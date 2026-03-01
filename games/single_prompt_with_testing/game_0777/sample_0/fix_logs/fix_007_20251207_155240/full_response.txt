@@ -1,0 +1,712 @@
+<analysis>
+- Issue identified:
+    1. AI gets stuck on off-roads because the off-road friction (0.90) is too punishing, bringing them to a near halt where they struggle to regain momentum.
+    2. AI steering logic is "bang-bang" (full left or full right) and uses a fixed look-ahead distance, causing them to cut corners or weave, leading to off-road excursions.
+    3. The "off-roads are just light blue" is due to the lack of a ground plane mesh; the game renders the skybox background where there is no track.
+- Files affected: `game.js`, `entities.js`
+- Changes needed:
+    1. In `game.js`: Add a large green PlaneGeometry in `setupGame` to serve as the ground/off-road visual.
+    2. In `entities.js`:
+        - Update `Kart` class friction values to be less punishing (0.95 offroad instead of 0.90).
+        - Update `Opponent` class `update` method to use proportional steering (smoother turns) and dynamic or shorter look-ahead to stick closer to the track center.
+        - Improve AI speed control to prevent stalling when turning or off-road.
+</analysis>
+
+<code filename="game.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Track } from './track.js';
+import { Player, Opponent, ItemBox } from './entities.js';
+import { updateCamera } from './camera.js';
+import { initUI, renderUI } from './ui.js';
+import { randomRange } from './utils.js';
+
+function init() {
+    // 1. Setup Container
+    const container = document.createElement('div');
+    container.id = 'game-container';
+    container.style.width = `${CANVAS_WIDTH}px`;
+    container.style.height = `${CANVAS_HEIGHT}px`;
+    container.style.position = 'relative';
+    container.style.overflow = 'hidden';
+    document.body.appendChild(container);
+    gameState.gameContainer = container;
+
+    // 2. Setup Renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+    renderer.shadowMap.enabled = true;
+    container.appendChild(renderer.domElement);
+    gameState.renderer = renderer;
+
+    // 3. Setup Scene & Camera
+    gameState.scene = new THREE.Scene();
+    gameState.scene.background = new THREE.Color(0x87CEEB);
+    gameState.scene.fog = new THREE.Fog(0x87CEEB, 20, 150);
+
+    gameState.camera = new THREE.PerspectiveCamera(60, CANVAS_WIDTH / CANVAS_HEIGHT, 0.1, 500);
+    
+    // 4. Lights
+    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+    gameState.scene.add(ambient);
+    
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+    dirLight.position.set(50, 100, 50);
+    dirLight.castShadow = true;
+    dirLight.shadow.camera.left = -50;
+    dirLight.shadow.camera.right = 50;
+    dirLight.shadow.camera.top = 50;
+    dirLight.shadow.camera.bottom = -50;
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
+    gameState.scene.add(dirLight);
+
+    // 5. Initialize Game Objects
+    setupGame();
+    initUI();
+    
+    // 6. Events
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    
+    // 7. Start Loop
+    requestAnimationFrame(gameLoop);
+}
+
+function setupGame() {
+    // Clear existing
+    if (gameState.track) gameState.scene.remove(gameState.track.mesh);
+    // Remove entities but keep lights and cameras
+    // Use isLight and isCamera properties to properly detect Three.js lights and cameras
+    gameState.scene.children = gameState.scene.children.filter(c => c.isLight || c.isCamera); 
+    
+    gameState.player = null;
+    gameState.opponents = [];
+    gameState.itemBoxes = [];
+    gameState.projectiles = [];
+    
+    // Seed random
+    Math.seedrandom('42');
+    
+    // Create Ground Plane (Visual only, physics logic is in Kart class)
+    const groundGeo = new THREE.PlaneGeometry(1000, 1000);
+    const groundMat = new THREE.MeshStandardMaterial({ 
+        color: 0x5c9c54, // Grass green
+        roughness: 1.0,
+        metalness: 0.0
+    });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.5; // Slightly below track level
+    ground.receiveShadow = true;
+    gameState.scene.add(ground);
+    
+    // Create Track
+    gameState.track = new Track();
+    
+    // Spawn Player
+    const startPos = gameState.track.points[0];
+    // Offset slightly
+    gameState.player = new Player(startPos.x + 3, startPos.y + 1, startPos.z);
+    
+    // Face track direction
+    const t0 = gameState.track.points[1];
+    // Fix: Look at a point at the same height as the player to prevent downward pitch (tilting)
+    gameState.player.mesh.lookAt(t0.x, startPos.y + 1, t0.z);
+    
+    // Spawn Opponents
+    const colors = [0x0000FF, 0x00FF00, 0xFFA500];
+    for (let i = 0; i < 3; i++) {
+        const offX = (i % 2 === 0 ? -1 : 1) * (4 + i);
+        const zOff = -5 * (Math.floor(i/2) + 1);
+        // Simple positioning relative to start - rough approx
+        const opp = new Opponent(startPos.x + offX, startPos.y + 1, startPos.z + zOff, colors[i]);
+        // Fix: Opponents also need to look straight ahead, not into the ground
+        opp.mesh.lookAt(t0.x, startPos.y + 1, t0.z);
+        gameState.opponents.push(opp);
+    }
+    
+    // Spawn Item Boxes
+    for (let i = 0; i < gameState.track.points.length; i += 20) {
+        if (i === 0) continue; // Skip start
+        const pt = gameState.track.points[i];
+        const box = new ItemBox(pt.x, pt.y + 1, pt.z);
+        gameState.itemBoxes.push(box);
+    }
+}
+
+let lastTime = performance.now();
+function gameLoop(now) {
+    requestAnimationFrame(gameLoop);
+    
+    const dt = Math.min((now - lastTime) / 1000, 0.1); // Cap dt
+    lastTime = now;
+    
+    gameState.deltaTime = dt;
+    gameState.elapsedTime += dt;
+    gameState.frameCount++;
+    
+    if (gameState.gamePhase === "PLAYING") {
+        // Update Entities
+        if (gameState.player) gameState.player.update(dt);
+        gameState.opponents.forEach(o => o.update(dt));
+        gameState.itemBoxes.forEach(b => b.update(dt));
+        gameState.projectiles.forEach(p => p.update(dt));
+        
+        // Handle Physics Interactions
+        checkCollisions();
+        
+        updateRankings();
+    }
+    
+    // Camera always updates (orbit in start, follow in play)
+    updateCamera(dt);
+    
+    // Render
+    gameState.renderer.render(gameState.scene, gameState.camera);
+    renderUI();
+}
+
+function checkCollisions() {
+    const karts = [gameState.player, ...gameState.opponents];
+    
+    for (let i = 0; i < karts.length; i++) {
+        for (let j = i + 1; j < karts.length; j++) {
+            const k1 = karts[i];
+            const k2 = karts[j];
+            
+            if (!k1 || !k2 || k1.dead || k2.dead) continue;
+            
+            // Simple distance-based collision (cylinders)
+            // Ignore Y for collision to prevent driving over each other
+            const dx = k1.mesh.position.x - k2.mesh.position.x;
+            const dz = k1.mesh.position.z - k2.mesh.position.z;
+            const distSq = dx * dx + dz * dz;
+            const minDist = 2.2; // Combined radius approx
+            
+            if (distSq < minDist * minDist) {
+                const dist = Math.sqrt(distSq);
+                const overlap = minDist - dist;
+                
+                // Normal vector
+                let nx = dx / dist;
+                let nz = dz / dist;
+                
+                // Fallback if exactly on top
+                if (dist < 0.001) { nx = 1; nz = 0; }
+                
+                // 1. Separate positions
+                const moveX = nx * overlap * 0.5;
+                const moveZ = nz * overlap * 0.5;
+                
+                k1.mesh.position.x += moveX;
+                k1.mesh.position.z += moveZ;
+                k2.mesh.position.x -= moveX;
+                k2.mesh.position.z -= moveZ;
+                
+                // 2. Apply Bounce Impulse
+                const bounceForce = 20.0;
+                k1.bumpVelocity.x += nx * bounceForce;
+                k1.bumpVelocity.z += nz * bounceForce;
+                k2.bumpVelocity.x -= nx * bounceForce;
+                k2.bumpVelocity.z -= nz * bounceForce;
+                
+                // 3. Friction (slow down on impact)
+                k1.speed *= 0.9;
+                k2.speed *= 0.9;
+            }
+        }
+    }
+}
+
+function updateRankings() {
+    // Simple ranking based on lap + checkpoint index
+    const racers = [gameState.player, ...gameState.opponents];
+    racers.sort((a, b) => {
+        const scoreA = a.lap * 10000 + a.checkpointIndex;
+        const scoreB = b.lap * 10000 + b.checkpointIndex;
+        return scoreB - scoreA; // Descending
+    });
+    
+    const playerRank = racers.indexOf(gameState.player) + 1;
+    gameState.player.rank = playerRank;
+}
+
+function onKeyDown(e) {
+    const key = e.key;
+    if (gameState.keys.hasOwnProperty(key)) gameState.keys[key] = true;
+    if (e.code === 'Space') gameState.keys[" "] = true; // Fix space mapping
+    
+    // Phase controls
+    if (key === 'Enter' && gameState.gamePhase === "START") {
+        gameState.gamePhase = "PLAYING";
+    }
+    if (key === 'Escape') {
+        if (gameState.gamePhase === "PLAYING") gameState.gamePhase = "PAUSED";
+        else if (gameState.gamePhase === "PAUSED") gameState.gamePhase = "PLAYING";
+    }
+    if (key.toLowerCase() === 'r' && gameState.gamePhase.startsWith("GAME_OVER")) {
+        setupGame();
+        gameState.gamePhase = "START";
+    }
+}
+
+function onKeyUp(e) {
+    const key = e.key;
+    if (gameState.keys.hasOwnProperty(key)) gameState.keys[key] = false;
+    if (e.code === 'Space') gameState.keys[" "] = false;
+}
+
+// Global hook for controls
+window.setControlMode = (mode) => {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+};
+
+// Init
+init();
+</code>
+
+<code filename="entities.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+import { randomChoice, checkAABB } from './utils.js';
+
+class Entity {
+    constructor(x, y, z) {
+        this.mesh = new THREE.Group();
+        this.mesh.position.set(x, y, z);
+        gameState.scene.add(this.mesh);
+        this.dead = false;
+    }
+    
+    update(dt) {}
+    
+    destroy() {
+        gameState.scene.remove(this.mesh);
+        this.dead = true;
+    }
+}
+
+export class Kart extends Entity {
+    constructor(x, y, z, color, isPlayer = false) {
+        super(x, y, z);
+        this.isPlayer = isPlayer;
+        
+        // Physics
+        this.velocity = new THREE.Vector3();
+        this.bumpVelocity = new THREE.Vector3(); // For collision impulses
+        this.speed = 0;
+        // Increased speeds for better gameplay
+        this.maxSpeed = isPlayer ? 80 : 75; 
+        this.acceleration = 40; 
+        this.turnSpeed = 2.0;
+        this.friction = 0.99; // Less drag on road
+        this.offRoadFriction = 0.95; // Less punishing off-road (was 0.90)
+        this.driftFactor = 0;
+        this.isDrifting = false;
+        
+        // State
+        this.lap = 1;
+        this.checkpointIndex = 0;
+        this.rank = 1;
+        this.score = 0;
+        this.item = null; // 'MUSHROOM', 'SHELL', 'BANANA'
+        this.invincible = 0; // Timer
+        
+        // Visuals
+        this.buildKartMesh(color);
+    }
+    
+    buildKartMesh(color) {
+        // Chassis
+        const chassisGeo = new THREE.BoxGeometry(1.5, 0.5, 2.5);
+        const chassisMat = new THREE.MeshStandardMaterial({ 
+            color: color,
+            roughness: 0.6,
+            metalness: 0.3
+        });
+        const chassis = new THREE.Mesh(chassisGeo, chassisMat);
+        chassis.castShadow = true;
+        this.mesh.add(chassis);
+        
+        // Wheels
+        const wheelGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.3, 16);
+        wheelGeo.rotateZ(Math.PI/2);
+        const wheelMat = new THREE.MeshStandardMaterial({ 
+            color: 0x222222,
+            roughness: 0.8
+        });
+        
+        const positions = [
+            [-0.8, -0.2, 1.0], [0.8, -0.2, 1.0],
+            [-0.8, -0.2, -1.0], [0.8, -0.2, -1.0]
+        ];
+        
+        positions.forEach(pos => {
+            const wheel = new THREE.Mesh(wheelGeo, wheelMat);
+            wheel.position.set(...pos);
+            wheel.castShadow = true;
+            this.mesh.add(wheel);
+        });
+        
+        // Driver
+        const headGeo = new THREE.SphereGeometry(0.4, 16, 16);
+        const headMat = new THREE.MeshStandardMaterial({ 
+            color: 0xffccaa,
+            roughness: 0.9
+        });
+        const head = new THREE.Mesh(headGeo, headMat);
+        head.position.set(0, 0.8, -0.2);
+        this.mesh.add(head);
+    }
+    
+    update(dt) {
+        if (this.dead) return;
+        
+        if (this.invincible > 0) {
+            this.invincible -= dt;
+            this.mesh.visible = Math.floor(gameState.frameCount / 4) % 2 === 0;
+        } else {
+            this.mesh.visible = true;
+        }
+        
+        // Apply bump velocity from collisions
+        this.mesh.position.add(this.bumpVelocity.clone().multiplyScalar(dt));
+        // Dampen bump velocity
+        this.bumpVelocity.lerp(new THREE.Vector3(0,0,0), 5.0 * dt);
+        
+        // Apply physics move
+        const moveDir = new THREE.Vector3(0, 0, 1).applyQuaternion(this.mesh.quaternion);
+        
+        // Apply velocity
+        this.mesh.position.add(moveDir.multiplyScalar(this.speed * dt));
+        
+        // Ground clamping - smoother for flat track
+        if (gameState.track) {
+            const { point } = gameState.track.getClosestPoint(this.mesh.position);
+            // Smooth lerp Y to track Y to stay on road
+            // Fix: Increased offset from 0.5 to 0.7 so wheels sit ON the road, not inside it
+            this.mesh.position.y = THREE.MathUtils.lerp(this.mesh.position.y, point.y + 0.7, 15 * dt);
+        }
+        
+        // Drag
+        const onTrack = gameState.track ? gameState.track.isOnTrack(this.mesh.position) : true;
+        const drag = onTrack ? this.friction : this.offRoadFriction;
+        this.speed *= drag;
+        
+        // Update lap progress
+        this.updateProgress();
+    }
+    
+    updateProgress() {
+        if (!gameState.track) return;
+        
+        const { index } = gameState.track.getClosestPoint(this.mesh.position);
+        
+        // Simple lap logic: if index wraps from high to low near start
+        const totalPoints = gameState.track.points.length;
+        
+        // Crossing finish line forward
+        if (this.checkpointIndex > totalPoints * 0.9 && index < totalPoints * 0.1) {
+            this.lap++;
+            if (this.isPlayer && this.lap > gameState.lapsTotal) {
+                // Determine win/loss immediately for this jam
+                // Check rank (simplified)
+                gameState.gamePhase = this.rank === 1 ? "GAME_OVER_WIN" : "GAME_OVER_LOSE";
+            }
+        }
+        // Crossing backward (ignore or decrement?)
+        
+        this.checkpointIndex = index;
+    }
+    
+    useItem() {
+        if (!this.item) return;
+        
+        if (this.item === 'MUSHROOM') {
+            this.speed = this.maxSpeed * 1.5;
+        } else if (this.item === 'SHELL') {
+            const dir = new THREE.Vector3(0,0,1).applyQuaternion(this.mesh.quaternion);
+            const pos = this.mesh.position.clone().add(dir.multiplyScalar(2));
+            const proj = new Projectile(pos, dir, this);
+            gameState.projectiles.push(proj);
+        }
+        
+        this.item = null;
+    }
+}
+
+export class Player extends Kart {
+    constructor(x, y, z) {
+        super(x, y, z, 0xff0000, true);
+    }
+    
+    update(dt) {
+        // Input Handling
+        let accel = 0;
+        let steer = 0;
+        
+        if (gameState.controlMode === "HUMAN") {
+            if (gameState.keys.ArrowUp || gameState.keys.w) accel = 1;
+            if (gameState.keys.ArrowDown || gameState.keys.s) accel = -1;
+            if (gameState.keys.ArrowLeft || gameState.keys.a) steer = 1; // Left turns +Y rot
+            if (gameState.keys.ArrowRight || gameState.keys.d) steer = -1;
+            
+            if (gameState.keys.Shift && (steer !== 0)) {
+                this.isDrifting = true;
+            } else {
+                this.isDrifting = false;
+            }
+            
+            if (gameState.keys[" "] && this.item) {
+                this.useItem();
+                gameState.keys[" "] = false; // consume key
+            }
+        } else if (gameState.controlMode.startsWith("TEST")) {
+            // Test automations
+            if (gameState.controlMode === "TEST_1") {
+                accel = 1; // Just drive
+            } else if (gameState.controlMode === "TEST_2") {
+                // Drive off road
+                accel = 1;
+                steer = 1; 
+            }
+        }
+        
+        // Physics update
+        this.speed += accel * this.acceleration * dt;
+        
+        // Cap speed
+        if (this.speed > this.maxSpeed) this.speed = this.maxSpeed;
+        if (this.speed < -this.maxSpeed/2) this.speed = -this.maxSpeed/2;
+        
+        // Turning
+        if (Math.abs(this.speed) > 0.1) {
+            const turnMultiplier = this.isDrifting ? 1.5 : 1.0;
+            // Reverse steering if going backward
+            const dir = this.speed > 0 ? 1 : -1;
+            this.mesh.rotation.y += steer * this.turnSpeed * turnMultiplier * dt * dir;
+            
+            // Visual drift tilt
+            if (this.isDrifting) {
+                // Hop effect or sparks could go here
+            }
+        }
+        
+        super.update(dt);
+        
+        // Log info for testing
+        if (window.logs.player_info) {
+            window.logs.player_info.push({
+                x: this.mesh.position.x,
+                z: this.mesh.position.z,
+                speed: this.speed,
+                lap: this.lap,
+                frame: gameState.frameCount
+            });
+        }
+    }
+}
+
+export class Opponent extends Kart {
+    constructor(x, y, z, color) {
+        super(x, y, z, color, false);
+        this.targetIndex = 0;
+    }
+    
+    update(dt) {
+        if (!gameState.track) return;
+        
+        // Find target point on track
+        const points = gameState.track.points;
+        const { index } = gameState.track.getClosestPoint(this.mesh.position);
+        
+        // Dynamic lookahead: faster = look further, but keep it tight to prevent corner cutting
+        const lookAhead = 8 + Math.floor(this.speed / 20);
+        let targetIdx = (index + lookAhead) % points.length;
+        const target = points[targetIdx].clone();
+        
+        // Steering logic
+        const kartPos = this.mesh.position.clone();
+        const dirToTarget = target.sub(kartPos).normalize();
+        
+        const forward = new THREE.Vector3(0,0,1).applyQuaternion(this.mesh.quaternion);
+        
+        // Cross product to know left or right (y component acts as sine of angle)
+        const cross = new THREE.Vector3().crossVectors(forward, dirToTarget);
+        
+        // Proportional steering instead of binary
+        let steer = cross.y * 4.0;
+        steer = Math.max(-1, Math.min(1, steer));
+        
+        // AI Acceleration
+        let throttle = 1.0;
+        
+        // Check angle to target for cornering speed control
+        const angle = forward.angleTo(dirToTarget);
+        
+        // If angle is large (sharp turn), reduce throttle
+        if (angle > 0.5) {
+            throttle = 0.5;
+        }
+        
+        // Apply throttle
+        this.speed += this.acceleration * throttle * dt;
+        
+        // Cap speed
+        const aiMaxSpeed = this.maxSpeed * 0.9;
+        if (this.speed > aiMaxSpeed) this.speed = aiMaxSpeed;
+        
+        // Anti-stuck: If speed is very low (stuck offroad), boost acceleration
+        if (this.speed < 10) {
+            this.speed += this.acceleration * dt;
+        }
+        
+        this.mesh.rotation.y += steer * this.turnSpeed * dt;
+        
+        super.update(dt);
+    }
+}
+
+export class ItemBox extends Entity {
+    constructor(x, y, z) {
+        super(x, y, z);
+        
+        const geometry = new THREE.BoxGeometry(1, 1, 1);
+        const material = new THREE.MeshStandardMaterial({ 
+            color: 0xFFFF00, 
+            transparent: true, 
+            opacity: 0.8,
+            emissive: 0xaa8800,
+            emissiveIntensity: 0.5,
+            roughness: 0.5,
+            metalness: 0.2
+        });
+        this.boxMesh = new THREE.Mesh(geometry, material);
+        this.mesh.add(this.boxMesh);
+        
+        // Question mark (simplified as a floating smaller cube inside)
+        const qGeo = new THREE.BoxGeometry(0.4, 0.4, 0.4);
+        const qMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        this.qMesh = new THREE.Mesh(qGeo, qMat);
+        this.mesh.add(this.qMesh);
+        
+        this.baseY = y;
+        this.bbox = new THREE.Box3();
+    }
+    
+    update(dt) {
+        this.mesh.rotation.y += 2 * dt;
+        this.mesh.rotation.x += 1 * dt;
+        this.mesh.position.y = this.baseY + Math.sin(gameState.elapsedTime * 3) * 0.3;
+        
+        // Update Bounding Box
+        this.bbox.setFromObject(this.mesh);
+        
+        // Check collision with player
+        if (gameState.player && !gameState.player.dead) {
+            const playerBox = new THREE.Box3().setFromObject(gameState.player.mesh);
+            if (this.bbox.intersectsBox(playerBox)) {
+                this.collect(gameState.player);
+            }
+        }
+    }
+    
+    collect(kart) {
+        if (kart.item === null) {
+            const items = ['MUSHROOM', 'SHELL'];
+            kart.item = randomChoice(items);
+            // Visual feedback could go here
+        }
+        this.destroy();
+        // Remove from global list
+        const idx = gameState.itemBoxes.indexOf(this);
+        if (idx > -1) gameState.itemBoxes.splice(idx, 1);
+    }
+}
+
+export class Projectile extends Entity {
+    constructor(pos, dir, owner) {
+        // Fix: Ensure projectile starts above ground to prevent clipping
+        super(pos.x, Math.max(pos.y, 0.5), pos.z);
+        
+        // Fix: Flatten direction to prevent shooting into ground if kart is tilted
+        const flatDir = new THREE.Vector3(dir.x, 0, dir.z).normalize();
+        this.velocity = flatDir.multiplyScalar(60); 
+        
+        this.owner = owner;
+        this.life = 3.0; // seconds
+        
+        const geo = new THREE.SphereGeometry(0.5);
+        const mat = new THREE.MeshStandardMaterial({ 
+            color: 0x00ff00, 
+            emissive: 0x004400,
+            roughness: 0.4,
+            metalness: 0.6
+        }); // Green shell
+        this.shell = new THREE.Mesh(geo, mat);
+        this.mesh.add(this.shell);
+    }
+    
+    update(dt) {
+        this.life -= dt;
+        if (this.life <= 0) {
+            this.destroy();
+            return;
+        }
+        
+        this.mesh.position.add(this.velocity.clone().multiplyScalar(dt));
+        
+        // Fix: Snap to track height and follow track curvature
+        if (gameState.track) {
+            const { point, index } = gameState.track.getClosestPoint(this.mesh.position);
+            
+            // Prevent sinking
+            const groundY = point.y + 0.5;
+            if (this.mesh.position.y < groundY) {
+                this.mesh.position.y = groundY;
+            }
+            
+            // Guide along track (steer velocity towards track direction)
+            const points = gameState.track.points;
+            // Look ahead to find track direction
+            const nextIdx = (index + 5) % points.length;
+            const currentPt = points[index];
+            const nextPt = points[nextIdx];
+            const trackDir = new THREE.Vector3().subVectors(nextPt, currentPt).normalize();
+            
+            // Blend velocity towards track direction
+            const speed = this.velocity.length();
+            const currentDir = this.velocity.clone().normalize();
+            // Lerp factor controls how strongly it follows the track
+            const newDir = new THREE.Vector3().lerpVectors(currentDir, trackDir, 10 * dt).normalize();
+            this.velocity = newDir.multiplyScalar(speed);
+        }
+        
+        // Check collisions with karts
+        const targets = [gameState.player, ...gameState.opponents];
+        const myBox = new THREE.Box3().setFromObject(this.mesh);
+        
+        for (let target of targets) {
+            if (target === this.owner || target.dead) continue;
+            
+            const tBox = new THREE.Box3().setFromObject(target.mesh);
+            if (myBox.intersectsBox(tBox)) {
+                // Hit!
+                target.speed = 0; // Stop them
+                target.mesh.position.y += 2; // Jump up
+                // Spin effect?
+                this.destroy();
+                return;
+            }
+        }
+    }
+    
+    destroy() {
+        super.destroy();
+        const idx = gameState.projectiles.indexOf(this);
+        if (idx > -1) gameState.projectiles.splice(idx, 1);
+    }
+}
+</code>

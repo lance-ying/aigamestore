@@ -79,77 +79,31 @@ def add_description_to_file(file_path: Path):
 
 def main():
     """Process all temp concept files."""
-    temp_files = [
-        "temp_concept_paper_io.txt",
-        "temp_concept_mario_kart_tour.txt",
-        "temp_concept_brawl_stars.txt",
-        "temp_concept_crossy_road.txt",
-        "temp_concept_hill_climb_racing.txt",
-        "temp_concept_ridiculous_fishing.txt",
-        "temp_concept_poly_bridge_2.txt",
-        "temp_concept_tds___tower_destiny_survive.txt",
-        "temp_concept_hit_master_3d_knife_assassin.txt",
-        "temp_concept_risk_global_domination.txt",
-        "temp_concept_brotato.txt",
-        "temp_concept_shawarma_legend.txt",
-        "temp_concept_friday_night_funkin_mobile.txt",
-        "temp_concept_downwell.txt",
-        "temp_concept_super_meat_boy_forever.txt",
-        "temp_concept_hoplite.txt",
-        "temp_concept_onebit_adventure.txt",
-        "temp_concept_knights_of_pen__paper_2.txt",
-        "temp_concept_enter_the_gungeon.txt",
-        "temp_concept_terraria.txt",
-        "temp_concept_monument_valley_2.txt",
-        "temp_concept_balatro.txt",
-        "temp_concept_slay_the_spire.txt",
-        "temp_concept_tomb_of_the_mask_pixel_maze.txt",
-        "temp_concept_snake_vs_block.txt",
-        "temp_concept_square_bird___flappy_chicken.txt",
-        "temp_concept_go_escape___casual_ball_games.txt",
-        "temp_concept_jelly_shift___obstacle_course.txt",
-        "temp_concept_battle_disc.txt",
-        "temp_concept_flappy_dunk.txt",
-        "temp_concept_dune.txt",
-        "temp_concept_tiny_wings.txt",
-        "temp_concept_stack_ball_3d.txt",
-        "temp_concept_tank_stars.txt",
-        "temp_concept_bottle_flip_3d__tap_to_jump.txt",
-        "temp_concept_going_balls.txt",
-        "temp_concept_temple_run.txt",
-        "temp_concept_jetpack_joyride.txt",
-        "temp_concept_doodle_jump_2.txt",
-        "temp_concept_leps_world___jump_n_run_games.txt",
-        "temp_concept_super_mario_run.txt",
-        "temp_concept_sonic_the_hedgehog_classic.txt",
-        "temp_concept_mega_man_x.txt",
-        "temp_concept_sonic_runners_adventure.txt",
-        "temp_concept_dead_cells.txt",
-        "temp_concept_bastion.txt",
-        "temp_concept_20_minutes_till_dawn.txt",
-        "temp_concept_loop_hero.txt",
-        "temp_concept_stone_story_rpg.txt",
-        "temp_concept_battleheart_legacy.txt",
-        "temp_concept_peglin.txt",
-        "temp_concept_vampire_survivors.txt",
-        "temp_concept_archero.txt",
-        "temp_concept_ballz.txt",
-        "temp_concept_stack.txt",
-        "temp_concept_hop.txt",
-        "temp_concept_leap_day.txt",
-        "temp_concept_sprint_rpg.txt",
-        "temp_concept_redungeon.txt",
-        "temp_concept_vault.txt",
-        "temp_concept_gopogo.txt",
-        "temp_concept_platform_panic.txt",
-    ]
-    
+    # Automatically find all temp_concept files that don't have full descriptions yet
     project_root = Path(__file__).parent
+    temp_files = []
+    
+    for file_path in project_root.glob("temp_concept_*.txt"):
+        content = file_path.read_text(encoding='utf-8')
+        # Only include files that don't have "Full Description:" yet
+        if "Full Description:" not in content:
+            temp_files.append(file_path.name)
+    
+    # Sort for consistent processing
+    temp_files.sort()
+    
+    if not temp_files:
+        print("="*80)
+        print("No temp concept files found that need descriptions added")
+        print("="*80)
+        return
+    
     success_count = 0
     
     print("="*80)
     print("Adding App Store Descriptions to Temp Concept Files")
     print("="*80)
+    print(f"Found {len(temp_files)} files to process")
     
     for filename in temp_files:
         file_path = project_root / filename

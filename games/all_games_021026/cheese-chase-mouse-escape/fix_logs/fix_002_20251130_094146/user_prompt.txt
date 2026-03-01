@@ -1,0 +1,1448 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+level 3 and 4 is too difficult since the cats are right on top of the cheese, can you redesign the levels so that they are a bit easier, and can you make it so that the first 2 levels are easy, the next 2 levels a medium, and the next two levels are hard? and make sure the platform placements make sense
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Cheese Chase: Mouse Escape</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic Movement)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Smart AI)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">You are a clever mouse on a mission to collect all the delicious cheese scattered throughout increasingly dangerous environments! Navigate through 6 challenging levels filled with patrolling cats. Collect every piece of cheese to activate the mouse hole exit, then make your escape. But beware - one touch from a cat and you'll lose a life! Master the art of timing, precision jumping, and careful planning to complete all levels and claim victory.</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Left: Move left | Arrow Right: Move right | Arrow Up: Jump (when on ground) | ENTER: Start game | ESC: Pause/Unpause game | R: Return to start screen</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const gameState = {
+  player: null,
+  entities: [],
+  score: 0,
+  level: 1,
+  lives: 3,
+  gamePhase: GAME_PHASES.START,
+  controlMode: "HUMAN",
+  cheeseCollected: 0,
+  totalCheese: 0,
+  mouseHoleActive: false,
+  invulnerable: false,
+  invulnerableTimer: 0,
+  levelTransitionTimer: 0,
+  highScore: 0
+};
+
+// Load high score from localStorage
+if (typeof window !== 'undefined' && window.localStorage) {
+  const stored = window.localStorage.getItem('cheeseChaseHighScore');
+  if (stored) {
+    gameState.highScore = parseInt(stored, 10) || 0;
+  }
+}
+
+// Expose gameState globally
+if (typeof window !== 'undefined') {
+  window.getGameState = () => gameState;
+}
+</file>
+
+<file name="game.js">
+import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { handleKeyPressed, handleKeyReleased, handlePlayerMovement, startGame } from './controls.js';
+import { checkCollisions } from './collision.js';
+import { loadLevel, updateLevelTransition } from './levelManager.js';
+import { renderGame } from './rendering.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Initialize logs
+  p.logs = {
+    game_info: [],
+    inputs: [],
+    player_info: []
+  };
+
+  let needsLevelLoad = false;
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    p.logs.game_info.push({
+      event: 'game_initialized',
+      data: { canvas_width: CANVAS_WIDTH, canvas_height: CANVAS_HEIGHT },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+
+  p.draw = function() {
+    // Handle level loading
+    if (gameState.gamePhase === GAME_PHASES.PLAYING && !gameState.player) {
+      loadLevel(p, gameState.level);
+    }
+
+    // Handle level transition
+    if (gameState.levelTransitionTimer > 0) {
+      updateLevelTransition(p);
+      renderGame(p);
+      return;
+    }
+
+    // Update game state
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      // Handle player movement
+      handlePlayerMovement(p);
+
+      // Update all entities
+      for (const entity of gameState.entities) {
+        entity.update();
+      }
+
+      // Remove dead particles
+      gameState.entities = gameState.entities.filter(e => {
+        if (e.type === 'particle') {
+          return !e.isDead();
+        }
+        return true;
+      });
+
+      // Check collisions
+      checkCollisions(p);
+
+      // Update invulnerability timer
+      if (gameState.invulnerable) {
+        gameState.invulnerableTimer--;
+        if (gameState.invulnerableTimer <= 0) {
+          gameState.invulnerable = false;
+        }
+      }
+
+      // Log player position periodically
+      if (p.frameCount % 60 === 0 && gameState.player) {
+        p.logs.player_info.push({
+          screen_x: gameState.player.x,
+          screen_y: gameState.player.y,
+          game_x: gameState.player.x,
+          game_y: gameState.player.y,
+          framecount: p.frameCount
+        });
+      }
+    }
+
+    // Render
+    renderGame(p);
+  };
+
+  p.keyPressed = function() {
+    handleKeyPressed(p, p.key, p.keyCode);
+    return false;
+  };
+
+  p.keyReleased = function() {
+    handleKeyReleased(p, p.key, p.keyCode);
+    return false;
+  };
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    if (window.gameInstance) {
+      // Try to import and call loadLevel if available
+      if (typeof loadLevel === 'function') {
+        loadLevel(window.gameInstance, levelNum);
+      } else if (typeof initializeLevel === 'function') {
+        initializeLevel(window.gameInstance, levelNum);
+      }
+      if (state.gamePhase !== undefined) {
+        state.gamePhase = "PLAYING";
+      }
+    }
+  }
+};
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const activeBtn = document.getElementById(mode === 'HUMAN' ? 'humanModeBtn' : `${mode}_ModeBtn`);
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+  
+  gameInstance.logs.game_info.push({
+    event: 'control_mode_changed',
+    data: { mode },
+    framecount: gameInstance.frameCount,
+    timestamp: Date.now()
+  });
+};
+</file>
+
+<file name="collision.js">
+import { gameState, GAME_PHASES } from './globals.js';
+import { Particle } from './entities.js';
+
+export function checkCollisions(p) {
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) return;
+  if (!gameState.player) return;
+
+  const player = gameState.player;
+  
+  // Check cheese collection
+  const cheeses = gameState.entities.filter(e => e.type === 'cheese' && !e.collected);
+  for (const cheese of cheeses) {
+    const dist = Math.sqrt(
+      Math.pow(player.x - cheese.x, 2) + 
+      Math.pow(player.y - cheese.y, 2)
+    );
+    if (dist < (player.w / 2 + cheese.w / 2)) {
+      cheese.collected = true;
+      gameState.cheeseCollected++;
+      gameState.score += 50;
+      
+      // Create particles
+      for (let i = 0; i < 10; i++) {
+        const angle = (Math.PI * 2 * i) / 10;
+        const speed = 2 + Math.random() * 2;
+        gameState.entities.push(
+          new Particle(
+            p,
+            cheese.x,
+            cheese.y,
+            Math.cos(angle) * speed,
+            Math.sin(angle) * speed,
+            [255, 220, 60],
+            30
+          )
+        );
+      }
+      
+      // Check if all cheese collected
+      if (gameState.cheeseCollected >= gameState.totalCheese) {
+        gameState.mouseHoleActive = true;
+      }
+    }
+  }
+  
+  // Check cat collision
+  if (!gameState.invulnerable) {
+    const cats = gameState.entities.filter(e => e.type === 'cat');
+    for (const cat of cats) {
+      const dist = Math.sqrt(
+        Math.pow(player.x - cat.x, 2) + 
+        Math.pow(player.y - cat.y, 2)
+      );
+      if (dist < (player.w / 2 + cat.w / 2)) {
+        handlePlayerHit(p);
+        break;
+      }
+    }
+  }
+  
+  // Check mouse hole collision
+  if (gameState.mouseHoleActive) {
+    const mouseHole = gameState.entities.find(e => e.type === 'mousehole');
+    if (mouseHole) {
+      const dist = Math.sqrt(
+        Math.pow(player.x - mouseHole.x, 2) + 
+        Math.pow(player.y - mouseHole.y, 2)
+      );
+      if (dist < (player.w / 2 + mouseHole.w / 2)) {
+        handleLevelComplete(p);
+      }
+    }
+  }
+}
+
+export function handlePlayerHit(p) {
+  gameState.lives--;
+  
+  // Log player death
+  p.logs.player_info.push({
+    event: 'player_died',
+    screen_x: gameState.player.x,
+    screen_y: gameState.player.y,
+    game_x: gameState.player.x,
+    game_y: gameState.player.y,
+    lives_remaining: gameState.lives,
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  
+  if (gameState.lives <= 0) {
+    gameState.gamePhase = GAME_PHASES.GAME_OVER_LOSE;
+    p.logs.game_info.push({
+      event: 'game_over_lose',
+      data: { final_score: gameState.score, level: gameState.level },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  } else {
+    // Respawn player
+    respawnPlayer(p);
+    gameState.invulnerable = true;
+    gameState.invulnerableTimer = 120; // 2 seconds at 60 FPS
+  }
+}
+
+function respawnPlayer(p) {
+  const levelConfig = gameState.currentLevelConfig;
+  if (levelConfig && gameState.player) {
+    gameState.player.x = levelConfig.playerStart.x;
+    gameState.player.y = levelConfig.playerStart.y;
+    gameState.player.vx = 0;
+    gameState.player.vy = 0;
+    gameState.player.onGround = false;
+  }
+}
+
+function handleLevelComplete(p) {
+  // Calculate level completion bonus
+  const levelBonus = 1000;
+  const livesBonus = gameState.lives * 500;
+  gameState.score += levelBonus + livesBonus;
+  
+  p.logs.game_info.push({
+    event: 'level_complete',
+    data: { 
+      level: gameState.level, 
+      score: gameState.score,
+      level_bonus: levelBonus,
+      lives_bonus: livesBonus
+    },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  
+  if (gameState.level >= 6) {
+    // Game complete!
+    gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
+    
+    // Update high score
+    if (gameState.score > gameState.highScore) {
+      gameState.highScore = gameState.score;
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem('cheeseChaseHighScore', gameState.highScore.toString());
+      }
+    }
+    
+    p.logs.game_info.push({
+      event: 'game_complete',
+      data: { final_score: gameState.score },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  } else {
+    // Next level
+    gameState.level++;
+    gameState.levelTransitionTimer = 180; // 3 seconds
+  }
+}
+</file>
+
+<file name="controls.js">
+import { gameState, GAME_PHASES } from './globals.js';
+
+export function handleKeyPressed(p, key, keyCode) {
+  // Log input
+  p.logs.inputs.push({
+    input_type: 'keyPressed',
+    data: { key, keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+
+  // ENTER - Start game
+  if (keyCode === 13) {
+    if (gameState.gamePhase === GAME_PHASES.START) {
+      startGame(p);
+    }
+  }
+
+  // ESC - Pause/Unpause
+  if (keyCode === 27) {
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      gameState.gamePhase = GAME_PHASES.PAUSED;
+      p.logs.game_info.push({
+        event: 'game_paused',
+        data: {},
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+      gameState.gamePhase = GAME_PHASES.PLAYING;
+      p.logs.game_info.push({
+        event: 'game_resumed',
+        data: {},
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+
+  // R - Restart
+  if (keyCode === 82) {
+    if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || 
+        gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE ||
+        gameState.gamePhase === GAME_PHASES.PAUSED) {
+      resetToStart(p);
+    }
+  }
+
+  // Gameplay controls
+  if (gameState.gamePhase === GAME_PHASES.PLAYING && gameState.player) {
+    if (keyCode === 38) { // Arrow Up
+      gameState.player.jump();
+    }
+  }
+}
+
+export function handleKeyReleased(p, key, keyCode) {
+  // Log input
+  p.logs.inputs.push({
+    input_type: 'keyReleased',
+    data: { key, keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function handlePlayerMovement(p) {
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING || !gameState.player) return;
+
+  if (gameState.controlMode === 'HUMAN') {
+    if (p.keyIsDown(37)) { // Arrow Left
+      gameState.player.moveLeft();
+    } else if (p.keyIsDown(39)) { // Arrow Right
+      gameState.player.moveRight();
+    } else {
+      gameState.player.stopMove();
+    }
+  } else {
+    // Automated testing mode
+    handleAutomatedControls(p);
+  }
+}
+
+function handleAutomatedControls(p) {
+  // Simple AI for testing
+  if (!gameState.player) return;
+
+  const player = gameState.player;
+  
+  if (gameState.controlMode === 'TEST_1') {
+    // Basic movement test - just move right
+    player.moveRight();
+    if (p.frameCount % 60 === 0) {
+      player.jump();
+    }
+  } else if (gameState.controlMode === 'TEST_2') {
+    // More advanced - try to collect cheese
+    const cheeses = gameState.entities.filter(e => e.type === 'cheese' && !e.collected);
+    if (cheeses.length > 0) {
+      const targetCheese = cheeses[0];
+      if (player.x < targetCheese.x - 10) {
+        player.moveRight();
+      } else if (player.x > targetCheese.x + 10) {
+        player.moveLeft();
+      } else {
+        player.stopMove();
+      }
+      
+      // Jump if cheese is above
+      if (targetCheese.y < player.y - 30 && player.onGround) {
+        player.jump();
+      }
+    } else {
+      // Go to mouse hole
+      const mouseHole = gameState.entities.find(e => e.type === 'mousehole');
+      if (mouseHole) {
+        if (player.x < mouseHole.x - 10) {
+          player.moveRight();
+        } else if (player.x > mouseHole.x + 10) {
+          player.moveLeft();
+        } else {
+          player.stopMove();
+        }
+      }
+    }
+  }
+}
+
+export function startGame(p) {
+  gameState.gamePhase = GAME_PHASES.PLAYING;
+  gameState.level = 1;
+  gameState.score = 0;
+  gameState.lives = 3;
+  
+  p.logs.game_info.push({
+    event: 'game_started',
+    data: {},
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  
+  // Level will be loaded in the main update loop
+}
+
+export function resetToStart(p) {
+  gameState.gamePhase = GAME_PHASES.START;
+  gameState.level = 1;
+  gameState.score = 0;
+  gameState.lives = 3;
+  gameState.entities = [];
+  gameState.player = null;
+  gameState.cheeseCollected = 0;
+  gameState.totalCheese = 0;
+  gameState.mouseHoleActive = false;
+  gameState.invulnerable = false;
+  gameState.invulnerableTimer = 0;
+  gameState.levelTransitionTimer = 0;
+  
+  p.logs.game_info.push({
+    event: 'reset_to_start',
+    data: {},
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+</file>
+
+<file name="levelManager.js">
+import { gameState, GAME_PHASES } from './globals.js';
+import { levelConfigs } from './levelData.js';
+import { Player, Cat, Cheese, Platform, MouseHole } from './entities.js';
+
+export function loadLevel(p, levelNum) {
+  const config = levelConfigs[levelNum - 1];
+  if (!config) return;
+
+  gameState.currentLevelConfig = config;
+  gameState.entities = [];
+  gameState.cheeseCollected = 0;
+  gameState.totalCheese = config.cheese.length;
+  gameState.mouseHoleActive = false;
+  gameState.invulnerable = false;
+  gameState.invulnerableTimer = 0;
+
+  // Create player
+  gameState.player = new Player(p, config.playerStart.x, config.playerStart.y);
+  gameState.entities.push(gameState.player);
+
+  // Create platforms
+  for (const platData of config.platforms) {
+    gameState.entities.push(new Platform(p, platData.x, platData.y, platData.w, platData.h));
+  }
+
+  // Create cheese
+  for (const cheeseData of config.cheese) {
+    gameState.entities.push(new Cheese(p, cheeseData.x, cheeseData.y));
+  }
+
+  // Create cats
+  for (const catData of config.cats) {
+    gameState.entities.push(
+      new Cat(p, catData.x, catData.y, catData.patrolPath, catData.speed)
+    );
+  }
+
+  // Create mouse hole
+  gameState.entities.push(new MouseHole(p, config.mouseHole.x, config.mouseHole.y));
+
+  p.logs.game_info.push({
+    event: 'level_loaded',
+    data: { level: levelNum },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function updateLevelTransition(p) {
+  if (gameState.levelTransitionTimer > 0) {
+    gameState.levelTransitionTimer--;
+    if (gameState.levelTransitionTimer === 0) {
+      loadLevel(p, gameState.level);
+      gameState.gamePhase = GAME_PHASES.PLAYING;
+    }
+  }
+}
+</file>
+
+<file name="rendering.js">
+import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderGame(p) {
+  p.background(30, 25, 35);
+
+  // Check level transition first, before game phase
+  if (gameState.levelTransitionTimer > 0) {
+    renderLevelTransition(p);
+  } else if (gameState.gamePhase === GAME_PHASES.START) {
+    renderStartScreen(p);
+  } else if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+    renderPlaying(p);
+  } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+    renderPlaying(p);
+    renderPauseOverlay(p);
+  } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN) {
+    renderGameOverWin(p);
+  } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+    renderGameOverLose(p);
+  }
+}
+
+function renderStartScreen(p) {
+  p.push();
+  
+  // Title
+  p.textAlign(p.CENTER, p.CENTER);
+  p.fill(255, 220, 100);
+  p.textSize(48);
+  p.text('CHEESE CHASE', CANVAS_WIDTH / 2, 80);
+  
+  p.textSize(24);
+  p.fill(255, 180, 80);
+  p.text('Mouse Escape', CANVAS_WIDTH / 2, 120);
+  
+  // Description
+  p.textSize(14);
+  p.fill(200, 200, 200);
+  p.text('Collect all the cheese to activate the mouse hole,', CANVAS_WIDTH / 2, 170);
+  p.text('then escape before the cats catch you!', CANVAS_WIDTH / 2, 190);
+  
+  // Instructions
+  p.textSize(16);
+  p.fill(255, 255, 200);
+  p.text('HOW TO PLAY', CANVAS_WIDTH / 2, 230);
+  
+  p.textSize(14);
+  p.fill(220, 220, 220);
+  p.textAlign(p.LEFT, p.CENTER);
+  const instrX = 150;
+  p.text('← →  Move Left/Right', instrX, 260);
+  p.text('↑      Jump', instrX, 285);
+  p.text('ESC   Pause Game', instrX, 310);
+  p.text('R       Restart to Menu', instrX, 335);
+  
+  // High Score
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(16);
+  p.fill(255, 215, 0);
+  p.text(`HIGH SCORE: ${gameState.highScore.toString().padStart(6, '0')}`, CANVAS_WIDTH / 2, 370);
+  
+  // Start prompt
+  p.textSize(20);
+  p.fill(100, 255, 100);
+  const blink = Math.floor(p.frameCount / 30) % 2 === 0;
+  if (blink) {
+    p.text('PRESS ENTER TO START', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 30);
+  }
+  
+  p.pop();
+}
+
+function renderPlaying(p) {
+  // Render all entities
+  for (const entity of gameState.entities) {
+    entity.draw();
+  }
+  
+  // Render invulnerability effect
+  if (gameState.invulnerable && gameState.player) {
+    const alpha = Math.floor((gameState.invulnerableTimer % 20) / 10) * 100;
+    p.push();
+    p.noFill();
+    p.stroke(100, 200, 255, alpha);
+    p.strokeWeight(3);
+    p.ellipse(gameState.player.x, gameState.player.y, gameState.player.w + 10, gameState.player.h + 10);
+    p.pop();
+  }
+  
+  // Render UI
+  renderUI(p);
+}
+
+function renderUI(p) {
+  p.push();
+  
+  // Score - top left
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(18);
+  p.fill(255, 255, 255);
+  p.text(`SCORE: ${gameState.score.toString().padStart(6, '0')}`, 10, 10);
+  
+  // Level - top right
+  p.textAlign(p.RIGHT, p.TOP);
+  p.text(`LEVEL: ${gameState.level}`, CANVAS_WIDTH - 10, 10);
+  
+  // Lives - bottom left
+  p.textAlign(p.LEFT, p.TOP);
+  p.text('LIVES: ', 10, CANVAS_HEIGHT - 30);
+  for (let i = 0; i < gameState.lives; i++) {
+    p.fill(255, 50, 50);
+    p.noStroke();
+    p.beginShape();
+    const x = 70 + i * 25;
+    const y = CANVAS_HEIGHT - 20;
+    p.vertex(x, y - 5);
+    p.bezierVertex(x - 5, y - 10, x - 10, y - 5, x, y + 5);
+    p.bezierVertex(x + 10, y - 5, x + 5, y - 10, x, y - 5);
+    p.endShape(p.CLOSE);
+  }
+  
+  // Cheese counter
+  p.textAlign(p.RIGHT, p.TOP);
+  p.fill(255, 255, 255);
+  p.text(`CHEESE: ${gameState.cheeseCollected}/${gameState.totalCheese}`, CANVAS_WIDTH - 10, CANVAS_HEIGHT - 30);
+  
+  p.pop();
+}
+
+function renderPauseOverlay(p) {
+  p.push();
+  p.fill(0, 0, 0, 150);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.textAlign(p.RIGHT, p.TOP);
+  p.fill(255, 255, 255);
+  p.textSize(16);
+  p.text('PAUSED', CANVAS_WIDTH - 10, 10);
+  
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(24);
+  p.text('GAME PAUSED', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+  p.textSize(16);
+  p.text('Press ESC to resume', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+  p.text('Press R to return to menu', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+  
+  p.pop();
+}
+
+function renderGameOverWin(p) {
+  p.push();
+  
+  p.textAlign(p.CENTER, p.CENTER);
+  p.fill(100, 255, 100);
+  p.textSize(48);
+  p.text('YOU WIN!', CANVAS_WIDTH / 2, 100);
+  
+  p.textSize(24);
+  p.fill(255, 255, 100);
+  p.text('All Levels Complete!', CANVAS_WIDTH / 2, 150);
+  
+  p.textSize(20);
+  p.fill(255, 255, 255);
+  p.text(`Final Score: ${gameState.score.toString().padStart(6, '0')}`, CANVAS_WIDTH / 2, 210);
+  
+  if (gameState.score === gameState.highScore) {
+    p.fill(255, 215, 0);
+    p.textSize(18);
+    p.text('NEW HIGH SCORE!', CANVAS_WIDTH / 2, 250);
+  }
+  
+  p.textSize(18);
+  p.fill(200, 200, 200);
+  p.text('PRESS R TO RESTART', CANVAS_WIDTH / 2, 320);
+  
+  p.pop();
+}
+
+function renderGameOverLose(p) {
+  p.push();
+  
+  p.textAlign(p.CENTER, p.CENTER);
+  p.fill(255, 100, 100);
+  p.textSize(48);
+  p.text('GAME OVER', CANVAS_WIDTH / 2, 120);
+  
+  p.textSize(20);
+  p.fill(255, 255, 255);
+  p.text(`Final Score: ${gameState.score.toString().padStart(6, '0')}`, CANVAS_WIDTH / 2, 200);
+  p.text(`Reached Level: ${gameState.level}`, CANVAS_WIDTH / 2, 230);
+  
+  p.textSize(18);
+  p.fill(200, 200, 200);
+  p.text('PRESS R TO RESTART', CANVAS_WIDTH / 2, 300);
+  
+  p.pop();
+}
+
+function renderLevelTransition(p) {
+  p.push();
+  
+  const prevLevel = gameState.level - 1;
+  
+  p.background(30, 25, 35);
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  if (gameState.levelTransitionTimer > 120) {
+    // First 1 second - show completion
+    p.fill(100, 255, 100);
+    p.textSize(36);
+    p.text(`LEVEL ${prevLevel} COMPLETE!`, CANVAS_WIDTH / 2, 140);
+    
+    p.fill(255, 255, 255);
+    p.textSize(20);
+    p.text(`Level Bonus: +1000`, CANVAS_WIDTH / 2, 200);
+    p.text(`Lives Bonus: +${(gameState.lives * 500)}`, CANVAS_WIDTH / 2, 230);
+    p.text(`Total Score: ${gameState.score.toString().padStart(6, '0')}`, CANVAS_WIDTH / 2, 270);
+  } else {
+    // Next 2 seconds - get ready
+    p.fill(255, 255, 100);
+    p.textSize(36);
+    p.text(`GET READY FOR`, CANVAS_WIDTH / 2, 160);
+    p.text(`LEVEL ${gameState.level}`, CANVAS_WIDTH / 2, 210);
+  }
+  
+  p.pop();
+}
+</file>
+
+<file name="entities.js">
+import { gameState, CANVAS_HEIGHT } from './globals.js';
+import { handlePlayerHit } from './collision.js';
+
+export class Player {
+  constructor(p, x, y) {
+    this.p = p;
+    this.x = x;
+    this.y = y;
+    this.w = 25;
+    this.h = 25;
+    this.vx = 0;
+    this.vy = 0;
+    this.onGround = false;
+    this.moveSpeed = 3;
+    this.jumpPower = -8;
+    this.gravity = 0.4;
+    this.facingRight = true;
+    this.animFrame = 0;
+    this.animTimer = 0;
+  }
+
+  update() {
+    // Apply gravity
+    this.vy += this.gravity;
+    
+    // Apply velocity
+    this.x += this.vx;
+    this.y += this.vy;
+    
+    // Check ground collision
+    this.onGround = false;
+    const platforms = gameState.entities.filter(e => e.type === 'platform');
+    for (const platform of platforms) {
+      if (this.checkPlatformCollision(platform)) {
+        this.onGround = true;
+        this.vy = 0;
+        this.y = platform.y - this.h / 2;
+        break;
+      }
+    }
+    
+    // Keep player in horizontal bounds
+    this.x = this.p.constrain(this.x, this.w / 2, 600 - this.w / 2);
+    
+    // Check if player fell off the map
+    if (this.y > CANVAS_HEIGHT + 20) {
+      handlePlayerHit(this.p);
+      return;
+    }
+    
+    // Animation
+    if (this.vx !== 0 && this.onGround) {
+      this.animTimer++;
+      if (this.animTimer > 8) {
+        this.animFrame = (this.animFrame + 1) % 2;
+        this.animTimer = 0;
+      }
+    } else {
+      this.animFrame = 0;
+      this.animTimer = 0;
+    }
+  }
+
+  checkPlatformCollision(platform) {
+    return this.p.collideRectRect(
+      this.x - this.w / 2, this.y - this.h / 2, this.w, this.h,
+      platform.x, platform.y, platform.w, platform.h
+    ) && this.vy >= 0 && this.y - this.h / 2 < platform.y + 5;
+  }
+
+  draw() {
+    this.p.push();
+    this.p.translate(this.x, this.y);
+    if (!this.facingRight) {
+      this.p.scale(-1, 1);
+    }
+    
+    // Mouse body (grey)
+    this.p.fill(160, 160, 160);
+    this.p.noStroke();
+    this.p.ellipse(0, 0, this.w, this.h);
+    
+    // Ears
+    this.p.fill(140, 140, 140);
+    this.p.ellipse(-8, -8, 8, 10);
+    this.p.ellipse(8, -8, 8, 10);
+    
+    // Eyes
+    this.p.fill(0);
+    this.p.ellipse(-5, -2, 3, 3);
+    this.p.ellipse(5, -2, 3, 3);
+    
+    // Nose
+    this.p.fill(255, 180, 200);
+    this.p.ellipse(0, 3, 4, 3);
+    
+    // Whiskers
+    this.p.stroke(80);
+    this.p.strokeWeight(1);
+    this.p.line(-10, 0, -15, -2);
+    this.p.line(-10, 2, -15, 4);
+    this.p.line(10, 0, 15, -2);
+    this.p.line(10, 2, 15, 4);
+    
+    // Legs animation
+    if (this.animFrame === 1 && this.onGround) {
+      this.p.noStroke();
+      this.p.fill(150, 150, 150);
+      this.p.ellipse(-6, 10, 4, 6);
+      this.p.ellipse(6, 10, 4, 6);
+    }
+    
+    this.p.pop();
+  }
+
+  jump() {
+    if (this.onGround) {
+      this.vy = this.jumpPower;
+      this.onGround = false;
+    }
+  }
+
+  moveLeft() {
+    this.vx = -this.moveSpeed;
+    this.facingRight = false;
+  }
+
+  moveRight() {
+    this.vx = this.moveSpeed;
+    this.facingRight = true;
+  }
+
+  stopMove() {
+    this.vx = 0;
+  }
+}
+
+export class Cat {
+  constructor(p, x, y, patrolPath, speed) {
+    this.p = p;
+    this.x = x;
+    this.y = y;
+    this.w = 35;
+    this.h = 35;
+    this.type = 'cat';
+    this.patrolPath = patrolPath;
+    this.patrolIndex = 0;
+    this.speed = speed;
+    this.facingRight = true;
+    this.animFrame = 0;
+    this.animTimer = 0;
+  }
+
+  update() {
+    if (this.patrolPath.length > 0) {
+      const target = this.patrolPath[this.patrolIndex];
+      const dx = target.x - this.x;
+      const dy = target.y - this.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      
+      if (dist < 5) {
+        this.patrolIndex = (this.patrolIndex + 1) % this.patrolPath.length;
+      } else {
+        this.x += (dx / dist) * this.speed;
+        this.y += (dy / dist) * this.speed;
+        this.facingRight = dx > 0;
+      }
+      
+      // Animation
+      this.animTimer++;
+      if (this.animTimer > 10) {
+        this.animFrame = (this.animFrame + 1) % 2;
+        this.animTimer = 0;
+      }
+    }
+  }
+
+  draw() {
+    this.p.push();
+    this.p.translate(this.x, this.y);
+    if (!this.facingRight) {
+      this.p.scale(-1, 1);
+    }
+    
+    // Cat body (orange-brown)
+    this.p.fill(200, 120, 60);
+    this.p.noStroke();
+    this.p.ellipse(0, 0, this.w, this.h);
+    
+    // Ears (triangular)
+    this.p.fill(180, 100, 50);
+    this.p.triangle(-10, -15, -6, -10, -14, -10);
+    this.p.triangle(10, -15, 6, -10, 14, -10);
+    
+    // Eyes (more menacing)
+    this.p.fill(255, 255, 0);
+    this.p.ellipse(-7, -3, 6, 8);
+    this.p.ellipse(7, -3, 6, 8);
+    this.p.fill(0);
+    this.p.ellipse(-7, -2, 3, 6);
+    this.p.ellipse(7, -2, 3, 6);
+    
+    // Nose
+    this.p.fill(255, 180, 180);
+    this.p.triangle(-2, 3, 2, 3, 0, 5);
+    
+    // Whiskers
+    this.p.stroke(60);
+    this.p.strokeWeight(1);
+    this.p.line(-12, 0, -18, -2);
+    this.p.line(-12, 2, -18, 4);
+    this.p.line(12, 0, 18, -2);
+    this.p.line(12, 2, 18, 4);
+    
+    // Legs animation
+    if (this.animFrame === 1) {
+      this.p.noStroke();
+      this.p.fill(180, 100, 50);
+      this.p.ellipse(-8, 14, 5, 8);
+      this.p.ellipse(8, 14, 5, 8);
+    }
+    
+    this.p.pop();
+  }
+}
+
+export class Cheese {
+  constructor(p, x, y) {
+    this.p = p;
+    this.x = x;
+    this.y = y;
+    this.w = 20;
+    this.h = 20;
+    this.type = 'cheese';
+    this.collected = false;
+    this.pulseTimer = 0;
+  }
+
+  update() {
+    this.pulseTimer += 0.1;
+  }
+
+  draw() {
+    if (this.collected) return;
+    
+    this.p.push();
+    this.p.translate(this.x, this.y);
+    
+    const pulse = Math.sin(this.pulseTimer) * 2;
+    const size = this.w + pulse;
+    
+    // Cheese wedge (yellow)
+    this.p.fill(255, 220, 60);
+    this.p.noStroke();
+    this.p.beginShape();
+    this.p.vertex(-size / 2, size / 2);
+    this.p.vertex(size / 2, size / 2);
+    this.p.vertex(0, -size / 2);
+    this.p.endShape(this.p.CLOSE);
+    
+    // Holes
+    this.p.fill(230, 180, 40);
+    this.p.ellipse(-3, 3, 4, 4);
+    this.p.ellipse(4, 5, 3, 3);
+    this.p.ellipse(0, -3, 3, 3);
+    
+    // Sparkle
+    this.p.stroke(255, 255, 200, 150);
+    this.p.strokeWeight(2);
+    const sparkle = Math.abs(Math.sin(this.pulseTimer * 2));
+    this.p.line(-size / 2 - 3, -size / 2 - 3, -size / 2 - 3 - sparkle * 3, -size / 2 - 3 - sparkle * 3);
+    this.p.line(size / 2 + 3, -size / 2 - 3, size / 2 + 3 + sparkle * 3, -size / 2 - 3 - sparkle * 3);
+    
+    this.p.pop();
+  }
+}
+
+export class Platform {
+  constructor(p, x, y, w, h) {
+    this.p = p;
+    this.x = x;
+    this.y = y;
+    this.w = w;
+    this.h = h;
+    this.type = 'platform';
+  }
+
+  update() {}
+
+  draw() {
+    this.p.push();
+    this.p.fill(100, 80, 60);
+    this.p.stroke(80, 60, 40);
+    this.p.strokeWeight(2);
+    this.p.rect(this.x, this.y, this.w, this.h);
+    
+    // Add texture lines
+    this.p.stroke(120, 100, 80);
+    this.p.strokeWeight(1);
+    for (let i = 10; i < this.w; i += 20) {
+      this.p.line(this.x + i, this.y, this.x + i, this.y + this.h);
+    }
+    this.p.pop();
+  }
+}
+
+export class MouseHole {
+  constructor(p, x, y) {
+    this.p = p;
+    this.x = x;
+    this.y = y;
+    this.w = 35;
+    this.h = 35;
+    this.type = 'mousehole';
+    this.glowTimer = 0;
+  }
+
+  update() {
+    if (gameState.mouseHoleActive) {
+      this.glowTimer += 0.15;
+    }
+  }
+
+  draw() {
+    this.p.push();
+    this.p.translate(this.x, this.y);
+    
+    // Glow effect when active
+    if (gameState.mouseHoleActive) {
+      const glow = Math.abs(Math.sin(this.glowTimer)) * 20 + 10;
+      this.p.fill(255, 255, 150, glow);
+      this.p.noStroke();
+      this.p.ellipse(0, 0, this.w + 20, this.h + 20);
+      
+      this.p.fill(255, 255, 100, glow * 2);
+      this.p.ellipse(0, 0, this.w + 10, this.h + 10);
+    }
+    
+    // Hole
+    this.p.fill(...(gameState.mouseHoleActive ? [60, 50, 40] : [30, 25, 20]));
+    this.p.noStroke();
+    this.p.ellipse(0, 0, this.w, this.h);
+    
+    // Arch detail
+    this.p.fill(...(gameState.mouseHoleActive ? [80, 70, 60] : [50, 45, 40]));
+    this.p.arc(0, 5, this.w - 5, this.h - 5, this.p.PI, 0, this.p.CHORD);
+    
+    this.p.pop();
+  }
+}
+
+export class Particle {
+  constructor(p, x, y, vx, vy, color, life) {
+    this.p = p;
+    this.x = x;
+    this.y = y;
+    this.vx = vx;
+    this.vy = vy;
+    this.color = color;
+    this.life = life;
+    this.maxLife = life;
+    this.size = 4;
+    this.type = 'particle';
+  }
+
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.vy += 0.2; // gravity
+    this.life--;
+  }
+
+  draw() {
+    const alpha = (this.life / this.maxLife) * 255;
+    this.p.push();
+    this.p.fill(...this.color, alpha);
+    this.p.noStroke();
+    this.p.ellipse(this.x, this.y, this.size, this.size);
+    this.p.pop();
+  }
+
+  isDead() {
+    return this.life <= 0;
+  }
+}
+</file>
+
+<file name="levelData.js">
+export const levelConfigs = [
+  {
+    // Level 1: The Pantry Maze (Easy)
+    level: 1,
+    playerStart: { x: 60, y: 340 },
+    platforms: [
+      { x: 0, y: 380, w: 600, h: 20 }, // floor
+      { x: 150, y: 300, w: 150, h: 15 },
+      { x: 350, y: 250, w: 150, h: 15 }
+    ],
+    cheese: [
+      { x: 100, y: 350 },
+      { x: 220, y: 270 },
+      { x: 420, y: 220 }
+    ],
+    cats: [
+      { x: 400, y: 340, patrolPath: [{ x: 350, y: 340 }, { x: 500, y: 340 }], speed: 0.8 }
+    ],
+    mouseHole: { x: 550, y: 350 }
+  },
+  {
+    // Level 2: Kitchen Climb (Easy)
+    level: 2,
+    playerStart: { x: 60, y: 340 },
+    platforms: [
+      { x: 0, y: 380, w: 200, h: 20 },
+      { x: 150, y: 320, w: 100, h: 15 },
+      { x: 300, y: 260, w: 120, h: 15 },
+      { x: 450, y: 200, w: 150, h: 15 },
+      { x: 350, y: 140, w: 100, h: 15 }
+    ],
+    cheese: [
+      { x: 120, y: 350 },
+      { x: 200, y: 290 },
+      { x: 360, y: 230 },
+      { x: 520, y: 170 },
+      { x: 400, y: 110 }
+    ],
+    cats: [
+      { x: 200, y: 310, patrolPath: [{ x: 150, y: 310 }, { x: 250, y: 310 }], speed: 1.2 }
+    ],
+    mouseHole: { x: 550, y: 170 }
+  },
+  {
+    // Level 3: Dining Room (Medium)
+    // Redesigned: Clearer platforms, cats guard areas but don't sit on cheese
+    level: 3,
+    playerStart: { x: 50, y: 340 },
+    platforms: [
+      { x: 0, y: 380, w: 600, h: 20 }, // Floor
+      { x: 150, y: 250, w: 300, h: 15 }, // Main Table
+      { x: 50, y: 310, w: 80, h: 15 }, // Left Chair
+      { x: 470, y: 310, w: 80, h: 15 }, // Right Chair
+      { x: 200, y: 150, w: 200, h: 15 }  // High Shelf
+    ],
+    cheese: [
+      { x: 90, y: 290 }, // On Left Chair
+      { x: 510, y: 290 }, // On Right Chair
+      { x: 160, y: 230 }, // Table Left Edge (Safe from cat patrol)
+      { x: 440, y: 230 }, // Table Right Edge (Safe from cat patrol)
+      { x: 300, y: 130 }, // Top Shelf
+      { x: 300, y: 350 }  // Floor Center (Timed jump required)
+    ],
+    cats: [
+      // Table Cat: Patrols middle of table, leaving edges safe
+      { x: 300, y: 235, patrolPath: [{ x: 220, y: 235 }, { x: 380, y: 235 }], speed: 1.0 },
+      // Floor Cat: Patrols wide area
+      { x: 300, y: 340, patrolPath: [{ x: 150, y: 340 }, { x: 450, y: 340 }], speed: 1.1 }
+    ],
+    mouseHole: { x: 300, y: 110 }
+  },
+  {
+    // Level 4: The Staircase (Medium)
+    // Redesigned: Logical climb, cats on specific beats
+    level: 4,
+    playerStart: { x: 50, y: 340 },
+    platforms: [
+      { x: 0, y: 380, w: 600, h: 20 }, // Floor
+      { x: 100, y: 320, w: 100, h: 15 }, // Step 1
+      { x: 250, y: 260, w: 100, h: 15 }, // Step 2
+      { x: 400, y: 200, w: 100, h: 15 }, // Step 3
+      { x: 150, y: 140, w: 300, h: 15 }  // Top Beam
+    ],
+    cheese: [
+      { x: 50, y: 350 }, // Floor Start
+      { x: 550, y: 350 }, // Floor End
+      { x: 150, y: 300 }, // Step 1
+      { x: 300, y: 240 }, // Step 2
+      { x: 450, y: 180 }, // Step 3
+      { x: 170, y: 120 }, // Top Left (Safe zone)
+      { x: 430, y: 120 }  // Top Right (Safe zone)
+    ],
+    cats: [
+      // Floor Cat: Fast but predictable
+      { x: 300, y: 340, patrolPath: [{ x: 200, y: 340 }, { x: 500, y: 340 }], speed: 1.3 },
+      // Top Beam Cat: Patrols center of beam
+      { x: 300, y: 125, patrolPath: [{ x: 220, y: 125 }, { x: 380, y: 125 }], speed: 1.2 }
+    ],
+    mouseHole: { x: 300, y: 100 }
+  },
+  {
+    // Level 5: Grand Feast (Hard)
+    // Dense platforming, multiple threats
+    level: 5,
+    playerStart: { x: 300, y: 340 },
+    platforms: [
+      { x: 0, y: 380, w: 100, h: 20 },
+      { x: 150, y: 380, w: 100, h: 20 },
+      { x: 300, y: 380, w: 100, h: 20 },
+      { x: 450, y: 380, w: 150, h: 20 },
+      { x: 50, y: 330, w: 80, h: 15 },
+      { x: 180, y: 310, w: 90, h: 15 },
+      { x: 320, y: 330, w: 80, h: 15 },
+      { x: 450, y: 310, w: 90, h: 15 },
+      { x: 100, y: 270, w: 80, h: 15 },
+      { x: 230, y: 250, w: 90, h: 15 },
+      { x: 370, y: 270, w: 80, h: 15 },
+      { x: 480, y: 240, w: 100, h: 15 },
+      { x: 50, y: 210, w: 100, h: 15 },
+      { x: 200, y: 190, w: 80, h: 15 },
+      { x: 330, y: 210, w: 90, h: 15 },
+      { x: 470, y: 170, w: 100, h: 15 },
+      { x: 150, y: 130, w: 100, h: 15 },
+      { x: 300, y: 150, w: 80, h: 15 },
+      { x: 430, y: 100, w: 120, h: 15 }
+    ],
+    cheese: [
+      { x: 50, y: 350 },
+      { x: 200, y: 350 },
+      { x: 350, y: 350 },
+      { x: 90, y: 300 },
+      { x: 225, y: 280 },
+      { x: 360, y: 300 },
+      { x: 490, y: 280 },
+      { x: 140, y: 240 },
+      { x: 275, y: 220 },
+      { x: 410, y: 240 },
+      { x: 100, y: 180 },
+      { x: 490, y: 70 }
+    ],
+    cats: [
+      { x: 90, y: 320, patrolPath: [{ x: 50, y: 320 }, { x: 130, y: 320 }], speed: 1.5 },
+      { x: 360, y: 320, patrolPath: [{ x: 320, y: 320 }, { x: 400, y: 320 }], speed: 1.6 },
+      { x: 140, y: 260, patrolPath: [{ x: 100, y: 260 }, { x: 180, y: 260 }], speed: 1.7 },
+      { x: 410, y: 260, patrolPath: [{ x: 370, y: 260 }, { x: 450, y: 260 }], speed: 1.8 }
+    ],
+    mouseHole: { x: 520, y: 140 }
+  },
+  {
+    // Level 6: The Clock Tower (Hard)
+    // Vertical challenge, tight jumps
+    level: 6,
+    playerStart: { x: 300, y: 350 },
+    platforms: [
+      { x: 200, y: 380, w: 200, h: 20 }, // Start Base
+      { x: 50, y: 300, w: 120, h: 15 },
+      { x: 430, y: 300, w: 120, h: 15 },
+      { x: 250, y: 230, w: 100, h: 15 }, // Center small
+      { x: 80, y: 160, w: 150, h: 15 },
+      { x: 370, y: 160, w: 150, h: 15 },
+      { x: 250, y: 90, w: 100, h: 15 }   // Top peak
+    ],
+    cheese: [
+      { x: 60, y: 270 },
+      { x: 540, y: 270 },
+      { x: 300, y: 200 },
+      { x: 90, y: 130 },
+      { x: 510, y: 130 },
+      { x: 300, y: 60 }
+    ],
+    cats: [
+      { x: 110, y: 285, patrolPath: [{ x: 60, y: 285 }, { x: 160, y: 285 }], speed: 1.6 },
+      { x: 490, y: 285, patrolPath: [{ x: 440, y: 285 }, { x: 540, y: 285 }], speed: 1.6 },
+      { x: 300, y: 145, patrolPath: [{ x: 100, y: 145 }, { x: 500, y: 145 }], speed: 2.0 } // Fast sweeper on top
+    ],
+    mouseHole: { x: 300, y: 330 }
+  }
+];
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

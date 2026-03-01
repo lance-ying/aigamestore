@@ -1,0 +1,346 @@
+/**
+ * game.js
+ * Main entry point and game loop.
+ */
+
+import { gameState, initLogs, resetGameState, CANVAS_WIDTH, CANVAS_HEIGHT, COLOR_PALETTE } from './globals.js';
+import { handleInput, onKeyPressed, onKeyReleased, clearInputFrame } from './input.js';
+import { renderUI, renderStartScreen, renderGameOver } from './ui.js';
+import { loadLevel } from './levelgen.js';
+import { checkAABB } from './physics.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        initLogs(p);
+        
+        // Initialize basic state
+        gameState.gamePhase = "START";
+        
+        // Log start
+        p.logs.game_info.push({
+            data: { gamePhase: gameState.gamePhase, message: "Game Initialized" },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    };
+
+    p.draw = function() {
+        // 1. Time management
+        const currentTime = p.millis();
+        gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = currentTime;
+        gameState.frameCount = p.frameCount;
+        
+        // 2. Background with Screenshake
+        p.push();
+        if (gameState.cameraShake > 0) {
+            const sx = p.random(-gameState.cameraShake, gameState.cameraShake);
+            const sy = p.random(-gameState.cameraShake, gameState.cameraShake);
+            p.translate(sx, sy);
+            gameState.cameraShake *= 0.9;
+            if (gameState.cameraShake < 0.5) gameState.cameraShake = 0;
+        }
+        
+        p.background(COLOR_PALETTE.background);
+        
+        // 3. State Machine
+        switch(gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                break;
+                
+            case "PLAYING":
+                updateGame(p);
+                renderGame(p);
+                renderUI(p);
+                break;
+                
+            case "PAUSED":
+                renderGame(p); // Draw game frozen in background
+                // Pause overlay and text removed as per feedback
+                break;
+                
+            case "GAME_OVER_WIN":
+                renderGame(p);
+                renderGameOver(p, true);
+                break;
+                
+            case "GAME_OVER_LOSE":
+                renderGame(p);
+                renderGameOver(p, false);
+                break;
+                
+            case "RESTART_PENDING":
+                resetGame(p);
+                break;
+                
+            case "NEXT_LEVEL_TRANSITION":
+                handleLevelTransition(p);
+                break;
+        }
+        
+        p.pop(); // End Screenshake
+        
+        clearInputFrame();
+    };
+    
+    p.keyPressed = function() {
+        onKeyPressed(p);
+    };
+    
+    p.keyReleased = function() {
+        onKeyReleased(p);
+    };
+});
+
+function updateGame(p) {
+    // If just started playing and no level loaded
+    if (!gameState.player && gameState.currentFloor === 1) {
+        loadLevel(p, 1);
+    }
+    
+    // Sort entities for Z-index if needed (walls first, then items, then units)
+    // Here we can just render array specific or main list
+    // Update Entities
+    gameState.entities.forEach(e => e.update(p));
+    gameState.projectiles.forEach(e => e.update(p));
+    gameState.pickups.forEach(e => e.update(p));
+    gameState.particles.forEach(e => e.update(p));
+    if (gameState.door) gameState.door.update(p);
+    
+    // Cleanup Dead Entities
+    gameState.entities = gameState.entities.filter(e => !e.markedForDeletion);
+    gameState.enemies = gameState.enemies.filter(e => !e.markedForDeletion);
+    gameState.projectiles = gameState.projectiles.filter(e => !e.markedForDeletion);
+    gameState.pickups = gameState.pickups.filter(e => !e.markedForDeletion);
+    gameState.particles = gameState.particles.filter(e => e.life > 0);
+    
+    // Check Win Condition (Boss dead)
+    if (gameState.currentFloor === 5 && gameState.enemies.length === 0 && gameState.entities.some(e => e === gameState.player)) {
+         // Delay slightly?
+         if (!gameState.winTimer) gameState.winTimer = 0;
+         gameState.winTimer++;
+         if (gameState.winTimer > 120) {
+             gameState.gamePhase = "GAME_OVER_WIN";
+         }
+    }
+}
+
+function renderGame(p) {
+    // Walls
+    gameState.walls.forEach(w => w.render(p));
+    
+    // Door
+    if (gameState.door) gameState.door.render(p);
+    
+    // Pickups
+    gameState.pickups.forEach(pu => pu.render(p));
+    
+    // Entities (Player & Enemies)
+    gameState.entities.forEach(e => e.render(p));
+    
+    // Projectiles
+    gameState.projectiles.forEach(prj => prj.render(p));
+    
+    // Particles (Top layer)
+    gameState.particles.forEach(pt => pt.render(p));
+}
+
+function handleLevelTransition(p) {
+    // Simple fade or direct
+    gameState.currentFloor++;
+    if (gameState.currentFloor > 5) {
+        gameState.gamePhase = "GAME_OVER_WIN";
+        return;
+    }
+    
+    // Reset player position but keep stats?
+    const hp = gameState.player.health;
+    const wpn = gameState.player.weaponLevel;
+    
+    loadLevel(p, gameState.currentFloor);
+    
+    // Restore stats
+    gameState.player.health = hp;
+    gameState.player.weaponLevel = wpn;
+    
+    gameState.gamePhase = "PLAYING";
+    
+    p.logs.game_info.push({
+        data: { message: `Level ${gameState.currentFloor} Started` },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+    });
+}
+
+function resetGame(p) {
+    resetGameState();
+    p.randomSeed(42); // Ensure consistent start for reproduction
+    loadLevel(p, 1);
+    gameState.gamePhase = "START"; // Actually, let's go back to start screen to be safe, or direct play? Instructions say R -> Start Screen.
+}
+
+// Window Global helper for buttons
+window.setControlMode = function(mode) {
+    // Since only 'HUMAN' mode is supported, we can simplify this.
+    // The button in index.html will always call with 'HUMAN'.
+    gameState.controlMode = 'HUMAN'; // Force to HUMAN
+    console.log("Control Mode set to: " + gameState.controlMode);
+    
+    // Update buttons
+    document.querySelectorAll('.control-button').forEach(btn => btn.classList.remove('active'));
+    document.getElementById('humanModeBtn').classList.add('active');
+    
+    // If game is running, reset to apply mode cleanly or just continue?
+    // Let's reset to ensure a fresh start
+    if (gameState.gamePhase !== "START") {
+         resetGameState();
+         gameState.gamePhase = "START";
+    }
+};
+
+window.gameInstance = gameInstance;
+<code filename="ui.js">
+/**
+ * ui.js
+ * Handles rendering of user interface and different game screens.
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, COLOR_PALETTE } from './globals.js';
+
+export function renderUI(p) {
+    // Persistent HUD (Score & Sector) - Always visible
+    p.push();
+    p.textAlign(p.RIGHT, p.TOP);
+    
+    // Floor info
+    p.textSize(18);
+    p.fill(255);
+    p.text(`SECTOR ${gameState.currentFloor}`, CANVAS_WIDTH - 20, 20);
+    
+    // Score
+    p.textSize(18);
+    p.fill(255, 215, 0);
+    p.stroke(0);
+    p.strokeWeight(2);
+    p.text(`SCORE: ${gameState.score}`, CANVAS_WIDTH - 20, 45);
+    p.pop();
+
+    // Player Status HUD
+    if (gameState.player) {
+        const barW = 200;
+        const barH = 20;
+        const x = 20;
+        const y = 20;
+        
+        p.push();
+        // Health Bar BG
+        p.fill(50, 0, 0);
+        p.stroke(200, 200, 200);
+        p.rect(x, y, barW, barH);
+        
+        // Health Bar Fill
+        const ratio = gameState.player.health / gameState.player.maxHealth;
+        if (ratio > 0) {
+            p.fill(ratio < 0.3 ? [255, 0, 0] : [0, 200, 255]);
+            p.noStroke();
+            p.rect(x + 1, y + 1, (barW - 2) * ratio, barH - 2);
+        }
+        
+        // Health Text
+        p.fill(255);
+        p.textSize(12);
+        p.textAlign(p.CENTER, p.CENTER);
+        p.text(`${Math.ceil(gameState.player.health)} / ${gameState.player.maxHealth}`, x + barW/2, y + barH/2);
+        
+        // Boss Health Bar Overlay
+        const boss = gameState.enemies.find(e => e.type === 'boss');
+        if (boss) {
+             const bw = 400;
+             const bh = 15;
+             const bx = (CANVAS_WIDTH - bw) / 2;
+             const by = CANVAS_HEIGHT - 30;
+             p.fill(0);
+             p.stroke(255, 0, 0);
+             p.rect(bx, by, bw, bh);
+             p.fill(255, 0, 0);
+             p.noStroke();
+             p.rect(bx + 1, by + 1, (bw-2) * (boss.health / boss.maxHealth), bh - 2);
+             p.fill(255);
+             p.textAlign(p.CENTER);
+             p.text("GUARDIAN", CANVAS_WIDTH/2, by - 5);
+        }
+        p.pop();
+    }
+}
+
+export function renderStartScreen(p) {
+    p.background(COLOR_PALETTE.background);
+    
+    // Grid effect
+    drawGrid(p);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    // Replaced Title with simple message
+    p.fill(255); // Keep simple styling
+    p.textSize(24); // Make it a bit larger than old instruction text
+    if (p.frameCount % 60 < 30) {
+        p.text("press enter to begin", CANVAS_WIDTH/2, CANVAS_HEIGHT/2); // Centered
+    }
+    
+    // Instructions (Controls section - REMOVED from canvas, preserved in HTML)
+    // p.textSize(12);
+    // p.fill(150);
+    // p.text("ARROWS: Move | Z: Fire | SPACE: Dash | SHIFT: Focus", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 50);
+}
+
+// renderPausedOverlay removed as per feedback (no visual overlay, text, or instructions)
+
+export function renderGameOver(p, win) {
+    p.fill(0, 0, 0, 200);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    if (win) {
+        p.fill(0, 255, 0);
+        p.textSize(40);
+        p.text("MISSION ACCOMPLISHED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+        p.textSize(16);
+        p.fill(200, 255, 200);
+        p.text("Providence Core Secured", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    } else {
+        p.fill(255, 0, 0);
+        p.textSize(40);
+        p.text("CRITICAL FAILURE", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+        p.textSize(16);
+        p.fill(255, 200, 200);
+        p.text("Signal Lost...", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    }
+    
+    p.fill(255);
+    p.textSize(20);
+    p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+    
+    p.textSize(14);
+    p.fill(150);
+    p.text("Press R to Reboot System", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 80);
+}
+
+function drawGrid(p) {
+    p.stroke(30, 30, 40);
+    p.strokeWeight(1);
+    for(let x=0; x<CANVAS_WIDTH; x+=40) {
+        p.line(x, 0, x, CANVAS_HEIGHT);
+    }
+    for(let y=0; y<CANVAS_HEIGHT; y+=40) {
+        p.line(0, y, CANVAS_WIDTH, y);
+    }
+}

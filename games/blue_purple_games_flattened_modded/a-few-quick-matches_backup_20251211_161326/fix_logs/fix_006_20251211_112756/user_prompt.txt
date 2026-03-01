@@ -1,0 +1,1428 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you make it so that I have directional inputs moves, like a down aerial, up aerial, front and back aerial, as well as directional attacks on the ground as well? 
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>A Few Quick Matches</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #111; color: #eee; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 2px solid #444; box-shadow: 0 0 20px rgba(0,0,0,0.5); width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 20px; cursor: pointer; background: #333; color: #fff; border: 1px solid #555; border-radius: 4px; transition: background 0.2s; font-weight: bold; }
+      .control-button:hover { background: #444; }
+      .control-button.active { background: #007bff; border-color: #0056b3; }
+      h1 { margin-bottom: 10px; text-transform: uppercase; letter-spacing: 2px; font-size: 24px; color: #f0f0f0; }
+      .info-text { max-width: 600px; text-align: center; color: #aaa; margin-bottom: 20px; font-size: 14px; line-height: 1.5; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle">A Few Quick Matches</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN', this)">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="setMode('TEST_1', this)">TEST 1 (Physics)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="setMode('TEST_2', this)">TEST 2 (Win)</button>
+      </div>
+      <p id="gameDescription" class="info-text">
+        A fast-paced stick figure platform fighter! Engage in high-speed combat, execute stylish combos, and master the art of the dash-cancel. Defeat your opponent by depleting their health bar.
+      </p>
+      <p id="gameControls" class="info-text">
+        <strong>Controls:</strong> ARROWS to Move • SPACE to Jump (x2) • Z to Attack • SHIFT to Dash<br>
+        <strong>Tips:</strong> Hit an enemy to enable Dash-Cancel!
+      </p>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+    
+    <script>
+      function setMode(mode, btn) {
+        window.setControlMode(mode);
+        // Update UI
+        document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      }
+    </script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+/**
+ * Automated Testing Controller
+ * Generates inputs based on game state and selected test mode.
+ */
+
+import { gameState } from './globals.js';
+import { KEYS } from './input.js';
+
+export function get_automated_testing_action(currentState) {
+    if (!currentState.player) return null;
+    
+    const player = currentState.player;
+    const enemy = currentState.enemies.length > 0 ? currentState.enemies[0] : null;
+
+    if (currentState.controlMode === 'TEST_1') {
+        // Random movement and actions to test physics stability
+        const actions = [];
+        const r = Math.random();
+        
+        if (r < 0.05) actions.push(KEYS.SPACE);
+        if (r < 0.1) actions.push(KEYS.Z);
+        if (r > 0.1 && r < 0.2) actions.push(KEYS.LEFT);
+        if (r > 0.2 && r < 0.3) actions.push(KEYS.RIGHT);
+        
+        // Ensure some continuous movement
+        if (Math.floor(Date.now() / 1000) % 2 === 0) actions.push(KEYS.RIGHT);
+        else actions.push(KEYS.LEFT);
+
+        return { keys: actions };
+    }
+    
+    if (currentState.controlMode === 'TEST_2') {
+        // Win strategy: Aggressively chase and attack
+        const actions = [];
+        
+        if (enemy) {
+            const dx = enemy.x - player.x;
+            const dy = enemy.y - player.y;
+            
+            // Move towards enemy
+            if (dx > 30) actions.push(KEYS.RIGHT);
+            else if (dx < -30) actions.push(KEYS.LEFT);
+            else {
+                // In range, Attack!
+                actions.push(KEYS.Z);
+            }
+            
+            // Jump if enemy is above
+            if (dy < -50 && player.isGrounded) actions.push(KEYS.SPACE);
+        }
+        
+        return { keys: actions };
+    }
+    
+    return null;
+}
+</file>
+
+<file name="globals.js">
+/**
+ * Global constants and state management for A Few Quick Matches.
+ * Stores the single source of truth for game state.
+ */
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const WORLD_WIDTH = 800; // Larger world for scrolling
+export const WORLD_HEIGHT = 600;
+
+export const GRAVITY = 0.6;
+export const FRICTION = 0.85; // Ground friction
+export const AIR_RESISTANCE = 0.98;
+export const TERMINAL_VELOCITY = 15;
+
+// Game State Object
+export const gameState = {
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2
+    
+    // Time tracking
+    frameCount: 0,
+    deltaTime: 0,
+    lastFrameTime: 0,
+    
+    // Entities
+    entities: [],
+    player: null,
+    enemies: [], // Array of Bot instances
+    platforms: [],
+    projectiles: [], // Hitboxes are treated somewhat like short-lived projectiles
+    particles: [],
+    
+    // Camera
+    camera: {
+        x: 0,
+        y: 0,
+        shake: 0
+    },
+    
+    // Game Rules
+    score: 0,
+    stage: 1,
+    stageBgTop: [30, 30, 40],    // Gradient Top
+    stageBgBottom: [10, 10, 20], // Gradient Bottom
+    hitStop: 0, // Global freeze frames for impact feel
+    slowMotion: 0, // For dramatic finishes
+};
+
+/**
+ * Returns the global game state object.
+ * Exposed to window for debugging and hard constraint compliance.
+ */
+export function getGameState() {
+    return gameState;
+}
+
+// Expose globally
+window.getGameState = getGameState;
+
+/**
+ * Resets the game state for a new match.
+ */
+export function resetGameState() {
+    gameState.gamePhase = "START";
+    gameState.entities = [];
+    gameState.player = null;
+    gameState.enemies = [];
+    gameState.platforms = [];
+    gameState.projectiles = [];
+    gameState.particles = [];
+    gameState.camera.x = 0;
+    gameState.camera.y = 0;
+    gameState.camera.shake = 0;
+    gameState.hitStop = 0;
+    gameState.slowMotion = 0;
+    gameState.score = 0;
+    gameState.stage = 1;
+    gameState.stageBgTop = [30, 30, 40];
+    gameState.stageBgBottom = [10, 10, 20];
+}
+</file>
+
+<file name="game.js">
+/**
+ * Main Game Loop and Setup
+ */
+
+import { gameState, getGameState, resetGameState, CANVAS_WIDTH, CANVAS_HEIGHT, WORLD_WIDTH, WORLD_HEIGHT } from './globals.js';
+import { Player, Enemy, Platform, Hitbox } from './entities.js';
+import { updateInput, handleKeyPressed, handleKeyReleased, KEYS } from './input.js';
+import { renderStartScreen, renderHUD, renderPaused, renderGameOver } from './ui.js';
+import { checkCollision } from './physics.js';
+import { createExplosion } from './particles.js';
+
+// Expose Input module to window for Entities to access easily without circular dependency issues in bundlers
+import * as inputModule from './input.js';
+window.inputModule = inputModule;
+
+const p5 = window.p5;
+
+const gameInstance = new p5(p => {
+    p.logs = { game_info: [], inputs: [], player_info: [] };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        // Log start
+        p.logs.game_info.push({ event: "Setup Complete", timestamp: Date.now() });
+    };
+
+    p.draw = function() {
+        // Update Time
+        const now = Date.now();
+        gameState.deltaTime = (now - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = now;
+        gameState.frameCount = p.frameCount;
+
+        // Input Update
+        updateInput(p);
+        
+        // Check Restart
+        if ((gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") && 
+            inputModule.isKeyDown(KEYS.R)) {
+             resetGameState();
+             // Re-init game
+             initGame(p);
+             gameState.gamePhase = "PLAYING";
+        }
+        
+        // HitStop Freeze
+        if (gameState.hitStop > 0) {
+            gameState.hitStop--;
+            return; // Skip update, just draw last frame (or keep shaking)
+        }
+
+        // --- UPDATE LOGIC ---
+        if (gameState.gamePhase === "PLAYING") {
+            if (!gameState.player && gameState.entities.length === 0) {
+                initGame(p);
+            }
+            
+            updateGame(p);
+        }
+
+        // --- RENDER LOGIC ---
+        // Draw Stage Background
+        if (gameState.gamePhase === "PLAYING" || gameState.gamePhase.startsWith("GAME_OVER") || gameState.gamePhase === "PAUSED") {
+            drawGradientBackground(p);
+        } else {
+             p.background(30, 30, 40); // Default dark
+        }
+        
+        // Camera Shake
+        p.push();
+        if (gameState.camera.shake > 0) {
+            const rx = p.random(-gameState.camera.shake, gameState.camera.shake);
+            const ry = p.random(-gameState.camera.shake, gameState.camera.shake);
+            p.translate(rx, ry);
+            gameState.camera.shake *= 0.9;
+            if (gameState.camera.shake < 0.5) gameState.camera.shake = 0;
+        }
+
+        // Camera Follow (Center on player, clamped to world)
+        if (gameState.player) {
+            let targetX = -gameState.player.x + CANVAS_WIDTH / 2;
+            let targetY = -gameState.player.y + CANVAS_HEIGHT / 2;
+            
+            // Clamp
+            targetX = p.constrain(targetX, -WORLD_WIDTH + CANVAS_WIDTH, 0);
+            targetY = p.constrain(targetY, -WORLD_HEIGHT + CANVAS_HEIGHT, 0); // Floor align
+            
+            // Smooth
+            gameState.camera.x = p.lerp(gameState.camera.x, targetX, 0.1);
+            gameState.camera.y = p.lerp(gameState.camera.y, targetY, 0.1);
+            
+            p.translate(gameState.camera.x, gameState.camera.y);
+        }
+
+        if (gameState.gamePhase === "START") {
+            p.pop(); // Reset cam
+            renderStartScreen(p);
+        } else {
+            // Render World
+            drawBackgroundGrid(p);
+            
+            // Render Entities
+            gameState.platforms.forEach(e => e.render(p));
+            gameState.particles.forEach(e => e.render(p));
+            gameState.enemies.forEach(e => e.render(p));
+            if (gameState.player) gameState.player.render(p);
+            
+            // Debug Hitboxes
+             gameState.projectiles.forEach(e => e.render(p));
+            
+            p.pop(); // Restore camera transform
+            
+            // UI Overlay
+            renderHUD(p);
+            
+            if (gameState.gamePhase === "PAUSED") renderPaused(p);
+            if (gameState.gamePhase.startsWith("GAME_OVER")) renderGameOver(p);
+        }
+    };
+
+    p.keyPressed = function() {
+        handleKeyPressed(p);
+    };
+
+    p.keyReleased = function() {
+        handleKeyReleased(p);
+    };
+});
+
+function initGame(p) {
+    // Platforms
+    gameState.platforms.push(new Platform(WORLD_WIDTH/2, CANVAS_HEIGHT - 50, WORLD_WIDTH, 40)); // Ground
+    gameState.platforms.push(new Platform(200, 250, 150, 20));
+    gameState.platforms.push(new Platform(600, 250, 150, 20));
+    gameState.platforms.push(new Platform(400, 150, 100, 20));
+
+    // Player
+    gameState.player = new Player(100, 300);
+    gameState.entities.push(gameState.player);
+
+    // Initial Enemy (Stage 1)
+    spawnEnemy(1, p);
+    setStageTheme(p);
+}
+
+function spawnEnemy(level, p) {
+    // Random color
+    const r = p ? p.random(100, 255) : 255;
+    const g = p ? p.random(50, 200) : 50;
+    const b = p ? p.random(50, 200) : 50;
+    
+    const enemy = new Enemy(700, 300, level, [r, g, b]);
+    gameState.enemies.push(enemy);
+    gameState.entities.push(enemy); // Add to general entities for reference if needed
+}
+
+function setStageTheme(p) {
+    if (!p) return;
+    // Generate random gradient for background
+    gameState.stageBgTop = [p.random(10, 60), p.random(10, 60), p.random(20, 80)];
+    gameState.stageBgBottom = [p.random(0, 20), p.random(0, 20), p.random(10, 40)];
+}
+
+function updateGame(p) {
+    // Update Entities
+    if (gameState.player) {
+        gameState.player.update(p);
+        
+        // Log Player
+        if (p.frameCount % 10 === 0) {
+             p.logs.player_info.push({
+                x: gameState.player.x,
+                y: gameState.player.y,
+                state: gameState.player.state,
+                health: gameState.player.health,
+                framecount: p.frameCount
+            });
+        }
+    }
+    
+    gameState.enemies.forEach(e => e.update(p));
+    gameState.projectiles.forEach((h, i) => {
+        h.update();
+        if (h.markedForDeletion) {
+            gameState.projectiles.splice(i, 1);
+        } else {
+            // Collision Check
+            checkAttackCollision(h);
+        }
+    });
+    
+    gameState.particles.forEach((pt, i) => {
+        pt.update();
+        if (pt.life <= 0) gameState.particles.splice(i, 1);
+    });
+
+    // Win/Loss Condition
+    if (gameState.player && gameState.player.health <= 0 && gameState.player.state === "DEAD") {
+        gameState.gamePhase = "GAME_OVER_LOSE";
+        p.logs.game_info.push({ event: "Game Over Lose", framecount: p.frameCount });
+    } else if (gameState.enemies.length > 0 && gameState.enemies[0].health <= 0 && gameState.enemies[0].state === "DEAD") {
+        // Enemy Defeated - Next Stage Logic
+        gameState.score += 1000 * gameState.stage;
+        gameState.stage++;
+        
+        // Remove dead enemy
+        gameState.enemies.shift(); 
+        
+        // Heal Player slightly (25%)
+        if (gameState.player) {
+             gameState.player.health = Math.min(gameState.player.health + 25, gameState.player.maxHealth);
+             createExplosion(gameState.player.x, gameState.player.y, 10, 'SPARK'); // Visual feedback
+        }
+
+        // Spawn new stronger enemy
+        spawnEnemy(gameState.stage, p);
+        
+        // Change Stage Color
+        setStageTheme(p);
+        
+        p.logs.game_info.push({ event: "Stage Clear", stage: gameState.stage, framecount: p.frameCount });
+    }
+}
+
+function checkAttackCollision(hitbox) {
+    // Check against enemies if owner is player
+    if (hitbox.owner.isPlayer) {
+        gameState.enemies.forEach(enemy => {
+            if (enemy.state !== "DEAD" && !hitbox.hitList.includes(enemy)) {
+                if (checkCollision(hitbox, enemy)) {
+                    enemy.takeDamage(hitbox.damage, hitbox.kbX, hitbox.kbY);
+                    hitbox.hitList.push(enemy);
+                    hitbox.owner.hasHit = true; // Enable dash cancel
+                    createExplosion(enemy.x, enemy.y, 5, 'SPARK');
+                    gameState.score += 10 + Math.floor(hitbox.damage);
+                }
+            }
+        });
+    } else {
+        // Check against player
+        if (gameState.player && gameState.player.state !== "DEAD" && !hitbox.hitList.includes(gameState.player)) {
+            if (checkCollision(hitbox, gameState.player)) {
+                gameState.player.takeDamage(hitbox.damage, hitbox.kbX, hitbox.kbY);
+                hitbox.hitList.push(gameState.player);
+            }
+        }
+    }
+}
+
+function drawGradientBackground(p) {
+    // Simple vertical gradient
+    p.push();
+    p.noFill();
+    for (let y = 0; y <= CANVAS_HEIGHT; y+=10) {
+        let inter = p.map(y, 0, CANVAS_HEIGHT, 0, 1);
+        let c = p.lerpColor(
+            p.color(gameState.stageBgTop), 
+            p.color(gameState.stageBgBottom), 
+            inter
+        );
+        p.stroke(c);
+        p.strokeWeight(10);
+        p.line(0, y, CANVAS_WIDTH, y);
+    }
+    p.pop();
+}
+
+function drawBackgroundGrid(p) {
+    p.stroke(255, 255, 255, 20);
+    p.strokeWeight(1);
+    const gridSize = 50;
+    
+    // Calculate visible range based on camera
+    const startX = Math.floor(-gameState.camera.x / gridSize) * gridSize;
+    const startY = Math.floor(-gameState.camera.y / gridSize) * gridSize;
+    
+    for (let x = startX; x < startX + CANVAS_WIDTH + gridSize; x += gridSize) {
+        p.line(x, -WORLD_HEIGHT, x, WORLD_HEIGHT);
+    }
+    for (let y = startY; y < startY + CANVAS_HEIGHT + gridSize; y += gridSize) {
+        p.line(-WORLD_WIDTH, y, WORLD_WIDTH, y);
+    }
+}
+
+// Global functions for control mode (HTML buttons)
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+    // Restart game to apply clean state for testing
+    resetGameState();
+    gameState.gamePhase = "START";
+    // If test mode, auto start
+    if (mode !== "HUMAN") {
+        setTimeout(() => {
+             gameState.gamePhase = "PLAYING";
+        }, 100);
+    }
+};
+
+window.gameInstance = gameInstance;
+</file>
+
+<file name="ui.js">
+/**
+ * User Interface rendering: Start Screen, HUD, Game Over, Paused.
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderStartScreen(p) {
+    p.background(10, 10, 15);
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    // Animated Title
+    p.push();
+    p.translate(CANVAS_WIDTH/2, CANVAS_HEIGHT/3);
+    p.rotate(Math.sin(p.frameCount * 0.05) * 0.05);
+    p.scale(1 + Math.sin(p.frameCount * 0.1) * 0.05);
+    p.textSize(48);
+    p.fill(255, 200, 50);
+    p.stroke(255);
+    p.strokeWeight(2);
+    p.text("A FEW QUICK MATCHES", 0, 0);
+    p.pop();
+
+    p.textSize(16);
+    p.noStroke();
+    p.fill(200);
+    p.text("Fast-paced Stick Figure Fighting Action", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 20);
+    
+    p.textSize(18);
+    p.fill(100, 255, 100);
+    if (Math.floor(p.frameCount / 30) % 2 === 0) {
+        p.text("PRESS ENTER TO START", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+    }
+    
+    p.textSize(14);
+    p.fill(150);
+    p.text("ARROWS to Move | Z to Attack | SPACE to Jump | SHIFT to Dash", CANVAS_WIDTH/2, CANVAS_HEIGHT - 60);
+    p.text("Chain attacks into Dashes for massive combos!", CANVAS_WIDTH/2, CANVAS_HEIGHT - 40);
+}
+
+export function renderHUD(p) {
+    if (!gameState.player) return;
+
+    // Player Health
+    drawHealthBar(p, 20, 20, gameState.player.health, gameState.player.maxHealth, "PLAYER", [50, 255, 100]);
+    
+    // Enemy Health (Assuming 1 enemy for now)
+    if (gameState.enemies.length > 0) {
+        const enemy = gameState.enemies[0];
+        drawHealthBar(p, CANVAS_WIDTH - 220, 20, enemy.health, enemy.maxHealth, "CPU Lvl " + enemy.level, [255, 50, 50]);
+    }
+    
+    // Score / Timer
+    p.fill(255);
+    p.noStroke();
+    p.textAlign(p.CENTER, p.TOP);
+    p.textSize(20);
+    p.text("SCORE: " + gameState.score, CANVAS_WIDTH/2, 10);
+    p.textSize(14);
+    p.text("STAGE " + gameState.stage, CANVAS_WIDTH/2, 35);
+}
+
+function drawHealthBar(p, x, y, current, max, label, color) {
+    const w = 200;
+    const h = 20;
+    
+    // Name
+    p.textAlign(p.LEFT, p.BOTTOM);
+    p.textSize(14);
+    p.fill(255);
+    p.noStroke();
+    p.text(label, x, y - 5);
+    
+    // Bar BG
+    p.fill(50);
+    p.rect(x, y, w, h);
+    
+    // Bar Fill
+    const fillW = Math.max(0, (current / max) * w);
+    p.fill(color);
+    p.rect(x, y, fillW, h);
+    
+    // Border
+    p.noFill();
+    p.stroke(200);
+    p.strokeWeight(2);
+    p.rect(x, y, w, h);
+}
+
+export function renderPaused(p) {
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(32);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+}
+
+export function renderGameOver(p) {
+    p.fill(0, 0, 0, 200);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(48);
+    
+    if (gameState.gamePhase === "GAME_OVER_WIN") {
+        p.fill(100, 255, 100);
+        p.text("VICTORY!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 20);
+    } else {
+        p.fill(255, 50, 50);
+        p.text("DEFEAT", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 20);
+    }
+    
+    p.textSize(24);
+    p.fill(200);
+    p.text("Final Score: " + gameState.score, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 20);
+    
+    p.textSize(18);
+    p.fill(255);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60);
+}
+</file>
+
+<file name="entities.js">
+/**
+ * Game entities: Player, Enemy, Platform, Hitbox.
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { updatePhysics, resolvePlatformCollision, checkCollision, applyKnockback } from './physics.js';
+import { createExplosion } from './particles.js';
+
+// --- Base Entity ---
+export class Entity {
+    constructor(x, y, width, height) {
+        this.x = x;
+        this.y = y;
+        this.width = width;
+        this.height = height;
+        this.vx = 0;
+        this.vy = 0;
+        this.isGrounded = false;
+        this.facing = 1; // 1 Right, -1 Left
+        this.color = [255, 255, 255];
+        this.markedForDeletion = false;
+    }
+
+    update() {}
+    render(p) {}
+}
+
+// --- Platform ---
+export class Platform extends Entity {
+    constructor(x, y, width, height) {
+        super(x, y, width, height);
+        this.color = [100, 100, 120];
+    }
+
+    render(p) {
+        p.push();
+        p.fill(this.color);
+        p.stroke(200);
+        p.strokeWeight(2);
+        p.rectMode(p.CENTER);
+        p.rect(this.x, this.y, this.width, this.height);
+        p.pop();
+    }
+}
+
+// --- Hitbox ---
+// Represents an active attack area
+export class Hitbox extends Entity {
+    constructor(owner, x, y, width, height, damage, knockbackX, knockbackY, duration) {
+        super(x, y, width, height);
+        this.owner = owner;
+        this.damage = damage;
+        this.kbX = knockbackX;
+        this.kbY = knockbackY;
+        this.duration = duration;
+        this.age = 0;
+        this.hitList = []; // Entities already hit
+    }
+
+    update() {
+        this.age++;
+        if (this.age >= this.duration) {
+            this.markedForDeletion = true;
+        }
+
+        // Move with owner if it's a melee attack attached to body
+        // For now, static relative to spawn or attached logic could be complex. 
+        // We'll assume detached for simplicity or simple offset updates in owner.
+    }
+
+    render(p) {
+        // Debug render
+        // p.push();
+        // p.noFill();
+        // p.stroke(255, 0, 0, 100);
+        // p.rectMode(p.CENTER);
+        // p.rect(this.x, this.y, this.width, this.height);
+        // p.pop();
+    }
+}
+
+// --- Fighter (Base for Player and AI) ---
+export class Fighter extends Entity {
+    constructor(x, y, isPlayer = false) {
+        super(x, y, 30, 60); // Standard human size
+        this.isPlayer = isPlayer;
+        
+        // Stats
+        this.maxHealth = 100;
+        this.health = 100;
+        this.moveSpeed = 5;
+        this.jumpForce = -12;
+        this.dashSpeed = 15;
+        
+        // State
+        this.state = "IDLE"; // IDLE, RUN, JUMP, FALL, ATTACK, DASH, STUN, DEAD
+        this.stateTimer = 0;
+        this.canDash = true;
+        this.hasDoubleJump = true;
+        this.attackCooldown = 0;
+        this.dashCooldown = 0;
+        
+        // Combo system
+        this.hasHit = false; // Can we cancel?
+        
+        // Visuals
+        this.animFrame = 0;
+    }
+
+    update(p) {
+        if (this.health <= 0 && this.state !== "DEAD") {
+            this.setState("DEAD");
+        }
+        
+        this.stateTimer++;
+        if (this.attackCooldown > 0) this.attackCooldown--;
+        if (this.dashCooldown > 0) this.dashCooldown--;
+
+        // Input handling is done in subclasses (Player) or AI logic (Enemy)
+        
+        // State Machine Update
+        switch (this.state) {
+            case "IDLE":
+            case "RUN":
+            case "JUMP":
+            case "FALL":
+                this.handleMovementState(p);
+                break;
+            case "ATTACK":
+                this.handleAttackState(p);
+                break;
+            case "DASH":
+                this.handleDashState(p);
+                break;
+            case "STUN":
+                this.handleStunState(p);
+                break;
+            case "DEAD":
+                this.vx = 0;
+                break;
+        }
+
+        updatePhysics(this);
+        
+        // Collision with Platforms
+        gameState.platforms.forEach(platform => {
+            resolvePlatformCollision(this, platform);
+        });
+
+        // Bounds check (Death pit)
+        if (this.y > CANVAS_HEIGHT + 100) {
+            this.health = 0;
+            this.setState("DEAD");
+        }
+    }
+
+    handleMovementState(p) {
+        // Base physics logic happens in updatePhysics, this controls velocity intent
+    }
+
+    handleAttackState(p) {
+        // Default empty, override in subclass if needed
+    }
+
+    handleDashState(p) {
+        // Default empty, override in subclass if needed
+    }
+
+    handleStunState(p) {
+        // Default recovery logic
+        if (this.stateTimer > 20) {
+            this.setState("IDLE");
+        }
+    }
+
+    setState(newState) {
+        this.state = newState;
+        this.stateTimer = 0;
+        if (newState === "ATTACK") {
+            this.hasHit = false;
+        }
+    }
+
+    takeDamage(amount, kbX, kbY) {
+        if (this.state === "DEAD") return;
+        this.health -= amount;
+        applyKnockback(this, kbX, kbY);
+        this.setState("STUN");
+        
+        // Hitstop effect
+        gameState.hitStop = 5;
+        gameState.camera.shake = 10;
+        
+        createExplosion(this.x, this.y, 10, 'SPARK');
+        createExplosion(this.x, this.y, 5, 'BLOOD');
+    }
+
+    // Render Stick Figure
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        if (this.facing === -1) p.scale(-1, 1);
+
+        // Flicker if damaged recently?
+        if (this.state === "STUN" && p.frameCount % 4 === 0) {
+            p.pop();
+            return; 
+        }
+
+        p.stroke(this.isPlayer ? 0 : 255); // Black for player, White for enemy (or configurable)
+        
+        if (this.isPlayer) {
+            p.stroke(50, 255, 100); // Green tint for player
+        } else {
+            // Use custom enemy color
+            p.stroke(this.color);
+        }
+
+        p.strokeWeight(3);
+        p.noFill();
+
+        // Animation procedural logic
+        let legOffset = 0;
+        let armOffset = 0;
+        
+        if (this.state === "RUN" && this.isGrounded) {
+            legOffset = Math.sin(p.frameCount * 0.5) * 10;
+        }
+        
+        // Head
+        p.circle(0, -20, 15);
+        
+        // Body
+        p.line(0, -12, 0, 10);
+        
+        // Legs
+        p.line(0, 10, -10 + legOffset, 30);
+        p.line(0, 10, 10 - legOffset, 30);
+        
+        // Arms
+        if (this.state === "ATTACK") {
+            p.line(0, -5, 20, -5); // Punch
+        } else {
+            p.line(0, -5, 15 + armOffset, 10);
+            p.line(0, -5, -15 - armOffset, 10);
+        }
+
+        // Debug Hitbox
+        // p.stroke(0, 255, 0);
+        // p.rect(0, 0, this.width, this.height);
+
+        p.pop();
+    }
+}
+
+// --- Player Class ---
+export class Player extends Fighter {
+    constructor(x, y) {
+        super(x, y, true);
+    }
+
+    update(p) {
+        // Imports
+        const { isKeyDown, isKeyPressed, KEYS, consumeKeyPress } =  window.inputModule; // We will attach input to window for easy access in classes
+        
+        super.update(p);
+        
+        if (this.state === "DEAD") return;
+        if (this.state === "STUN") {
+            if (this.stateTimer > 20) this.setState("IDLE"); // Recovery
+            return;
+        }
+
+        // Movement
+        if (this.state !== "DASH" && this.state !== "ATTACK") {
+            if (isKeyDown(KEYS.LEFT)) {
+                this.vx = -this.moveSpeed;
+                this.facing = -1;
+                if (this.isGrounded) this.setState("RUN");
+            } else if (isKeyDown(KEYS.RIGHT)) {
+                this.vx = this.moveSpeed;
+                this.facing = 1;
+                if (this.isGrounded) this.setState("RUN");
+            } else {
+                this.vx = 0;
+                if (this.isGrounded) this.setState("IDLE");
+            }
+
+            // Jump
+            if (isKeyPressed(KEYS.SPACE)) {
+                if (this.isGrounded) {
+                    this.vy = this.jumpForce;
+                    this.isGrounded = false;
+                    this.setState("JUMP");
+                    createExplosion(this.x, this.y + 30, 5, 'DUST');
+                    consumeKeyPress(KEYS.SPACE);
+                } else if (this.hasDoubleJump) {
+                    this.vy = this.jumpForce;
+                    this.hasDoubleJump = false;
+                    createExplosion(this.x, this.y + 30, 5, 'DUST');
+                    consumeKeyPress(KEYS.SPACE);
+                }
+            }
+        }
+        
+        // Dash
+        if (isKeyPressed(KEYS.SHIFT) && this.canDash && this.dashCooldown === 0) {
+            // Can dash if idle/move/jump OR if Attacking and HasHit (Dash Cancel)
+            if (this.state !== "ATTACK" || (this.state === "ATTACK" && this.hasHit)) {
+                this.setState("DASH");
+                this.canDash = false; // Need to land to reset or cooldown
+                this.dashCooldown = 60;
+                
+                // Dash direction
+                let dirX = 0;
+                let dirY = 0;
+                if (isKeyDown(KEYS.LEFT)) dirX = -1;
+                if (isKeyDown(KEYS.RIGHT)) dirX = 1;
+                if (isKeyDown(KEYS.UP)) dirY = -1;
+                if (isKeyDown(KEYS.DOWN)) dirY = 1;
+                
+                if (dirX === 0 && dirY === 0) dirX = this.facing;
+                
+                // Normalize roughly
+                const mag = Math.sqrt(dirX*dirX + dirY*dirY);
+                this.vx = (dirX / mag) * this.dashSpeed;
+                this.vy = (dirY / mag) * this.dashSpeed;
+                
+                consumeKeyPress(KEYS.SHIFT);
+                createExplosion(this.x, this.y, 8, 'LINE');
+            }
+        }
+
+        // Attack
+        if (isKeyPressed(KEYS.Z) && this.attackCooldown === 0 && this.state !== "DASH") {
+            this.setState("ATTACK");
+            this.attackCooldown = 20;
+            // Spawn Hitbox
+            const hbX = this.x + (30 * this.facing);
+            const hb = new Hitbox(this, hbX, this.y, 40, 40, 10, 10 * this.facing, -5, 10);
+            gameState.projectiles.push(hb);
+            consumeKeyPress(KEYS.Z);
+        }
+        
+        if (this.state === "ATTACK") {
+            // Apply a little friction during ground attack
+            if (this.isGrounded) this.vx *= 0.5;
+            if (this.stateTimer > 15) {
+                this.setState("IDLE");
+            }
+        }
+        
+        if (this.state === "DASH") {
+            this.vy = 0; // defy gravity
+            if (this.stateTimer > 10) {
+                this.vx *= 0.2;
+                this.vy *= 0.2;
+                this.setState("FALL");
+            }
+        }
+    }
+}
+
+// --- Enemy AI ---
+export class Enemy extends Fighter {
+    constructor(x, y, level = 1, color = [255, 50, 50]) {
+        super(x, y, false);
+        this.decisionTimer = 0;
+        this.target = null;
+        this.level = level;
+        this.color = color;
+        
+        // Scale stats based on level
+        this.moveSpeed = 5 + (level * 0.5);
+        this.damageMultiplier = 1 + (level * 0.15);
+        this.maxHealth = 100 + (level * 10);
+        this.health = this.maxHealth;
+    }
+
+    update(p) {
+        super.update(p);
+        this.target = gameState.player;
+        if (!this.target) return;
+        
+        if (this.state === "DEAD" || this.state === "STUN") return;
+        
+        const dist = Math.abs(this.target.x - this.x);
+        const dy = this.target.y - this.y;
+        
+        // Simple AI
+        this.decisionTimer++;
+        if (this.decisionTimer > 30) { // React every half second roughly
+             this.decisionTimer = 0;
+        }
+
+        // Face player
+        if (this.target.x > this.x) this.facing = 1;
+        else this.facing = -1;
+
+        if (this.state !== "ATTACK" && this.state !== "DASH") {
+            // Movement
+            if (dist > 50) {
+                this.vx = this.moveSpeed * this.facing;
+                this.setState("RUN");
+            } else {
+                this.vx = 0;
+                this.setState("IDLE");
+                
+                // Attack if close
+                if (this.attackCooldown === 0 && Math.random() < 0.1) {
+                     this.setState("ATTACK");
+                     this.attackCooldown = 40; // Slower than player
+                     const hbX = this.x + (30 * this.facing);
+                     const damage = 8 * this.damageMultiplier;
+                     const hb = new Hitbox(this, hbX, this.y, 40, 40, damage, 8 * this.facing, -5, 10);
+                     gameState.projectiles.push(hb);
+                }
+            }
+            
+            // Jump if target is above or random
+            if ((dy < -50 || Math.random() < 0.01) && this.isGrounded) {
+                this.vy = this.jumpForce;
+                this.isGrounded = false;
+                this.setState("JUMP");
+            }
+        }
+        
+        if (this.state === "ATTACK") {
+             if (this.stateTimer > 20) this.setState("IDLE");
+        }
+    }
+}
+</file>
+
+<file name="physics.js">
+/**
+ * Physics engine for A Few Quick Matches.
+ * Handles collision detection, resolution, and movement integration.
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, GRAVITY, FRICTION, AIR_RESISTANCE } from './globals.js';
+
+/**
+ * Check AABB collision between two rectangular entities.
+ * Assumes entities have x, y, width, height properties (where x,y is Top-Left or Center handled consistently).
+ * Our entities use Center X, Center Y for position, but width/height are full dimensions.
+ */
+export function checkCollision(a, b) {
+    // Convert Center-based coordinates to Top-Left
+    const aX = a.x - a.width / 2;
+    const aY = a.y - a.height / 2;
+    const bX = b.x - b.width / 2;
+    const bY = b.y - b.height / 2;
+    
+    // Standard AABB collision check (inclusive to match p5.collide2d behavior)
+    return (aX + a.width >= bX &&
+            aX <= bX + b.width &&
+            aY + a.height >= bY &&
+            aY <= bY + b.height);
+}
+
+/**
+ * Resolves collision between an entity (dynamic) and a platform (static).
+ * Pushes the entity out of the platform based on the shallowest axis of penetration.
+ */
+export function resolvePlatformCollision(entity, platform) {
+    const dx = entity.x - platform.x;
+    const dy = entity.y - platform.y;
+    
+    const combinedHalfWidth = entity.width / 2 + platform.width / 2;
+    const combinedHalfHeight = entity.height / 2 + platform.height / 2;
+    
+    const overlapX = combinedHalfWidth - Math.abs(dx);
+    const overlapY = combinedHalfHeight - Math.abs(dy);
+    
+    if (overlapX > 0 && overlapY > 0) {
+        // Collision detected
+        // Resolve on the axis with smallest overlap
+        if (overlapX < overlapY) {
+            // Horizontal collision (Walls)
+            if (dx > 0) {
+                entity.x += overlapX; // Push right
+            } else {
+                entity.x -= overlapX; // Push left
+            }
+            entity.vx = 0;
+        } else {
+            // Vertical collision (Floor/Ceiling)
+            if (dy > 0) {
+                entity.y += overlapY; // Push down (hit ceiling)
+                entity.vy = 0;
+            } else {
+                entity.y -= overlapY; // Push up (land on floor)
+                entity.vy = 0;
+                entity.isGrounded = true;
+                entity.hasDoubleJump = true; // Reset double jump on land
+                entity.canDash = true; // Reset dash on land
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Applies knockback to an entity.
+ */
+export function applyKnockback(entity, forceX, forceY) {
+    entity.vx = forceX;
+    entity.vy = forceY;
+    entity.isGrounded = false;
+    // Add hitstun or state change logic if passed
+}
+
+/**
+ * Updates physics for a generic entity.
+ */
+export function updatePhysics(entity) {
+    // Apply gravity
+    if (!entity.isGrounded) {
+        entity.vy += GRAVITY;
+    }
+
+    // Apply Velocity
+    entity.x += entity.vx;
+    entity.y += entity.vy;
+
+    // Apply Friction / Air Resistance
+    if (entity.isGrounded) {
+        entity.vx *= FRICTION;
+    } else {
+        entity.vx *= AIR_RESISTANCE;
+    }
+
+    // Terminal Velocity
+    // entity.vy = Math.min(entity.vy, 15); // Handled by simple clamp if needed, but linear drag helps
+
+    // Reset grounded state for next frame (re-verified by collision)
+    entity.isGrounded = false;
+    
+    // Check World Bounds (Fall off logic)
+    // If player falls too far, they die/take massive damage
+    // For this map, we'll keep them in bounds horizontally, but allow pit falls
+    if (entity.x < 0) {
+        entity.x = 0;
+        entity.vx = 0;
+    }
+    if (entity.x > 800) { // World width
+        entity.x = 800;
+        entity.vx = 0;
+    }
+}
+</file>
+
+<file name="particles.js">
+/**
+ * Particle system for visual effects.
+ */
+import { gameState } from './globals.js';
+
+export class Particle {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.type = type; // 'SPARK', 'DUST', 'LINE'
+        this.vx = (Math.random() - 0.5) * 5;
+        this.vy = (Math.random() - 0.5) * 5;
+        this.life = 1.0;
+        this.decay = Math.random() * 0.05 + 0.02;
+        this.size = Math.random() * 5 + 2;
+        this.color = [255, 255, 255];
+        
+        if (type === 'SPARK') {
+            this.color = [255, 255, 100];
+            this.vx *= 2;
+            this.vy *= 2;
+        } else if (type === 'DUST') {
+            this.color = [200, 200, 200];
+            this.vy = Math.random() * -1; // float up
+        } else if (type === 'BLOOD') {
+            this.color = [255, 50, 50];
+        }
+    }
+    
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life -= this.decay;
+        
+        // Physics for some particles
+        if (this.type === 'BLOOD' || this.type === 'SPARK') {
+            this.vy += 0.2; // Gravity
+        }
+    }
+    
+    render(p) {
+        p.push();
+        p.noStroke();
+        p.fill(this.color[0], this.color[1], this.color[2], this.life * 255);
+        if (this.type === 'LINE') {
+            p.stroke(this.color[0], this.color[1], this.color[2], this.life * 255);
+            p.strokeWeight(2);
+            p.line(this.x, this.y, this.x - this.vx*3, this.y - this.vy*3);
+        } else {
+            p.circle(this.x, this.y, this.size * this.life);
+        }
+        p.pop();
+    }
+}
+
+export function createExplosion(x, y, count = 10, type = 'SPARK') {
+    for(let i=0; i<count; i++) {
+        gameState.particles.push(new Particle(x, y, type));
+    }
+}
+</file>
+
+<file name="input.js">
+/**
+ * Input handling module.
+ * Manages keyboard state and automated testing inputs.
+ */
+
+import { gameState } from './globals.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+// Key codes
+export const KEYS = {
+    LEFT: 37,
+    UP: 38,
+    RIGHT: 39,
+    DOWN: 40,
+    SPACE: 32, // Jump
+    Z: 90,     // Attack
+    SHIFT: 16, // Dash
+    ENTER: 13,
+    ESC: 27,
+    R: 82
+};
+
+const keyState = {};
+const keyEventsBuffer = {}; // Accumulates presses between frames
+const keyPressedThisFrame = {};
+
+/**
+ * Updates the input state. Should be called at the start of the game loop.
+ * Integrates automated testing inputs if control mode is not HUMAN.
+ */
+export function updateInput(p) {
+    // Reset "pressed this frame" buffer (managed manually for some logic)
+    for (let k in keyPressedThisFrame) {
+        keyPressedThisFrame[k] = false;
+    }
+
+    // Transfer buffered events to current frame state
+    for (let k in keyEventsBuffer) {
+        if (keyEventsBuffer[k]) {
+            keyPressedThisFrame[k] = true;
+            keyEventsBuffer[k] = false; // Clear buffer
+        }
+    }
+
+    // If automated testing, override keys
+    if (gameState.controlMode !== 'HUMAN') {
+        const action = get_automated_testing_action(gameState);
+        
+        // Reset keys for automation to prevent stuck keys
+        if (action) {
+            // Clear standard inputs to let automation take over
+            keyState[KEYS.LEFT] = false;
+            keyState[KEYS.RIGHT] = false;
+            keyState[KEYS.UP] = false;
+            keyState[KEYS.DOWN] = false;
+            keyState[KEYS.Z] = false;
+            keyState[KEYS.SPACE] = false;
+            keyState[KEYS.SHIFT] = false;
+            
+            // Clear triggers
+            keyPressedThisFrame[KEYS.Z] = false;
+            keyPressedThisFrame[KEYS.SPACE] = false;
+            keyPressedThisFrame[KEYS.SHIFT] = false;
+            
+            // Apply automation action
+            if (action.keys) {
+                action.keys.forEach(k => {
+                    keyState[k] = true;
+                    keyPressedThisFrame[k] = true; // Automation triggers actions
+                });
+            }
+        }
+    }
+}
+
+/**
+ * Handler for p5 keyPressed
+ */
+export function handleKeyPressed(p) {
+    keyState[p.keyCode] = true;
+    keyEventsBuffer[p.keyCode] = true; // Store in buffer
+
+    // Log input
+    if(p.logs) {
+        p.logs.inputs.push({
+            input_type: 'keyPressed',
+            data: { key: p.key, keyCode: p.keyCode },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+
+    // Global Phase Transitions
+    if (p.keyCode === KEYS.ENTER) {
+        if (gameState.gamePhase === "START") {
+            gameState.gamePhase = "PLAYING";
+            p.logs.game_info.push({ event: "Game Started", timestamp: Date.now() });
+        }
+    }
+    
+    if (p.keyCode === KEYS.ESC) {
+        if (gameState.gamePhase === "PLAYING") {
+            gameState.gamePhase = "PAUSED";
+        } else if (gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = "PLAYING";
+        }
+    }
+    
+    if (p.keyCode === KEYS.R) {
+        if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+            // Restart is handled in main loop
+        }
+    }
+}
+
+/**
+ * Handler for p5 keyReleased
+ */
+export function handleKeyReleased(p) {
+    keyState[p.keyCode] = false;
+    
+    if(p.logs) {
+        p.logs.inputs.push({
+            input_type: 'keyReleased',
+            data: { key: p.key, keyCode: p.keyCode },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+
+/**
+ * Check if a key is currently held down.
+ */
+export function isKeyDown(keyCode) {
+    return !!keyState[keyCode];
+}
+
+/**
+ * Check if a key was pressed specifically in this frame (for one-shot actions like jump start).
+ */
+export function isKeyPressed(keyCode) {
+    return keyPressedThisFrame[keyCode]; 
+}
+
+/**
+ * Manually consume a key press so it doesn't trigger multiple actions
+ */
+export function consumeKeyPress(keyCode) {
+    keyPressedThisFrame[keyCode] = false;
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

@@ -1,0 +1,341 @@
+<analysis>
+- Issue identified: The automatic game restart after a "Game Over" (win or lose) currently calls `resetToStart`, which incorrectly sends the player back to the initial "press enter to begin" screen (`GAME_PHASES.START`). The user expects the auto-restart to immediately begin a new game in the playing state, similar to pressing ENTER from the start screen.
+- Files affected:
+    - `game.js`: Needs to change the function called for auto-restart.
+    - `controls.js`: Needs refactoring to provide distinct functions for resetting to the start screen and restarting directly into gameplay, and to ensure a full state reset for starting a new game.
+- Changes needed:
+    - In `controls.js`, create a private helper function `_fullResetAndSetPhase` to centralize all game state resetting logic (score, lives, entities, player, timers, etc.) and set the `gamePhase`.
+    - Modify `startGame` to use `_fullResetAndSetPhase` and set the phase to `PLAYING`.
+    - Create a new `export` function `resetToStartScreen` (replacing the old `resetToStart`) that uses `_fullResetAndSetPhase` and sets the phase to `START`. This will be used for the manual 'R' key press.
+    - Create a new `export` function `restartGamePlaying` that uses `_fullResetAndSetPhase` and sets the phase to `PLAYING`. This will be used for the automatic restart.
+    - In `handleKeyPressed`, update the 'R' key logic to call `resetToStartScreen`.
+    - In `game.js`, update the import statement to include `restartGamePlaying` and change the auto-restart logic to call `restartGamePlaying`.
+</analysis>
+<code filename="game.js">
+import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { handleKeyPressed, handleKeyReleased, handlePlayerMovement, startGame, resetToStartScreen, restartGamePlaying } from './controls.js'; // Import resetToStartScreen and restartGamePlaying
+import { checkCollisions } from './collision.js';
+import { loadLevel, updateLevelTransition } from './levelManager.js';
+import { renderGame } from './rendering.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Initialize logs
+  p.logs = {
+    game_info: [],
+    inputs: [],
+    player_info: []
+  };
+
+  let needsLevelLoad = false;
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    p.logs.game_info.push({
+      event: 'game_initialized',
+      data: { canvas_width: CANVAS_WIDTH, canvas_height: CANVAS_HEIGHT },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+
+  p.draw = function() {
+    // Handle level loading
+    if (gameState.gamePhase === GAME_PHASES.PLAYING && !gameState.player) {
+      loadLevel(p, gameState.level);
+    }
+
+    // Handle level transition
+    if (gameState.levelTransitionTimer > 0) {
+      updateLevelTransition(p);
+      renderGame(p);
+      return;
+    }
+
+    // Update game state
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      // Handle player movement
+      handlePlayerMovement(p);
+
+      // Update all entities
+      for (const entity of gameState.entities) {
+        entity.update();
+      }
+
+      // Remove dead particles
+      gameState.entities = gameState.entities.filter(e => {
+        if (e.type === 'particle') {
+          return !e.isDead();
+        }
+        return true;
+      });
+
+      // Check collisions
+      checkCollisions(p);
+
+      // Update invulnerability timer
+      if (gameState.invulnerable) {
+        gameState.invulnerableTimer--;
+        if (gameState.invulnerableTimer <= 0) {
+          gameState.invulnerable = false;
+        }
+      }
+
+      // Log player position periodically
+      if (p.frameCount % 60 === 0 && gameState.player) {
+        p.logs.player_info.push({
+          screen_x: gameState.player.x,
+          screen_y: gameState.player.y,
+          game_x: gameState.player.x,
+          game_y: gameState.player.y,
+          framecount: p.frameCount
+        });
+      }
+    }
+
+    // Render
+    renderGame(p);
+
+    // Auto-restart logic after game over
+    if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+        if (gameState.autoRestartTimer === null) { // If timer not started, initialize it
+            gameState.autoRestartTimer = p.frameCount;
+            p.logs.game_info.push({
+              event: 'auto_restart_scheduled',
+              framecount: p.frameCount,
+              timestamp: Date.now()
+            });
+        }
+        // Auto-restart after 1 second (p.frameRate() frames)
+        const framesToWait = p.frameRate(); 
+        if (p.frameCount - gameState.autoRestartTimer > framesToWait) {
+            restartGamePlaying(p); // Call the new restart function to go directly to playing
+            // restartGamePlaying will clear autoRestartTimer, so no need to do it here again
+            p.logs.game_info.push({
+              event: 'auto_restart_triggered',
+              framecount: p.frameCount,
+              timestamp: Date.now()
+            });
+        }
+    } else {
+        // Reset timer if not in game over phase, in case phase changes before auto-restart
+        if (gameState.autoRestartTimer !== null) {
+            gameState.autoRestartTimer = null;
+            p.logs.game_info.push({
+              event: 'auto_restart_timer_reset',
+              reason: 'game_phase_changed_from_gameover',
+              framecount: p.frameCount,
+              timestamp: Date.now()
+            });
+        }
+    }
+  };
+
+  p.keyPressed = function() {
+    handleKeyPressed(p, p.key, p.keyCode);
+    return false;
+  };
+
+  p.keyReleased = function() {
+    handleKeyReleased(p, p.key, p.keyCode);
+    return false;
+  };
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    if (window.gameInstance) {
+      // Try to import and call loadLevel if available
+      if (typeof loadLevel === 'function') {
+        loadLevel(window.gameInstance, levelNum);
+      } else if (typeof initializeLevel === 'function') {
+        initializeLevel(window.gameInstance, levelNum);
+      }
+      if (state.gamePhase !== undefined) {
+        state.gamePhase = "PLAYING";
+      }
+    }
+  }
+};
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  // Ensure control mode is always HUMAN now
+  gameState.controlMode = 'HUMAN';
+  
+  // Update button states
+  const buttons = ['humanModeBtn']; // Only human mode button remains
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const activeBtn = document.getElementById('humanModeBtn'); // Always activate human mode button
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+  
+  gameInstance.logs.game_info.push({
+    event: 'control_mode_changed',
+    data: { mode: gameState.controlMode }, // Log the actual mode set
+    framecount: gameInstance.frameCount,
+    timestamp: Date.now()
+  });
+};
+</code>
+<code filename="controls.js">
+import { gameState, GAME_PHASES } from './globals.js';
+
+/**
+ * Resets all core game state variables to their initial values for a new game,
+ * and sets the game phase. This is a comprehensive reset.
+ * @param {object} p - The p5 instance.
+ * @param {string} targetPhase - The GAME_PHASES enum value to set after reset.
+ */
+function _fullResetAndSetPhase(p, targetPhase) {
+  gameState.level = 1;
+  gameState.score = 0;
+  gameState.lives = 3;
+  gameState.entities = [];
+  gameState.player = null; // Ensure player is null so loadLevel creates a new one
+  gameState.cheeseCollected = 0;
+  gameState.totalCheese = 0;
+  gameState.mouseHoleActive = false;
+  gameState.invulnerable = false;
+  gameState.invulnerableTimer = 0;
+  gameState.levelTransitionTimer = 0;
+  gameState.autoRestartTimer = null; // Always clear auto-restart timer on any full reset
+  gameState.gamePhase = targetPhase; // Set the desired phase
+
+  p.logs.game_info.push({
+    event: 'game_state_reset',
+    data: { targetPhase: targetPhase },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function handleKeyPressed(p, key, keyCode) {
+  // Log input
+  p.logs.inputs.push({
+    input_type: 'keyPressed',
+    data: { key, keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+
+  // ENTER - Start game
+  if (keyCode === 13) {
+    if (gameState.gamePhase === GAME_PHASES.START) {
+      startGame(p);
+    }
+  }
+
+  // ESC - Pause/Unpause
+  if (keyCode === 27) {
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      gameState.gamePhase = GAME_PHASES.PAUSED;
+      p.logs.game_info.push({
+        event: 'game_paused',
+        data: {},
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+      gameState.gamePhase = GAME_PHASES.PLAYING;
+      p.logs.game_info.push({
+        event: 'game_resumed',
+        data: {},
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+
+  // R - Restart to Start Screen
+  if (keyCode === 82) {
+    if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || 
+        gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE ||
+        gameState.gamePhase === GAME_PHASES.PAUSED) {
+      resetToStartScreen(p); // Call the new function to go to start screen
+    }
+  }
+
+  // Gameplay controls
+  if (gameState.gamePhase === GAME_PHASES.PLAYING && gameState.player) {
+    if (keyCode === 38) { // Arrow Up
+      gameState.player.jump();
+    }
+  }
+}
+
+export function handleKeyReleased(p, key, keyCode) {
+  // Log input
+  p.logs.inputs.push({
+    input_type: 'keyReleased',
+    data: { key, keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function handlePlayerMovement(p) {
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING || !gameState.player) return;
+
+  // Only human control mode is available
+  if (p.keyIsDown(37)) { // Arrow Left
+    gameState.player.moveLeft();
+  } else if (p.keyIsDown(39)) { // Arrow Right
+    gameState.player.moveRight();
+  } else {
+    gameState.player.stopMove();
+  }
+}
+
+/**
+ * Starts a new game from the initial START phase.
+ * Performs a full game reset and transitions to PLAYING.
+ * @param {object} p - The p5 instance.
+ */
+export function startGame(p) {
+  _fullResetAndSetPhase(p, GAME_PHASES.PLAYING);
+  
+  p.logs.game_info.push({
+    event: 'game_started',
+    data: {},
+    framecount: p.frameCount,
+    timestamp: Date.24now()
+  });
+  
+  // Level will be loaded in the main update loop as gameState.player is null
+}
+
+/**
+ * Resets the game to the START screen, clearing all game progress.
+ * This is typically called on manual restart (e.g., 'R' key).
+ * @param {object} p - The p5 instance.
+ */
+export function resetToStartScreen(p) {
+  _fullResetAndSetPhase(p, GAME_PHASES.START);
+}
+
+/**
+ * Restarts the game directly into the PLAYING phase, clearing all game progress.
+ * This is typically called for automatic restarts after game over.
+ * @param {object} p - The p5 instance.
+ */
+export function restartGamePlaying(p) {
+  _fullResetAndSetPhase(p, GAME_PHASES.PLAYING);
+}
+</code>

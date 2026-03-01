@@ -1,0 +1,541 @@
+<analysis>
+- Issue identified: The platform generation created gaps that were mathematically impossible or extremely difficult to clear given the player's jump physics (gravity, max power, horizontal speed). Specifically, the horizontal reach was insufficient for the random generation spread, and vertical gaps in the upper levels were too high.
+- Files affected: `globals.js`, `entities.js`, `world.js`
+- Changes needed:
+  1.  `globals.js`: Reduce `GRAVITY` (0.4 -> 0.34) and increase `MAX_JUMP_POWER` (14 -> 15) to make jumps floatier and higher. Reduce `BOUNCE_FACTOR` slightly.
+  2.  `entities.js`: Increase horizontal jump speed (`jumpXSpeed` 5 -> 6.0) to ensure the player can cross wider gaps.
+  3.  `world.js`:
+      -   Tutorial: Move platforms closer horizontally.
+      -   Forest: Constrain random generation to a reachable horizontal range (+/- 160px instead of 250px).
+      -   Sky: Reduce vertical step (180 -> 140) and use a deterministic zigzag pattern.
+      -   Tower: Reduce vertical step (250 -> 200).
+</analysis>
+
+<code filename="globals.js">
+/**
+ * Global constants and state management for the game.
+ * Includes physics constants, canvas dimensions, and the central gameState object.
+ */
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Physics Constants
+export const GRAVITY = 0.34; // Reduced from 0.4 for floatier, easier jumps
+export const TERMINAL_VELOCITY = 12;
+export const FRICTION_GROUND = 0.8;
+export const FRICTION_AIR = 0.99; // Very little air friction
+export const WALK_SPEED = 3.5;
+export const SLOW_WALK_SPEED = 1.5;
+export const JUMP_CHARGE_RATE = 0.5;
+export const MAX_JUMP_POWER = 15; // Increased from 14
+export const MIN_JUMP_POWER = 2;
+export const BOUNCE_FACTOR = 0.5; // Reduced from 0.6 to be slightly less punishing
+
+// Level Dimensions
+export const WORLD_WIDTH = 600;
+export const WORLD_HEIGHT = 4000; // Very tall world
+
+// Central Game State
+export const gameState = {
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN",
+    
+    // Entities
+    player: null,
+    platforms: [],
+    decorations: [],
+    particles: [],
+    triggerZones: [],
+    
+    // Camera
+    camera: {
+        x: 0,
+        y: 0,
+        targetY: 0
+    },
+    
+    // Game Progress
+    score: 0, // Max height reached
+    currentHeight: 0,
+    startTime: 0,
+    elapsedTime: 0,
+    attempts: 0,
+    falls: 0,
+    
+    // Input State (processed)
+    keys: {
+        left: false,
+        right: false,
+        up: false,
+        down: false,
+        jump: false,
+        walkSlow: false,
+        action: false
+    },
+    
+    // Performance
+    frameCount: 0,
+    deltaTime: 0,
+    lastFrameTime: 0,
+    
+    // Debug/Cheats
+    debugMode: false
+};
+
+// Global accessor as required
+window.getGameState = () => gameState;
+
+// Logging function helper
+export function logGameInfo(p, infoType, data) {
+    if (!p.logs) return;
+    
+    const targetLog = p.logs[infoType];
+    if (targetLog) {
+        targetLog.push({
+            data: data,
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+</code>
+
+<code filename="entities.js">
+/**
+ * Game entities: Player, Platform, Decoration.
+ */
+import { PhysicsBody, resolveCollisions } from './physics.js';
+import { gameState, WALK_SPEED, SLOW_WALK_SPEED, JUMP_CHARGE_RATE, MAX_JUMP_POWER, MIN_JUMP_POWER, logGameInfo, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { createParticles } from './particles.js';
+
+// Player States
+const STATE_IDLE = 0;
+const STATE_WALK = 1;
+const STATE_CHARGE = 2;
+const STATE_JUMP = 3;
+const STATE_FALL = 4;
+const STATE_BONK = 5; // Hit a wall
+
+export class Player extends PhysicsBody {
+    constructor(x, y) {
+        super(x, y, 20, 32); // Width 20, Height 32
+        this.color = [200, 50, 50]; // Red cape default
+        this.facing = 1; // 1 Right, -1 Left
+        this.state = STATE_IDLE;
+        this.chargeLevel = 0;
+        this.prevY = y;
+        this.highestY = y; // Lower is better
+    }
+
+    update(p) {
+        this.handleInput();
+        this.updatePhysics();
+        
+        // Check collisions with world
+        resolveCollisions(this, gameState.platforms);
+        
+        // Determine State after physics resolution
+        this.updateState();
+        
+        // Check Triggers
+        this.checkTriggers();
+
+        // Track Height for Score
+        // World coordinates: 0 is top, 4000 is bottom
+        // Score is inverted height
+        const currentH = Math.max(0, 4000 - (this.y + this.height));
+        gameState.currentHeight = Math.floor(currentH);
+        if (currentH > gameState.score) {
+            gameState.score = Math.floor(currentH);
+        }
+        
+        // Log if falling significantly
+        if (this.y - this.prevY > 200) {
+            gameState.falls++;
+            this.prevY = this.y;
+            logGameInfo(p, "game_info", { event: "BIG_FALL", depth: this.y });
+        }
+        if (this.y < this.prevY) this.prevY = this.y;
+    }
+
+    handleInput() {
+        const k = gameState.keys;
+        
+        // If on ground, we have control
+        if (this.onGround) {
+            // Charging Jump
+            if (k.jump) {
+                this.state = STATE_CHARGE;
+                this.chargeLevel += JUMP_CHARGE_RATE;
+                if (this.chargeLevel > MAX_JUMP_POWER) this.chargeLevel = MAX_JUMP_POWER;
+                this.vx = 0; // Stop moving while charging
+            } else {
+                // Was charging? Jump!
+                if (this.chargeLevel > 0) {
+                    this.performJump();
+                } else {
+                    // Walking
+                    let speed = k.walkSlow ? SLOW_WALK_SPEED : WALK_SPEED;
+                    if (k.left) {
+                        this.vx = -speed;
+                        this.facing = -1;
+                        this.state = STATE_WALK;
+                    } else if (k.right) {
+                        this.vx = speed;
+                        this.facing = 1;
+                        this.state = STATE_WALK;
+                    } else {
+                        // Friction handles stopping, but we set idle here logic wise
+                        // The physics engine applies friction, so we don't force 0 unless we want snappy movement
+                        // Jump King is slightly slippery
+                        this.state = STATE_IDLE;
+                    }
+                }
+            }
+        } else {
+            // In Air - NO CONTROL
+            this.state = this.vy > 0 ? STATE_FALL : STATE_JUMP;
+            // Charge level useless in air
+            this.chargeLevel = 0;
+        }
+    }
+
+    performJump() {
+        // Calculate Jump Power
+        let power = Math.max(MIN_JUMP_POWER, this.chargeLevel);
+        
+        // Vertical Impulse
+        this.vy = -power;
+        
+        // Horizontal Impulse (Fixed based on direction)
+        // In Jump King, you jump in the direction you are facing with a specific speed
+        // Increased from 5 to 6 to make jumps easier to reach
+        const jumpXSpeed = 6.0; 
+        
+        // Simple logic: Jump in facing direction
+        this.vx = this.facing * jumpXSpeed;
+        
+        this.onGround = false;
+        this.state = STATE_JUMP;
+        this.chargeLevel = 0;
+        
+        createParticles(this.x + this.width/2, this.y + this.height, 'DUST', 10);
+        gameState.attempts++;
+    }
+
+    updateState() {
+        if (this.onGround && this.vx === 0 && !gameState.keys.jump) this.state = STATE_IDLE;
+        if (this.onGround && Math.abs(this.vx) > 0.1 && !gameState.keys.jump) this.state = STATE_WALK;
+        if (gameState.keys.jump && this.onGround) this.state = STATE_CHARGE;
+        if (!this.onGround) this.state = this.vy < 0 ? STATE_JUMP : STATE_FALL;
+    }
+    
+    checkTriggers() {
+        // Check win condition
+        const topOfWorld = 200; // The goal is near y=0-200
+        if (this.y < topOfWorld && this.onGround) {
+            gameState.gamePhase = "GAME_OVER_WIN";
+        }
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x + this.width / 2, this.y + this.height / 2);
+        
+        // Flip based on facing
+        p.scale(this.facing, 1);
+        
+        // Draw Knight
+        p.noStroke();
+        
+        // Cape
+        p.fill(180, 20, 20);
+        p.beginShape();
+        p.vertex(-8, -5);
+        p.vertex(-12, 14);
+        p.vertex(8, 14);
+        p.vertex(8, -5);
+        p.endShape(p.CLOSE);
+
+        // Legs
+        p.fill(80);
+        if (this.state === STATE_WALK) {
+            // Simple walk cycle
+            let offset = Math.sin(p.frameCount * 0.5) * 5;
+            p.rect(-6 + offset, 8, 4, 8);
+            p.rect(2 - offset, 8, 4, 8);
+        } else if (this.state === STATE_JUMP || this.state === STATE_FALL) {
+            p.rect(-6, 6, 4, 8);
+            p.rect(2, 4, 4, 10);
+        } else {
+            p.rect(-6, 8, 4, 8);
+            p.rect(2, 8, 4, 8);
+        }
+
+        // Body
+        p.fill(150); // Armor Grey
+        p.rect(-8, -8, 16, 20, 2);
+        
+        // Head / Helmet
+        p.fill(180); // Lighter Grey
+        p.rect(-7, -18, 14, 14, 3);
+        
+        // Helmet Visor
+        p.fill(0);
+        p.rect(-2, -14, 8, 4);
+        
+        // Helmet Plume
+        p.fill(220, 20, 20);
+        p.beginShape();
+        p.vertex(0, -18);
+        p.vertex(-5, -24);
+        p.vertex(2, -22);
+        p.endShape();
+        
+        // Shaking while charging
+        if (this.state === STATE_CHARGE) {
+            p.translate((Math.random()-0.5)*2, (Math.random()-0.5)*2);
+            // Draw charge glow
+            p.noFill();
+            p.stroke(255, 200, 0, 150 + Math.sin(p.frameCount)*100);
+            p.strokeWeight(2);
+            p.circle(0, 0, 30 + this.chargeLevel * 2);
+        }
+
+        p.pop();
+        
+        // Debug bounds
+        if (gameState.debugMode) {
+            p.noFill();
+            p.stroke(0, 255, 0);
+            p.rect(this.x, this.y, this.width, this.height);
+        }
+    }
+}
+
+export class Platform {
+    constructor(x, y, w, h, type = 'STONE') {
+        this.x = x;
+        this.y = y;
+        this.width = w;
+        this.height = h;
+        this.type = type; // STONE, GRASS, SNOW, WOOD
+    }
+
+    render(p) {
+        // Cull if off screen
+        const camY = gameState.camera.y;
+        if (this.y > camY + CANVAS_HEIGHT || this.y + this.height < camY) return;
+
+        p.push();
+        p.translate(this.x, this.y);
+        
+        if (this.type === 'STONE') {
+            p.fill(80, 80, 90);
+            p.stroke(50);
+            p.strokeWeight(2);
+            p.rect(0, 0, this.width, this.height);
+            
+            // Texture details
+            p.noStroke();
+            p.fill(100, 100, 110);
+            for(let i=10; i<this.width; i+=40) {
+                p.rect(i, 5, 20, 10);
+            }
+            // Moss
+            p.fill(50, 100, 50);
+            p.rect(0, 0, this.width, 4);
+            
+        } else if (this.type === 'WOOD') {
+            p.fill(120, 80, 40);
+            p.stroke(80, 50, 20);
+            p.rect(0, 0, this.width, this.height);
+            // Plank lines
+            p.stroke(60, 40, 10);
+            for(let i=0; i<this.width; i+=20) {
+                p.line(i, 0, i, this.height);
+            }
+        } else if (this.type === 'INVISIBLE') {
+             // Wall boundary, debug only
+             if (gameState.debugMode) {
+                 p.noFill();
+                 p.stroke(255, 0, 0);
+                 p.rect(0, 0, this.width, this.height);
+             }
+        } else if (this.type === 'GOAL') {
+             p.fill(255, 215, 0); // Gold
+             p.rect(0, 0, this.width, this.height);
+             p.fill(255);
+             p.textAlign(p.CENTER, p.CENTER);
+             p.text("GOAL", this.width/2, this.height/2);
+        }
+        
+        p.pop();
+    }
+}
+
+export class Decoration {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.type = type; // CLOUD, TORCH, FLAG
+    }
+    
+    render(p) {
+        const camY = gameState.camera.y;
+        if (this.y > camY + CANVAS_HEIGHT + 100 || this.y < camY - 100) return;
+
+        p.push();
+        p.translate(this.x, this.y);
+        
+        if (this.type === 'CLOUD') {
+            p.fill(255, 255, 255, 200);
+            p.noStroke();
+            p.ellipse(0, 0, 60, 40);
+            p.ellipse(30, 0, 50, 30);
+            p.ellipse(-30, 0, 50, 30);
+        } else if (this.type === 'TORCH') {
+            p.fill(100, 50, 0);
+            p.rect(-2, 0, 4, 15);
+            // Flame
+            const fSize = 8 + Math.sin(p.frameCount * 0.2) * 3;
+            p.fill(255, 100, 0, 200);
+            p.circle(0, -5, fSize);
+            p.fill(255, 200, 0, 150);
+            p.circle(0, -5, fSize * 0.6);
+        }
+        
+        p.pop();
+    }
+}
+</code>
+
+<code filename="world.js">
+/**
+ * Handles level generation and camera management.
+ * The world is a tall vertical shaft.
+ */
+import { gameState, WORLD_HEIGHT, WORLD_WIDTH, CANVAS_HEIGHT, CANVAS_WIDTH } from './globals.js';
+import { Platform, Decoration } from './entities.js';
+
+export function initWorld() {
+    gameState.platforms = [];
+    gameState.decorations = [];
+    
+    // Create Walls
+    // Left Wall
+    gameState.platforms.push(new Platform(-50, -1000, 50, WORLD_HEIGHT + 2000, 'STONE'));
+    // Right Wall
+    gameState.platforms.push(new Platform(WORLD_WIDTH, -1000, 50, WORLD_HEIGHT + 2000, 'STONE'));
+    
+    // Create Floor
+    gameState.platforms.push(new Platform(0, WORLD_HEIGHT - 50, WORLD_WIDTH, 100, 'STONE'));
+
+    // --- Generate Level Sections (Bottom to Top) ---
+    
+    // 1. Tutorial / Base Area (4000 - 3500)
+    addPlatform(200, 3900, 200, 20, 'STONE');
+    // Moved closer to make the jump easier (was 450)
+    addPlatform(400, 3800, 100, 20, 'STONE');
+    // Moved closer (was 50)
+    addPlatform(150, 3750, 150, 20, 'STONE');
+    addPlatform(300, 3680, 100, 20, 'WOOD');
+    
+    let lastX = 300; // Track X for reachable generation
+
+    // 2. The Forest / Mossy Area (3500 - 2500)
+    // Start slightly higher to bridge gap from 3680
+    for (let y = 3550; y > 2500; y -= 150) {
+        // Ensure jump is solvable (max horizontal dist reduced to 160)
+        let minX = Math.max(50, lastX - 160);
+        let maxX = Math.min(WORLD_WIDTH - 150, lastX + 160);
+        
+        let w = Math.random() * 80 + 60;
+        let x;
+        
+        // Ensure we don't stack directly above the previous platform
+        let attempts = 0;
+        do {
+            x = Math.random() * (maxX - minX) + minX;
+            
+            // Keep within bounds strictly
+            if (x < 50) x = 50;
+            if (x + w > 550) x = 550 - w;
+            
+            attempts++;
+        } while (Math.abs(x - lastX) < 40 && attempts < 10);
+
+        addPlatform(x, y, w, 20, 'WOOD');
+        lastX = x;
+        
+        // Add some random smaller blocks for difficulty
+        if (Math.random() > 0.6) {
+            let bx = Math.random() * 500 + 50;
+            let bw = 40;
+            // Only add if it doesn't overlap the current platform's x range
+            if (bx + bw < x || bx > x + w) {
+                addPlatform(bx, y - 75, bw, 20, 'STONE');
+            }
+        }
+        
+        // Decor
+        gameState.decorations.push(new Decoration(Math.random() * 500 + 50, y - 50, 'TORCH'));
+    }
+    
+    // Bridge from Forest to Sky to ensure connectivity
+    addPlatform(250, 2580, 100, 20, 'WOOD');
+    
+    // 3. The Sky / Clouds (2500 - 1000)
+    // Reduced vertical gap from 180 to 140 to make it much easier
+    let leftSide = true;
+    for (let y = 2500; y > 1000; y -= 140) {
+        // Zigzag pattern: Alternate between left-ish and right-ish
+        // Reduced spread to ensure reachability (150 and 350)
+        let x = leftSide ? 150 : 350; 
+        leftSide = !leftSide;
+        
+        addPlatform(x, y, 100, 20, 'STONE');
+        
+        gameState.decorations.push(new Decoration(Math.random()*600, y, 'CLOUD'));
+    }
+    
+    // 4. The Tower / Space (1000 - 100)
+    // Reduced gap from 250 to 200
+    for (let y = 1000; y > 200; y -= 200) {
+        // Precise jumps required
+        addPlatform(250, y, 60, 20, 'STONE');
+        addPlatform(100, y - 100, 40, 20, 'STONE');
+        addPlatform(450, y - 100, 40, 20, 'STONE');
+    }
+    
+    // 5. The Top (Goal)
+    addPlatform(200, 150, 200, 40, 'GOAL');
+    
+    // Add "Babe" decoration
+    // TODO: A more distinct sprite, currently just a particle effect in game loop
+}
+
+function addPlatform(x, y, w, h, type) {
+    gameState.platforms.push(new Platform(x, y, w, h, type));
+}
+
+export function updateCamera(p) {
+    if (!gameState.player) return;
+    
+    const targetY = gameState.player.y - CANVAS_HEIGHT / 2;
+    
+    // Smooth Lerp
+    gameState.camera.y += (targetY - gameState.camera.y) * 0.1;
+    
+    // Clamp Camera
+    // We want the camera to be able to go up to the top (negative coords if needed, but here 0)
+    // And down to bottom
+    const minCamY = -200;
+    const maxCamY = WORLD_HEIGHT - CANVAS_HEIGHT;
+    
+    gameState.camera.y = p.constrain(gameState.camera.y, minCamY, maxCamY);
+    
+    gameState.camera.x = 0; // No horizontal scrolling
+}
+</code>

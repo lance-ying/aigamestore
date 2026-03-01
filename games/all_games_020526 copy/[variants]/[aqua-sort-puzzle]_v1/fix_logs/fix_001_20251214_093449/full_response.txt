@@ -1,0 +1,415 @@
+<analysis>
+- Issue identified: The automatic restart after a "Game Over" (win or lose) incorrectly directs the player back to the "Start" screen, requiring them to press "Enter" again. The desired behavior is to automatically restart the current level if the game was lost, or start a new game from level 1 (directly into playing mode) if all levels were won, bypassing the initial "Start" screen. The manual 'R' key restart should still go to the "Start" screen as per the `index.html` description.
+- Files affected:
+    - `globals.js`
+    - `game.js`
+- Changes needed:
+    - In `globals.js`, add a new state variable to `gameState` to store the specific game over phase (win or lose) that triggered the auto-restart.
+    - In `game.js`, introduce a new function to handle the auto-restart logic. This function will check the stored game over phase and either reload the current level (for a loss) or reset to level 1 and load it (for a win), setting the game phase directly to `PLAYING`.
+    - Modify the `p.draw` loop in `game.js` to use this new auto-restart logic, ensuring the correct game over phase is captured and the appropriate restart action is taken, while preserving the existing manual 'R' key restart behavior (which goes to the start screen).
+</analysis>
+<code filename="globals.js">
+// globals.js - Global state and constants
+
+export const CANVAS_WIDTH = 700;
+export const CANVAS_HEIGHT = 400;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE",
+  LEVEL_COMPLETE: "LEVEL_COMPLETE"
+};
+
+export const gameState = {
+  gamePhase: GAME_PHASES.START,
+  controlMode: "HUMAN",
+  
+  // Level and score
+  currentLevel: 1,
+  totalScore: 0,
+  levelMovesMade: 0,
+  levelMaxMoves: 0,
+  levelUndoCount: 0,
+  
+  // Tubes
+  tubes: [],
+  selectedTubeIndex: -1,
+  highlightedTubeIndex: 0,
+  
+  // Undo system
+  previousStates: [],
+  
+  // Animation
+  isAnimating: false,
+  animationProgress: 0,
+  animationDuration: 30, // frames
+  animationSourceIndex: -1,
+  animationDestIndex: -1,
+  animationWaterColor: null,
+  animationWaterAmount: 0,
+  
+  // Player (for logging purposes)
+  player: {
+    x: CANVAS_WIDTH / 2,
+    y: CANVAS_HEIGHT / 2
+  },
+
+  // Auto-restart
+  autoRestartScheduled: false,
+  autoRestartTimerId: null,
+  lastGameOverPhase: null // NEW: Stores GAME_OVER_WIN or GAME_OVER_LOSE when auto-restart is scheduled
+};
+
+// Level configurations
+export const LEVELS = [
+  {
+    level: 1,
+    difficulty: 'Easy',
+    maxMoves: 8,
+    tubes: [
+      { capacity: 4, colors: ['red', 'blue', 'red', 'blue'] },
+      { capacity: 4, colors: ['blue', 'red', 'blue', 'red'] },
+      { capacity: 4, colors: [] }
+    ]
+  },
+  {
+    level: 2,
+    difficulty: 'Easy',
+    maxMoves: 10,
+    tubes: [
+      { capacity: 4, colors: ['red', 'blue', 'green', 'red'] },
+      { capacity: 4, colors: ['blue', 'green', 'red', 'blue'] },
+      { capacity: 4, colors: ['green', 'red', 'blue', 'green'] },
+      { capacity: 4, colors: [] }
+    ]
+  },
+  {
+    level: 3,
+    difficulty: 'Easy',
+    maxMoves: 15,
+    tubes: [
+      { capacity: 4, colors: ['red', 'blue', 'yellow', 'red'] },
+      { capacity: 4, colors: ['blue', 'green', 'red', 'blue'] },
+      { capacity: 4, colors: ['green', 'yellow', 'blue', 'green'] },
+      { capacity: 4, colors: ['yellow', 'red', 'green', 'yellow'] },
+      { capacity: 4, colors: [] }
+    ]
+  },
+  {
+    level: 4,
+    difficulty: 'Medium',
+    maxMoves: 20,
+    tubes: [
+      { capacity: 4, colors: ['red', 'blue', 'yellow', 'green'] },
+      { capacity: 4, colors: ['blue', 'green', 'red', 'yellow'] },
+      { capacity: 4, colors: ['green', 'yellow', 'blue', 'red'] },
+      { capacity: 4, colors: ['yellow', 'red', 'green', 'blue'] },
+      { capacity: 4, colors: [] },
+      { capacity: 4, colors: [] }
+    ]
+  },
+  {
+    level: 5,
+    difficulty: 'Medium',
+    maxMoves: 25,
+    tubes: [
+      { capacity: 4, colors: ['red', 'blue', 'yellow', 'purple'] },
+      { capacity: 4, colors: ['blue', 'green', 'red', 'blue'] },
+      { capacity: 4, colors: ['green', 'yellow', 'purple', 'red'] },
+      { capacity: 4, colors: ['yellow', 'purple', 'green', 'yellow'] },
+      { capacity: 4, colors: ['purple', 'red', 'green', 'blue'] },
+      { capacity: 4, colors: [] },
+      { capacity: 4, colors: [] }
+    ]
+  },
+  {
+    level: 6,
+    difficulty: 'Medium',
+    maxMoves: 35,
+    tubes: [
+      { capacity: 4, colors: ['red', 'blue', 'yellow', 'purple'] },
+      { capacity: 4, colors: ['blue', 'green', 'orange', 'red'] },
+      { capacity: 4, colors: ['green', 'yellow', 'purple', 'orange'] },
+      { capacity: 4, colors: ['yellow', 'red', 'green', 'orange'] },
+      { capacity: 4, colors: ['purple', 'orange', 'green', 'yellow'] },
+      { capacity: 4, colors: ['blue', 'red', 'purple', 'blue'] },
+      { capacity: 4, colors: [] },
+      { capacity: 4, colors: [] }
+    ]
+  },
+  {
+    level: 7,
+    difficulty: 'Hard',
+    maxMoves: 40,
+    tubes: [
+      { capacity: 4, colors: ['red', 'blue', 'yellow', 'purple'] },
+      { capacity: 4, colors: ['blue', 'green', 'orange', 'red'] },
+      { capacity: 4, colors: ['green', 'yellow', 'purple', 'pink'] },
+      { capacity: 4, colors: ['yellow', 'red', 'green', 'orange'] },
+      { capacity: 4, colors: ['purple', 'orange', 'pink', 'yellow'] },
+      { capacity: 4, colors: ['blue', 'red', 'purple', 'pink'] },
+      { capacity: 4, colors: ['orange', 'pink', 'blue', 'green'] },
+      { capacity: 4, colors: [] },
+      { capacity: 4, colors: [] }
+    ]
+  },
+  {
+    level: 8,
+    difficulty: 'Hard',
+    maxMoves: 50,
+    tubes: [
+      { capacity: 4, colors: ['red', 'blue', 'yellow', 'purple'] },
+      { capacity: 4, colors: ['blue', 'green', 'orange', 'red'] },
+      { capacity: 4, colors: ['green', 'yellow', 'pink', 'orange'] },
+      { capacity: 4, colors: ['yellow', 'red', 'green', 'pink'] },
+      { capacity: 4, colors: ['purple', 'orange', 'pink', 'yellow'] },
+      { capacity: 4, colors: ['blue', 'red', 'purple', 'pink'] },
+      { capacity: 4, colors: ['orange', 'purple', 'green', 'blue'] },
+      { capacity: 4, colors: [] },
+      { capacity: 4, colors: [] }
+    ]
+  },
+  {
+    level: 9,
+    difficulty: 'Hard',
+    maxMoves: 60,
+    tubes: [
+      { capacity: 4, colors: ['red', 'blue', 'yellow', 'purple'] },
+      { capacity: 4, colors: ['blue', 'green', 'cyan', 'red'] },
+      { capacity: 4, colors: ['green', 'yellow', 'pink', 'orange'] },
+      { capacity: 4, colors: ['yellow', 'red', 'green', 'pink'] },
+      { capacity: 4, colors: ['purple', 'orange', 'cyan', 'yellow'] },
+      { capacity: 4, colors: ['blue', 'red', 'purple', 'pink'] },
+      { capacity: 4, colors: ['orange', 'purple', 'cyan', 'blue'] },
+      { capacity: 4, colors: ['pink', 'orange', 'cyan', 'green'] },
+      { capacity: 4, colors: [] },
+      { capacity: 4, colors: [] }
+    ]
+  }
+];
+
+export const COLOR_MAP = {
+  'red': [220, 50, 50],
+  'blue': [50, 120, 220],
+  'green': [50, 200, 80],
+  'yellow': [240, 200, 30],
+  'purple': [180, 60, 200],
+  'orange': [255, 140, 30],
+  'pink': [255, 120, 180],
+  'cyan': [0, 220, 220]
+};
+
+export function getGameState() {
+  return gameState;
+}
+
+// Expose globally
+if (typeof window !== 'undefined') {
+  window.getGameState = getGameState;
+}
+</code>
+<code filename="game.js">
+// game.js - Main game file
+
+import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT, getGameState } from './globals.js';
+import { handleKeyPressed } from './input.js';
+import { updateAnimation } from './gameLogic.js';
+import { 
+  renderStartScreen, 
+  renderPlayingScreen, 
+  renderPausedScreen, 
+  renderLevelComplete,
+  renderGameOverWin,
+  renderGameOverLose 
+} from './rendering.js';
+import { loadLevel } from './levelManager.js'; // Import loadLevel for reset function
+
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Initialize logs
+  p.logs = {
+    game_info: [],
+    inputs: [],
+    player_info: []
+  };
+
+  // Function to reset game state to start screen and cancel any auto-restart
+  // This function is used for manual restarts (e.g., 'R' key)
+  function resetGameAndCancelAutoRestart() {
+    // Clear any pending auto-restart timer
+    if (gameState.autoRestartTimerId) {
+      clearTimeout(gameState.autoRestartTimerId);
+      gameState.autoRestartTimerId = null;
+    }
+    gameState.autoRestartScheduled = false;
+    gameState.lastGameOverPhase = null; // Clear this as we are explicitly going to START
+    
+    // Reset core game state variables to initial values
+    gameState.gamePhase = GAME_PHASES.START;
+    gameState.totalScore = 0;
+    gameState.currentLevel = 1;
+    // Other state variables like tubes, selectedTubeIndex, etc., will be reset by loadLevel(1, p)
+    // when the user presses ENTER from the START screen.
+    
+    p.logs.game_info.push({
+      data: { phase: gameState.gamePhase, action: 'game_reset' },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+
+  // NEW: Function to handle the actual auto-restart logic based on win/lose
+  function handleAutoRestartLogic(p) {
+    // Clear any pending auto-restart timer
+    if (gameState.autoRestartTimerId) {
+      clearTimeout(gameState.autoRestartTimerId);
+      gameState.autoRestartTimerId = null;
+    }
+    gameState.autoRestartScheduled = false;
+
+    p.logs.game_info.push({
+      data: { phase: gameState.gamePhase, action: 'auto_restart_triggered', fromPhase: gameState.lastGameOverPhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+
+    if (gameState.lastGameOverPhase === GAME_PHASES.GAME_OVER_LOSE) {
+      // Restart the current level
+      loadLevel(gameState.currentLevel, p); // currentLevel is already set to the lost level
+      gameState.gamePhase = GAME_PHASES.PLAYING;
+      p.logs.game_info.push({
+        data: { phase: gameState.gamePhase, action: 'restarted_current_level', level: gameState.currentLevel },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    } else if (gameState.lastGameOverPhase === GAME_PHASES.GAME_OVER_WIN) {
+      // Start a new game from level 1
+      gameState.currentLevel = 1;
+      gameState.totalScore = 0;
+      loadLevel(1, p);
+      gameState.gamePhase = GAME_PHASES.PLAYING;
+      p.logs.game_info.push({
+        data: { phase: gameState.gamePhase, action: 'started_new_game', level: gameState.currentLevel },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+    gameState.lastGameOverPhase = null; // Clear the stored phase after handling
+  }
+  
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.randomSeed(42);
+    p.frameRate(60);
+    
+    // Initialize game state
+    gameState.gamePhase = GAME_PHASES.START;
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: { phase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+  
+  p.draw = function() {
+    // No test mode handling, always HUMAN
+    
+    // Update animations
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      updateAnimation(p);
+    }
+    
+    // Render based on game phase
+    if (gameState.gamePhase === GAME_PHASES.START) {
+      renderStartScreen(p);
+    } else if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      renderPlayingScreen(p);
+    } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+      renderPausedScreen(p);
+    } else if (gameState.gamePhase === GAME_PHASES.LEVEL_COMPLETE) {
+      renderLevelComplete(p);
+    } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN) {
+      renderGameOverWin(p);
+    } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+      renderGameOverLose(p);
+    }
+
+    // Auto-restart logic after game over
+    if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+      if (!gameState.autoRestartScheduled) {
+        gameState.autoRestartScheduled = true;
+        // Store the specific game over phase that triggered the auto-restart
+        gameState.lastGameOverPhase = gameState.gamePhase; 
+        gameState.autoRestartTimerId = setTimeout(() => {
+          handleAutoRestartLogic(p); // Trigger the specific auto-restart logic
+        }, 1000); // 1 second delay
+      }
+    } else {
+      // If the game is not in a game over state, ensure any pending auto-restart is cleared
+      if (gameState.autoRestartScheduled) {
+        clearTimeout(gameState.autoRestartTimerId);
+        gameState.autoRestartScheduled = false;
+        gameState.autoRestartTimerId = null;
+        gameState.lastGameOverPhase = null; // Clear the stored phase if no longer in game over
+      }
+    }
+    
+    // Log player info periodically
+    if (p.frameCount % 60 === 0) {
+      p.logs.player_info.push({
+        screen_x: gameState.player.x,
+        screen_y: gameState.player.y,
+        game_x: gameState.player.x,
+        game_y: gameState.player.y,
+        framecount: p.frameCount
+      });
+    }
+  };
+  
+  p.keyPressed = function() {
+    // Pass the p instance and the manual reset function to handleKeyPressed
+    handleKeyPressed(p, resetGameAndCancelAutoRestart);
+    return false; // Prevent default
+  };
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button styles
+  document.querySelectorAll('.control-button').forEach(btn => {
+    btn.classList.remove('active');
+  });
+  
+  if (mode === 'HUMAN') {
+    document.getElementById('humanModeBtn').classList.add('active');
+  } 
+};
+</code>

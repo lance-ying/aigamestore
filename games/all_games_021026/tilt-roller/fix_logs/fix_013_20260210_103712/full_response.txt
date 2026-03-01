@@ -1,0 +1,257 @@
+<analysis>
+- Issue identified: The game currently uses the 'R' key to restart or proceed to the next level after a win/loss, but the user requested using the 'Enter' key for this purpose.
+- Files affected: `input.js` (key handling logic), `ui.js` (on-screen instructions), `index.html` (control instructions).
+- Changes needed: 
+    1.  Modify `input.js` to trigger a game reset (which handles next level logic) when 'Enter' is pressed during `GAME_OVER_WIN` or `GAME_OVER_LOSE` states.
+    2.  Update `ui.js` to display "Press ENTER" instead of "Press R" on win/loss screens.
+    3.  Update `index.html` to reflect that Enter is used for Start and Next level.
+</analysis>
+
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Game</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      #game-container { 
+          width: 600px !important; 
+          height: 400px !important; 
+          position: relative; 
+          overflow: hidden; 
+          box-shadow: 0 0 20px rgba(0,0,0,0.5);
+      }
+      canvas { width: 100%; height: 100%; display: block; }
+      /* .control-buttons and .control-button styles are no longer needed but kept for minimal change */
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+      .control-button:hover { background: #555; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">
+        Tilt the world to guide the ball through 3D mazes. Reach the goal zone to advance to the next level. Be careful not to fall off the edges!
+      </p>
+    </div>
+
+    <div style="text-align: center; margin-bottom: 20px;">
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">
+        ARROWS/WASD: Tilt Stage | SPACE: Brake | R: Restart | ESC: Pause | ENTER: Start / Next
+      </p>
+    </div>
+    
+    <!-- Game Container created by script, but we can put a placeholder -->
+    <div id="game-placeholder"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/seedrandom@3.0.5/seedrandom.min.js"></script>
+    
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</code>
+
+<code filename="input.js">
+import { gameState, logs } from './globals.js';
+
+// Input State
+export const inputState = {
+    keys: {},
+    axis: {
+        x: 0, // -1 (Left) to 1 (Right)
+        y: 0  // -1 (Forward/Up) to 1 (Backward/Down)
+    },
+    brake: false
+};
+
+// Input Handling Setup
+export function setupInput() {
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+}
+
+function handleKeyDown(event) {
+    const code = event.keyCode;
+    inputState.keys[code] = true;
+    
+    // Logging
+    logs.inputs.push({
+        input_type: 'keydown',
+        data: { key: event.key, keyCode: code },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+    
+    // Global State Controls
+    handleGlobalControls(code);
+}
+
+function handleKeyUp(event) {
+    const code = event.keyCode;
+    inputState.keys[code] = false;
+    
+    logs.inputs.push({
+        input_type: 'keyup',
+        data: { key: event.key, keyCode: code },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+}
+
+function handleGlobalControls(code) {
+    // ENTER - Start Game or Next Level / Retry
+    if (code === 13) {
+        if (gameState.gamePhase === "START") {
+            gameState.gamePhase = "PLAYING";
+        } else if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+            gameState.shouldReset = true;
+        }
+    }
+    
+    // ESC - Pause / Unpause
+    if (code === 27) {
+        if (gameState.gamePhase === "PLAYING") {
+            gameState.gamePhase = "PAUSED";
+        } else if (gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = "PLAYING";
+        }
+    }
+    
+    // R - Restart
+    if (code === 82) {
+        if (gameState.gamePhase === "GAME_OVER_WIN" || 
+            gameState.gamePhase === "GAME_OVER_LOSE" ||
+            gameState.gamePhase === "PLAYING") {
+            // Signal main loop to reset
+            gameState.shouldReset = true;
+        }
+    }
+}
+
+// Update Input Axis per frame
+export function updateInput() {
+    // Reset axis
+    inputState.axis.x = 0;
+    inputState.axis.y = 0;
+    inputState.brake = false;
+    
+    // Human Controls (only mode available)
+    // Up / W
+    if (inputState.keys[38] || inputState.keys[87]) {
+        inputState.axis.y = -1;
+    }
+    // Down / S
+    if (inputState.keys[40] || inputState.keys[83]) {
+        inputState.axis.y = 1;
+    }
+    // Left / A
+    if (inputState.keys[37] || inputState.keys[65]) {
+        inputState.axis.x = -1;
+    }
+    // Right / D
+    if (inputState.keys[39] || inputState.keys[68]) {
+        inputState.axis.x = 1;
+    }
+    // Space (Brake)
+    if (inputState.keys[32]) {
+        inputState.brake = true;
+    }
+}
+</code>
+
+<code filename="ui.js">
+import { gameState, CONFIG } from './globals.js';
+
+let uiCanvas, uiContext;
+
+export function setupUI() {
+    uiCanvas = document.createElement('canvas');
+    uiCanvas.width = CONFIG.CANVAS_WIDTH;
+    uiCanvas.height = CONFIG.CANVAS_HEIGHT;
+    uiCanvas.style.position = 'absolute';
+    uiCanvas.style.top = '0';
+    uiCanvas.style.left = '0';
+    uiCanvas.style.pointerEvents = 'none';
+    
+    // Append to container
+    if (gameState.gameContainer) {
+        gameState.gameContainer.appendChild(uiCanvas);
+    } else {
+        document.body.appendChild(uiCanvas);
+    }
+    
+    uiContext = uiCanvas.getContext('2d');
+}
+
+export function renderUI() {
+    // Clear
+    uiContext.clearRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
+    
+    const w = CONFIG.CANVAS_WIDTH;
+    const h = CONFIG.CANVAS_HEIGHT;
+
+    // Common Text Settings
+    uiContext.fillStyle = 'white';
+    uiContext.textAlign = 'center';
+    
+    if (gameState.gamePhase === "START") {
+        // Overlay
+        uiContext.fillStyle = 'rgba(0,0,0,0.6)';
+        uiContext.fillRect(0, 0, w, h);
+        
+        uiContext.fillStyle = 'white';
+        uiContext.font = 'bold 30px Arial'; // Adjusted font size for single line
+        uiContext.fillText("press enter to begin", w/2, h/2); // Centered message
+        
+    } else if (gameState.gamePhase === "PLAYING" || gameState.gamePhase === "PAUSED") {
+        // HUD - Always visible when playing or paused, no overlay for pause
+        uiContext.font = '20px Arial';
+        uiContext.textAlign = 'left';
+        uiContext.fillText(`Level: ${gameState.levelIndex}`, 20, 30);
+        
+        // Show Brake indicator
+        if (gameState.player && gameState.player.velocity.length() > 0.1) {
+           // uiContext.fillText(`Speed: ${gameState.player.velocity.length().toFixed(2)}`, 20, 60);
+        }
+
+    } else if (gameState.gamePhase === "GAME_OVER_WIN") {
+        uiContext.fillStyle = 'rgba(0,0,0,0.7)';
+        uiContext.fillRect(0, 0, w, h);
+        
+        uiContext.fillStyle = '#4CAF50';
+        uiContext.font = 'bold 40px Arial';
+        uiContext.textAlign = 'center';
+        uiContext.fillText("LEVEL COMPLETED!", w/2, h/2 - 20);
+        
+        uiContext.fillStyle = 'white';
+        uiContext.font = '20px Arial';
+        uiContext.fillText("Press ENTER for Next Level", w/2, h/2 + 30);
+        
+    } else if (gameState.gamePhase === "GAME_OVER_LOSE") {
+        uiContext.fillStyle = 'rgba(0,0,0,0.7)';
+        uiContext.fillRect(0, 0, w, h);
+        
+        uiContext.fillStyle = '#FF5722';
+        uiContext.font = 'bold 40px Arial';
+        uiContext.textAlign = 'center';
+        uiContext.fillText("FALLEN!", w/2, h/2 - 20);
+        
+        uiContext.fillStyle = 'white';
+        uiContext.font = '20px Arial';
+        uiContext.fillText("Press ENTER to Try Again", w/2, h/2 + 30);
+    }
+
+    // Score Display (Always visible)
+    uiContext.textAlign = 'right';
+    uiContext.font = 'bold 24px Arial';
+    uiContext.fillStyle = 'white';
+    uiContext.shadowColor = 'rgba(0,0,0,0.5)';
+    uiContext.shadowBlur = 4;
+    uiContext.fillText(`Score: ${gameState.score}`, w - 20, 40);
+    uiContext.shadowBlur = 0; // Reset
+    uiContext.shadowColor = 'transparent';
+}
+</code>

@@ -1,0 +1,349 @@
+/**
+ * entities.js
+ * Player, Enemy, and basic Entity classes.
+ */
+
+import { gameState, TILE_SIZE, GRAVITY, FRICTION, PLAYER_SPEED, JUMP_FORCE, BLOCK, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { resolveMapCollision, isSolid, collideRectRect } from './physics.js';
+import { isKeyDown, wasKeyPressed, KEYS } from './input.js';
+import { ParticleSystem } from './particles.js';
+
+class Entity {
+    constructor(x, y, w, h) {
+        this.x = x;
+        this.y = y;
+        this.width = w;
+        this.height = h;
+        this.vx = 0;
+        this.vy = 0;
+        this.onGround = false;
+        this.markedForDeletion = false;
+    }
+
+    update() {
+        this.vy += GRAVITY;
+        resolveMapCollision(this);
+        
+        // World Bounds Check
+        if (this.y > gameState.worldHeight * TILE_SIZE) {
+            this.y = 0; // Loop or kill? Let's just reset to top for safety
+            this.vy = 0;
+        }
+    }
+
+    render(p) {
+        const screenX = this.x - gameState.cameraX;
+        const screenY = this.y - gameState.cameraY;
+        p.fill(255);
+        p.rect(screenX, screenY, this.width, this.height);
+    }
+}
+
+export class Player extends Entity {
+    constructor(x, y) {
+        super(x, y, 20, 28); // Smaller than tile size
+        this.health = 100;
+        this.maxHealth = 100;
+        this.facing = 1; // 1 Right, -1 Left
+        
+        // Inventory
+        this.inventory = [
+            { id: 'pickaxe', count: 1, type: 'tool', name: 'Pickaxe' },
+            { id: BLOCK.DIRT, count: 0, type: 'block', name: 'Dirt' },
+            { id: BLOCK.STONE, count: 0, type: 'block', name: 'Stone' },
+            { id: BLOCK.WOOD, count: 0, type: 'block', name: 'Wood' },
+            { id: 'sword', count: 1, type: 'weapon', name: 'Sword' }
+        ];
+        this.selectedSlot = 0;
+        
+        // Interaction
+        this.aimY = 0; // -1 Up, 0 Center, 1 Down
+        this.invincibilityTimer = 0;
+    }
+
+    update(p) {
+        // Input Handling
+        if (isKeyDown(KEYS.LEFT)) {
+            this.vx = -PLAYER_SPEED;
+            this.facing = -1;
+        } else if (isKeyDown(KEYS.RIGHT)) {
+            this.vx = PLAYER_SPEED;
+            this.facing = 1;
+        } else {
+            this.vx *= FRICTION;
+        }
+
+        // Jumping
+        if (isKeyDown(KEYS.SPACE) && this.onGround) {
+            this.vy = JUMP_FORCE;
+            this.onGround = false;
+        }
+
+        // Aiming
+        if (isKeyDown(KEYS.UP)) this.aimY = -1;
+        else if (isKeyDown(KEYS.DOWN)) this.aimY = 1;
+        else this.aimY = 0;
+
+        // Inventory Cycling
+        if (wasKeyPressed(KEYS.SHIFT)) {
+            this.selectedSlot = (this.selectedSlot + 1) % this.inventory.length;
+        }
+
+        // Action (Mining / Placing / Attacking)
+        if (wasKeyPressed(KEYS.Z)) {
+            this.performAction(p);
+        }
+
+        // Automated Testing Hooks
+        this.handleAutomatedInput();
+
+        // Physics
+        super.update();
+
+        // Update Invincibility
+        if (this.invincibilityTimer > 0) this.invincibilityTimer--;
+        
+        // Log player state
+        if (p.logs && p.frameCount % 10 === 0) {
+            p.logs.player_info.push({
+                x: this.x,
+                y: this.y,
+                health: this.health,
+                slot: this.selectedSlot,
+                frame: p.frameCount
+            });
+        }
+    }
+
+    handleAutomatedInput() {
+        if (window.get_automated_testing_action) {
+            const action = window.get_automated_testing_action(gameState);
+            if (action) {
+                if (action.keyCode === KEYS.RIGHT) this.vx = PLAYER_SPEED;
+                if (action.keyCode === KEYS.LEFT) this.vx = -PLAYER_SPEED;
+                if (action.keyCode === KEYS.SPACE && this.onGround) this.vy = JUMP_FORCE;
+                if (action.keyCode === KEYS.Z) this.performAction(window.gameInstance);
+            }
+        }
+    }
+
+    performAction(p) {
+        const item = this.inventory[this.selectedSlot];
+        
+        // Calculate Target Grid Coordinates
+        // Center of player
+        const cx = this.x + this.width / 2;
+        const cy = this.y + this.height / 2;
+        
+        // Target offset based on facing and aim
+        const reach = TILE_SIZE;
+        let tx = cx + (this.facing * reach);
+        let ty = cy + (this.aimY * reach);
+        
+        const gridX = Math.floor(tx / TILE_SIZE);
+        const gridY = Math.floor(ty / TILE_SIZE);
+
+        if (item.type === 'tool' || item.type === 'weapon') {
+            // Mine or Attack
+            const blockId = gameState.world.getBlock(gridX, gridY);
+            
+            // Check enemies first (weapon usage)
+            let hitEnemy = false;
+            if (item.id === 'sword' || item.id === 'pickaxe') {
+                const attackBox = { x: tx - 10, y: ty - 10, w: 20, h: 20 };
+                // Simple circle/rect check against enemies
+                gameState.entities.forEach(ent => {
+                    if (ent instanceof Enemy) {
+                        if (Math.abs(ent.x - tx) < 30 && Math.abs(ent.y - ty) < 30) {
+                            ent.takeDamage(25);
+                            hitEnemy = true;
+                            // Visual feedback
+                            ParticleSystem.spawnBlockBreak(ent.x, ent.y, [255, 0, 0]);
+                        }
+                    }
+                });
+            }
+
+            // If no enemy hit, try mining
+            if (!hitEnemy && blockId !== BLOCK.AIR && blockId !== BLOCK.BEDROCK) {
+                // Break block
+                if (blockId === BLOCK.CORE) {
+                    gameState.gamePhase = "GAME_OVER_WIN";
+                }
+                
+                // Add to inventory (simplified: find slot or just increment specific known types)
+                this.addToInventory(blockId);
+                
+                // Remove from world
+                gameState.world.setBlock(gridX, gridY, BLOCK.AIR);
+                
+                // Particles
+                ParticleSystem.spawnBlockBreak(gridX * TILE_SIZE, gridY * TILE_SIZE, [150, 150, 150]);
+            }
+        } else if (item.type === 'block') {
+            // Place block
+            const currentBlock = gameState.world.getBlock(gridX, gridY);
+            // Can only place in AIR and not colliding with player
+            const targetRect = {x: gridX * TILE_SIZE, y: gridY * TILE_SIZE, w: TILE_SIZE, h: TILE_SIZE};
+            const playerRect = {x: this.x, y: this.y, w: this.width, h: this.height};
+            
+            const intersectsPlayer = collideRectRect(targetRect.x, targetRect.y, targetRect.w, targetRect.h, playerRect.x, playerRect.y, playerRect.w, playerRect.h);
+
+            if (currentBlock === BLOCK.AIR && !intersectsPlayer && item.count > 0) {
+                gameState.world.setBlock(gridX, gridY, item.id);
+                item.count--;
+            }
+        }
+    }
+
+    addToInventory(blockId) {
+        const slot = this.inventory.find(s => s.id === blockId);
+        if (slot) {
+            slot.count++;
+        }
+    }
+
+    takeDamage(amount) {
+        if (this.invincibilityTimer > 0) return;
+        this.health -= amount;
+        this.invincibilityTimer = 30; // 0.5s invincibility
+        if (this.health <= 0) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+        }
+    }
+
+    render(p) {
+        const screenX = this.x - gameState.cameraX;
+        const screenY = this.y - gameState.cameraY;
+        
+        p.push();
+        // Translate to center for flip
+        p.translate(screenX + this.width / 2, screenY + this.height / 2);
+        if (this.facing === -1) p.scale(-1, 1);
+        
+        // Draw Body
+        if (this.invincibilityTimer > 0 && Math.floor(p.frameCount / 4) % 2 === 0) {
+            p.tint(255, 100); // Blink effect
+        }
+        
+        p.fill(0, 0, 255);
+        p.rect(-this.width / 2, -this.height / 2, this.width, this.height);
+        
+        // Draw Head
+        p.fill(255, 200, 180);
+        p.rect(-this.width / 2 + 2, -this.height / 2 + 2, this.width - 4, 10);
+        
+        // Draw Eyes
+        p.fill(0);
+        p.rect(2, -this.height / 2 + 4, 2, 2);
+        
+        // Draw Tool
+        const item = this.inventory[this.selectedSlot];
+        if (item.type === 'tool' || item.type === 'weapon') {
+            p.fill(100);
+            p.translate(8, 0);
+            p.rotate(this.aimY * 0.5); // Tilt based on aim
+            p.rect(0, 0, 15, 4);
+        } else if (item.count > 0) {
+             // Holding block
+             p.fill(139, 69, 19); // Generic block color
+             p.rect(8, 0, 10, 10);
+        }
+
+        p.pop();
+        
+        // Draw Target Cursor (UI overlay really, but attached to player)
+        this.renderCursor(p);
+    }
+
+    renderCursor(p) {
+        const cx = this.x + this.width / 2;
+        const cy = this.y + this.height / 2;
+        const reach = TILE_SIZE;
+        let tx = cx + (this.facing * reach);
+        let ty = cy + (this.aimY * reach);
+        
+        const gridX = Math.floor(tx / TILE_SIZE);
+        const gridY = Math.floor(ty / TILE_SIZE);
+        
+        const screenX = gridX * TILE_SIZE - gameState.cameraX;
+        const screenY = gridY * TILE_SIZE - gameState.cameraY;
+
+        p.push();
+        p.noFill();
+        p.stroke(255, 255, 0, 150);
+        p.strokeWeight(2);
+        p.rect(screenX, screenY, TILE_SIZE, TILE_SIZE);
+        p.pop();
+    }
+}
+
+export class Enemy extends Entity {
+    constructor(x, y) {
+        super(x, y, 20, 28);
+        this.health = 50;
+        this.speed = 1.5;
+        this.damage = 10;
+        this.type = 'zombie';
+    }
+
+    update(p) {
+        super.update();
+        
+        // AI: Move towards player
+        if (gameState.player) {
+            const dx = gameState.player.x - this.x;
+            const dy = gameState.player.y - this.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            
+            if (dist < 300) { // Detection range
+                this.vx = Math.sign(dx) * this.speed;
+                
+                // Jump at walls
+                if (this.vx > 0 && isSolid(Math.floor((this.x + this.width + 5) / TILE_SIZE), Math.floor(this.y / TILE_SIZE))) {
+                    if (this.onGround) this.vy = JUMP_FORCE;
+                }
+                if (this.vx < 0 && isSolid(Math.floor((this.x - 5) / TILE_SIZE), Math.floor(this.y / TILE_SIZE))) {
+                    if (this.onGround) this.vy = JUMP_FORCE;
+                }
+
+                // Attack
+                if (collideRectRect(this.x, this.y, this.width, this.height, gameState.player.x, gameState.player.y, gameState.player.width, gameState.player.height)) {
+                    gameState.player.takeDamage(this.damage);
+                    // Bounce back
+                    this.vx = -Math.sign(dx) * 5;
+                    this.vy = -3;
+                }
+            } else {
+                this.vx = 0;
+            }
+        }
+    }
+
+    takeDamage(amount) {
+        this.health -= amount;
+        this.vx = -Math.sign(this.vx || 1) * 5; // Knockback
+        this.vy = -5;
+        if (this.health <= 0) {
+            this.markedForDeletion = true;
+        }
+    }
+
+    render(p) {
+        const screenX = this.x - gameState.cameraX;
+        const screenY = this.y - gameState.cameraY;
+        
+        p.push();
+        p.fill(0, 150, 0); // Zombie green
+        p.rect(screenX, screenY, this.width, this.height);
+        
+        // Eyes
+        p.fill(255, 0, 0);
+        if (this.vx > 0) {
+            p.rect(screenX + 12, screenY + 4, 4, 4);
+        } else {
+            p.rect(screenX + 4, screenY + 4, 4, 4);
+        }
+        p.pop();
+    }
+}

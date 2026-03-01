@@ -1,0 +1,1738 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+game.js:15 Uncaught SyntaxError: Unexpected token '=>' (at game.js:15:20)
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Game</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #050510; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 2px solid #00FFFF; box-shadow: 0 0 20px rgba(0, 255, 255, 0.2); width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #112; color: #0FF; border: 1px solid #0FF; border-radius: 4px; font-family: 'Courier New', monospace; transition: all 0.2s; }
+      .control-button:hover, .control-button.active { background: #0FF; color: #000; box-shadow: 0 0 10px #0FF; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">HUMAN PILOT</button>
+      </div>
+      <p id="gameControls" style="color: #666; font-family: monospace; max-width: 600px; margin: 0 auto 20px auto; font-size: 12px;">
+        ARROWS: Move | SPACE: Shoot | SHIFT: Focus | Z: Special | ENTER: Start
+      </p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+    <script>
+        // UI helper to toggle active class
+        const buttons = document.querySelectorAll('.control-button');
+        buttons.forEach(btn => {
+            btn.addEventListener('click', function() {
+                buttons.forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+            });
+        });
+    </script>
+  </body>
+</html>
+</file>
+
+<file name="bullets.js">
+/**
+ * bullets.js
+ * Handles Bullet definitions, pooling, and Pattern Generators.
+ */
+
+import { ObjectPool, PI, TWO_PI, Easing } from './utils.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './globals.js';
+import { Physics } from './physics.js';
+
+/**
+ * Base Bullet Class
+ */
+export class Bullet {
+    constructor() {
+        this.active = false;
+        this.x = 0;
+        this.y = 0;
+        this.vx = 0;
+        this.vy = 0;
+        this.radius = 4;
+        this.color = COLORS.ENEMY_BULLET;
+        this.damage = 1;
+        this.isPlayer = false;
+        this.grazed = false; // Scoring mechanic
+    }
+
+    spawn(x, y, vx, vy, isPlayer = false, props = {}) {
+        this.x = x;
+        this.y = y;
+        this.vx = vx;
+        this.vy = vy;
+        this.isPlayer = isPlayer;
+        this.active = true;
+        this.grazed = false;
+        
+        // Apply properties
+        this.radius = props.radius || (isPlayer ? 5 : 4);
+        this.color = props.color || (isPlayer ? COLORS.PLAYER_BULLET : COLORS.ENEMY_BULLET);
+        this.damage = props.damage || 1;
+        this.type = props.type || 'basic'; // 'basic', 'aimed', 'laser'
+    }
+
+    update() {
+        if (!this.active) return;
+
+        this.x += this.vx;
+        this.y += this.vy;
+
+        // Bounds check
+        const margin = 20;
+        if (this.x < -margin || this.x > CANVAS_WIDTH + margin ||
+            this.y < -margin || this.y > CANVAS_HEIGHT + margin) {
+            this.active = false;
+        }
+    }
+
+    render(p) {
+        if (!this.active) return;
+        
+        p.push();
+        p.noStroke();
+        p.fill(this.color);
+        
+        // Simple glow effect
+        if (!this.isPlayer && this.type !== 'basic') {
+            p.drawingContext.shadowBlur = 5;
+            p.drawingContext.shadowColor = this.color;
+        }
+
+        if (this.type === 'oval') {
+            p.translate(this.x, this.y);
+            p.rotate(Math.atan2(this.vy, this.vx));
+            p.ellipse(0, 0, this.radius * 3, this.radius * 1.5);
+        } else {
+            p.circle(this.x, this.y, this.radius * 2);
+            // Inner core
+            p.fill(255);
+            p.circle(this.x, this.y, this.radius);
+        }
+        
+        p.pop();
+    }
+}
+
+// Global Bullet Managers
+export const BulletSystem = {
+    pool: new ObjectPool(() => new Bullet(), (b) => { b.active = false; }),
+    
+    spawn: (x, y, vx, vy, isPlayer, props) => {
+        const b = BulletSystem.pool.acquire();
+        b.spawn(x, y, vx, vy, isPlayer, props);
+        if (isPlayer) gameState.playerBullets.push(b);
+        else gameState.enemyBullets.push(b);
+        return b;
+    },
+
+    updateAndRender: (p) => {
+        // Player Bullets
+        for (let i = gameState.playerBullets.length - 1; i >= 0; i--) {
+            const b = gameState.playerBullets[i];
+            b.update();
+            b.render(p);
+            if (!b.active) {
+                BulletSystem.pool.release(b);
+                gameState.playerBullets.splice(i, 1);
+            }
+        }
+
+        // Enemy Bullets
+        for (let i = gameState.enemyBullets.length - 1; i >= 0; i--) {
+            const b = gameState.enemyBullets[i];
+            b.update();
+            b.render(p);
+            if (!b.active) {
+                BulletSystem.pool.release(b);
+                gameState.enemyBullets.splice(i, 1);
+            }
+        }
+    },
+    
+    clearEnemyBullets: () => {
+        // Turn bullets into score items or particles (the "Discharge" effect)
+        for (let b of gameState.enemyBullets) {
+            b.active = false;
+            BulletSystem.pool.release(b);
+            // TODO: Spawn particle/score
+        }
+        gameState.enemyBullets = [];
+    }
+};
+
+/**
+ * Pattern Generator
+ * Helper functions to create complex bullet patterns
+ */
+export const Patterns = {
+    // Fire a ring of bullets
+    ring: (x, y, count, speed, isPlayer = false, props = {}) => {
+        const step = TWO_PI / count;
+        for (let i = 0; i < count; i++) {
+            const angle = i * step;
+            const vx = Math.cos(angle) * speed;
+            const vy = Math.sin(angle) * speed;
+            BulletSystem.spawn(x, y, vx, vy, isPlayer, props);
+        }
+    },
+
+    // Fire aimed at player
+    aimed: (x, y, speed, spreadAngle = 0, count = 1, props = {}) => {
+        if (!gameState.player) return;
+        const targetX = gameState.player.x;
+        const targetY = gameState.player.y;
+        
+        const baseAngle = Math.atan2(targetY - y, targetX - x);
+        
+        if (count === 1) {
+            BulletSystem.spawn(x, y, Math.cos(baseAngle) * speed, Math.sin(baseAngle) * speed, false, props);
+        } else {
+            // Fan shape
+            const startAngle = baseAngle - spreadAngle / 2;
+            const step = spreadAngle / (count - 1);
+            
+            for (let i = 0; i < count; i++) {
+                const angle = startAngle + i * step;
+                BulletSystem.spawn(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, false, props);
+            }
+        }
+    },
+    
+    // Spiral pattern
+    spiral: (x, y, frame, arms = 3, speed = 3, rotationSpeed = 0.1, props = {}) => {
+        for (let i = 0; i < arms; i++) {
+            const angle = (frame * rotationSpeed) + (i * (TWO_PI / arms));
+            BulletSystem.spawn(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, false, props);
+        }
+    }
+};
+</file>
+
+<file name="automated_testing_controller.js">
+/**
+ * automated_testing_controller.js
+ * Logic for automated testing scenarios (Survival, Aggressive, Focus).
+ */
+
+import { distSq } from './utils.js';
+import { CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+/**
+ * Main entry point for AI actions.
+ * @param {Object} gameState - The global game state
+ * @returns {Object} Key states { left: bool, up: bool, ... }
+ */
+export function get_automated_testing_action(gameState) {
+    if (!gameState.player) return null;
+    
+    const actions = {
+        left: false, right: false, up: false, down: false,
+        shoot: true, // Always shoot by default
+        focus: false,
+        special: false
+    };
+
+    const pX = gameState.player.x;
+    const pY = gameState.player.y;
+
+    // Helper: Move towards target
+    const moveTo = (tx, ty) => {
+        const threshold = 5;
+        if (pX < tx - threshold) actions.right = true;
+        if (pX > tx + threshold) actions.left = true;
+        if (pY < ty - threshold) actions.down = true;
+        if (pY > ty + threshold) actions.up = true;
+    };
+
+    // Helper: Avoid nearest bullet
+    const avoidBullets = (criticalDist = 40) => {
+        let nearestDist = Infinity;
+        let threat = null;
+
+        for (const b of gameState.enemyBullets) {
+            const d = distSq(pX, pY, b.x, b.y);
+            if (d < nearestDist) {
+                nearestDist = d;
+                threat = b;
+            }
+        }
+
+        // If threat is close, move away
+        if (threat && nearestDist < criticalDist * criticalDist) {
+            const dx = pX - threat.x;
+            const dy = pY - threat.y;
+            // Move in direction of delta
+            if (dx > 0) actions.right = true;
+            else actions.left = true;
+            
+            if (dy > 0) actions.down = true;
+            else actions.up = true;
+            
+            return true; // dodging active
+        }
+        return false;
+    };
+
+    switch (gameState.controlMode) {
+        case "TEST_1": // Survival
+            // Prioritize dodging
+            if (!avoidBullets(60)) {
+                // If safe, stay in center bottom
+                moveTo(CANVAS_WIDTH / 2, CANVAS_HEIGHT - 100);
+            }
+            // Occasional bomb if overwhelmed
+            if (gameState.enemyBullets.length > 50 && Math.random() < 0.01) {
+                actions.special = true;
+            }
+            break;
+
+        case "TEST_2": // Aggressive
+            // Find nearest enemy to align X
+            let targetEnemy = null;
+            let minDist = Infinity;
+            for (const e of gameState.enemies) {
+                const d = distSq(pX, pY, e.x, e.y);
+                if (d < minDist) {
+                    minDist = d;
+                    targetEnemy = e;
+                }
+            }
+
+            // Dodge short range
+            const dodging = avoidBullets(30);
+            
+            if (!dodging && targetEnemy) {
+                // Align X
+                if (pX < targetEnemy.x - 10) actions.right = true;
+                else if (pX > targetEnemy.x + 10) actions.left = true;
+            }
+            
+            // Use bomb for score/clearing
+            if (gameState.bombs > 1 && gameState.enemyBullets.length > 30) {
+                actions.special = true;
+            }
+            break;
+
+        case "TEST_3": // Focus
+            actions.focus = true;
+            actions.shoot = false; // Just dodge
+            
+            // Move through gaps? Simplified: just dodge very carefully
+            if (!avoidBullets(40)) {
+                 moveTo(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+            }
+            break;
+    }
+
+    return actions;
+}
+
+// Expose globally
+window.get_automated_testing_action = get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+/**
+ * globals.js
+ * Contains global constants, game state definition, and logging initialization.
+ * This file serves as the central source of truth for game data.
+ */
+
+// Canvas Dimensions
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+
+// Game Colors (Blue Revolver Palette)
+export const COLORS = {
+    BACKGROUND: '#050510',
+    PLAYER: '#00FFFF', // Cyan
+    PLAYER_BULLET: '#AAFFFF',
+    ENEMY_WEAK: '#FF5555', // Red
+    ENEMY_STRONG: '#FF00FF', // Magenta
+    ENEMY_BULLET: '#FF99FF', // Pinkish
+    ENEMY_BULLET_AIMED: '#FF3333',
+    GOLD: '#FFD700',
+    TEXT: '#FFFFFF',
+    UI_BG: 'rgba(0, 0, 20, 0.8)',
+    PARTICLE_SPARK: '#FFFFFF',
+    PARTICLE_EXPLOSION: '#FFaa00'
+};
+
+// Game Phases
+export const GAME_PHASES = {
+    START: "START",
+    PLAYING: "PLAYING",
+    PAUSED: "PAUSED",
+    GAME_OVER_WIN: "GAME_OVER_WIN",
+    GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+// Control Modes
+export const CONTROL_MODES = {
+    HUMAN: "HUMAN",
+};
+
+/**
+ * The main Game State object.
+ * Tracks all mutable data during the game's lifecycle.
+ */
+export const gameState = {
+    // Phase and Mode
+    gamePhase: GAME_PHASES.START,
+    controlMode: CONTROL_MODES.HUMAN,
+
+    // Entities
+    player: null,
+    entities: [],       // General entity list
+    enemies: [],        // Specific list for collision optimization
+    enemyBullets: [],   // Specific list for bullets
+    playerBullets: [],
+    particles: [],
+    collectibles: [],
+    
+    // Physics / World
+    gravity: 0,         // No gravity in a top-down shmup
+    friction: 0.85,     // Movement friction
+    bounds: {
+        x: 0, y: 0, width: CANVAS_WIDTH, height: CANVAS_HEIGHT
+    },
+
+    // Scoring & Progression
+    score: 0,
+    highScore: 0,
+    chain: 0,           // Current chain count
+    chainTimer: 0,      // Frames until chain drops
+    chainMaxTime: 120,  // Max frames for chain
+    level: 1,
+    waveFrame: 0,       // Frame counter for the current wave
+
+    // Stats
+    lives: 3,
+    bombs: 2,           // Special weapon ammo
+    
+    // Performance
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Input State (Global mouse tracking)
+    mouseX: 0,
+    mouseY: 0,
+
+    // Debug flags
+    debugMode: false
+};
+
+/**
+ * Exposes the game state globally as required by the spec.
+ */
+export function getGameState() {
+    return gameState;
+}
+window.getGameState = getGameState;
+
+/**
+ * Resets the game state for a new game session.
+ * Does not reset high score or control mode.
+ */
+export function resetGameState() {
+    gameState.gamePhase = GAME_PHASES.START;
+    gameState.score = 0;
+    gameState.chain = 0;
+    gameState.chainTimer = 0;
+    gameState.waveFrame = 0;
+    gameState.lives = 3;
+    gameState.bombs = 3;
+    
+    // Clear arrays
+    gameState.entities = [];
+    gameState.enemies = [];
+    gameState.enemyBullets = [];
+    gameState.playerBullets = [];
+    gameState.particles = [];
+    gameState.collectibles = [];
+    
+    gameState.player = null;
+}
+</file>
+
+<file name="game.js">
+/**
+ * game.js
+ * Main entry point. Sets up p5 instance, game loop, and initialization.
+ */
+
+import { 
+    gameState, getGameState, resetGameState, 
+    CANVAS_WIDTH, CANVAS_HEIGHT, GAME_PHASES, CONTROL_MODES 
+} from './globals.js';
+import { handleKeyPress, handleKeyRelease } from './input.js';
+import { Player } from './entities.js';
+import { Background } from './background.js';
+import { BulletSystem } from './bullets.js';
+import { ParticleSystem } from './particles.js';
+import { Physics } => './physics.js';
+import { LevelDirector } from './level.js';
+import { 
+    renderHUD, renderStartScreen, renderGameOver, renderPause 
+} from './ui.js';
+
+// Get p5 from window (loaded via script tag)
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    // Initialize Logs
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        // Disable context menu
+        document.oncontextmenu = () => false;
+        
+        // Initial setup
+        Background.init();
+        
+        p.logs.game_info.push({
+            data: { gamePhase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    };
+
+    p.draw = function() {
+        // Timekeeping
+        const now = p.millis();
+        gameState.deltaTime = (now - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = now;
+        gameState.frameCount = p.frameCount;
+        
+        // Global Input Mouse tracking
+        gameState.mouseX = p.mouseX;
+        gameState.mouseY = p.mouseY;
+
+        // --- GAME LOOP ---
+        switch (gameState.gamePhase) {
+            case GAME_PHASES.START:
+                Background.update();
+                Background.render(p);
+                renderStartScreen(p);
+                break;
+                
+            case GAME_PHASES.PLAYING:
+                updateGameLogic(p);
+                renderGame(p);
+                renderHUD(p);
+                break;
+                
+            case GAME_PHASES.PAUSED:
+                renderGame(p); // Static render
+                renderPause(p);
+                break;
+                
+            case GAME_PHASES.GAME_OVER_WIN:
+            case GAME_PHASES.GAME_OVER_LOSE:
+                renderGame(p);
+                renderGameOver(p);
+                break;
+        }
+    };
+    
+    // --- UPDATE LOGIC ---
+    function updateGameLogic(p) {
+        // Init Player if null
+        if (!gameState.player) {
+            new Player(CANVAS_WIDTH/2, CANVAS_HEIGHT - 100);
+        }
+
+        // Global counters
+        gameState.waveFrame++;
+        if (gameState.chainTimer > 0) gameState.chainTimer--;
+        else gameState.chain = 0;
+
+        // Sub-systems
+        Background.update();
+        LevelDirector.update();
+        
+        // Entities
+        if (gameState.player) gameState.player.update(p);
+        
+        gameState.enemies.forEach(e => e.update(p));
+        gameState.collectibles.forEach(c => c.update());
+        
+        BulletSystem.updateAndRender(p); // Actually renders in draw, but updates here? 
+        // Architecture fix: BulletSystem should separate update and render. 
+        // For simplicity in this structure, we'll do update loops here and render calls in renderGame.
+        // Actually, let's keep it clean: update logic only here.
+        
+        // Physics & Collisions
+        checkCollisions();
+        
+        // Particles
+        // (updated in render usually for visual only? No, physics apply)
+    }
+    
+    function checkCollisions() {
+        // 1. Player Bullets vs Enemies
+        for (const bullet of gameState.playerBullets) {
+            if (!bullet.active) continue;
+            for (const enemy of gameState.enemies) {
+                if (enemy.dead) continue;
+                if (Physics.checkCircleCircle(bullet.x, bullet.y, bullet.radius, enemy.x, enemy.y, enemy.radius)) {
+                    enemy.takeDamage(bullet.damage);
+                    bullet.active = false;
+                    ParticleSystem.emit(bullet.x, bullet.y, 2, 'spark');
+                    break; // Bullet hits one enemy
+                }
+            }
+        }
+        
+        // 2. Enemy Bullets vs Player
+        if (gameState.player && !gameState.player.dead && gameState.player.invulnerableTime <= 0) {
+            const pX = gameState.player.x;
+            const pY = gameState.player.y;
+            const pR = gameState.player.radius; // tiny hitbox
+            const grazeR = gameState.player.visualRadius + 5;
+            
+            for (const bullet of gameState.enemyBullets) {
+                if (!bullet.active) continue;
+                
+                // Graze check
+                if (!bullet.grazed && Physics.checkCircleCircle(pX, pY, grazeR, bullet.x, bullet.y, bullet.radius)) {
+                    bullet.grazed = true;
+                    gameState.score += 10; // Graze points
+                    // FX?
+                }
+                
+                // Hit check
+                if (Physics.checkCircleCircle(pX, pY, pR, bullet.x, bullet.y, bullet.radius)) {
+                    gameState.player.hit();
+                    bullet.active = false;
+                    break;
+                }
+            }
+        }
+    }
+
+    // --- RENDER LOGIC ---
+    function renderGame(p) {
+        Background.render(p);
+        
+        gameState.collectibles.forEach(c => c.render(p));
+        gameState.enemies.forEach(e => e.render(p));
+        if (gameState.player) gameState.player.render(p);
+        
+        // Bullets (Update separated above? We need to iterate again for render or combine)
+        // To save cycles, we usually combine. But since p5 clears background, we must render every frame.
+        // Let's rely on BulletSystem.updateAndRender being split or handle it gracefully.
+        // We will split it now manually for correctness:
+        
+        renderBullets(p);
+        ParticleSystem.updateAndRender(p);
+    }
+    
+    function renderBullets(p) {
+         gameState.playerBullets.forEach(b => { if(b.active) b.render(p); });
+         gameState.enemyBullets.forEach(b => { if(b.active) b.render(p); });
+    }
+    
+    // Override update logic to remove the render call inside update
+    // We need to actually call update on bullets separately if we split render.
+    // Let's modify BulletSystem quickly in memory:
+    // Actually, I'll just iterate manually here for update to ensure separation of concerns.
+    
+    const _originalUpdateGame = updateGameLogic;
+    updateGameLogic = function(p) {
+         if (!gameState.player) new Player(CANVAS_WIDTH/2, CANVAS_HEIGHT - 100);
+         gameState.waveFrame++;
+         if (gameState.chainTimer > 0) gameState.chainTimer--; else gameState.chain = 0;
+         
+         Background.update();
+         LevelDirector.update();
+         if (gameState.player) gameState.player.update(p);
+         gameState.enemies.forEach(e => e.update(p));
+         gameState.collectibles.forEach(c => c.update());
+         
+         // Bullet updates
+         gameState.playerBullets.forEach(b => b.update());
+         gameState.enemyBullets.forEach(b => b.update());
+         
+         // Cleanup inactive bullets
+         // (Optimized cleanup should happen occasionally or via swap-remove, doing simple filter here for code clarity)
+         // NOTE: Filter creates garbage. Ideally we use the pool release logic inside update.
+         // Let's trust the BulletSystem manager methods if we implemented them to handle this cycle.
+         // I'll stick to a simple clean loop:
+         for(let i=gameState.playerBullets.length-1; i>=0; i--) {
+             if(!gameState.playerBullets[i].active) {
+                 BulletSystem.pool.release(gameState.playerBullets[i]);
+                 gameState.playerBullets.splice(i,1);
+             }
+         }
+         for(let i=gameState.enemyBullets.length-1; i>=0; i--) {
+             if(!gameState.enemyBullets[i].active) {
+                 BulletSystem.pool.release(gameState.enemyBullets[i]);
+                 gameState.enemyBullets.splice(i,1);
+             }
+         }
+
+         checkCollisions();
+    };
+
+    p.keyPressed = function() {
+        handleKeyPress(p);
+    };
+
+    p.keyReleased = function() {
+        handleKeyRelease(p);
+    };
+});
+
+window.gameInstance = gameInstance;
+
+window.setControlMode = (mode) => {
+    // With automated testing removed, the game should always be in HUMAN mode.
+    // This function is still called by the "HUMAN PILOT" button.
+    gameState.controlMode = CONTROL_MODES.HUMAN;
+    console.log("Control Mode Set to:", CONTROL_MODES.HUMAN);
+    resetGameState();
+    gameState.gamePhase = GAME_PHASES.START;
+};
+</file>
+
+<file name="ui.js">
+/**
+ * ui.js
+ * Handles HUD rendering and menu screens.
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './globals.js';
+
+export function renderHUD(p) {
+    p.push();
+    
+    // Top Bar Background
+    p.fill(0, 0, 0, 100);
+    p.rect(0, 0, CANVAS_WIDTH, 40);
+    
+    // Score
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(20);
+    p.fill(COLORS.GOLD);
+    p.text(`SCORE: ${gameState.score.toString().padStart(8, '0')}`, 10, 10);
+    
+    // Chain Gauge
+    p.textAlign(p.RIGHT, p.TOP);
+    p.fill(COLORS.TEXT);
+    p.text(`CHAIN: ${gameState.chain}`, CANVAS_WIDTH - 10, 10);
+    
+    // Chain Bar
+    if (gameState.chain > 0) {
+        const barW = 100;
+        const barH = 5;
+        const ratio = gameState.chainTimer / gameState.chainMaxTime;
+        p.noStroke();
+        p.fill(50);
+        p.rect(CANVAS_WIDTH - 120, 32, barW, barH);
+        p.fill(COLORS.GOLD);
+        p.rect(CANVAS_WIDTH - 120, 32, barW * ratio, barH);
+    }
+    
+    // Lives
+    p.textAlign(p.LEFT, p.BOTTOM);
+    p.textSize(16);
+    p.fill(COLORS.PLAYER);
+    p.text(`LIVES: ${"★".repeat(gameState.lives)}`, 10, CANVAS_HEIGHT - 10);
+    
+    // Bombs
+    p.fill(COLORS.ENEMY_WEAK);
+    p.text(`BOMBS: ${"●".repeat(gameState.bombs)}`, 120, CANVAS_HEIGHT - 10);
+
+    p.pop();
+}
+
+export function renderStartScreen(p) {
+    p.background(COLORS.BACKGROUND);
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    // Replaced Logo / Title with "press enter to begin"
+    p.fill(COLORS.TEXT); // Keep color consistent with original prompt
+    p.textSize(32); // Increased size to act as a title
+    p.textStyle(p.NORMAL); // Ensure no bold styling from previous title
+    p.text("press enter to begin", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    
+    // Instructions (kept as is)
+    p.textSize(14);
+    p.fill(150);
+    p.text("ARROWS: Move | Z: Bomb | SHIFT: Focus", CANVAS_WIDTH/2, CANVAS_HEIGHT - 30);
+}
+
+export function renderGameOver(p) {
+    p.background(0, 0, 0, 200);
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    p.fill(COLORS.ENEMY_WEAK);
+    p.textSize(48);
+    p.text("GAME OVER", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+    
+    p.fill(COLORS.TEXT);
+    p.textSize(24);
+    p.text(`FINAL SCORE: ${gameState.score}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 10);
+    
+    p.fill(COLORS.PLAYER);
+    p.textSize(18);
+    p.text("PRESS R TO RESTART", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60);
+}
+
+export function renderPause(p) {
+    p.fill(0, 0, 0, 100);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(COLORS.TEXT);
+    p.textSize(40);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+}
+</file>
+
+<file name="background.js">
+/**
+ * background.js
+ * Procedural scrolling background ("Cyberspace" effect).
+ */
+import { CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './globals.js';
+
+class GridLine {
+    constructor(y) {
+        this.y = y;
+        this.speed = 2;
+    }
+    update() {
+        this.y += this.speed;
+        if (this.y > CANVAS_HEIGHT) {
+            this.y = 0;
+        }
+    }
+    render(p) {
+        p.stroke(0, 50, 200, 100); // Dark Blue lines
+        p.strokeWeight(1);
+        p.line(0, this.y, CANVAS_WIDTH, this.y);
+    }
+}
+
+class Star {
+    constructor() {
+        this.reset();
+        this.y = Math.random() * CANVAS_HEIGHT;
+    }
+    reset() {
+        this.x = Math.random() * CANVAS_WIDTH;
+        this.y = 0;
+        this.z = Math.random() * 2 + 1; // Depth/Speed
+        this.size = Math.random() * 2;
+    }
+    update() {
+        this.y += this.z * 4; // Fast scrolling
+        if (this.y > CANVAS_HEIGHT) this.reset();
+    }
+    render(p) {
+        p.fill(255, 255, 255, 150);
+        p.noStroke();
+        p.circle(this.x, this.y, this.size);
+    }
+}
+
+export const Background = {
+    stars: [],
+    gridLines: [],
+    
+    init: () => {
+        Background.stars = [];
+        for (let i = 0; i < 50; i++) Background.stars.push(new Star());
+        Background.gridLines = [];
+        for (let i = 0; i < CANVAS_HEIGHT; i+= 40) Background.gridLines.push(new GridLine(i));
+    },
+    
+    update: () => {
+        Background.stars.forEach(s => s.update());
+        Background.gridLines.forEach(g => g.update());
+    },
+    
+    render: (p) => {
+        p.background(COLORS.BACKGROUND);
+        
+        // Draw Vertical Grid Lines (static perspective)
+        p.stroke(0, 50, 200, 50);
+        for (let x = 0; x < CANVAS_WIDTH; x += 40) {
+            p.line(x, 0, x, CANVAS_HEIGHT);
+        }
+        
+        // Draw Horizontal Scrolling Lines
+        Background.gridLines.forEach(g => g.render(p));
+        
+        // Draw Stars
+        Background.stars.forEach(s => s.render(p));
+    }
+};
+</file>
+
+<file name="entities.js">
+/**
+ * entities.js
+ * Player, Enemy, and Collectible classes.
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './globals.js';
+import { getActionInput } from './input.js';
+import { BulletSystem, Patterns } from './bullets.js';
+import { Physics } from './physics.js';
+import { ParticleSystem } from './particles.js';
+import { clamp } from './utils.js';
+
+/**
+ * Base Entity
+ */
+class Entity {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.vx = 0;
+        this.vy = 0;
+        this.width = 20;
+        this.height = 20;
+        this.radius = 10;
+        this.health = 10;
+        this.dead = false;
+        this.color = '#FFFFFF';
+        this.tags = [];
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+    }
+
+    render(p) {
+        p.fill(this.color);
+        p.circle(this.x, this.y, this.radius * 2);
+    }
+    
+    takeDamage(amount) {
+        this.health -= amount;
+        if (this.health <= 0) {
+            this.die();
+        }
+    }
+    
+    die() {
+        this.dead = true;
+        ParticleSystem.emit(this.x, this.y, 5, 'explosion');
+    }
+}
+
+/**
+ * Player Class
+ */
+export class Player extends Entity {
+    constructor(x, y) {
+        super(x, y);
+        this.speed = 5;
+        this.focusSpeed = 2.5;
+        this.radius = 3; // Hitbox radius (tiny)
+        this.visualRadius = 15;
+        this.color = COLORS.PLAYER;
+        this.health = 3; // Lives
+        
+        this.shootTimer = 0;
+        this.shootDelay = 5;
+        this.invulnerableTime = 0;
+        this.maxInvulnerable = 120; // 2 seconds
+        
+        this.dischargeTimer = 0;
+        this.dischargeMax = 300; // Cooldown for special
+        
+        gameState.player = this;
+    }
+
+    update(p) {
+        // Handle Input
+        let currentSpeed = this.speed;
+        let focused = false;
+        
+        if (getActionInput('focus')) {
+            currentSpeed = this.focusSpeed;
+            focused = true;
+        }
+
+        this.vx = 0;
+        this.vy = 0;
+        if (getActionInput('left')) this.vx = -currentSpeed;
+        if (getActionInput('right')) this.vx = currentSpeed;
+        if (getActionInput('up')) this.vy = -currentSpeed;
+        if (getActionInput('down')) this.vy = currentSpeed;
+
+        // Diagonal normalization
+        if (this.vx !== 0 && this.vy !== 0) {
+            this.vx *= 0.707;
+            this.vy *= 0.707;
+        }
+
+        // Apply movement
+        super.update();
+        
+        // Clamp bounds
+        this.x = clamp(this.x, this.visualRadius, CANVAS_WIDTH - this.visualRadius);
+        this.y = clamp(this.y, this.visualRadius, CANVAS_HEIGHT - this.visualRadius);
+
+        // Shooting
+        if (this.shootTimer > 0) this.shootTimer--;
+        if (getActionInput('shoot') && this.shootTimer <= 0) {
+            this.shoot();
+            this.shootTimer = this.shootDelay;
+        }
+        
+        // Special Weapon (Z)
+        if (getActionInput('special') && gameState.bombs > 0 && this.dischargeTimer <= 0) {
+            this.useSpecial();
+        }
+        if (this.dischargeTimer > 0) this.dischargeTimer--;
+
+        // Invulnerability
+        if (this.invulnerableTime > 0) this.invulnerableTime--;
+
+        // Collision with Collectibles
+        for (let i = gameState.collectibles.length - 1; i >= 0; i--) {
+            const c = gameState.collectibles[i];
+            if (Physics.checkCircleCircle(this.x, this.y, this.visualRadius + 10, c.x, c.y, c.radius)) {
+                c.collect();
+            }
+        }
+        
+        // Log Player Info
+        if (p.frameCount % 10 === 0) {
+            p.logs.player_info.push({
+                screen_x: this.x,
+                screen_y: this.y,
+                game_x: this.x,
+                game_y: this.y,
+                framecount: p.frameCount,
+                timestamp: Date.now()
+            });
+        }
+    }
+
+    shoot() {
+        // Main forward stream
+        BulletSystem.spawn(this.x - 5, this.y - 10, 0, -12, true, {});
+        BulletSystem.spawn(this.x + 5, this.y - 10, 0, -12, true, {});
+        
+        // Side spread if powered up (simple implementation: always active for fun)
+        BulletSystem.spawn(this.x - 10, this.y, -2, -10, true, { type: 'oval' });
+        BulletSystem.spawn(this.x + 10, this.y, 2, -10, true, { type: 'oval' });
+    }
+    
+    useSpecial() {
+        gameState.bombs--;
+        this.dischargeTimer = 60;
+        this.invulnerableTime = 60; // Brief i-frames
+        
+        // Clear screen logic
+        BulletSystem.clearEnemyBullets();
+        
+        // Visual flair
+        ParticleSystem.emit(this.x, this.y, 50, 'spark');
+        
+        // Damage all enemies
+        gameState.enemies.forEach(e => e.takeDamage(20));
+    }
+
+    hit() {
+        if (this.invulnerableTime > 0) return;
+        
+        gameState.lives--;
+        gameState.chain = 0; // Penalty
+        ParticleSystem.emit(this.x, this.y, 20, 'explosion');
+        
+        if (gameState.lives < 0) {
+            this.die();
+        } else {
+            this.invulnerableTime = this.maxInvulnerable;
+            // Reset position
+            this.x = CANVAS_WIDTH / 2;
+            this.y = CANVAS_HEIGHT - 50;
+            // Clear bullets to prevent spawn kill
+            BulletSystem.clearEnemyBullets();
+        }
+    }
+    
+    die() {
+        super.die();
+        gameState.gamePhase = "GAME_OVER_LOSE";
+    }
+
+    render(p) {
+        if (this.dead) return;
+        
+        // Flicker if invulnerable
+        if (this.invulnerableTime > 0 && Math.floor(p.frameCount / 4) % 2 === 0) return;
+
+        p.push();
+        p.translate(this.x, this.y);
+        
+        // Draw Ship Body
+        p.fill(this.color);
+        p.noStroke();
+        p.triangle(0, -this.visualRadius, -this.visualRadius, this.visualRadius, this.visualRadius, this.visualRadius);
+        
+        // Draw Hitbox (if focusing or always visible small dot)
+        if (getActionInput('focus')) {
+            p.fill(255, 0, 0);
+            p.circle(0, 0, this.radius * 2);
+            p.noFill();
+            p.stroke(255);
+            p.circle(0, 0, this.visualRadius * 2);
+        } else {
+            p.fill(0, 0, 50);
+            p.circle(0, 0, this.radius * 2);
+        }
+        
+        // Engine trails
+        p.fill(255, 100, 0, 150);
+        const trailLen = Math.random() * 20 + 10;
+        p.triangle(-5, 15, 5, 15, 0, 15 + trailLen);
+
+        p.pop();
+    }
+}
+
+/**
+ * Enemy Classes
+ */
+export class Enemy extends Entity {
+    constructor(x, y, type) {
+        super(x, y);
+        this.type = type;
+        this.scoreValue = 100;
+        this.age = 0;
+        
+        // Default props
+        this.health = 5;
+        this.radius = 15;
+        this.color = COLORS.ENEMY_WEAK;
+        
+        if (type === 'drone') {
+            this.health = 3;
+            this.scoreValue = 100;
+        } else if (type === 'tank') {
+            this.health = 40;
+            this.radius = 30;
+            this.color = COLORS.ENEMY_STRONG;
+            this.scoreValue = 1000;
+        } else if (type === 'interceptor') {
+            this.health = 8;
+            this.color = '#FFAA00';
+            this.scoreValue = 300;
+        }
+
+        gameState.enemies.push(this);
+    }
+
+    update(p) {
+        this.age++;
+        super.update();
+        
+        // Patterns based on type
+        if (this.type === 'drone') {
+            this.y += 2; // Move down
+            // Shoot occasionally
+            if (this.age % 120 === 60) {
+                Patterns.aimed(this.x, this.y, 4);
+            }
+        } else if (this.type === 'interceptor') {
+            this.y += 1.5;
+            this.x += Math.sin(this.age * 0.05) * 2;
+            if (this.age % 90 === 0) {
+                Patterns.ring(this.x, this.y, 8, 3);
+            }
+        } else if (this.type === 'tank') {
+            this.y += 0.5;
+            if (this.age % 60 === 0) {
+                Patterns.spiral(this.x, this.y, this.age, 5, 4);
+                Patterns.aimed(this.x, this.y, 5, PI/4, 3); // Aimed spread
+            }
+        }
+
+        // Cleanup offscreen
+        if (this.y > CANVAS_HEIGHT + 50 || this.x < -50 || this.x > CANVAS_WIDTH + 50) {
+            this.dead = true;
+            this.removeFromLists();
+        }
+    }
+    
+    die() {
+        super.die();
+        // Add Score
+        let multiplier = 1 + (gameState.chain * 0.1);
+        gameState.score += Math.floor(this.scoreValue * multiplier);
+        gameState.chain++;
+        gameState.chainTimer = gameState.chainMaxTime;
+        
+        // Chance to drop powerup/gold
+        if (Math.random() < 0.3) {
+            new Collectible(this.x, this.y);
+        }
+        
+        this.removeFromLists();
+    }
+    
+    removeFromLists() {
+        const idx = gameState.enemies.indexOf(this);
+        if (idx > -1) gameState.enemies.splice(idx, 1);
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        p.fill(this.color);
+        
+        // Draw enemy shape based on type
+        if (this.type === 'tank') {
+            p.rectMode(p.CENTER);
+            p.rect(0, 0, this.radius * 2, this.radius * 2);
+            // Core
+            p.fill(255, 0, 0);
+            p.circle(0, 0, this.radius);
+        } else {
+            // Rotated square for basic enemies
+            p.rotate(p.frameCount * 0.05);
+            p.rectMode(p.CENTER);
+            p.rect(0, 0, this.radius * 1.5, this.radius * 1.5);
+        }
+        p.pop();
+    }
+}
+
+/**
+ * Collectible Class (Score/Power items)
+ */
+export class Collectible extends Entity {
+    constructor(x, y) {
+        super(x, y);
+        this.radius = 8;
+        this.vy = 1; // Falls slowly
+        this.color = COLORS.GOLD;
+        gameState.collectibles.push(this);
+    }
+    
+    update() {
+        this.y += this.vy;
+        // Magnet effect if player is close or specialized
+        if (gameState.player && Physics.checkCircleCircle(this.x, this.y, 100, gameState.player.x, gameState.player.y, 10)) {
+            const angle = Math.atan2(gameState.player.y - this.y, gameState.player.x - this.x);
+            this.x += Math.cos(angle) * 4;
+            this.y += Math.sin(angle) * 4;
+        }
+        
+        if (this.y > CANVAS_HEIGHT + 20) {
+            this.dead = true;
+            this.remove();
+        }
+    }
+    
+    collect() {
+        gameState.score += 500;
+        this.dead = true;
+        this.remove();
+        // FX
+        ParticleSystem.emit(this.x, this.y, 3, 'spark');
+    }
+    
+    remove() {
+        const idx = gameState.collectibles.indexOf(this);
+        if (idx > -1) gameState.collectibles.splice(idx, 1);
+    }
+    
+    render(p) {
+        p.fill(this.color);
+        p.noStroke();
+        p.circle(this.x, this.y, this.radius * 2);
+    }
+}
+</file>
+
+<file name="utils.js">
+/**
+ * utils.js
+ * Utility functions for math, random generation, and easing.
+ */
+
+// Basic Math
+export const PI = Math.PI;
+export const TWO_PI = Math.PI * 2;
+export const HALF_PI = Math.PI / 2;
+
+export function clamp(value, min, max) {
+    return Math.min(Math.max(value, min), max);
+}
+
+export function lerp(start, end, t) {
+    return start + (end - start) * t;
+}
+
+export function distSq(x1, y1, x2, y2) {
+    const dx = x1 - x2;
+    const dy = y1 - y2;
+    return dx * dx + dy * dy;
+}
+
+export function dist(x1, y1, x2, y2) {
+    return Math.sqrt(distSq(x1, y1, x2, y2));
+}
+
+export function angleBetween(x1, y1, x2, y2) {
+    return Math.atan2(y2 - y1, x2 - x1);
+}
+
+// Easing Functions
+export const Easing = {
+    linear: t => t,
+    easeInQuad: t => t * t,
+    easeOutQuad: t => t * (2 - t),
+    easeInOutQuad: t => t < .5 ? 2 * t * t : -1 + (4 - 2 * t) * t,
+    easeOutElastic: t => {
+        const c4 = (2 * Math.PI) / 3;
+        return t === 0 ? 0 : t === 1 ? 1 : Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * c4) + 1;
+    }
+};
+
+/**
+ * Object Pool generic class implementation.
+ * Essential for performance in a bullet hell game.
+ */
+export class ObjectPool {
+    constructor(createFn, resetFn, initialSize = 100) {
+        this.createFn = createFn;
+        this.resetFn = resetFn;
+        this.pool = [];
+        this.active = []; // Optional tracking
+        
+        // Pre-populate
+        for (let i = 0; i < initialSize; i++) {
+            this.pool.push(this.createFn());
+        }
+    }
+    
+    acquire(...args) {
+        let obj;
+        if (this.pool.length > 0) {
+            obj = this.pool.pop();
+        } else {
+            // Expand pool if empty
+            obj = this.createFn();
+        }
+        
+        this.resetFn(obj, ...args);
+        return obj;
+    }
+    
+    release(obj) {
+        this.pool.push(obj);
+    }
+    
+    clear() {
+        // In a real scenario we might reset all active objects, 
+        // but here we just ensure the pool is ready for reuse logic
+        // Active lists are usually managed by the GameState arrays
+    }
+}
+</file>
+
+<file name="physics.js">
+/**
+ * physics.js
+ * Collision detection wrappers using p5.collide2D and basic AABB/Circle math.
+ */
+
+// Import collision library logic (assuming loaded via script tag globally as collideRectRect etc)
+// p5.collide2D attaches to p5.prototype usually, but we can also use standalone functions if available
+// or write custom ones to be safe and dependency-free if the library fails to load.
+// We will implement custom efficient checks here to ensure reliability.
+
+export const Physics = {
+    // Circle-Circle Collision (Cheapest)
+    checkCircleCircle: (x1, y1, r1, x2, y2, r2) => {
+        const dx = x1 - x2;
+        const dy = y1 - y2;
+        const distSq = dx * dx + dy * dy;
+        const rSum = r1 + r2;
+        return distSq <= rSum * rSum;
+    },
+
+    // AABB (Rect-Rect)
+    checkAABB: (r1, r2) => {
+        return (
+            r1.x < r2.x + r2.w &&
+            r1.x + r1.w > r2.x &&
+            r1.y < r2.y + r2.h &&
+            r1.y + r1.h > r2.y
+        );
+    },
+    
+    // Circle-Rect
+    checkCircleRect: (cx, cy, radius, rx, ry, rw, rh) => {
+        // Find the closest point to the circle within the rectangle
+        let testX = cx;
+        let testY = cy;
+
+        if (cx < rx) testX = rx;      // Left edge
+        else if (cx > rx + rw) testX = rx + rw;   // Right edge
+        
+        if (cy < ry) testY = ry;      // Top edge
+        else if (cy > ry + rh) testY = ry + rh;   // Bottom edge
+
+        // Get distance from closest edges
+        const distX = cx - testX;
+        const distY = cy - testY;
+        const distance = Math.sqrt((distX * distX) + (distY * distY));
+
+        return distance <= radius;
+    }
+};
+
+/**
+ * Grid-based Spatial Partitioning for efficient collision detection.
+ * Essential for bullet hell with 100s of entities.
+ */
+export class SpatialHash {
+    constructor(cellSize) {
+        this.cellSize = cellSize;
+        this.grid = new Map();
+    }
+
+    key(x, y) {
+        const cx = Math.floor(x / this.cellSize);
+        const cy = Math.floor(y / this.cellSize);
+        return `${cx},${cy}`;
+    }
+
+    clear() {
+        this.grid.clear();
+    }
+
+    insert(entity) {
+        // Simple insertion based on center point
+        // For large entities, might need to insert into multiple cells
+        const k = this.key(entity.x, entity.y);
+        if (!this.grid.has(k)) {
+            this.grid.set(k, []);
+        }
+        this.grid.get(k).push(entity);
+    }
+
+    // Retrieve potential collisions for an entity
+    query(entity) {
+        const neighbors = [];
+        const cx = Math.floor(entity.x / this.cellSize);
+        const cy = Math.floor(entity.y / this.cellSize);
+
+        // Check 3x3 grid around entity
+        for (let i = -1; i <= 1; i++) {
+            for (let j = -1; j <= 1; j++) {
+                const k = `${cx + i},${cy + j}`;
+                if (this.grid.has(k)) {
+                    const cellEntities = this.grid.get(k);
+                    for (let e of cellEntities) {
+                        if (e !== entity) neighbors.push(e);
+                    }
+                }
+            }
+        }
+        return neighbors;
+    }
+}
+</file>
+
+<file name="particles.js">
+/**
+ * particles.js
+ * Particle system for explosions, trails, and effects.
+ */
+
+import { gameState, COLORS } from './globals.js';
+
+class Particle {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.vx = (Math.random() - 0.5) * 5;
+        this.vy = (Math.random() - 0.5) * 5;
+        this.life = 1.0;
+        this.decay = 0.05;
+        this.size = Math.random() * 5 + 2;
+        this.type = type; // 'spark', 'explosion', 'smoke'
+        this.color = COLORS.PARTICLE_SPARK;
+        
+        if (type === 'explosion') {
+            this.color = COLORS.PARTICLE_EXPLOSION;
+            this.decay = 0.03;
+            this.size = Math.random() * 10 + 5;
+        } else if (type === 'smoke') {
+            this.color = '#888888';
+            this.vx *= 0.5;
+            this.vy *= 0.5;
+            this.decay = 0.02;
+        }
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life -= this.decay;
+        this.vx *= 0.95; // Friction
+        this.vy *= 0.95;
+    }
+
+    render(p) {
+        p.push();
+        p.noStroke();
+        // Alpha based on life
+        const alpha = Math.floor(this.life * 255);
+        // Parse hex to rgb for alpha? p5 handles this if we use color() object usually
+        // but for raw performance string manipulation is tricky. 
+        // We'll trust p5's fill(color, alpha) overload if color is a string is iffy
+        // Safer to use simple transparency:
+        
+        const c = p.color(this.color);
+        c.setAlpha(alpha);
+        p.fill(c);
+        
+        if (this.type === 'spark') {
+            p.rect(this.x, this.y, this.size, this.size);
+        } else {
+            p.circle(this.x, this.y, this.size);
+        }
+        p.pop();
+    }
+}
+
+export const ParticleSystem = {
+    emit: (x, y, count, type = 'spark') => {
+        for (let i = 0; i < count; i++) {
+            gameState.particles.push(new Particle(x, y, type));
+        }
+    },
+    
+    updateAndRender: (p) => {
+        for (let i = gameState.particles.length - 1; i >= 0; i--) {
+            const part = gameState.particles[i];
+            part.update();
+            part.render(p);
+            if (part.life <= 0) {
+                gameState.particles.splice(i, 1);
+            }
+        }
+    }
+};
+</file>
+
+<file name="input.js">
+/**
+ * input.js
+ * Handles keyboard input and provides an abstraction layer for controls.
+ */
+
+import { gameState, GAME_PHASES, CONTROL_MODES } from './globals.js';
+
+
+// Key Codes
+const KEYS = {
+    LEFT: 37,
+    UP: 38,
+    RIGHT: 39,
+    DOWN: 40,
+    SPACE: 32,
+    SHIFT: 16,
+    Z: 90,
+    ENTER: 13,
+    ESC: 27,
+    R: 82
+};
+
+// Input State
+const keyState = {};
+const keyMap = {
+    [KEYS.LEFT]: 'left',
+    [KEYS.UP]: 'up',
+    [KEYS.RIGHT]: 'right',
+    [KEYS.DOWN]: 'down',
+    [KEYS.SPACE]: 'shoot',
+    [KEYS.SHIFT]: 'focus',
+    [KEYS.Z]: 'special',
+    [KEYS.ENTER]: 'start',
+    [KEYS.ESC]: 'pause',
+    [KEYS.R]: 'restart'
+};
+
+/**
+ * Process key press events from p5
+ */
+export function handleKeyPress(p) {
+    const code = p.keyCode;
+    keyState[code] = true;
+
+    // Log input
+    p.logs.inputs.push({
+        input_type: 'keyPressed',
+        data: { key: p.key, keyCode: code },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+    });
+
+    // Global Phase Controls
+    if (code === KEYS.ENTER) {
+        if (gameState.gamePhase === GAME_PHASES.START) {
+            gameState.gamePhase = GAME_PHASES.PLAYING;
+            gameState.waveFrame = 0; // Reset wave timer
+        }
+    } else if (code === KEYS.ESC) {
+        if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+            gameState.gamePhase = GAME_PHASES.PAUSED;
+        } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+            gameState.gamePhase = GAME_PHASES.PLAYING;
+        }
+    } else if (code === KEYS.R) {
+        if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || 
+            gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+            // Reload page or reset state handled in main loop
+            // But for this architecture, we signal a reset
+            window.location.reload(); 
+        }
+    }
+}
+
+/**
+ * Process key release events
+ */
+export function handleKeyRelease(p) {
+    const code = p.keyCode;
+    keyState[code] = false;
+
+    p.logs.inputs.push({
+        input_type: 'keyReleased',
+        data: { key: p.key, keyCode: code },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+    });
+}
+
+/**
+ * Returns the current state of a specific action.
+ * Abstracts whether input comes from Human or AI.
+ */
+export function getActionInput(actionName) {
+    // With automated testing removed, input always comes from Human.
+    // Find key code for action name
+    for (const [code, name] of Object.entries(keyMap)) {
+        if (name === actionName) {
+            return keyState[code] === true;
+        }
+    }
+    return false;
+}
+</file>
+
+<file name="level.js">
+/**
+ * level.js
+ * Controls enemy spawning waves and game progression.
+ */
+
+import { gameState, CANVAS_WIDTH } from './globals.js';
+import { Enemy } from './entities.js';
+
+export const LevelDirector = {
+    update: () => {
+        const frame = gameState.waveFrame;
+        
+        // Wave definitions
+        
+        // Wave 1: Drones
+        if (frame % 100 === 0 && frame < 500) {
+            const x = Math.random() * (CANVAS_WIDTH - 100) + 50;
+            new Enemy(x, -20, 'drone');
+        }
+        
+        // Wave 2: Interceptors from sides
+        if (frame > 600 && frame < 1200 && frame % 80 === 0) {
+            new Enemy(50, -20, 'interceptor');
+            new Enemy(CANVAS_WIDTH - 50, -20, 'interceptor');
+        }
+        
+        // Wave 3: Heavy Tanks
+        if (frame > 1300 && frame % 300 === 0) {
+            new Enemy(CANVAS_WIDTH / 2, -50, 'tank');
+        }
+        
+        // Infinite scaling loop after 2000 frames
+        if (frame > 2000) {
+            if (frame % 60 === 0) {
+                const type = Math.random() < 0.2 ? 'tank' : (Math.random() < 0.5 ? 'interceptor' : 'drone');
+                const x = Math.random() * (CANVAS_WIDTH - 40) + 20;
+                new Enemy(x, -20, type);
+            }
+        }
+    }
+};
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

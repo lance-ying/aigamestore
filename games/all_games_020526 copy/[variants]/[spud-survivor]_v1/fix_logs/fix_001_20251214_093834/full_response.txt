@@ -1,0 +1,970 @@
+<analysis>
+- Issue identified: The game lacks a dedicated "Game Over" screen for both win and lose conditions. When the player dies or wins, the game currently attempts an "auto-restart" that transitions directly back to the "Start" screen after a delay, which the user finds undesirable. The user wants to see a Game Over screen and then manually initiate a restart.
+- Files affected:
+    - `globals.js`: To remove unused auto-restart state variables.
+    - `rendering.js`: To implement and display the "Game Over" screen for win/lose phases.
+    - `game_logic.js`: To remove the call to schedule auto-restart when the player dies.
+    - `input.js`: To remove auto-restart scheduling/cancellation logic, and to add 'R' key handling for manual restart from the new "Game Over" screen.
+- Changes needed:
+    - Create a `renderGameOver` function in `rendering.js` to display the game over state, final score, high scores, and restart instructions.
+    - Update `renderGame` in `rendering.js` to call `renderGameOver` for `GAME_PHASES.GAME_OVER_WIN` and `GAME_PHASES.GAME_OVER_LOSE`.
+    - Remove `autoRestartTimeoutId` and `autoRestartScheduled` from `gameState` in `globals.js`.
+    - Remove the `scheduleAutoRestart` and `cancelAutoRestart` functions from `input.js`.
+    - Remove all calls to `scheduleAutoRestart` and `cancelAutoRestart` from `game_logic.js` and `input.js`.
+    - Add 'R' key handling in `input.js` for `GAME_PHASES.GAME_OVER_WIN` and `GAME_PHASES.GAME_OVER_LOSE` to call `resetToStart`.
+</analysis>
+<code filename="globals.js">
+// globals.js - Global constants and game state
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  LEVEL_UP_MENU: "LEVEL_UP_MENU",
+  WAVE_COMPLETE: "WAVE_COMPLETE",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const gameState = {
+  player: null,
+  entities: [],
+  projectiles: [],
+  items: [],
+  enemies: [],
+  spawnQueue: [], // Queue of enemy types to spawn
+  spawnTimer: 0, // Timer for next spawn
+  gamePhase: GAME_PHASES.START,
+  controlMode: "HUMAN",
+  score: 0,
+  currentLevel: 1,
+  currentWave: 1,
+  waveTimer: 0,
+  enemiesRemainingInWave: 0,
+  totalWaveDuration: 30,
+  selectedUpgradeIndex: 0,
+  availableUpgrades: [],
+  materials: 0,
+  gameTimeElapsed: 0,
+  highScores: [],
+  notification: null,
+  notificationTimer: 0,
+};
+
+// Load high scores from localStorage
+export function loadHighScores() {
+  const stored = localStorage.getItem('spudSurvivorHighScores');
+  if (stored) {
+    try {
+      gameState.highScores = JSON.parse(stored);
+    } catch (e) {
+      gameState.highScores = [];
+    }
+  }
+  // Ensure we have at least 5 placeholder scores
+  while (gameState.highScores.length < 5) {
+    gameState.highScores.push({ name: 'Player', score: 0 });
+  }
+}
+
+export function saveHighScores() {
+  localStorage.setItem('spudSurvivorHighScores', JSON.stringify(gameState.highScores));
+}
+
+export function addHighScore(score) {
+  gameState.highScores.push({ name: 'Player', score: score });
+  gameState.highScores.sort((a, b) => b.score - a.score);
+  gameState.highScores = gameState.highScores.slice(0, 5);
+  saveHighScores();
+}
+// Expose gameState to window for debugging and recording scripts
+if (typeof window !== 'undefined') {
+  window.getGameState = () => gameState;
+}
+</code>
+<code filename="game_logic.js">
+// game_logic.js - Core game logic
+import { gameState, GAME_PHASES } from './globals.js';
+import { Player, Projectile, Enemy } from './entities.js';
+import { spawnWave, getWaveDuration, hasNextWave, hasNextLevel, getSpawnPosition } from './waves.js';
+import { checkCollisions } from './collision.js';
+import { keys, clearJustPressed } from './input.js'; // Removed scheduleAutoRestart
+import { generateUpgradeOptions, generateShopItems } from './upgrades.js';
+import { CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function initializeGame(p) {
+  // Create player
+  gameState.player = new Player(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  gameState.entities = [gameState.player];
+  
+  // Reset game state
+  gameState.score = 0;
+  gameState.currentLevel = 1;
+  gameState.currentWave = 1;
+  gameState.materials = 0;
+  gameState.enemies = [];
+  gameState.projectiles = [];
+  gameState.items = [];
+  gameState.spawnQueue = [];
+  gameState.spawnTimer = 0;
+  gameState.notification = null;
+  gameState.notificationTimer = 0;
+  
+  // Spawn first wave
+  const waveConfig = spawnWave(p, gameState.currentLevel, gameState.currentWave);
+  gameState.spawnQueue = waveConfig;
+  gameState.enemiesRemainingInWave = waveConfig.length;
+  gameState.waveTimer = getWaveDuration(gameState.currentLevel, gameState.currentWave);
+  
+  // Log player info
+  logPlayerInfo(p);
+}
+
+export function updateGame(p) {
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) return;
+  
+  const player = gameState.player;
+  if (!player) return;
+  
+  // Update player
+  player.update(p, keys);
+  
+  // Clear just pressed flags after update (for tap-based controls)
+  clearJustPressed();
+  
+  // Auto-attack
+  const nearestEnemy = player.findNearestEnemy();
+  if (nearestEnemy) {
+    // Delegate firing to player weapon system
+    player.fire(p, nearestEnemy, gameState.projectiles);
+  } else if (player.attackCooldown > 0) {
+    player.attackCooldown--;
+  }
+  
+  // Handle Incremental Spawning
+  if (gameState.spawnQueue.length > 0) {
+    gameState.spawnTimer--;
+    if (gameState.spawnTimer <= 0) {
+      const type = gameState.spawnQueue.shift();
+      const pos = getSpawnPosition(p);
+      const enemy = new Enemy(pos.x, pos.y, type);
+      
+      gameState.enemies.push(enemy);
+      gameState.entities.push(enemy);
+      
+      // Set random timer for next spawn (e.g., between 0.5s and 2s depending on density)
+      // Adjust density based on remaining enemies to ensure they all spawn before wave end
+      const enemiesLeft = gameState.spawnQueue.length;
+      const timePerEnemy = Math.max(10, Math.floor(gameState.waveTimer / (enemiesLeft + 1)));
+      gameState.spawnTimer = p.random(10, Math.min(120, timePerEnemy));
+    }
+  }
+  
+  // Update notification
+  if (gameState.notificationTimer > 0) {
+    gameState.notificationTimer--;
+    if (gameState.notificationTimer <= 0) {
+      gameState.notification = null;
+    }
+  }
+  
+  // Update enemies
+  for (const enemy of gameState.enemies) {
+    enemy.update(p, player);
+  }
+  
+  // Update projectiles
+  for (let i = gameState.projectiles.length - 1; i >= 0; i--) {
+    const proj = gameState.projectiles[i];
+    proj.update();
+    
+    if (proj.isOutOfRange() || proj.isOffScreen()) {
+      gameState.projectiles.splice(i, 1);
+    }
+  }
+  
+  // Update items
+  for (let i = gameState.items.length - 1; i >= 0; i--) {
+    const item = gameState.items[i];
+    item.update();
+    
+    if (item.isExpired()) {
+      gameState.items.splice(i, 1);
+    }
+  }
+  
+  // Check collisions
+  checkCollisions(p);
+  
+  // Check wave completion
+  gameState.waveTimer--;
+  
+  if (gameState.enemiesRemainingInWave <= 0 || gameState.waveTimer <= 0) {
+    gameState.score += 100; // Wave completion bonus
+    
+    const isLevelComplete = gameState.currentWave >= getMaxWaveForLevel(gameState.currentLevel);
+    
+    if (isLevelComplete) {
+      gameState.score += 500; // Level completion bonus
+      gameState.shopItems = generateShopItems(p);
+    }
+    
+    gameState.selectedUpgradeIndex = 0;
+    gameState.gamePhase = GAME_PHASES.WAVE_COMPLETE;
+    
+    p.logs.game_info.push({
+      data: { 
+        phase: 'WAVE_COMPLETE', 
+        level: gameState.currentLevel, 
+        wave: gameState.currentWave,
+        score: gameState.score
+      },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+  
+  // Check game over
+  if (player.currentHP <= 0) {
+    if (gameState.gamePhase !== GAME_PHASES.GAME_OVER_LOSE) { // Only trigger game over logic once
+      gameState.gamePhase = GAME_PHASES.GAME_OVER_LOSE;
+      import('./globals.js').then(module => {
+        module.addHighScore(gameState.score);
+      });
+      // Removed scheduleAutoRestart(p); // No auto-restart after game over
+      
+      p.logs.game_info.push({
+        data: { phase: 'GAME_OVER_LOSE', final_score: gameState.score },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+  
+  // Log player info periodically
+  if (p.frameCount % 60 === 0) {
+    logPlayerInfo(p);
+  }
+  
+  gameState.gameTimeElapsed++;
+}
+
+function logPlayerInfo(p) {
+  const player = gameState.player;
+  if (!player) return;
+  
+  p.logs.player_info.push({
+    screen_x: player.x,
+    screen_y: player.y,
+    game_x: player.x,
+    game_y: player.y,
+    framecount: p.frameCount
+  });
+}
+
+function getMaxWaveForLevel(level) {
+  const waveConfig = {
+    1: 3,
+    2: 4,
+    3: 5
+  };
+  return waveConfig[level] || 3;
+}
+
+export function handleLevelUpMenuOpen(p) {
+  gameState.availableUpgrades = generateUpgradeOptions(p);
+  gameState.selectedUpgradeIndex = 0;
+}
+</code>
+<code filename="rendering.js">
+// rendering.js - All rendering functions
+import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { UPGRADE_TYPES } from './upgrades.js';
+
+export function renderGame(p) {
+  // Clear background
+  p.background(40, 35, 30);
+  
+  switch (gameState.gamePhase) {
+    case GAME_PHASES.START:
+      renderStartScreen(p);
+      break;
+    case GAME_PHASES.PLAYING:
+      renderPlayingScreen(p);
+      break;
+    case GAME_PHASES.PAUSED:
+      renderPlayingScreen(p);
+      renderPausedOverlay(p);
+      break;
+    case GAME_PHASES.LEVEL_UP_MENU:
+      renderPlayingScreen(p);
+      renderLevelUpMenu(p);
+      break;
+    case GAME_PHASES.WAVE_COMPLETE:
+      renderPlayingScreen(p);
+      renderWaveComplete(p);
+      break;
+    case GAME_PHASES.GAME_OVER_WIN:
+      renderGameOver(p, true);
+      break;
+    case GAME_PHASES.GAME_OVER_LOSE:
+      renderGameOver(p, false);
+      break;
+  }
+}
+
+function renderStartScreen(p) {
+  // New main title: "press enter to begin"
+  p.fill(255, 255, 100); // Prominent color
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(36); // Prominent size
+  const flash = Math.sin(p.frameCount * 0.1) > 0;
+  if (flash) {
+    p.text('press enter to begin', CANVAS_WIDTH / 2, 120); // Centered, in place of old title/graphic
+  }
+  
+  // Instructions (preserved as they do not contain game name)
+  p.fill(200);
+  p.textSize(14);
+  p.text('Survive waves of enemies!', CANVAS_WIDTH / 2, 230);
+  p.text('Collect experience to level up', CANVAS_WIDTH / 2, 250);
+  p.text('Gather materials for upgrades', CANVAS_WIDTH / 2, 270);
+  
+  // Controls (preserved as they do not contain game name)
+  p.fill(150, 200, 255);
+  p.textSize(12);
+  p.text('WASD: Move', CANVAS_WIDTH / 2, 300);
+  p.text('SHIFT: Dash', CANVAS_WIDTH / 2, 318);
+  p.text('ESC: Pause', CANVAS_WIDTH / 2, 336);
+  
+  // Removed old "PRESS ENTER TO START" prompt as new title serves this purpose
+}
+
+function renderPlayingScreen(p) {
+  // Render entities
+  for (const item of gameState.items) {
+    item.render(p);
+  }
+  
+  for (const projectile of gameState.projectiles) {
+    projectile.render(p);
+  }
+  
+  for (const enemy of gameState.enemies) {
+    enemy.render(p);
+  }
+  
+  if (gameState.player) {
+    gameState.player.render(p);
+  }
+  
+  // UI
+  renderUI(p);
+  
+  // Notification
+  if (gameState.notification) {
+    renderNotification(p);
+  }
+}
+
+function renderUI(p) {
+  const player = gameState.player;
+  
+  // Level and Wave indicator (top-left)
+  p.fill(255);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(14);
+  p.text(`LEVEL ${gameState.currentLevel} - WAVE ${gameState.currentWave}`, 10, 10);
+  
+  // Score (top-right)
+  p.textAlign(p.RIGHT, p.TOP);
+  p.text(`SCORE: ${String(gameState.score).padStart(6, '0')}`, CANVAS_WIDTH - 10, 10);
+  
+  // Weapon Display (Top Center)
+  p.textAlign(p.CENTER, p.TOP);
+  p.fill(255, 220, 150);
+  p.textSize(12);
+  p.text(`WEAPON: ${player.getCurrentWeaponName()}`, CANVAS_WIDTH / 2, 10);
+  
+  // Health bar
+  const hpBarWidth = 200;
+  const hpBarHeight = 20;
+  const hpBarX = 10;
+  const hpBarY = 35;
+  
+  p.fill(50);
+  p.noStroke();
+  p.rect(hpBarX, hpBarY, hpBarWidth, hpBarHeight);
+  
+  const hpPercent = player.currentHP / player.maxHP;
+  const hpColor = hpPercent > 0.5 ? [100, 255, 100] : hpPercent > 0.25 ? [255, 200, 50] : [255, 50, 50];
+  p.fill(...hpColor);
+  p.rect(hpBarX, hpBarY, hpBarWidth * hpPercent, hpBarHeight);
+  
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(12);
+  p.text(`${Math.ceil(player.currentHP)} / ${player.maxHP}`, hpBarX + hpBarWidth / 2, hpBarY + hpBarHeight / 2);
+  
+  // Experience bar (bottom)
+  const expBarWidth = CANVAS_WIDTH - 20;
+  const expBarHeight = 15;
+  const expBarX = 10;
+  const expBarY = CANVAS_HEIGHT - 25;
+  
+  p.fill(50);
+  p.noStroke();
+  p.rect(expBarX, expBarY, expBarWidth, expBarHeight);
+  
+  const expPercent = player.currentExp / player.expToNextLevel;
+  p.fill(255, 255, 100);
+  p.rect(expBarX, expBarY, expBarWidth * expPercent, expBarHeight);
+  
+  p.fill(255);
+  p.textSize(10);
+  p.text(`LVL ${player.playerLevel}  ${Math.floor(player.currentExp)}/${player.expToNextLevel} XP`, expBarX + expBarWidth / 2, expBarY + expBarHeight / 2);
+  
+  // Materials display
+  p.fill(180, 100, 255);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(12);
+  p.text(`💎 ${gameState.materials}`, 10, 60);
+  
+  // Dash cooldown indicator
+  if (player.dashCooldown > 0) {
+    p.fill(100, 150, 255);
+    p.textAlign(p.RIGHT, p.BOTTOM);
+    p.textSize(10);
+    p.text(`DASH: ${Math.ceil(player.dashCooldown / 60)}s`, CANVAS_WIDTH - 10, CANVAS_HEIGHT - 30);
+  }
+}
+
+function renderNotification(p) {
+  p.push();
+  p.fill(0, 0, 0, 180);
+  p.noStroke();
+  p.rect(0, 100, CANVAS_WIDTH, 50);
+  
+  p.fill(255, 255, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(18);
+  p.text(gameState.notification, CANVAS_WIDTH / 2, 125);
+  p.pop();
+}
+
+function renderPausedOverlay(p) {
+  p.fill(0, 0, 0, 150);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.fill(255, 255, 100);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(16);
+  p.text('PAUSED', CANVAS_WIDTH - 10, 10);
+  
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(14);
+  p.text('ESC - Resume', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  p.text('R - Restart', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 25);
+}
+
+function renderLevelUpMenu(p) {
+  // Semi-transparent overlay
+  p.fill(0, 0, 0, 200);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Panel
+  const panelWidth = 400;
+  const panelHeight = 280;
+  const panelX = (CANVAS_WIDTH - panelWidth) / 2;
+  const panelY = (CANVAS_HEIGHT - panelHeight) / 2;
+  
+  p.fill(60, 50, 40);
+  p.stroke(150, 120, 80);
+  p.strokeWeight(3);
+  p.rect(panelX, panelY, panelWidth, panelHeight, 10);
+  
+  // Title
+  p.fill(255, 220, 150);
+  p.noStroke();
+  p.textAlign(p.CENTER, p.TOP);
+  p.textSize(24);
+  p.text('LEVEL UP!', CANVAS_WIDTH / 2, panelY + 20);
+  
+  // Upgrade options
+  const optionHeight = 60;
+  const optionY = panelY + 70;
+  
+  for (let i = 0; i < gameState.availableUpgrades.length; i++) {
+    const upgradeKey = gameState.availableUpgrades[i];
+    const upgrade = UPGRADE_TYPES[upgradeKey];
+    const y = optionY + i * (optionHeight + 10);
+    const isSelected = i === gameState.selectedUpgradeIndex;
+    
+    // Option background
+    p.fill(...(isSelected ? [100, 80, 60] : [50, 40, 30]));
+    p.stroke(...(isSelected ? [255, 220, 150] : [100, 80, 60]));
+    p.strokeWeight(isSelected ? 3 : 1);
+    p.rect(panelX + 20, y, panelWidth - 40, optionHeight, 5);
+    
+    // Icon
+    p.fill(255);
+    p.noStroke();
+    p.textAlign(p.LEFT, p.CENTER);
+    p.textSize(32);
+    p.text(upgrade.icon, panelX + 40, y + optionHeight / 2);
+    
+    // Name and description
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(18);
+    p.text(upgrade.name, panelX + 90, y + 12);
+    p.textSize(12);
+    p.fill(200);
+    p.text(upgrade.desc, panelX + 90, y + 35);
+  }
+  
+  // Instructions
+  p.fill(150, 200, 255);
+  p.textAlign(p.CENTER, p.BOTTOM);
+  p.textSize(12);
+  p.text('W/S: Select   SPACE: Confirm', CANVAS_WIDTH / 2, panelY + panelHeight - 15);
+}
+
+function renderWaveComplete(p) {
+  // Semi-transparent overlay
+  p.fill(0, 0, 0, 150);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Panel
+  const panelWidth = 450;
+  const panelHeight = 320;
+  const panelX = (CANVAS_WIDTH - panelWidth) / 2;
+  const panelY = (CANVAS_HEIGHT - panelHeight) / 2;
+  
+  p.fill(60, 50, 40);
+  p.stroke(150, 120, 80);
+  p.strokeWeight(3);
+  p.rect(panelX, panelY, panelWidth, panelHeight, 10);
+  
+  // Title
+  p.fill(255, 220, 150);
+  p.noStroke();
+  p.textAlign(p.CENTER, p.TOP);
+  p.textSize(28);
+  
+  const isLevelComplete = gameState.currentWave >= getMaxWaveForLevel(gameState.currentLevel);
+  if (isLevelComplete) {
+    p.text(`LEVEL ${gameState.currentLevel} COMPLETE!`, CANVAS_WIDTH / 2, panelY + 20);
+  } else {
+    p.text(`WAVE ${gameState.currentWave} COMPLETE!`, CANVAS_WIDTH / 2, panelY + 20);
+  }
+  
+  // Stats
+  p.fill(200);
+  p.textSize(14);
+  p.text(`Score: ${gameState.score}`, CANVAS_WIDTH / 2, panelY + 65);
+  p.text(`Materials: ${gameState.materials}`, CANVAS_WIDTH / 2, panelY + 85);
+  
+  // Shop (only on level complete)
+  if (isLevelComplete && gameState.shopItems) {
+    p.fill(255, 220, 150);
+    p.textSize(18);
+    p.text('SHOP', CANVAS_WIDTH / 2, panelY + 115);
+    
+    const optionHeight = 45;
+    const optionY = panelY + 145;
+    
+    for (let i = 0; i < gameState.shopItems.length; i++) {
+      const item = gameState.shopItems[i];
+      const y = optionY + i * (optionHeight + 5);
+      const isSelected = i === gameState.selectedUpgradeIndex;
+      const canAfford = gameState.materials >= item.cost;
+      
+      p.fill(...(isSelected ? [100, 80, 60] : [50, 40, 30]));
+      p.stroke(...(isSelected ? [255, 220, 150] : [100, 80, 60]));
+      p.strokeWeight(isSelected ? 3 : 1);
+      p.rect(panelX + 20, y, panelWidth - 40, optionHeight, 5);
+      
+      p.fill(...(canAfford ? [255, 255, 255] : [150, 150, 150]));
+      p.noStroke();
+      p.textAlign(p.LEFT, p.CENTER);
+      p.textSize(14);
+      p.text(item.name, panelX + 40, y + optionHeight / 2);
+      
+      p.fill(...(canAfford ? [180, 100, 255] : [100, 60, 150]));
+      p.textAlign(p.RIGHT, p.CENTER);
+      p.text(`💎 ${item.cost}`, panelX + panelWidth - 40, y + optionHeight / 2);
+    }
+    
+    p.fill(150, 200, 255);
+    p.textAlign(p.CENTER, p.BOTTOM);
+    p.textSize(11);
+    p.text('W/S: Select   SPACE: Buy/Continue', CANVAS_WIDTH / 2, panelY + panelHeight - 12);
+  } else {
+    p.fill(150, 200, 255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(16);
+    const flash = Math.sin(p.frameCount * 0.1) > 0;
+    if (flash) {
+      p.text('PRESS SPACE TO CONTINUE', CANVAS_WIDTH / 2, panelY + panelHeight - 60);
+    }
+  }
+}
+
+function renderGameOver(p, didWin) {
+  // Semi-transparent overlay
+  p.fill(0, 0, 0, 200);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+  // Panel
+  const panelWidth = 400;
+  const panelHeight = 300;
+  const panelX = (CANVAS_WIDTH - panelWidth) / 2;
+  const panelY = (CANVAS_HEIGHT - panelHeight) / 2;
+
+  p.fill(60, 50, 40);
+  p.stroke(150, 120, 80);
+  p.strokeWeight(3);
+  p.rect(panelX, panelY, panelWidth, panelHeight, 10);
+
+  // Title
+  p.fill(didWin ? [100, 255, 100] : [255, 50, 50]);
+  p.noStroke();
+  p.textAlign(p.CENTER, p.TOP);
+  p.textSize(48);
+  p.text(didWin ? 'YOU WON!' : 'GAME OVER', CANVAS_WIDTH / 2, panelY + 30);
+
+  // Score
+  p.fill(255);
+  p.textSize(24);
+  p.text(`FINAL SCORE: ${gameState.score}`, CANVAS_WIDTH / 2, panelY + 100);
+
+  // High Scores
+  p.textSize(16);
+  p.text('HIGH SCORES', CANVAS_WIDTH / 2, panelY + 150);
+  p.textSize(14);
+  for (let i = 0; i < gameState.highScores.length; i++) {
+    const hs = gameState.highScores[i];
+    p.text(`${i + 1}. ${hs.name}: ${hs.score}`, CANVAS_WIDTH / 2, panelY + 175 + i * 20);
+  }
+
+  // Restart instruction
+  p.fill(150, 200, 255);
+  p.textAlign(p.CENTER, p.BOTTOM);
+  p.textSize(18);
+  const flash = Math.sin(p.frameCount * 0.1) > 0;
+  if (flash) {
+    p.text('PRESS R TO RESTART', CANVAS_WIDTH / 2, panelY + panelHeight - 20);
+  }
+}
+
+
+function getMaxWaveForLevel(level) {
+  const waveConfig = {
+    1: 3,
+    2: 4,
+    3: 5
+  };
+  return waveConfig[level] || 3;
+}
+</code>
+<code filename="input.js">
+// input.js - Input handling
+import { gameState, GAME_PHASES } from './globals.js';
+import { applyUpgrade, generateUpgradeOptions, generateShopItems } from './upgrades.js';
+import { hasNextWave, hasNextLevel } from './waves.js';
+
+export const keys = {
+  w: false,
+  a: false,
+  s: false,
+  d: false,
+  up: false,
+  left: false,
+  down: false,
+  right: false,
+  space: false,
+  shift: false,
+  enter: false,
+  escape: false,
+  r: false
+};
+
+// Track keys that were just pressed this frame (for tap-based controls)
+export const keysJustPressed = {
+  w: false,
+  a: false,
+  s: false,
+  d: false,
+  up: false,
+  left: false,
+  down: false,
+  right: false,
+  space: false,
+  shift: false,
+  enter: false,
+  escape: false,
+  r: false
+};
+
+export function clearJustPressed() {
+  for (const key in keysJustPressed) {
+    keysJustPressed[key] = false;
+  }
+}
+
+// Removed scheduleAutoRestart and cancelAutoRestart functions
+
+export function handleKeyPressed(p, keyCode, key) {
+  // Log input
+  p.logs.inputs.push({
+    input_type: 'keyPressed',
+    data: { key, keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  
+  // Update key states (for non-movement keys)
+  const wasPressed = updateKeyState(keyCode, true);
+  
+  // Mark as just pressed (for tap-based movement)
+  if (!wasPressed) {
+    updateJustPressedState(keyCode, true);
+  }
+  
+  // Phase-specific controls
+  switch (gameState.gamePhase) {
+    case GAME_PHASES.START:
+      if (keyCode === 13) { // Enter
+        startGame(p);
+      }
+      break;
+      
+    case GAME_PHASES.PLAYING:
+      if (keyCode === 27) { // Escape
+        gameState.gamePhase = GAME_PHASES.PAUSED;
+        p.logs.game_info.push({
+          data: { phase: 'PAUSED' },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      } else if (keyCode === 16) { // Shift
+        if (gameState.player) {
+          gameState.player.activateDash();
+        }
+      } else if (keyCode === 81) { // Q - Switch Weapon
+        if (gameState.player) {
+          gameState.player.switchWeapon();
+        }
+      }
+      break;
+      
+    case GAME_PHASES.PAUSED:
+      if (keyCode === 27) { // Escape
+        gameState.gamePhase = GAME_PHASES.PLAYING;
+        p.logs.game_info.push({
+          data: { phase: 'PLAYING' },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      } else if (keyCode === 82) { // R
+        resetToStart(p);
+      }
+      break;
+      
+    case GAME_PHASES.LEVEL_UP_MENU:
+      if (keyCode === 87 || keyCode === 38) { // W or Up
+        gameState.selectedUpgradeIndex = Math.max(0, gameState.selectedUpgradeIndex - 1);
+      } else if (keyCode === 83 || keyCode === 40) { // S or Down
+        gameState.selectedUpgradeIndex = Math.min(gameState.availableUpgrades.length - 1, gameState.selectedUpgradeIndex + 1);
+      } else if (keyCode === 32) { // Space
+        const selectedUpgrade = gameState.availableUpgrades[gameState.selectedUpgradeIndex];
+        applyUpgrade(selectedUpgrade);
+        gameState.gamePhase = GAME_PHASES.PLAYING;
+        p.logs.game_info.push({
+          data: { phase: 'PLAYING', upgrade: selectedUpgrade },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+      break;
+      
+    case GAME_PHASES.WAVE_COMPLETE:
+      handleWaveCompleteInput(p, keyCode);
+      break;
+      
+    case GAME_PHASES.GAME_OVER_WIN:
+    case GAME_PHASES.GAME_OVER_LOSE:
+      if (keyCode === 82) { // R
+        resetToStart(p); // Manual restart from game over screen
+      }
+      break;
+  }
+}
+
+export function handleKeyReleased(p, keyCode, key) {
+  // Log input
+  p.logs.inputs.push({
+    input_type: 'keyReleased',
+    data: { key, keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  
+  updateKeyState(keyCode, false);
+}
+
+function updateKeyState(keyCode, pressed) {
+  let wasPressed = false;
+  switch (keyCode) {
+    case 87: wasPressed = keys.w; keys.w = pressed; break; // W
+    case 65: wasPressed = keys.a; keys.a = pressed; break; // A
+    case 83: wasPressed = keys.s; keys.s = pressed; break; // S
+    case 68: wasPressed = keys.d; keys.d = pressed; break; // D
+    case 38: wasPressed = keys.up; keys.up = pressed; break; // Arrow Up
+    case 37: wasPressed = keys.left; keys.left = pressed; break; // Arrow Left
+    case 40: wasPressed = keys.down; keys.down = pressed; break; // Arrow Down
+    case 39: wasPressed = keys.right; keys.right = pressed; break; // Arrow Right
+    case 32: wasPressed = keys.space; keys.space = pressed; break; // Space
+    case 16: wasPressed = keys.shift; keys.shift = pressed; break; // Shift
+    case 13: wasPressed = keys.enter; keys.enter = pressed; break; // Enter
+    case 27: wasPressed = keys.escape; keys.escape = pressed; break; // Escape
+    case 82: wasPressed = keys.r; keys.r = pressed; break; // R
+  }
+  return wasPressed;
+}
+
+function updateJustPressedState(keyCode, pressed) {
+  switch (keyCode) {
+    case 87: keysJustPressed.w = pressed; break; // W
+    case 65: keysJustPressed.a = pressed; break; // A
+    case 83: keysJustPressed.s = pressed; break; // S
+    case 68: keysJustPressed.d = pressed; break; // D
+    case 38: keysJustPressed.up = pressed; break; // Arrow Up
+    case 37: keysJustPressed.left = pressed; break; // Arrow Left
+    case 40: keysJustPressed.down = pressed; break; // Arrow Down
+    case 39: keysJustPressed.right = pressed; break; // Arrow Right
+    case 32: keysJustPressed.space = pressed; break; // Space
+    case 16: keysJustPressed.shift = pressed; break; // Shift
+    case 13: keysJustPressed.enter = pressed; break; // Enter
+    case 27: keysJustPressed.escape = pressed; break; // Escape
+    case 82: keysJustPressed.r = pressed; break; // R
+  }
+}
+
+function handleWaveCompleteInput(p, keyCode) {
+  const isLevelComplete = gameState.currentWave >= getMaxWaveForLevel(gameState.currentLevel);
+  
+  if (isLevelComplete && gameState.shopItems) {
+    if (keyCode === 87 || keyCode === 38) { // W or Up
+      gameState.selectedUpgradeIndex = Math.max(0, gameState.selectedUpgradeIndex - 1);
+    } else if (keyCode === 83 || keyCode === 40) { // S or Down
+      gameState.selectedUpgradeIndex = Math.min(gameState.shopItems.length - 1, gameState.selectedUpgradeIndex + 1);
+    } else if (keyCode === 32) { // Space
+      const selectedItem = gameState.shopItems[gameState.selectedUpgradeIndex];
+      if (gameState.materials >= selectedItem.cost) {
+        gameState.materials -= selectedItem.cost;
+        selectedItem.apply(gameState.player);
+        p.logs.game_info.push({
+          data: { action: 'shop_purchase', item: selectedItem.name },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+      
+      // Continue anyway
+      advanceWave(p);
+    }
+  } else if (keyCode === 32) { // Space
+    advanceWave(p);
+  }
+}
+
+function advanceWave(p) {
+  if (hasNextWave(gameState.currentLevel, gameState.currentWave)) {
+    gameState.currentWave++;
+    gameState.gamePhase = GAME_PHASES.PLAYING;
+  } else if (hasNextLevel(gameState.currentLevel)) {
+    gameState.currentLevel++;
+    gameState.currentWave = 1;
+    gameState.gamePhase = GAME_PHASES.PLAYING;
+    
+    // Unlock new weapon for next level
+    if (gameState.player) {
+      const newWeapon = gameState.player.unlockNextWeapon();
+      if (newWeapon) {
+        gameState.notification = `NEW WEAPON UNLOCKED: ${newWeapon.name}!`;
+        gameState.notificationTimer = 300; // 5 seconds
+      }
+    }
+  } else {
+    // Game won
+    if (gameState.gamePhase !== GAME_PHASES.GAME_OVER_WIN) { // Only trigger game over logic once
+      gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
+      addHighScore(gameState.score);
+      // Removed scheduleAutoRestart(p); // No auto-restart after game won
+    }
+  }
+  
+  p.logs.game_info.push({
+    data: { phase: gameState.gamePhase, level: gameState.currentLevel, wave: gameState.currentWave },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function getMaxWaveForLevel(level) {
+  const waveConfig = {
+    1: 3,
+    2: 4,
+    3: 5
+  };
+  return waveConfig[level] || 3;
+}
+
+function startGame(p) {
+  import('./game_logic.js').then(module => {
+    module.initializeGame(p);
+    gameState.gamePhase = GAME_PHASES.PLAYING;
+    p.logs.game_info.push({
+      data: { phase: 'PLAYING', action: 'game_start' },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  });
+}
+
+function resetToStart(p) {
+  // Always cancel any pending auto-restart on manual reset (no longer needed, but good practice if it returns)
+  
+  gameState.gamePhase = GAME_PHASES.START;
+  gameState.player = null;
+  gameState.entities = [];
+  gameState.enemies = [];
+  gameState.projectiles = [];
+  gameState.items = [];
+  gameState.spawnQueue = [];
+  gameState.score = 0;
+  gameState.currentLevel = 1;
+  gameState.currentWave = 1;
+  gameState.materials = 0;
+  
+  p.logs.game_info.push({
+    data: { phase: 'START', action: 'restart' },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function addHighScore(score) {
+  import('./globals.js').then(module => {
+    module.addHighScore(score);
+  });
+}
+</code>

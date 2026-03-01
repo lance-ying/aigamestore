@@ -1,0 +1,1562 @@
+<analysis>
+- Issue identified: The game currently has 3 levels with time-based progression and retained upgrades. The user wants 6 levels (2 Easy, 2 Medium, 2 Hard) with kill-count progression, distinct floor colors, specific enemy balancing (slow/weak for easy), and upgrades resetting between levels.
+- Files affected: `globals.js`, `combat.js`, `game.js`, `levelManager.js`, `ui.js`.
+- Changes needed:
+    - `globals.js`: Update `LEVEL_CONFIGS` to 6 levels with `killTarget`, `floorColor`, and adjusted spawn configs. Add `levelKills` to `gameState`.
+    - `combat.js`: Increment `gameState.levelKills` in `handleEnemyDeath`.
+    - `game.js`: Initialize `levelKills` in `startGame`. Render background using `floorColor`.
+    - `levelManager.js`: Change win condition to check `levelKills >= killTarget`. In `updateLevelTransition`, reset the player instance (clearing upgrades) but preserve level index.
+    - `ui.js`: Update HUD to display Kill Progress instead of Time.
+</analysis>
+
+<code filename="globals.js">
+// globals.js - Global game state and constants
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE",
+  UPGRADE_SELECTION: "UPGRADE_SELECTION",
+  LEVEL_TRANSITION: "LEVEL_TRANSITION"
+};
+
+export const CONTROL_MODES = {
+  HUMAN: "HUMAN",
+  TEST_1: "TEST_1",
+  TEST_2: "TEST_2"
+};
+
+// Game state object
+export const gameState = {
+  player: null,
+  entities: [],
+  projectiles: [],
+  expGems: [],
+  enemies: [],
+  score: 0,
+  gamePhase: GAME_PHASES.START,
+  controlMode: CONTROL_MODES.HUMAN,
+  
+  // Level system
+  currentLevel: 1,
+  levelKills: 0,
+  levelStartTime: 0,
+  levelDuration: 0,
+  
+  // Spawn system
+  lastEnemySpawn: 0,
+  enemySpawnRate: 2000,
+  maxEnemiesOnScreen: 8,
+  
+  // Upgrade system
+  availableUpgrades: [],
+  selectedUpgradeIndex: 0,
+  
+  // Transition
+  transitionStartTime: 0,
+  transitionDuration: 3000,
+  transitionMessage: "",
+  
+  // Boss tracking
+  bossSpawned: false,
+  miniBossSpawned: false,
+  bossDefeated: false,
+  
+  // Visual effects
+  lightningBolts: [], // { x1, y1, x2, y2, lifetime }
+  
+  // Testing
+  testingFrameCount: 0,
+  testingAutoUpgrade: false
+};
+
+// Player constants
+export const PLAYER_CONFIG = {
+  startX: CANVAS_WIDTH / 2,
+  startY: CANVAS_HEIGHT / 2,
+  radius: 10,
+  maxHealth: 100,
+  baseSpeed: 2.5,
+  baseDamage: 25,
+  baseAttackSpeed: 1.0,
+  projectileSpeed: 5,
+  invincibilityDuration: 60,
+  expToLevel: 150,
+  expGrowthRate: 1.4,
+  swordRange: 40,
+  swordArc: Math.PI / 2
+};
+
+// Enemy types - Enhanced colors for better visual distinction
+export const ENEMY_TYPES = {
+  GOBLIN: {
+    name: "GOBLIN",
+    radius: 8,
+    health: 30,
+    damage: 10,
+    speed: 0.6,
+    expValue: 25,
+    pointsValue: 10,
+    color: [255, 30, 30] // Bright red
+  },
+  SPIDER: {
+    name: "SPIDER",
+    size: 10,
+    health: 20,
+    damage: 8,
+    speed: 1.1,
+    expValue: 30,
+    pointsValue: 25,
+    color: [30, 255, 30] // Bright green
+  },
+  IMP: {
+    name: "IMP",
+    size: 12,
+    health: 40,
+    damage: 15,
+    speed: 0.7,
+    expValue: 45,
+    pointsValue: 40,
+    color: [200, 30, 255], // Bright purple/magenta
+    shootInterval: 3000
+  },
+  BRUTE: {
+    name: "BRUTE",
+    radius: 15,
+    health: 80,
+    damage: 25,
+    speed: 0.4,
+    expValue: 60,
+    pointsValue: 50,
+    color: [150, 90, 40] // Orange-brown
+  },
+  WRAITH: {
+    name: "WRAITH",
+    size: 12,
+    health: 25,
+    damage: 12,
+    speed: 1.3,
+    expValue: 50,
+    pointsValue: 45,
+    color: [100, 200, 255], // Cyan/light blue
+    teleportInterval: 5000
+  },
+  NECROMANCER: {
+    name: "NECROMANCER",
+    size: 14,
+    health: 50,
+    damage: 10,
+    speed: 0.5,
+    expValue: 90,
+    pointsValue: 75,
+    color: [150, 0, 200], // Deep purple
+    shootInterval: 4000,
+    summonInterval: 8000
+  },
+  GOLEM: {
+    name: "GOLEM",
+    radius: 18,
+    health: 120,
+    damage: 30,
+    speed: 0.3,
+    expValue: 120,
+    pointsValue: 100,
+    color: [120, 120, 120] // Gray
+  },
+  MINIBOSS: {
+    name: "MINIBOSS",
+    radius: 20,
+    health: 300,
+    damage: 20,
+    speed: 0.5,
+    expValue: 150,
+    pointsValue: 200,
+    color: [255, 220, 0] // Bright gold/yellow
+  },
+  BOSS: {
+    name: "BOSS",
+    radius: 30,
+    health: 800,
+    damage: 30,
+    speed: 0.4,
+    expValue: 300,
+    pointsValue: 1000,
+    color: [200, 0, 0], // Dark red
+    shootInterval: 2000
+  }
+};
+
+// Level configurations - 6 distinct levels
+export const LEVEL_CONFIGS = {
+  1: {
+    killTarget: 10,
+    floorColor: [40, 60, 40], // Dark Green
+    name: "Easy: The Outskirts",
+    clearMessage: "Level 1 Cleared!",
+    completionBonus: 100,
+    spawnConfig: [
+      { time: 0, type: "GOBLIN", rate: 2000, maxEnemies: 5, speedMultiplier: 0.5, healthMultiplier: 0.5 }
+    ]
+  },
+  2: {
+    killTarget: 15,
+    floorColor: [40, 50, 60], // Dark Slate Blue
+    name: "Easy: Spider Caverns",
+    clearMessage: "Level 2 Cleared!",
+    completionBonus: 150,
+    spawnConfig: [
+      { time: 0, type: "GOBLIN", rate: 1800, maxEnemies: 6, speedMultiplier: 0.6, healthMultiplier: 0.6 },
+      { time: 5000, type: "SPIDER", rate: 3000, maxEnemies: 6, speedMultiplier: 0.6, healthMultiplier: 0.6 }
+    ]
+  },
+  3: {
+    killTarget: 25,
+    floorColor: [60, 40, 40], // Dark Red
+    name: "Medium: The Badlands",
+    clearMessage: "Level 3 Cleared!",
+    completionBonus: 200,
+    spawnConfig: [
+      { time: 0, type: "IMP", rate: 2000, maxEnemies: 8 },
+      { time: 5000, type: "BRUTE", rate: 4000, maxEnemies: 8 },
+      { time: 10000, type: "GOBLIN", rate: 1500, maxEnemies: 10 }
+    ]
+  },
+  4: {
+    killTarget: 35,
+    floorColor: [60, 50, 30], // Dark Yellow/Brown
+    name: "Medium: Desert Ruins",
+    clearMessage: "Level 4 Cleared!",
+    completionBonus: 250,
+    spawnConfig: [
+      { time: 0, type: "IMP", rate: 1500, maxEnemies: 12 },
+      { time: 0, type: "SPIDER", rate: 2000, maxEnemies: 12 },
+      { time: 10000, type: "BRUTE", rate: 3500, maxEnemies: 12 }
+    ]
+  },
+  5: {
+    killTarget: 50,
+    floorColor: [30, 50, 50], // Dark Cyan
+    name: "Hard: The Crypt",
+    clearMessage: "Level 5 Cleared!",
+    completionBonus: 300,
+    spawnConfig: [
+      { time: 0, type: "WRAITH", rate: 2000, maxEnemies: 15 },
+      { time: 0, type: "NECROMANCER", rate: 5000, maxEnemies: 15 },
+      { time: 10000, type: "GOLEM", rate: 6000, maxEnemies: 15 }
+    ]
+  },
+  6: {
+    killTarget: 75,
+    floorColor: [40, 20, 40], // Dark Purple
+    name: "Hard: The Void",
+    clearMessage: "Victory!",
+    completionBonus: 500,
+    spawnConfig: [
+      { time: 0, type: "WRAITH", rate: 1500, maxEnemies: 20 },
+      { time: 0, type: "IMP", rate: 1200, maxEnemies: 20 },
+      { time: 10000, type: "NECROMANCER", rate: 4000, maxEnemies: 20 },
+      { time: 20000, type: "BOSS", rate: 999999, maxEnemies: 20, once: true }
+    ]
+  }
+};
+
+// Upgrade pool - Focused on weapons and sword upgrades only
+export const UPGRADE_POOL = [
+  // Projectile Weapons
+  { type: "WEAPON", name: "Arcane Orb", description: "Fires slow, powerful orbs", effect: { weapon: "ARCANE_ORB" } },
+  { type: "WEAPON", name: "Triple Shot", description: "Fire 3 projectiles in a cone", effect: { weapon: "TRIPLE_SHOT" } },
+  { type: "WEAPON", name: "Rapid Fire", description: "Fast firing projectiles", effect: { weapon: "RAPID_FIRE" } },
+  { type: "WEAPON", name: "Lightning Chain", description: "Strikes jump between enemies", effect: { weapon: "LIGHTNING_CHAIN" } },
+  { type: "WEAPON", name: "Boomerang", description: "Returns after hitting", effect: { weapon: "BOOMERANG" } },
+  { type: "WEAPON", name: "Laser Beam", description: "Continuous damage beam", effect: { weapon: "LASER_BEAM" } },
+  { type: "WEAPON", name: "Explosive Shot", description: "Area damage projectiles", effect: { weapon: "EXPLOSIVE_SHOT" } },
+  
+  // Sword Upgrades
+  { type: "WEAPON", name: "Faster Sword", description: "Swing sword 50% faster", effect: { swordSpeed: 0.5 } },
+  { type: "WEAPON", name: "Longer Sword", description: "Increases sword reach", effect: { swordRange: 20 } },
+  { type: "WEAPON", name: "Wider Swing", description: "Bigger sword arc", effect: { swordArc: 0.5 } },
+  { type: "WEAPON", name: "Double Swords", description: "Swing two swords at once", effect: { doubleSwords: true } },
+  { type: "WEAPON", name: "Heavy Blade", description: "+15 sword damage", effect: { swordDamage: 15 } },
+  { type: "WEAPON", name: "Spinning Blade", description: "Full 360° sword spin", effect: { spinAttack: true } },
+  
+  // Essential stat upgrades only (very impactful)
+  { type: "WEAPON", name: "+50 Max HP", description: "Greatly increases health", effect: { maxHealth: 50, healAmount: 50 } },
+  { type: "WEAPON", name: "Swift Feet", description: "+30% movement speed", effect: { moveSpeed: 0.3 } },
+  { type: "WEAPON", name: "Lifesteal", description: "Heal 8% of damage dealt", effect: { lifesteal: 0.08 } },
+  { type: "WEAPON", name: "Critical Strike", description: "+25% crit chance for 3x damage", effect: { critChance: 0.25, critDamage: 1.0 } }
+];
+</code>
+
+<code filename="combat.js">
+// combat.js - Combat system
+
+import { Projectile } from './projectiles.js';
+import { gameState, PLAYER_CONFIG, UPGRADE_POOL } from './globals.js';
+import { createExplosion } from './particles.js';
+import { ExpGem } from './expGem.js';
+
+export function updatePlayerCombat(p, currentTime) {
+  const player = gameState.player;
+  const attackInterval = 1000 / player.attackSpeedMultiplier;
+  
+  if (currentTime - player.lastAttackTime > attackInterval) {
+    firePlayerWeapons(p, player);
+    player.lastAttackTime = currentTime;
+  }
+  
+  // Health regeneration
+  if (player.healthRegen > 0 && currentTime - player.lastHealthRegen > 1000) {
+    player.health = Math.min(player.health + player.healthRegen, player.maxHealth);
+    player.lastHealthRegen = currentTime;
+  }
+}
+
+function firePlayerWeapons(p, player) {
+  for (const weapon of player.weapons) {
+    switch (weapon) {
+      case "BASIC":
+        fireBasicWeapon(p, player);
+        break;
+      case "ARCANE_ORB":
+        fireArcaneOrb(p, player);
+        break;
+      case "TRIPLE_SHOT":
+        fireTripleShot(p, player);
+        break;
+      case "RAPID_FIRE":
+        fireRapidFire(p, player);
+        break;
+      case "LIGHTNING_CHAIN":
+        fireLightningChain(p, player);
+        break;
+      case "BOOMERANG":
+        fireBoomerang(p, player);
+        break;
+      case "LASER_BEAM":
+        fireLaserBeam(p, player);
+        break;
+      case "EXPLOSIVE_SHOT":
+        fireExplosiveShot(p, player);
+        break;
+    }
+  }
+}
+
+function fireBasicWeapon(p, player) {
+  // Sword swing - just start the animation
+  // Collision detection happens in player.update() during the swing
+  player.startSwordSwing();
+}
+
+function fireArcaneOrb(p, player) {
+  if (gameState.enemies.length === 0) return;
+  
+  const target = gameState.enemies[0];
+  const dx = target.x - player.x;
+  const dy = target.y - player.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  
+  if (dist > 0) {
+    const speed = 3 * player.projectileSpeedMultiplier;
+    const vx = (dx / dist) * speed;
+    const vy = (dy / dist) * speed;
+    
+    const damage = calculateDamage(player, player.baseDamage * 2);
+    const projectile = new Projectile(
+      player.x,
+      player.y,
+      vx,
+      vy,
+      damage,
+      "PLAYER"
+    );
+    projectile.radius = 5;
+    projectile.piercing = player.piercing;
+    
+    gameState.projectiles.push(projectile);
+  }
+}
+
+function fireTripleShot(p, player) {
+  if (gameState.enemies.length === 0) return;
+  
+  const target = gameState.enemies[0];
+  const dx = target.x - player.x;
+  const dy = target.y - player.y;
+  const baseAngle = Math.atan2(dy, dx);
+  
+  const speed = PLAYER_CONFIG.projectileSpeed * player.projectileSpeedMultiplier;
+  const spreadAngles = [-0.3, 0, 0.3];
+  
+  for (const angleOffset of spreadAngles) {
+    const angle = baseAngle + angleOffset;
+    const vx = Math.cos(angle) * speed;
+    const vy = Math.sin(angle) * speed;
+    
+    const damage = calculateDamage(player, player.baseDamage * 0.8);
+    const projectile = new Projectile(
+      player.x,
+      player.y,
+      vx,
+      vy,
+      damage,
+      "PLAYER"
+    );
+    projectile.piercing = player.piercing;
+    
+    gameState.projectiles.push(projectile);
+  }
+}
+
+function fireRapidFire(p, player) {
+  if (gameState.enemies.length === 0) return;
+  
+  const target = gameState.enemies[0];
+  const dx = target.x - player.x;
+  const dy = target.y - player.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  
+  if (dist > 0) {
+    const speed = PLAYER_CONFIG.projectileSpeed * player.projectileSpeedMultiplier * 1.5;
+    const vx = (dx / dist) * speed;
+    const vy = (dy / dist) * speed;
+    
+    const damage = calculateDamage(player, player.baseDamage * 0.6);
+    const projectile = new Projectile(
+      player.x,
+      player.y,
+      vx,
+      vy,
+      damage,
+      "PLAYER"
+    );
+    projectile.piercing = player.piercing;
+    
+    gameState.projectiles.push(projectile);
+  }
+}
+
+function fireLightningChain(p, player) {
+  if (gameState.enemies.length === 0) return;
+  
+  // Find closest enemy
+  let closest = null;
+  let closestDist = Infinity;
+  
+  for (const enemy of gameState.enemies) {
+    if (enemy.isDead) continue;
+    const dx = enemy.x - player.x;
+    const dy = enemy.y - player.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < closestDist) {
+      closestDist = dist;
+      closest = enemy;
+    }
+  }
+  
+  if (closest && closestDist < 200) {
+    // Create lightning bolt visual from player to first target
+    gameState.lightningBolts.push({
+      x1: player.x,
+      y1: player.y,
+      x2: closest.x,
+      y2: closest.y,
+      lifetime: 10
+    });
+    
+    const damage = calculateDamage(player, player.baseDamage * 1.5);
+    const killed = closest.takeDamage(damage);
+    
+    if (killed) {
+      handleEnemyDeath(p, closest, []);
+    }
+    
+    // Chain to nearby enemies
+    let chainCount = 3;
+    let lastTarget = closest;
+    
+    for (let i = 0; i < chainCount; i++) {
+      let nextTarget = null;
+      let nextDist = Infinity;
+      
+      for (const enemy of gameState.enemies) {
+        if (enemy === lastTarget || enemy.isDead) continue;
+        const dx = enemy.x - lastTarget.x;
+        const dy = enemy.y - lastTarget.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 150 && dist < nextDist) {
+          nextDist = dist;
+          nextTarget = enemy;
+        }
+      }
+      
+      if (nextTarget) {
+        // Create lightning bolt visual between chained enemies
+        gameState.lightningBolts.push({
+          x1: lastTarget.x,
+          y1: lastTarget.y,
+          x2: nextTarget.x,
+          y2: nextTarget.y,
+          lifetime: 10
+        });
+        
+        const chainKilled = nextTarget.takeDamage(damage * 0.7);
+        if (chainKilled) {
+          handleEnemyDeath(p, nextTarget, []);
+        }
+        lastTarget = nextTarget;
+      } else {
+        break;
+      }
+    }
+  }
+}
+
+function fireBoomerang(p, player) {
+  if (gameState.enemies.length === 0) return;
+  
+  const target = gameState.enemies[0];
+  const dx = target.x - player.x;
+  const dy = target.y - player.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  
+  if (dist > 0) {
+    const speed = 4 * player.projectileSpeedMultiplier;
+    const vx = (dx / dist) * speed;
+    const vy = (dy / dist) * speed;
+    
+    const damage = calculateDamage(player, player.baseDamage * 1.0);
+    const projectile = new Projectile(
+      player.x,
+      player.y,
+      vx,
+      vy,
+      damage,
+      "PLAYER"
+    );
+    projectile.isBoomerang = true;
+    projectile.maxDistance = 250;
+    projectile.traveledDistance = 0;
+    projectile.returning = false;
+    projectile.piercing = 3;
+    projectile.rotation = 0;
+    
+    gameState.projectiles.push(projectile);
+  }
+}
+
+function fireLaserBeam(p, player) {
+  if (gameState.enemies.length === 0) return;
+  
+  const target = gameState.enemies[0];
+  const dx = target.x - player.x;
+  const dy = target.y - player.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  
+  if (dist > 0) {
+    const speed = 8 * player.projectileSpeedMultiplier;
+    const vx = (dx / dist) * speed;
+    const vy = (dy / dist) * speed;
+    
+    const damage = calculateDamage(player, player.baseDamage * 0.4);
+    const projectile = new Projectile(
+      player.x,
+      player.y,
+      vx,
+      vy,
+      damage,
+      "PLAYER"
+    );
+    projectile.isLaser = true;
+    projectile.piercing = 999;
+    projectile.radius = 2;
+    
+    gameState.projectiles.push(projectile);
+  }
+}
+
+function fireExplosiveShot(p, player) {
+  if (gameState.enemies.length === 0) return;
+  
+  const target = gameState.enemies[0];
+  const dx = target.x - player.x;
+  const dy = target.y - player.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  
+  if (dist > 0) {
+    const speed = 4 * player.projectileSpeedMultiplier;
+    const vx = (dx / dist) * speed;
+    const vy = (dy / dist) * speed;
+    
+    const damage = calculateDamage(player, player.baseDamage * 1.5);
+    const projectile = new Projectile(
+      player.x,
+      player.y,
+      vx,
+      vy,
+      damage,
+      "PLAYER"
+    );
+    projectile.isExplosive = true;
+    projectile.explosionRadius = 40;
+    projectile.radius = 4;
+    
+    gameState.projectiles.push(projectile);
+  }
+}
+
+function calculateDamage(player, baseDamage) {
+  let damage = baseDamage;
+  
+  // Critical hit chance
+  if (player.critChance > 0 && Math.random() < player.critChance) {
+    damage *= (2 + player.critDamage);
+  }
+  
+  return damage;
+}
+
+export function updateEnemyShooting(p, currentTime) {
+  for (const enemy of gameState.enemies) {
+    if (enemy.isDead) continue;
+    if (enemy.type !== "IMP" && enemy.type !== "BOSS" && enemy.type !== "NECROMANCER") continue;
+    
+    if (currentTime - enemy.lastShot > enemy.shootInterval) {
+      fireEnemyProjectile(p, enemy);
+      enemy.lastShot = currentTime;
+    }
+  }
+}
+
+function fireEnemyProjectile(p, enemy) {
+  const player = gameState.player;
+  const dx = player.x - enemy.x;
+  const dy = player.y - enemy.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  
+  if (dist > 0) {
+    const speed = 3;
+    
+    if (enemy.type === "BOSS") {
+      // Spread shot
+      const baseAngle = Math.atan2(dy, dx);
+      const spreadAngles = [-0.4, -0.2, 0, 0.2, 0.4];
+      
+      for (const angleOffset of spreadAngles) {
+        const angle = baseAngle + angleOffset;
+        const vx = Math.cos(angle) * speed;
+        const vy = Math.sin(angle) * speed;
+        
+        const projectile = new Projectile(
+          enemy.x,
+          enemy.y,
+          vx,
+          vy,
+          enemy.damage,
+          "ENEMY"
+        );
+        
+        gameState.projectiles.push(projectile);
+      }
+    } else {
+      const vx = (dx / dist) * speed;
+      const vy = (dy / dist) * speed;
+      
+      const projectile = new Projectile(
+        enemy.x,
+        enemy.y,
+        vx,
+        vy,
+        enemy.damage,
+        "ENEMY"
+      );
+      
+      gameState.projectiles.push(projectile);
+    }
+  }
+}
+
+export function checkCollisions(p) {
+  const player = gameState.player;
+  const particles = [];
+  
+  // Projectile-enemy collisions
+  for (const projectile of gameState.projectiles) {
+    if (projectile.isDead || projectile.owner !== "PLAYER") continue;
+    
+    let hitCount = 0;
+    const maxHits = projectile.piercing || 0;
+    
+    for (const enemy of gameState.enemies) {
+      if (enemy.isDead) continue;
+      if (hitCount >= maxHits && maxHits > 0) break;
+      
+      const enemyRadius = enemy.radius || enemy.size / 2;
+      if (projectile.collidesWith(enemy.x, enemy.y, enemyRadius)) {
+        if (!projectile.isBoomerang || !projectile.returning) {
+          const killed = enemy.takeDamage(projectile.damage);
+          
+          // Lifesteal
+          if (player.lifesteal > 0) {
+            player.health = Math.min(player.health + projectile.damage * player.lifesteal, player.maxHealth);
+          }
+          
+          // Impact particles
+          particles.push(...createExplosion(p, projectile.x, projectile.y, [255, 255, 255], 4));
+          
+          if (killed) {
+            handleEnemyDeath(p, enemy, particles);
+          }
+          
+          // Explosive projectile
+          if (projectile.isExplosive) {
+            explodeProjectile(p, projectile, particles);
+          }
+          
+          hitCount++;
+          if (maxHits === 0 || hitCount >= maxHits) {
+            projectile.isDead = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+  
+  // Boomerang return to player
+  for (const projectile of gameState.projectiles) {
+    if (projectile.isDead || !projectile.isBoomerang || !projectile.returning) continue;
+    
+    if (projectile.collidesWith(player.x, player.y, player.radius)) {
+      projectile.isDead = true;
+    }
+  }
+  
+  // Enemy projectile-player collisions
+  for (const projectile of gameState.projectiles) {
+    if (projectile.isDead || projectile.owner !== "ENEMY") continue;
+    
+    if (projectile.collidesWith(player.x, player.y, player.radius)) {
+      projectile.isDead = true;
+      const died = player.takeDamage(projectile.damage);
+      
+      if (died) {
+        gameState.gamePhase = "GAME_OVER_LOSE";
+        p.logs.game_info.push({
+          data: { phase: "GAME_OVER_LOSE" },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+  }
+  
+  // Player-enemy collisions
+  for (const enemy of gameState.enemies) {
+    if (enemy.isDead) continue;
+    
+    const enemyRadius = enemy.radius || enemy.size / 2;
+    if (enemy.collidesWith(player.x, player.y, player.radius)) {
+      let damage = enemy.damage;
+      const died = player.takeDamage(damage);
+      
+      // Thorns damage
+      if (player.thorns > 0) {
+        const thornsDamage = damage * player.thorns;
+        const killed = enemy.takeDamage(thornsDamage);
+        if (killed) {
+          handleEnemyDeath(p, enemy, particles);
+        }
+      }
+      
+      // Push enemy back
+      const dx = enemy.x - player.x;
+      const dy = enemy.y - player.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > 0) {
+        enemy.x += (dx / dist) * 20;
+        enemy.y += (dy / dist) * 20;
+      }
+      
+      if (died) {
+        gameState.gamePhase = "GAME_OVER_LOSE";
+        p.logs.game_info.push({
+          data: { phase: "GAME_OVER_LOSE" },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+  }
+  
+  // Player-expGem collisions
+  for (const gem of gameState.expGems) {
+    if (gem.isDead) continue;
+    
+    if (gem.collidesWith(player.x, player.y, player.radius)) {
+      gem.isDead = true;
+      const expAmount = gem.expValue * (1 + player.expMultiplier);
+      const leveledUp = player.addExp(expAmount);
+      gameState.score += 2;
+      
+      particles.push(...createExplosion(p, gem.x, gem.y, [255, 220, 100], 6));
+      
+      if (leveledUp) {
+        gameState.gamePhase = "UPGRADE_SELECTION";
+        generateUpgradeChoices(p);
+        p.logs.game_info.push({
+          data: { phase: "UPGRADE_SELECTION", level: player.level },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+  }
+  
+  return particles;
+}
+
+function explodeProjectile(p, projectile, particles) {
+  particles.push(...createExplosion(p, projectile.x, projectile.y, [255, 200, 50], 12));
+  
+  // Deal damage to nearby enemies
+  for (const enemy of gameState.enemies) {
+    if (enemy.isDead) continue;
+    
+    const dx = enemy.x - projectile.x;
+    const dy = enemy.y - projectile.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    
+    if (dist < projectile.explosionRadius) {
+      const killed = enemy.takeDamage(projectile.damage * 0.5);
+      if (killed) {
+        handleEnemyDeath(p, enemy, particles);
+      }
+    }
+  }
+}
+
+export function handleEnemyDeath(p, enemy, particles) {
+  gameState.score += enemy.pointsValue;
+  gameState.levelKills++; // Increment kills for level progression
+  
+  // Drop exp gem
+  const gem = new ExpGem(enemy.x, enemy.y, enemy.expValue);
+  gameState.expGems.push(gem);
+  
+  // Death particles
+  if (p) {
+    particles.push(...createExplosion(p, enemy.x, enemy.y, enemy.color, 8));
+  }
+  
+  // Check for boss death
+  if (enemy.type === "BOSS") {
+    gameState.bossDefeated = true;
+  }
+}
+
+function generateUpgradeChoices(p) {
+  const choices = [];
+  const availableUpgrades = [...UPGRADE_POOL];
+  
+  for (let i = 0; i < 3; i++) {
+    if (availableUpgrades.length === 0) break;
+    const index = Math.floor(p.random(availableUpgrades.length));
+    choices.push(availableUpgrades[index]);
+    availableUpgrades.splice(index, 1);
+  }
+  
+  gameState.availableUpgrades = choices;
+  gameState.selectedUpgradeIndex = 0;
+}
+</code>
+
+<code filename="game.js">
+// game.js - Main game file
+
+import { gameState, GAME_PHASES, CONTROL_MODES, CANVAS_WIDTH, CANVAS_HEIGHT, PLAYER_CONFIG, LEVEL_CONFIGS } from './globals.js';
+import { Player } from './player.js';
+import { handleHumanInput, handleTestingInput, handleKeyPressed } from './controls.js';
+import { updateSpawning } from './spawner.js';
+import { updatePlayerCombat, updateEnemyShooting, checkCollisions } from './combat.js';
+import { checkLevelCompletion, updateLevelTransition } from './levelManager.js';
+import { renderUI } from './ui.js';
+import { Particle } from './particles.js';
+
+const p5 = window.p5;
+
+let particles = [];
+
+let gameInstance = new p5(p => {
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Initialize logs
+    p.logs = {
+      game_info: [],
+      inputs: [],
+      player_info: []
+    };
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: { phase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+  
+  p.draw = function() {
+    // Render distinct floor color per level
+    const levelConfig = LEVEL_CONFIGS[gameState.currentLevel];
+    if (levelConfig && levelConfig.floorColor) {
+      p.background(...levelConfig.floorColor);
+    } else {
+      p.background(40);
+    }
+    
+    const currentTime = Date.now();
+    
+    // Handle different game phases
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      updatePlayingPhase(p, currentTime);
+      renderPlayingPhase(p);
+    } else if (gameState.gamePhase === GAME_PHASES.LEVEL_TRANSITION) {
+      updateLevelTransition(p, currentTime);
+    } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+      renderPlayingPhase(p);
+    } else if (gameState.gamePhase === GAME_PHASES.UPGRADE_SELECTION) {
+      renderPlayingPhase(p);
+    }
+    
+    // Render UI for all phases
+    renderUI(p);
+    
+    // Log player info during gameplay
+    if (gameState.player && p.frameCount % 10 === 0 && gameState.gamePhase === GAME_PHASES.PLAYING) {
+      p.logs.player_info.push({
+        screen_x: gameState.player.x,
+        screen_y: gameState.player.y,
+        game_x: gameState.player.x,
+        game_y: gameState.player.y,
+        framecount: p.frameCount
+      });
+    }
+  };
+  
+  function updatePlayingPhase(p, currentTime) {
+    // Handle input based on control mode
+    if (gameState.controlMode === CONTROL_MODES.HUMAN) {
+      handleHumanInput(p);
+    } else {
+      handleTestingInput(p);
+    }
+    
+    // Update player
+    if (gameState.player) {
+      gameState.player.update(p);
+    }
+    
+    // Update enemies
+    for (const enemy of gameState.enemies) {
+      if (!enemy.isDead) {
+        enemy.update(p, gameState.player);
+      }
+    }
+    
+    // Update projectiles
+    for (const projectile of gameState.projectiles) {
+      if (!projectile.isDead) {
+        projectile.update();
+      }
+    }
+    
+    // Update exp gems
+    for (const gem of gameState.expGems) {
+      if (!gem.isDead && gameState.player) {
+        gem.update(gameState.player);
+      }
+    }
+    
+    // Update particles
+    for (const particle of particles) {
+      particle.update();
+    }
+    
+    // Update lightning bolts
+    for (const bolt of gameState.lightningBolts) {
+      bolt.lifetime--;
+    }
+    gameState.lightningBolts = gameState.lightningBolts.filter(b => b.lifetime > 0);
+    
+    // Combat systems
+    updatePlayerCombat(p, currentTime);
+    updateEnemyShooting(p, currentTime);
+    
+    // Check collisions
+    const newParticles = checkCollisions(p);
+    particles.push(...newParticles);
+    
+    // Spawning
+    updateSpawning(p, currentTime);
+    
+    // Level completion check
+    checkLevelCompletion(p, currentTime);
+    
+    // Survival score
+    if (p.frameCount % 60 === 0) {
+      gameState.score += 5;
+    }
+    
+    // Clean up dead entities
+    gameState.projectiles = gameState.projectiles.filter(e => !e.isDead);
+    gameState.expGems = gameState.expGems.filter(e => !e.isDead);
+    gameState.enemies = gameState.enemies.filter(e => !e.isDead);
+    particles = particles.filter(p => !p.isDead);
+    gameState.entities = gameState.entities.filter(e => 
+      e === gameState.player || !e.isDead
+    );
+  }
+  
+  function renderPlayingPhase(p) {
+    // Render arena border
+    p.stroke(80);
+    p.strokeWeight(2);
+    p.noFill();
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    // Render particles
+    for (const particle of particles) {
+      particle.render(p);
+    }
+    
+    // Render exp gems
+    for (const gem of gameState.expGems) {
+      if (!gem.isDead) {
+        gem.render(p);
+      }
+    }
+    
+    // Render enemies
+    for (const enemy of gameState.enemies) {
+      if (!enemy.isDead) {
+        enemy.render(p);
+      }
+    }
+    
+    // Render projectiles
+    for (const projectile of gameState.projectiles) {
+      if (!projectile.isDead) {
+        projectile.render(p);
+      }
+    }
+    
+    // Render lightning bolts
+    for (const bolt of gameState.lightningBolts) {
+      renderLightningBolt(p, bolt);
+    }
+    
+    // Render player
+    if (gameState.player) {
+      gameState.player.render(p);
+    }
+    
+    // Screen shake effect on damage
+    if (gameState.player && gameState.player.hitFlash > 5) {
+      p.push();
+      p.fill(255, 0, 0, 30);
+      p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+      p.pop();
+    }
+  }
+  
+  function renderLightningBolt(p, bolt) {
+    p.push();
+    
+    // Main bolt
+    p.stroke(150, 200, 255, 200);
+    p.strokeWeight(3);
+    
+    // Create jagged lightning effect
+    const segments = 5;
+    const dx = (bolt.x2 - bolt.x1) / segments;
+    const dy = (bolt.y2 - bolt.y1) / segments;
+    
+    let prevX = bolt.x1;
+    let prevY = bolt.y1;
+    
+    for (let i = 1; i <= segments; i++) {
+      let nextX = bolt.x1 + dx * i;
+      let nextY = bolt.y1 + dy * i;
+      
+      // Add random offset except for endpoints
+      if (i < segments) {
+        nextX += (Math.random() - 0.5) * 20;
+        nextY += (Math.random() - 0.5) * 20;
+      }
+      
+      p.line(prevX, prevY, nextX, nextY);
+      prevX = nextX;
+      prevY = nextY;
+    }
+    
+    // Glow effect
+    p.stroke(200, 230, 255, 100);
+    p.strokeWeight(6);
+    p.line(bolt.x1, bolt.y1, bolt.x2, bolt.y2);
+    
+    // Electric particles at endpoints
+    p.noStroke();
+    p.fill(200, 230, 255, 150);
+    p.circle(bolt.x1, bolt.y1, 8);
+    p.circle(bolt.x2, bolt.y2, 8);
+    
+    p.pop();
+  }
+  
+  p.keyPressed = function() {
+    handleKeyPressed(p);
+  };
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Expose getGameState function
+window.getGameState = function() {
+  return gameState;
+};
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  if (CONTROL_MODES[mode]) {
+    gameState.controlMode = CONTROL_MODES[mode];
+    
+    // Update button states
+    document.querySelectorAll('.control-button').forEach(btn => {
+      btn.classList.remove('active');
+    });
+    
+    const btnId = mode.toLowerCase() + 'ModeBtn';
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.add('active');
+    }
+    
+    // Auto-start game if in START phase and switching to a test mode
+    if (gameState.gamePhase === GAME_PHASES.START && mode !== 'HUMAN') {
+      // Initialize game
+      gameState.player = new Player(PLAYER_CONFIG.startX, PLAYER_CONFIG.startY);
+      gameState.entities = [gameState.player];
+      gameState.projectiles = [];
+      gameState.expGems = [];
+      gameState.enemies = [];
+      gameState.score = 0;
+      gameState.currentLevel = 1;
+      gameState.levelKills = 0;
+      gameState.levelStartTime = Date.now();
+      gameState.levelDuration = LEVEL_CONFIGS[1].duration;
+      gameState.lastEnemySpawn = 0;
+      gameState.bossSpawned = false;
+      gameState.miniBossSpawned = false;
+      gameState.bossDefeated = false;
+      gameState.testingFrameCount = 0;
+      gameState.lightningBolts = [];
+      
+      gameState.gamePhase = GAME_PHASES.PLAYING;
+      
+      if (gameInstance && gameInstance._renderer) {
+        gameInstance.logs.game_info.push({
+          data: { phase: "PLAYING", level: 1, autoStarted: true, mode: mode },
+          framecount: gameInstance.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+  }
+};
+</code>
+
+<code filename="levelManager.js">
+// levelManager.js - Level progression and transitions
+
+import { gameState, LEVEL_CONFIGS, GAME_PHASES, PLAYER_CONFIG } from './globals.js';
+import { Player } from './player.js';
+
+export function checkLevelCompletion(p, currentTime) {
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) return;
+  
+  const config = LEVEL_CONFIGS[gameState.currentLevel];
+  if (!config) return;
+  
+  // Check if kill target is met
+  const killsMet = gameState.levelKills >= config.killTarget;
+  
+  // Level complete
+  if (killsMet) {
+    // Award completion bonus
+    gameState.score += config.completionBonus;
+    
+    // Clear remaining enemies
+    for (const enemy of gameState.enemies) {
+      enemy.isDead = true;
+    }
+    
+    // Check if this was the final level
+    if (gameState.currentLevel === 6) {
+      gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
+      p.logs.game_info.push({
+        data: { phase: "GAME_OVER_WIN", finalScore: gameState.score },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    } else {
+      // Transition to next level
+      gameState.gamePhase = GAME_PHASES.LEVEL_TRANSITION;
+      gameState.transitionStartTime = Date.now();
+      gameState.transitionMessage = config.clearMessage;
+      
+      p.logs.game_info.push({
+        data: { phase: "LEVEL_TRANSITION", level: gameState.currentLevel },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+}
+
+export function updateLevelTransition(p, currentTime) {
+  const elapsed = currentTime - gameState.transitionStartTime;
+  
+  if (elapsed >= gameState.transitionDuration) {
+    // Start next level
+    gameState.currentLevel++;
+    gameState.levelStartTime = Date.now();
+    gameState.levelKills = 0;
+    gameState.lastEnemySpawn = 0;
+    gameState.bossSpawned = false;
+    gameState.miniBossSpawned = false;
+    gameState.bossDefeated = false;
+    
+    // Reset player upgrades (start fresh but keep level progression)
+    gameState.player = new Player(PLAYER_CONFIG.startX, PLAYER_CONFIG.startY);
+    gameState.entities = [gameState.player];
+    gameState.projectiles = [];
+    gameState.expGems = [];
+    gameState.enemies = [];
+    
+    gameState.gamePhase = GAME_PHASES.PLAYING;
+    
+    p.logs.game_info.push({
+      data: { phase: "PLAYING", level: gameState.currentLevel },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+</code>
+
+<code filename="ui.js">
+// ui.js - UI rendering
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, GAME_PHASES, LEVEL_CONFIGS } from './globals.js';
+
+export function renderUI(p) {
+  if (gameState.gamePhase === GAME_PHASES.START) {
+    renderStartScreen(p);
+  } else if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+    renderGameUI(p);
+  } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+    renderGameUI(p);
+    renderPauseOverlay(p);
+  } else if (gameState.gamePhase === GAME_PHASES.UPGRADE_SELECTION) {
+    renderGameUI(p);
+    renderUpgradeSelection(p);
+  } else if (gameState.gamePhase === GAME_PHASES.LEVEL_TRANSITION) {
+    renderLevelTransition(p);
+  } else if (gameState.gamePhase.includes("GAME_OVER")) {
+    renderGameOver(p);
+  }
+}
+
+function renderStartScreen(p) {
+  p.push();
+  
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  // Title
+  p.textSize(36);
+  p.text("ARENA RECKONING", CANVAS_WIDTH / 2, 80);
+  
+  p.textSize(20);
+  p.text("PIXEL HORDE", CANVAS_WIDTH / 2, 115);
+  
+  // Description
+  p.textSize(12);
+  p.fill(200);
+  p.text("Survive 6 levels of increasing monster hordes!", CANVAS_WIDTH / 2, 160);
+  p.text("Collect EXP gems to level up and choose upgrades.", CANVAS_WIDTH / 2, 180);
+  p.text("Kill enemies to progress. Upgrades reset each level!", CANVAS_WIDTH / 2, 200);
+  
+  // Instructions
+  p.textSize(14);
+  p.fill(255, 220, 100);
+  p.text("CONTROLS", CANVAS_WIDTH / 2, 240);
+  
+  p.textSize(11);
+  p.fill(200);
+  p.text("Arrow Keys / WASD: Move", CANVAS_WIDTH / 2, 265);
+  p.text("Space: Confirm Upgrade", CANVAS_WIDTH / 2, 285);
+  p.text("Shift/ESC: Pause", CANVAS_WIDTH / 2, 305);
+  p.text("R: Restart", CANVAS_WIDTH / 2, 325);
+  
+  // Start prompt
+  p.textSize(16);
+  p.fill(100, 255, 100);
+  const alpha = (Math.sin(p.frameCount * 0.1) + 1) * 127 + 50;
+  p.fill(100, 255, 100, alpha);
+  p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 370);
+  
+  p.pop();
+}
+
+function renderGameUI(p) {
+  const player = gameState.player;
+  if (!player) return;
+  
+  p.push();
+  
+  // HP Bar
+  p.fill(50);
+  p.rect(10, 10, 150, 20);
+  const healthPercent = player.health / player.maxHealth;
+  p.fill(255, 50, 50);
+  p.rect(10, 10, 150 * healthPercent, 20);
+  p.noFill();
+  p.stroke(255);
+  p.strokeWeight(2);
+  p.rect(10, 10, 150, 20);
+  
+  p.fill(255);
+  p.noStroke();
+  p.textSize(10);
+  p.textAlign(p.LEFT, p.TOP);
+  p.text(`HP: ${Math.ceil(player.health)}/${player.maxHealth}`, 15, 13);
+  
+  // EXP Bar
+  const expPercent = player.currentExp / player.expToNextLevel;
+  p.fill(30);
+  p.rect(CANVAS_WIDTH / 2 - 100, CANVAS_HEIGHT - 30, 200, 15);
+  p.fill(100, 150, 255);
+  p.rect(CANVAS_WIDTH / 2 - 100, CANVAS_HEIGHT - 30, 200 * expPercent, 15);
+  p.noFill();
+  p.stroke(255);
+  p.strokeWeight(2);
+  p.rect(CANVAS_WIDTH / 2 - 100, CANVAS_HEIGHT - 30, 200, 15);
+  
+  p.fill(255);
+  p.noStroke();
+  p.textAlign(p.CENTER, p.TOP);
+  p.text(`EXP: ${Math.floor(player.currentExp)}/${player.expToNextLevel}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 28);
+  
+  // Level
+  p.textAlign(p.CENTER, p.TOP);
+  p.textSize(14);
+  p.text(`LEVEL: ${player.level}`, CANVAS_WIDTH / 2, 10);
+  
+  // Score
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(12);
+  p.text(`SCORE: ${gameState.score}`, CANVAS_WIDTH - 10, 10);
+  
+  // Kill Progress
+  if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+    const config = LEVEL_CONFIGS[gameState.currentLevel];
+    const kills = gameState.levelKills;
+    const target = config ? config.killTarget : 999;
+    
+    p.textAlign(p.CENTER, p.TOP);
+    p.textSize(12);
+    p.text(`KILLS: ${kills} / ${target}`, CANVAS_WIDTH / 2, 30);
+    p.text(`Stage ${gameState.currentLevel}/6`, CANVAS_WIDTH / 2, 50);
+  }
+  
+  p.pop();
+}
+
+function renderPauseOverlay(p) {
+  p.push();
+  
+  // Small indicator
+  p.fill(255);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(14);
+  p.text("PAUSED", CANVAS_WIDTH - 10, 40);
+  
+  p.pop();
+}
+
+function renderUpgradeSelection(p) {
+  p.push();
+  
+  // Overlay
+  p.fill(0, 0, 0, 200);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Title
+  p.fill(255, 220, 100);
+  p.textAlign(p.CENTER, p.TOP);
+  p.textSize(24);
+  p.text("LEVEL UP!", CANVAS_WIDTH / 2, 40);
+  
+  p.textSize(14);
+  p.fill(200);
+  p.text("Choose an upgrade:", CANVAS_WIDTH / 2, 75);
+  
+  // Upgrade options
+  const boxWidth = 160;
+  const boxHeight = 120;
+  const spacing = 20;
+  const startX = (CANVAS_WIDTH - (boxWidth * 3 + spacing * 2)) / 2;
+  const startY = 120;
+  
+  for (let i = 0; i < gameState.availableUpgrades.length; i++) {
+    const upgrade = gameState.availableUpgrades[i];
+    const x = startX + i * (boxWidth + spacing);
+    const y = startY;
+    
+    // Box
+    if (i === gameState.selectedUpgradeIndex) {
+      p.fill(80, 80, 120);
+      p.stroke(255, 220, 100);
+      p.strokeWeight(3);
+    } else {
+      p.fill(40, 40, 60);
+      p.stroke(100);
+      p.strokeWeight(2);
+    }
+    p.rect(x, y, boxWidth, boxHeight);
+    
+    // Text
+    p.noStroke();
+    p.fill(255);
+    p.textSize(12);
+    p.textAlign(p.CENTER, p.TOP);
+    p.text(upgrade.name, x + boxWidth / 2, y + 10);
+    
+    p.textSize(10);
+    p.fill(200);
+    
+    // Wrap description
+    const words = upgrade.description.split(' ');
+    let line = '';
+    let yOffset = 40;
+    for (const word of words) {
+      const testLine = line + word + ' ';
+      if (p.textWidth(testLine) > boxWidth - 20) {
+        p.text(line, x + boxWidth / 2, y + yOffset);
+        line = word + ' ';
+        yOffset += 15;
+      } else {
+        line = testLine;
+      }
+    }
+    p.text(line, x + boxWidth / 2, y + yOffset);
+    
+    // Type indicator
+    p.textSize(9);
+    p.fill(150, 150, 200);
+    p.text(`[${upgrade.type}]`, x + boxWidth / 2, y + boxHeight - 20);
+  }
+  
+  // Instructions
+  p.fill(255, 220, 100);
+  p.textSize(12);
+  p.textAlign(p.CENTER, p.TOP);
+  p.text("Use Arrow Keys to select, Space to confirm", CANVAS_WIDTH / 2, CANVAS_HEIGHT - 40);
+  
+  p.pop();
+}
+
+function renderLevelTransition(p) {
+  p.push();
+  
+  // Overlay
+  p.fill(0, 0, 0, 150);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Message
+  p.fill(255, 220, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(24);
+  p.text(gameState.transitionMessage, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+  
+  p.textSize(16);
+  p.fill(200);
+  p.text("Get ready...", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+  
+  p.pop();
+}
+
+function renderGameOver(p) {
+  p.push();
+  
+  p.fill(0, 0, 0, 200);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN) {
+    p.textSize(36);
+    p.fill(100, 255, 100);
+    p.text("VICTORY!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 60);
+    
+    p.textSize(16);
+    p.fill(255);
+    p.text("You survived all 6 levels!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+  } else {
+    p.textSize(36);
+    p.fill(255, 100, 100);
+    p.text("GAME OVER", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 60);
+    
+    p.textSize(16);
+    p.fill(255);
+    p.text("You were overwhelmed...", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+  }
+  
+  p.textSize(20);
+  p.fill(255, 220, 100);
+  p.text(`FINAL SCORE: ${gameState.score}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+  
+  p.textSize(14);
+  p.fill(200);
+  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 60);
+  
+  p.pop();
+}
+</code>

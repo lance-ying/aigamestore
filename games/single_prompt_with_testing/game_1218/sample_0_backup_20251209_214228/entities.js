@@ -1,0 +1,516 @@
+/**
+ * entities.js
+ * Contains all game entity classes: Player, Enemy, Platform, Projectile, Collectible.
+ */
+
+import { gameState, GRAVITY, TERMINAL_VELOCITY, FRICTION, AIR_RESISTANCE, CANVAS_WIDTH } from './globals.js';
+import { resolveMapCollisions, checkCollision } from './physics.js';
+import { createExplosion, createSmoke, Particle } from './particles.js';
+
+// Base Entity Class
+class Entity {
+    constructor(x, y, w, h) {
+        this.x = x;
+        this.y = y;
+        this.width = w;
+        this.height = h;
+        this.vx = 0;
+        this.vy = 0;
+        this.active = true;
+        this.prevX = x;
+        this.prevY = y;
+        this.onGround = false;
+        this.color = [255, 255, 255];
+    }
+    
+    update(p) {
+        this.prevX = this.x;
+        this.prevY = this.y;
+        
+        // Physics integration
+        this.vy += GRAVITY;
+        if (this.vy > TERMINAL_VELOCITY) this.vy = TERMINAL_VELOCITY;
+        
+        this.x += this.vx;
+        this.y += this.vy;
+        
+        // Friction
+        if (this.onGround) {
+            this.vx *= FRICTION;
+        } else {
+            this.vx *= AIR_RESISTANCE;
+        }
+        
+        if (Math.abs(this.vx) < 0.1) this.vx = 0;
+    }
+    
+    render(p) {
+        p.push();
+        p.fill(this.color);
+        p.noStroke();
+        p.rectMode(p.CENTER);
+        p.rect(this.x, this.y, this.width, this.height);
+        p.pop();
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Player Class
+// ----------------------------------------------------------------------------
+export class Player extends Entity {
+    constructor(x, y) {
+        super(x, y, 20, 30);
+        this.speed = 0.8; // Acceleration
+        this.maxSpeed = 5;
+        this.jumpForce = -11;
+        this.facing = 1; // 1 = right, -1 = left
+        this.health = 100;
+        this.maxHealth = 100;
+        this.invulnerableTime = 0;
+        this.weapon = "PEASHOOTER"; // PEASHOOTER, SHOTGUN, LASER
+        this.weaponTimer = 0;
+        
+        // Upgrades
+        this.canDoubleJump = false;
+        this.jumpsLeft = 1;
+        this.hasDash = false;
+        this.dashCooldown = 0;
+    }
+    
+    update(p) {
+        // Input Handling
+        if (gameState.inputs.left) {
+            this.vx -= this.speed;
+            this.facing = -1;
+        }
+        if (gameState.inputs.right) {
+            this.vx += this.speed;
+            this.facing = 1;
+        }
+        
+        // Cap speed
+        if (this.vx > this.maxSpeed) this.vx = this.maxSpeed;
+        if (this.vx < -this.maxSpeed) this.vx = -this.maxSpeed;
+        
+        // Jumping
+        if (gameState.inputs.jumpPressed) {
+            if (this.onGround) {
+                this.vy = this.jumpForce;
+                this.onGround = false;
+                createSmoke(this.x, this.y + this.height/2, 5);
+            } else if (this.canDoubleJump && this.jumpsLeft > 0) {
+                this.vy = this.jumpForce * 0.9;
+                this.jumpsLeft--;
+                createSmoke(this.x, this.y + this.height/2, 5);
+            }
+        }
+        
+        // Reset double jump on land
+        if (this.onGround) {
+            this.jumpsLeft = 1;
+        }
+        
+        // Dashing
+        if (this.hasDash && gameState.inputs.dashPressed && this.dashCooldown <= 0) {
+            this.vx = this.facing * 15;
+            this.vy = 0;
+            this.dashCooldown = 60; // 1 second
+            // Visual effect
+            for(let i=0; i<5; i++) gameState.particles.push(new Particle(this.x, this.y, 'SPARK'));
+        }
+        if (this.dashCooldown > 0) this.dashCooldown--;
+        
+        // Shooting
+        if (gameState.inputs.shoot && this.weaponTimer <= 0) {
+            this.shoot();
+        }
+        if (this.weaponTimer > 0) this.weaponTimer--;
+        
+        // Physics update (Parent)
+        super.update(p);
+        
+        // Map collision
+        this.onGround = resolveMapCollisions(this, gameState.platforms);
+        
+        // Invulnerability
+        if (this.invulnerableTime > 0) this.invulnerableTime--;
+        
+        // Log player state
+        p.logs.player_info.push({
+            x: this.x, y: this.y, vx: this.vx, vy: this.vy,
+            health: this.health,
+            frame: gameState.frameCount
+        });
+        
+        // Check death
+        if (this.y > gameState.cameraY + CANVAS_HEIGHT + 100) {
+            this.takeDamage(1000); // Fell off screen (shouldn't happen with floor, but for pits)
+        }
+        
+        if (this.health <= 0) {
+            createExplosion(this.x, this.y, 30);
+            gameState.gamePhase = "GAME_OVER_LOSE";
+        }
+    }
+    
+    shoot() {
+        let vx = this.facing * 10;
+        let vy = 0;
+        
+        // Aim up
+        if (gameState.inputs.up) {
+            vx = 0;
+            vy = -10;
+        }
+        
+        if (this.weapon === "PEASHOOTER") {
+            gameState.projectiles.push(new Projectile(this.x, this.y, vx, vy, "PLAYER", 10));
+            this.weaponTimer = 15;
+        } else if (this.weapon === "SHOTGUN") {
+            for(let i=-1; i<=1; i++) {
+                // Spread
+                let ang = Math.atan2(vy, vx) + i * 0.2;
+                let svx = Math.cos(ang) * 10;
+                let svy = Math.sin(ang) * 10;
+                gameState.projectiles.push(new Projectile(this.x, this.y, svx, svy, "PLAYER", 8));
+            }
+            this.weaponTimer = 40;
+        } else if (this.weapon === "LASER") {
+            gameState.projectiles.push(new Projectile(this.x, this.y, vx * 1.5, vy * 1.5, "PLAYER", 20));
+            this.weaponTimer = 8;
+        }
+        
+        // Eject shell casing effect
+        gameState.particles.push(new Particle(this.x, this.y, 'SHELL'));
+    }
+    
+    takeDamage(amount) {
+        if (this.invulnerableTime > 0) return;
+        
+        this.health -= amount;
+        this.invulnerableTime = 60; // 1 second iframe
+        gameState.cameraShake = 10;
+        
+        // Knockback
+        this.vy = -5;
+        this.vx = -this.facing * 5;
+    }
+    
+    render(p) {
+        if (this.invulnerableTime > 0 && Math.floor(gameState.frameCount / 4) % 2 === 0) return; // Flicker
+        
+        p.push();
+        p.translate(this.x, this.y);
+        
+        // Draw Suit
+        p.rectMode(p.CENTER);
+        
+        // Body
+        p.fill(0, 100, 200);
+        p.rect(0, 0, this.width, this.height, 4);
+        
+        // Visor
+        p.fill(0, 255, 255);
+        let visorX = this.facing * 4;
+        p.rect(visorX, -5, 12, 8);
+        
+        // Arm Cannon
+        p.fill(50);
+        let cannonX = this.facing * 10;
+        let cannonY = 2;
+        if (gameState.inputs.up) {
+            cannonX = 0;
+            cannonY = -15;
+            p.rect(cannonX, cannonY, 8, 15);
+        } else {
+            p.rect(cannonX, cannonY, 15, 8);
+        }
+        
+        p.pop();
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Enemy Class (Polymorphic)
+// ----------------------------------------------------------------------------
+export class Enemy extends Entity {
+    constructor(x, y, type) {
+        super(x, y, 25, 25);
+        this.type = type; // 'SLIME', 'BAT', 'SHOOTER'
+        this.health = 20;
+        this.damage = 10;
+        this.timer = 0;
+        
+        if (type === 'SLIME') {
+            this.color = [0, 200, 50];
+            this.vx = 2; // Patrol speed
+        } else if (type === 'BAT') {
+            this.color = [100, 50, 150];
+            this.health = 10;
+            this.width = 20;
+            this.height = 15;
+        } else if (type === 'SHOOTER') {
+            this.color = [200, 50, 50];
+            this.health = 30;
+        }
+    }
+    
+    update(p) {
+        this.timer++;
+        
+        if (Math.abs(this.x - gameState.player.x) > 400 && Math.abs(this.y - gameState.player.y) > 400) return; // Optimization: sleep if far
+        
+        if (this.type === 'SLIME') {
+            // Basic physics
+            super.update(p);
+            this.onGround = resolveMapCollisions(this, gameState.platforms);
+            
+            // Patrol logic: turn around at walls or edges
+            // Check ahead
+            // (Simplified: Just bounce off walls for now)
+            if (this.vx === 0) this.vx = (Math.random() > 0.5 ? 2 : -2); // Unstuck
+            
+        } else if (this.type === 'BAT') {
+            // Fly towards player
+            const dx = gameState.player.x - this.x;
+            const dy = gameState.player.y - this.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            
+            if (dist < 250) {
+                this.vx = (dx / dist) * 2;
+                this.vy = (dy / dist) * 2;
+            } else {
+                // Hover idle
+                this.vx = Math.sin(this.timer * 0.05);
+                this.vy = Math.cos(this.timer * 0.05);
+            }
+            this.x += this.vx;
+            this.y += this.vy;
+            
+        } else if (this.type === 'SHOOTER') {
+            super.update(p);
+            this.onGround = resolveMapCollisions(this, gameState.platforms);
+            this.vx = 0; // Stationary
+            
+            // Shoot at player
+            if (this.timer % 120 === 0) {
+                 const dx = gameState.player.x - this.x;
+                 const dy = gameState.player.y - this.y;
+                 const dist = Math.sqrt(dx*dx + dy*dy);
+                 if (dist < 300) {
+                     gameState.projectiles.push(new Projectile(this.x, this.y, (dx/dist)*5, (dy/dist)*5, "ENEMY", 10));
+                 }
+            }
+        }
+        
+        // Collision with player
+        if (checkCollision(this, gameState.player)) {
+            gameState.player.takeDamage(this.damage);
+        }
+        
+        // Death
+        if (this.health <= 0) {
+            this.die();
+        }
+    }
+    
+    die() {
+        this.active = false;
+        createExplosion(this.x, this.y, 8);
+        gameState.score += 50;
+        
+        // Chance to drop collectible
+        if (Math.random() < 0.2) {
+            gameState.collectibles.push(new Collectible(this.x, this.y, 'GEM'));
+        }
+        if (Math.random() < 0.05) {
+            gameState.collectibles.push(new Collectible(this.x, this.y, 'HEALTH'));
+        }
+    }
+    
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        p.fill(this.color);
+        
+        if (this.type === 'SLIME') {
+            // Wobbly effect
+            const h = this.height - Math.sin(this.timer * 0.2) * 2;
+            const w = this.width + Math.sin(this.timer * 0.2) * 2;
+            p.rect(0, 12 - h/2, w, h); // Anchor bottom
+            // Eyes
+            p.fill(255);
+            p.circle(-5, 5 - h/2, 5);
+            p.circle(5, 5 - h/2, 5);
+        } else if (this.type === 'BAT') {
+             // Wings flap
+             const flap = Math.sin(this.timer * 0.5) * 10;
+             p.triangle(-10, 0, 10, 0, 0, 10); // Body
+             p.triangle(-10, 0, -20, -10 + flap, -5, 5); // Left Wing
+             p.triangle(10, 0, 20, -10 + flap, 5, 5); // Right Wing
+        } else {
+             p.rect(0, 0, this.width, this.height);
+             // Gun
+             p.fill(50);
+             p.rect(10, 0, 10, 5);
+        }
+        
+        p.pop();
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Projectile Class
+// ----------------------------------------------------------------------------
+export class Projectile extends Entity {
+    constructor(x, y, vx, vy, owner, damage) {
+        super(x, y, 6, 6);
+        this.vx = vx;
+        this.vy = vy;
+        this.owner = owner; // 'PLAYER' or 'ENEMY'
+        this.damage = damage;
+        this.life = 120; // Frames
+    }
+    
+    update(p) {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life--;
+        
+        if (this.life <= 0) {
+            this.active = false;
+            return;
+        }
+        
+        // Hit detection
+        if (this.owner === "PLAYER") {
+            for (let enemy of gameState.enemies) {
+                if (enemy.active && checkCollision(this, enemy)) {
+                    enemy.health -= this.damage;
+                    this.active = false;
+                    createExplosion(this.x, this.y, 3);
+                    return;
+                }
+            }
+        } else {
+            if (checkCollision(this, gameState.player)) {
+                gameState.player.takeDamage(this.damage);
+                this.active = false;
+                createExplosion(this.x, this.y, 3);
+            }
+        }
+        
+        // Wall collisions
+        for (let plat of gameState.platforms) {
+            if (plat.type === 'SOLID' && checkCollision(this, plat)) {
+                this.active = false;
+                createExplosion(this.x, this.y, 2);
+                return;
+            }
+        }
+    }
+    
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        p.fill(this.owner === "PLAYER" ? [255, 255, 0] : [255, 0, 0]);
+        p.circle(0, 0, this.width);
+        p.pop();
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Platform Class
+// ----------------------------------------------------------------------------
+export class Platform {
+    constructor(x, y, w, h, type = 'SOLID') {
+        this.x = x;
+        this.y = y;
+        this.width = w;
+        this.height = h;
+        this.type = type; // 'SOLID', 'ONE_WAY'
+    }
+    
+    render(p) {
+        p.push();
+        p.rectMode(p.CENTER);
+        if (this.type === 'SOLID') {
+            p.fill(80, 80, 90);
+            p.stroke(60);
+            p.rect(this.x, this.y, this.width, this.height);
+            // Bricks pattern details
+            p.stroke(70);
+            p.line(this.x - this.width/2, this.y, this.x + this.width/2, this.y);
+        } else {
+            p.fill(100, 100, 120);
+            p.rect(this.x, this.y, this.width, this.height);
+            p.fill(60, 60, 70);
+            p.rect(this.x, this.y - this.height/2 + 2, this.width, 4); // Top lip
+        }
+        p.pop();
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Collectible Class
+// ----------------------------------------------------------------------------
+export class Collectible extends Entity {
+    constructor(x, y, type) {
+        super(x, y, 16, 16);
+        this.type = type; // 'GEM', 'HEALTH', 'WEAPON'
+        this.bobOffset = Math.random() * Math.PI * 2;
+    }
+    
+    update(p) {
+        // Bobbing animation
+        this.bobOffset += 0.1;
+        this.y += Math.sin(this.bobOffset) * 0.2;
+        
+        // Collision with player
+        if (checkCollision(this, gameState.player)) {
+            if (this.type === 'GEM') {
+                gameState.score += 100;
+            } else if (this.type === 'HEALTH') {
+                gameState.player.health = Math.min(gameState.player.health + 25, gameState.player.maxHealth);
+            } else if (this.type === 'WEAPON') {
+                gameState.player.weapon = Math.random() > 0.5 ? "SHOTGUN" : "LASER";
+                gameState.player.weaponTimer = 30;
+            }
+            this.active = false;
+            // Sound effect visual
+            gameState.particles.push(new Particle(this.x, this.y, 'SPARK'));
+        }
+    }
+    
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        
+        if (this.type === 'GEM') {
+            p.fill(0, 255, 0);
+            p.beginShape();
+            p.vertex(0, -8);
+            p.vertex(6, 0);
+            p.vertex(0, 8);
+            p.vertex(-6, 0);
+            p.endShape(p.CLOSE);
+        } else if (this.type === 'HEALTH') {
+            p.fill(255, 100, 100);
+            p.circle(0, 0, 12);
+            p.fill(255);
+            p.rectMode(p.CENTER);
+            p.rect(0, 0, 4, 10);
+            p.rect(0, 0, 10, 4);
+        } else if (this.type === 'WEAPON') {
+            p.fill(200, 150, 0);
+            p.rectMode(p.CENTER);
+            p.rect(0, 0, 16, 16);
+            p.fill(0);
+            p.textSize(10);
+            p.textAlign(p.CENTER, p.CENTER);
+            p.text("?", 0, 0);
+        }
+        
+        p.pop();
+    }
+}

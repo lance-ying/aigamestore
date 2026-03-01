@@ -1,0 +1,1767 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+when I press enter, nothing happens, can you fix that
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Zenonia 4 Demake</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #111; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; font-family: 'Courier New', Courier, monospace; }
+      canvas { border: 2px solid #444; box-shadow: 0 0 20px rgba(0,0,0,0.5); width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #333; color: #aaa; border: 1px solid #555; border-radius: 4px; transition: all 0.2s; }
+      .control-button:hover { background: #444; color: #fff; }
+      .control-button.active { background: #d32f2f; color: #fff; border-color: #f44336; }
+      
+      h1 { color: #eee; margin-bottom: 5px; text-shadow: 2px 2px 0 #000; }
+      p { color: #888; font-size: 14px; margin: 5px 0; max-width: 600px; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 10px;">
+      <h1>ZENONIA 4 DEMAKE</h1>
+      <p>Return of the Legend - Action RPG</p>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN', this)">Human Mode</button>
+        <button id="test1ModeBtn" class="control-button" onclick="setMode('TEST_1', this)">Test: Movement</button>
+        <button id="test2ModeBtn" class="control-button" onclick="setMode('TEST_2', this)">Test: Combat AI</button>
+      </div>
+    </div>
+    
+    <!-- Canvas injected here by p5 -->
+    
+    <div style="margin-top: 10px; text-align: center;">
+      <p style="color: #666; font-size: 12px;">Controls: Arrows to Move, SPACE to Attack, Z for Skill, SHIFT to Dash</p>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+    
+    <script>
+      function setMode(mode, btn) {
+        if (window.setControlMode) {
+          window.setControlMode(mode);
+          
+          // Update UI
+          document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          
+          // Focus canvas
+          setTimeout(() => {
+             const canvas = document.querySelector('canvas');
+             if(canvas) canvas.focus();
+          }, 100);
+        }
+      }
+    </script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+/**
+ * Global constants and state management for Zenonia 4 Demake.
+ */
+
+// Canvas Dimensions
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// World Dimensions (2x2 screens roughly)
+export const WORLD_WIDTH = 1200;
+export const WORLD_HEIGHT = 800;
+
+// Game Configuration
+export const FPS = 60;
+export const GRAVITY = 0; // Top down RPG, no gravity
+export const FRICTION = 0.85;
+
+// Colors
+export const COLORS = {
+    background: [30, 35, 40],
+    ground: [45, 50, 40],
+    ui_bg: [0, 0, 0, 150],
+    text: [255, 255, 255],
+    hp_bar: [220, 40, 40],
+    xp_bar: [40, 220, 220],
+    mp_bar: [40, 40, 220],
+    damage_text: [255, 255, 255],
+    crit_text: [255, 255, 0],
+    heal_text: [0, 255, 0]
+};
+
+// Initial Game State
+export const gameState = {
+    // Phase
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2, TEST_3
+    
+    // Time
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Camera
+    camera: {
+        x: 0,
+        y: 0,
+        shake: 0
+    },
+    
+    // Entities lists
+    player: null,
+    enemies: [],
+    projectiles: [],
+    particles: [], // Effects, floating text
+    items: [], // Dropped loot
+    walls: [], // Static collision objects
+    
+    // Gameplay Stats
+    score: 0,
+    killCount: 0,
+    level: 1,
+    
+    // Input State (for decoupled logic)
+    inputs: {
+        up: false,
+        down: false,
+        left: false,
+        right: false,
+        attack: false,
+        skill: false,
+        dash: false
+    }
+};
+
+/**
+ * Initializes the game state logs.
+ * NOTE: Logs are write-only and persist through restarts.
+ */
+export function initLogs(p) {
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+}
+
+/**
+ * Reset game state for a new game.
+ * Keeps controlMode and logs intact.
+ */
+export function resetGameState() {
+    gameState.gamePhase = "START";
+    gameState.frameCount = 0;
+    gameState.score = 0;
+    gameState.killCount = 0;
+    
+    gameState.player = null;
+    gameState.enemies = [];
+    gameState.projectiles = [];
+    gameState.particles = [];
+    gameState.items = [];
+    gameState.walls = [];
+    
+    gameState.camera.x = 0;
+    gameState.camera.y = 0;
+    gameState.camera.shake = 0;
+}
+
+// Expose global accessor
+window.getGameState = () => gameState;
+</file>
+
+<file name="game.js">
+/**
+ * Main Game Loop and Setup.
+ * Integrates all modules.
+ */
+
+import { 
+    gameState, initLogs, resetGameState,
+    CANVAS_WIDTH, CANVAS_HEIGHT, WORLD_WIDTH, WORLD_HEIGHT, FPS, COLORS
+} from './globals.js';
+import { Player, Slime, ShadowKnight, Boss } from './entities.js';
+import { renderStartScreen, renderHUD, renderPausedScreen, renderGameOver } from './ui.js';
+import { handleInput } from './input.js';
+import { constrainToWorld } from './physics.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    // --- Setup ---
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(FPS);
+        p.randomSeed(42);
+        
+        initLogs(p);
+        
+        // Initial log
+        p.logs.game_info.push({
+            data: { gamePhase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    };
+
+    // --- Main Loop ---
+    p.draw = function() {
+        // Time management
+        const currentTime = p.millis();
+        gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = currentTime;
+        gameState.frameCount = p.frameCount;
+        
+        // Input Handling
+        handleInput(p); // Process inputs before logic
+        
+        p.background(COLORS.background);
+        
+        switch (gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                // Listen for ENTER to transition (handled in input.js but we need to init world)
+                if (gameState.inputs.attack || p.keyIsDown(13)) { // Using Enter directly in Input
+                    initGameWorld(p);
+                }
+                break;
+                
+            case "PLAYING":
+                updateGame(p);
+                renderGame(p);
+                renderHUD(p);
+                break;
+                
+            case "PAUSED":
+                renderGame(p);
+                renderHUD(p);
+                renderPausedScreen(p);
+                break;
+                
+            case "GAME_OVER_WIN":
+            case "GAME_OVER_LOSE":
+                renderGame(p);
+                renderGameOver(p, gameState.gamePhase === "GAME_OVER_WIN");
+                break;
+        }
+    };
+    
+    // --- Phase Transition Helper ---
+    function initGameWorld(p) {
+        if (gameState.gamePhase !== "PLAYING") {
+            gameState.gamePhase = "PLAYING";
+            resetGameState();
+            
+            // Spawn Player
+            gameState.player = new Player(100, 100);
+            
+            // Spawn Enemies scattered
+            for (let i = 0; i < 15; i++) {
+                gameState.enemies.push(new Slime(300 + Math.random() * (WORLD_WIDTH - 400), Math.random() * WORLD_HEIGHT));
+            }
+            
+            for (let i = 0; i < 5; i++) {
+                 gameState.enemies.push(new ShadowKnight(500 + Math.random() * (WORLD_WIDTH - 600), Math.random() * WORLD_HEIGHT));
+            }
+            
+            // Spawn Boss far away
+            gameState.enemies.push(new Boss(WORLD_WIDTH - 150, WORLD_HEIGHT / 2));
+            
+            p.logs.game_info.push({ event: "Game Started", mode: gameState.controlMode });
+        }
+    }
+    
+    // --- Update Logic ---
+    function updateGame(p) {
+        const player = gameState.player;
+        if (!player) return;
+        
+        if (player.dead) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+            return;
+        }
+
+        // 1. Update Entities
+        player.update(p);
+        
+        // Enemies
+        for (let i = gameState.enemies.length - 1; i >= 0; i--) {
+            const e = gameState.enemies[i];
+            e.update(p);
+            if (e.dead) {
+                gameState.enemies.splice(i, 1);
+            }
+        }
+        
+        // Projectiles
+        for (let i = gameState.projectiles.length - 1; i >= 0; i--) {
+            const pr = gameState.projectiles[i];
+            pr.update(p);
+            if (pr.dead) gameState.projectiles.splice(i, 1);
+        }
+        
+        // Particles
+        for (let i = gameState.particles.length - 1; i >= 0; i--) {
+            const pt = gameState.particles[i];
+            pt.update();
+            if (pt.dead) gameState.particles.splice(i, 1);
+        }
+        
+        // 2. Camera Logic
+        // Target is player with some smoothing
+        // Shake decay
+        if (gameState.camera.shake > 0) {
+            gameState.camera.shake *= 0.9;
+            if (gameState.camera.shake < 0.5) gameState.camera.shake = 0;
+        }
+        
+        let targetCamX = player.x + player.width/2 - CANVAS_WIDTH/2;
+        let targetCamY = player.y + player.height/2 - CANVAS_HEIGHT/2;
+        
+        // Clamp camera to world
+        targetCamX = p.constrain(targetCamX, 0, WORLD_WIDTH - CANVAS_WIDTH);
+        targetCamY = p.constrain(targetCamY, 0, WORLD_HEIGHT - CANVAS_HEIGHT);
+        
+        gameState.camera.x = p.lerp(gameState.camera.x, targetCamX, 0.1);
+        gameState.camera.y = p.lerp(gameState.camera.y, targetCamY, 0.1);
+        
+        // Logging
+        if (p.frameCount % 60 === 0) {
+            p.logs.player_info.push({
+                x: player.x,
+                y: player.y,
+                hp: player.stats.hp,
+                frame: p.frameCount
+            });
+        }
+    }
+    
+    // --- Render Logic ---
+    function renderGame(p) {
+        p.push();
+        
+        // Apply Camera Transform
+        const shakeX = (Math.random() - 0.5) * gameState.camera.shake;
+        const shakeY = (Math.random() - 0.5) * gameState.camera.shake;
+        p.translate(-gameState.camera.x + shakeX, -gameState.camera.y + shakeY);
+        
+        // Draw World Background (Grass/Tiles)
+        renderWorldBackground(p);
+        
+        // Render Order: Items -> Enemies -> Player -> Projectiles -> Particles
+        
+        gameState.items.forEach(i => i.render(p));
+        
+        // Z-sort living entities for depth perception
+        const renderList = [gameState.player, ...gameState.enemies];
+        renderList.sort((a, b) => (a.y + a.height) - (b.y + b.height));
+        
+        renderList.forEach(e => e.render(p));
+        
+        gameState.projectiles.forEach(pr => pr.render(p));
+        gameState.particles.forEach(pt => pt.render(p));
+        
+        // World Borders debug
+        p.noFill();
+        p.stroke(255, 0, 0);
+        p.rect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+        
+        p.pop();
+    }
+    
+    function renderWorldBackground(p) {
+        // Simple tiling pattern optimization
+        // Only draw visible tiles
+        const tileSize = 100;
+        const startCol = Math.floor(gameState.camera.x / tileSize);
+        const endCol = Math.floor((gameState.camera.x + CANVAS_WIDTH) / tileSize) + 1;
+        const startRow = Math.floor(gameState.camera.y / tileSize);
+        const endRow = Math.floor((gameState.camera.y + CANVAS_HEIGHT) / tileSize) + 1;
+        
+        p.noStroke();
+        for (let c = startCol; c < endCol; c++) {
+            for (let r = startRow; r < endRow; r++) {
+                // Checker pattern for grass
+                if ((c + r) % 2 === 0) p.fill(40, 50, 40);
+                else p.fill(35, 45, 35);
+                p.rect(c * tileSize, r * tileSize, tileSize, tileSize);
+                
+                // Occasional detail (flower/rock) deterministic based on coord
+                // Use a pseudo random check
+                const pseudoRand = Math.sin(c * 12.9898 + r * 78.233) * 43758.5453;
+                if ((pseudoRand - Math.floor(pseudoRand)) > 0.9) {
+                    p.fill(60, 70, 60);
+                    p.circle(c * tileSize + 50, r * tileSize + 50, 10);
+                }
+            }
+        }
+    }
+
+    // Keyboard callbacks wrappers (logic handled in input.js polling mostly, but good for one-offs)
+    p.keyPressed = function() {
+        if (p.keyCode === 82) { // R key event for restart
+             if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+                 resetGameState();
+                 gameState.gamePhase = "START";
+             }
+        }
+        
+        // Log raw input
+        p.logs.inputs.push({
+            key: p.key,
+            keyCode: p.keyCode,
+            type: "press",
+            frame: p.frameCount
+        });
+    };
+});
+
+// Global Helpers for Debug/Console
+window.setControlMode = (mode) => {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+};
+
+window.gameInstance = gameInstance;
+</file>
+
+<file name="ui.js">
+/**
+ * User Interface rendering: HUD, Screens, Overlays.
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './globals.js';
+
+export function renderHUD(p) {
+    const player = gameState.player;
+    if (!player) return;
+
+    // --- Portrait Frame ---
+    p.push();
+    p.translate(10, 10);
+    
+    // Background
+    p.fill(COLORS.ui_bg);
+    p.stroke(200);
+    p.rect(0, 0, 200, 70, 5);
+    
+    // Character Portrait (Abstract)
+    p.fill(200, 200, 200);
+    p.rect(10, 10, 50, 50);
+    p.fill(240, 240, 50); // Hair
+    p.triangle(20, 20, 35, 10, 50, 20);
+    p.fill(0); // Eyes
+    p.rect(25, 30, 5, 5);
+    p.rect(45, 30, 5, 5);
+
+    // Bars
+    const barX = 70;
+    const barW = 120;
+    
+    // HP
+    p.noStroke();
+    p.fill(50, 0, 0);
+    p.rect(barX, 15, barW, 12);
+    p.fill(COLORS.hp_bar);
+    const hpRatio = p.constrain(player.stats.hp / player.stats.maxHp, 0, 1);
+    p.rect(barX, 15, barW * hpRatio, 12);
+    p.fill(255);
+    p.textSize(10);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text(`${Math.floor(player.stats.hp)}/${player.stats.maxHp}`, barX + barW/2, 21);
+
+    // XP
+    p.fill(0, 50, 50);
+    p.rect(barX, 32, barW, 8);
+    p.fill(COLORS.xp_bar);
+    const xpRatio = p.constrain(player.xp / player.maxXp, 0, 1);
+    p.rect(barX, 32, barW * xpRatio, 8);
+    
+    // MP (Placeholder for Skill resource)
+    p.fill(0, 0, 50);
+    p.rect(barX, 45, barW, 8);
+    p.fill(COLORS.mp_bar);
+    // Let's assume Spin uses MP in a full version, here static or cooldown viz
+    // Just full for visuals
+    p.rect(barX, 45, barW, 8);
+    
+    // Level Badge
+    p.fill(255, 215, 0);
+    p.stroke(0);
+    p.circle(10, 10, 24);
+    p.fill(0);
+    p.noStroke();
+    p.textSize(12);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text(gameState.level, 10, 10);
+
+    p.pop();
+
+    // Minimap / Score
+    p.push();
+    p.textAlign(p.RIGHT, p.TOP);
+    p.textSize(16);
+    p.fill(255);
+    p.text(`Score: ${gameState.score}`, CANVAS_WIDTH - 10, 10);
+    p.textSize(12);
+    p.text(`Kills: ${gameState.killCount}`, CANVAS_WIDTH - 10, 30);
+    p.pop();
+    
+    // Skill Cooldowns
+    renderSkillIcons(p);
+}
+
+function renderSkillIcons(p) {
+    const startX = CANVAS_WIDTH - 150;
+    const y = CANVAS_HEIGHT - 50;
+    
+    // Dash (Shift)
+    renderSkillSlot(p, startX, y, 'Shift', gameState.player.skills.dash);
+    
+    // Spin (Z)
+    renderSkillSlot(p, startX + 50, y, 'Z', gameState.player.skills.spin);
+    
+    // Attack (Space)
+    renderSkillSlot(p, startX + 100, y, 'Space', { currentCooldown: gameState.player.attackCooldown, maxCooldown: 20 });
+}
+
+function renderSkillSlot(p, x, y, keyName, skillObj) {
+    p.push();
+    p.translate(x, y);
+    p.fill(0, 0, 0, 150);
+    p.stroke(200);
+    p.rect(0, 0, 40, 40, 4);
+    
+    // Fill overlay for cooldown
+    if (skillObj.currentCooldown > 0) {
+        const ratio = skillObj.currentCooldown / skillObj.maxCooldown;
+        p.fill(0, 0, 0, 200);
+        p.noStroke();
+        p.rect(0, 40 * (1 - ratio), 40, 40 * ratio);
+    }
+    
+    p.fill(255);
+    p.noStroke();
+    p.textSize(10);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text(keyName, 20, 20);
+    p.pop();
+}
+
+export function renderStartScreen(p) {
+    p.background(COLORS.background);
+    
+    p.textAlign(p.CENTER);
+    p.fill(255);
+    p.textSize(40);
+    p.text("ZENONIA 4 DEMAKE", CANVAS_WIDTH/2, 120);
+    
+    p.textSize(20);
+    p.fill(200);
+    p.text("Return of the Legend", CANVAS_WIDTH/2, 160);
+    
+    p.textSize(16);
+    p.fill(150);
+    p.text("Defeat the Abyss Lord!", CANVAS_WIDTH/2, 200);
+    
+    // Flashing text
+    if (Math.floor(p.millis() / 500) % 2 === 0) {
+        p.fill(255, 255, 0);
+        p.text("PRESS ENTER TO START", CANVAS_WIDTH/2, 300);
+    }
+    
+    // Instructions
+    p.fill(100);
+    p.textSize(12);
+    p.text("Arrows: Move | Space: Attack | Z: Skill | Shift: Dash", CANVAS_WIDTH/2, 350);
+}
+
+export function renderPausedScreen(p) {
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER);
+    p.fill(255);
+    p.textSize(32);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    p.textSize(16);
+    p.text("Press ESC to Resume", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+}
+
+export function renderGameOver(p, win) {
+    p.fill(0, 0, 0, 200);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER);
+    p.textSize(48);
+    
+    if (win) {
+        p.fill(100, 255, 100);
+        p.text("LEGENDARY!", CANVAS_WIDTH/2, 150);
+        p.textSize(20);
+        p.fill(255);
+        p.text("You have defeated the Abyss Lord.", CANVAS_WIDTH/2, 200);
+    } else {
+        p.fill(255, 50, 50);
+        p.text("GAME OVER", CANVAS_WIDTH/2, 150);
+        p.textSize(20);
+        p.fill(255);
+        p.text("The legend fades...", CANVAS_WIDTH/2, 200);
+    }
+    
+    p.text(`Final Level: ${gameState.level}`, CANVAS_WIDTH/2, 250);
+    p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH/2, 280);
+    
+    p.fill(255, 255, 0);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, 340);
+}
+</file>
+
+<file name="skills.js">
+/**
+ * Skill system definition.
+ * Handles ability logic, cooldowns, and execution.
+ */
+
+import { gameState } from './globals.js';
+import { Projectile } from './entities.js';
+import { createExplosion } from './particles.js';
+
+export class Skill {
+    constructor(name, cooldownFrames, manaCost) {
+        this.name = name;
+        this.maxCooldown = cooldownFrames;
+        this.currentCooldown = 0;
+        this.manaCost = manaCost;
+    }
+
+    canUse(user) {
+        return this.currentCooldown <= 0; // && user.mp >= this.manaCost
+    }
+
+    update() {
+        if (this.currentCooldown > 0) {
+            this.currentCooldown--;
+        }
+    }
+
+    use(user, targetX, targetY) {
+        if (this.canUse(user)) {
+            this.execute(user, targetX, targetY);
+            this.currentCooldown = this.maxCooldown;
+            // user.mp -= this.manaCost;
+            return true;
+        }
+        return false;
+    }
+
+    execute(user, targetX, targetY) {
+        // Override in subclasses
+        console.log(`${user.constructor.name} used ${this.name}`);
+    }
+}
+
+export class DashSkill extends Skill {
+    constructor() {
+        super("Flash Step", 60, 10);
+        this.dashSpeed = 15;
+        this.duration = 10;
+    }
+
+    execute(user, targetX, targetY) {
+        // Calculate direction based on current movement or facing
+        let dx = 0;
+        let dy = 0;
+        
+        if (Math.abs(user.vx) > 0.1 || Math.abs(user.vy) > 0.1) {
+            const mag = Math.sqrt(user.vx*user.vx + user.vy*user.vy);
+            dx = user.vx / mag;
+            dy = user.vy / mag;
+        } else {
+            // Dash in facing direction
+            dx = user.facing === 1 ? 1 : -1;
+        }
+
+        user.vx = dx * this.dashSpeed;
+        user.vy = dy * this.dashSpeed;
+        
+        // Add visual effect (Ghost trail is handled in Player render or particle system)
+        createExplosion(user.x + user.width/2, user.y + user.height/2, 10, [200, 200, 255]);
+    }
+}
+
+export class SpinAttackSkill extends Skill {
+    constructor() {
+        super("Cyclone Slash", 120, 20);
+        this.range = 80;
+        this.damageMult = 1.5;
+    }
+
+    execute(user, targetX, targetY) {
+        // Visuals
+        const centerX = user.x + user.width/2;
+        const centerY = user.y + user.height/2;
+        
+        // Logic: Hit all enemies in range
+        gameState.enemies.forEach(enemy => {
+            const ex = enemy.x + enemy.width/2;
+            const ey = enemy.y + enemy.height/2;
+            const dist = Math.sqrt(Math.pow(centerX - ex, 2) + Math.pow(centerY - ey, 2));
+            
+            if (dist < this.range) {
+                const dmg = Math.floor(user.stats.attack * this.damageMult);
+                enemy.takeDamage(dmg, true); // true = isCritical (visual styling)
+                
+                // Knockback
+                const angle = Math.atan2(ey - centerY, ex - centerX);
+                enemy.vx = Math.cos(angle) * 10;
+                enemy.vy = Math.sin(angle) * 10;
+            }
+        });
+
+        // Add a "Spin" particle effect (a large expanding ring)
+        // Implemented ad-hoc in particles for now or specialized effect
+        createExplosion(centerX, centerY, 20, [100, 255, 255]);
+    }
+}
+
+export class FireballSkill extends Skill {
+    constructor() {
+        super("Shadow Bolt", 90, 15);
+        this.speed = 8;
+        this.damage = 25;
+    }
+
+    execute(user, targetX, targetY) {
+        const startX = user.x + user.width/2;
+        const startY = user.y + user.height/2;
+        
+        // Aim at mouse (or target)
+        // If targetX/Y are not provided, default to facing
+        let tx = targetX;
+        let ty = targetY;
+
+        const proj = new Projectile(startX, startY, tx, ty, this.speed, this.damage, "player");
+        // Color override
+        proj.color = [150, 50, 255];
+        gameState.projectiles.push(proj);
+    }
+}
+</file>
+
+<file name="entities.js">
+/**
+ * Game entities: Player, Enemies, Items.
+ * Contains logic for movement, combat, and rendering.
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS, WORLD_WIDTH, WORLD_HEIGHT } from './globals.js';
+import { checkRectOverlap, checkCircleRect, constrainToWorld, lerp, getDistance, getAngle } from './physics.js';
+import { spawnDamageText, createExplosion, SlashEffect, spawnHealText } from './particles.js';
+import { DashSkill, SpinAttackSkill, FireballSkill } from './skills.js';
+
+// --- Base Classes ---
+
+class Entity {
+    constructor(x, y, width, height) {
+        this.x = x;
+        this.y = y;
+        this.width = width;
+        this.height = height;
+        this.vx = 0;
+        this.vy = 0;
+        this.dead = false;
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+    }
+
+    render(p) {
+        p.fill(255);
+        p.rect(this.x, this.y, this.width, this.height);
+    }
+}
+
+class LivingEntity extends Entity {
+    constructor(x, y, width, height) {
+        super(x, y, width, height);
+        this.stats = {
+            maxHp: 100,
+            hp: 100,
+            attack: 10,
+            defense: 0,
+            speed: 3
+        };
+        this.facing = 1; // 1 Right, -1 Left
+        this.invulnerable = 0;
+        this.flashTime = 0;
+        this.state = "IDLE"; // IDLE, RUN, ATTACK, HIT, DIE
+    }
+
+    takeDamage(amount, isCrit = false) {
+        if (this.invulnerable > 0) return;
+
+        const damage = Math.max(1, amount - this.stats.defense);
+        this.stats.hp -= damage;
+        this.flashTime = 10;
+        
+        spawnDamageText(this.x + this.width/2, this.y, damage, isCrit);
+        createExplosion(this.x + this.width/2, this.y + this.height/2, 5, [200, 50, 50]);
+
+        if (this.stats.hp <= 0) {
+            this.die();
+        }
+    }
+
+    heal(amount) {
+        this.stats.hp = Math.min(this.stats.maxHp, this.stats.hp + amount);
+        spawnHealText(this.x + this.width/2, this.y, amount);
+    }
+
+    die() {
+        this.dead = true;
+    }
+
+    update() {
+        super.update();
+        if (this.flashTime > 0) this.flashTime--;
+        if (this.invulnerable > 0) this.invulnerable--;
+    }
+}
+
+// --- Player Class ---
+
+export class Player extends LivingEntity {
+    constructor(x, y) {
+        super(x, y, 32, 48); // Taller than wide
+        this.stats = {
+            maxHp: 200,
+            hp: 200,
+            attack: 25,
+            defense: 5,
+            speed: 4
+        };
+        this.xp = 0;
+        this.maxXp = 100;
+        
+        // Combat state
+        this.attackCooldown = 0;
+        this.comboCount = 0;
+        this.comboTimer = 0;
+        
+        // Skills
+        this.skills = {
+            dash: new DashSkill(),
+            spin: new SpinAttackSkill(),
+            fireball: new FireballSkill()
+        };
+        
+        // Animation
+        this.animFrame = 0;
+    }
+
+    update(p) {
+        // Handle input via gameState (decoupled)
+        this.handleInput(p);
+        
+        // Physics
+        super.update();
+        
+        // World bounds
+        constrainToWorld(this);
+        
+        // Friction
+        this.vx *= 0.8;
+        this.vy *= 0.8;
+        if (Math.abs(this.vx) < 0.1) this.vx = 0;
+        if (Math.abs(this.vy) < 0.1) this.vy = 0;
+
+        // Facing
+        if (this.vx > 0) this.facing = 1;
+        if (this.vx < 0) this.facing = -1;
+
+        // Animation
+        if (Math.abs(this.vx) > 0.1 || Math.abs(this.vy) > 0.1) {
+            this.animFrame += 0.2;
+        } else {
+            this.animFrame = 0;
+        }
+
+        // Cooldowns
+        if (this.attackCooldown > 0) this.attackCooldown--;
+        if (this.comboTimer > 0) {
+            this.comboTimer--;
+            if (this.comboTimer === 0) this.comboCount = 0;
+        }
+        
+        Object.values(this.skills).forEach(s => s.update());
+        
+        // Level Up Check
+        if (this.xp >= this.maxXp) {
+            this.levelUp();
+        }
+        
+        // Interaction with items
+        this.checkItemCollisions();
+    }
+
+    handleInput(p) {
+        if (gameState.gamePhase !== "PLAYING") return;
+        
+        const inputs = gameState.inputs;
+        
+        // Movement
+        if (inputs.left) this.vx -= 1;
+        if (inputs.right) this.vx += 1;
+        if (inputs.up) this.vy -= 1;
+        if (inputs.down) this.vy += 1;
+        
+        // Normalize speed diagonal
+        if ((inputs.left || inputs.right) && (inputs.up || inputs.down)) {
+           // Basic normalization done by friction/acceleration logic roughly
+           // Could use vectors, but this feels snappy enough for arcade
+        }
+        
+        // Clamp speed
+        const speed = this.stats.speed;
+        this.vx = p.constrain(this.vx, -speed, speed);
+        this.vy = p.constrain(this.vy, -speed, speed);
+        
+        // Attack
+        if (inputs.attack && this.attackCooldown === 0) {
+            this.performAttack(p);
+        }
+        
+        // Skills
+        if (inputs.dash) {
+            this.skills.dash.use(this);
+            gameState.inputs.dash = false; // consume input
+        }
+        
+        if (inputs.skill) {
+            // Check inputs for skill selection? For now just one active skill Z
+            // Use Spin Attack
+            this.skills.spin.use(this);
+            gameState.inputs.skill = false;
+        }
+    }
+
+    performAttack(p) {
+        this.attackCooldown = 20; // Frames between hits
+        this.comboTimer = 60; // 1 second to continue combo
+        this.comboCount++;
+        if (this.comboCount > 3) this.comboCount = 1;
+        
+        // Attack Hitbox
+        const range = 50;
+        const attackX = this.x + this.width/2 + (this.facing * 20);
+        const attackY = this.y + this.height/2;
+        
+        // Visual Slash
+        const effect = new SlashEffect(attackX, attackY, this.facing === 1 ? 0 : p.PI, range);
+        gameState.particles.push(effect);
+        
+        // Check collisions with enemies
+        let hit = false;
+        gameState.enemies.forEach(enemy => {
+            if (enemy.dead) return;
+            
+            // Simple distance check for melee
+            const dist = getDistance(attackX, attackY, enemy.x + enemy.width/2, enemy.y + enemy.height/2);
+            
+            if (dist < range) {
+                const dmg = this.stats.attack + (this.comboCount * 5); // Combo bonus
+                const isCrit = Math.random() < 0.2; // 20% crit chance
+                enemy.takeDamage(isCrit ? dmg * 2 : dmg, isCrit);
+                
+                // Knockback
+                enemy.vx += this.facing * 5;
+                hit = true;
+            }
+        });
+        
+        if (hit) {
+            // Screen shake slightly
+            gameState.camera.shake = 2;
+        }
+    }
+
+    levelUp() {
+        this.stats.maxHp += 50;
+        this.stats.hp = this.stats.maxHp;
+        this.stats.attack += 5;
+        this.stats.defense += 2;
+        this.xp = this.xp - this.maxXp;
+        this.maxXp = Math.floor(this.maxXp * 1.5);
+        gameState.level++;
+        
+        spawnHealText(this.x + this.width/2, this.y, "LEVEL UP!");
+        createExplosion(this.x + this.width/2, this.y, 20, [255, 255, 100]);
+    }
+    
+    checkItemCollisions() {
+        for (let i = gameState.items.length - 1; i >= 0; i--) {
+            const item = gameState.items[i];
+            if (checkRectOverlap(this, item)) {
+                item.collect(this);
+                gameState.items.splice(i, 1);
+            }
+        }
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x + this.width/2, this.y + this.height/2);
+        
+        if (this.flashTime > 0 && Math.floor(p.millis() / 50) % 2 === 0) {
+            p.fill(255, 0, 0);
+        } else {
+            p.fill(COLORS.text); // White skin roughly
+        }
+        
+        // Flip if facing left
+        p.scale(this.facing, 1);
+        
+        // Body (Zenonia style - big head, small body)
+        // Body
+        p.fill(50, 50, 150);
+        p.rect(-10, 0, 20, 24);
+        
+        // Head
+        p.fill(255, 220, 200); // Skin
+        p.circle(0, -10, 30);
+        
+        // Hair (Spiky)
+        p.fill(240, 240, 50); // Blonde/Gold
+        p.triangle(-20, -15, -5, -35, 10, -15);
+        p.triangle(-10, -15, 5, -40, 20, -15);
+        p.triangle(0, -15, 15, -35, 25, -5);
+        
+        // Eyes
+        p.fill(0);
+        p.ellipse(5, -10, 4, 8);
+        
+        // Sword
+        p.push();
+        // Animate sword based on attack
+        if (this.attackCooldown > 10) {
+            p.rotate(p.PI / 4);
+        }
+        p.fill(200);
+        p.rect(10, 5, 30, 6);
+        p.fill(100);
+        p.rect(10, 5, 8, 6); // Hilt
+        p.pop();
+        
+        p.pop();
+        
+        // Draw stats if testing
+        if (gameState.controlMode !== "HUMAN") {
+            // Debug info
+        }
+    }
+}
+
+// --- Enemy Classes ---
+
+export class Enemy extends LivingEntity {
+    constructor(x, y, type) {
+        super(x, y, 32, 32);
+        this.type = type;
+        this.detectionRange = 250;
+        this.attackRange = 40;
+        this.attackCooldown = 0;
+        this.xpValue = 20;
+    }
+
+    update() {
+        super.update();
+        if (this.dead) return;
+        
+        const player = gameState.player;
+        if (!player) return;
+
+        const dist = getDistance(this.x, this.y, player.x, player.y);
+        
+        if (dist < this.detectionRange) {
+            this.aiBehavior(player, dist);
+        }
+        
+        // Wall collision/World bounds
+        constrainToWorld(this);
+        
+        if (this.attackCooldown > 0) this.attackCooldown--;
+    }
+    
+    aiBehavior(player, dist) {
+        // Basic chase
+        if (dist > this.attackRange) {
+            const angle = getAngle(this.x, this.y, player.x, player.y);
+            this.vx = Math.cos(angle) * this.stats.speed;
+            this.vy = Math.sin(angle) * this.stats.speed;
+            
+            // Facing
+            this.facing = this.vx > 0 ? 1 : -1;
+        } else {
+            this.vx = 0;
+            this.vy = 0;
+            this.attack(player);
+        }
+    }
+    
+    attack(player) {
+        if (this.attackCooldown <= 0) {
+            player.takeDamage(this.stats.attack);
+            this.attackCooldown = 60; // 1 second
+            
+            // Visual bump
+            const angle = getAngle(this.x, this.y, player.x, player.y);
+            this.vx = Math.cos(angle) * 5;
+            this.vy = Math.sin(angle) * 5;
+        }
+    }
+
+    die() {
+        super.die();
+        // Drop items
+        if (Math.random() < 0.3) {
+            gameState.items.push(new Loot(this.x, this.y, "POTION"));
+        } else if (Math.random() < 0.1) {
+             // Rare loot?
+        }
+        
+        // Give XP
+        if (gameState.player) {
+            gameState.player.xp += this.xpValue;
+            gameState.killCount++;
+            gameState.score += this.xpValue * 10;
+        }
+    }
+}
+
+export class Slime extends Enemy {
+    constructor(x, y) {
+        super(x, y, "SLIME");
+        this.stats.hp = 50;
+        this.stats.attack = 8;
+        this.stats.speed = 1.5;
+        this.width = 24;
+        this.height = 20;
+        this.color = [50, 200, 50];
+        this.jumpOffset = 0;
+    }
+    
+    update() {
+        super.update();
+        this.jumpOffset = Math.abs(Math.sin(gameState.frameCount * 0.2)) * 5;
+    }
+    
+    render(p) {
+        p.push();
+        p.translate(this.x + this.width/2, this.y + this.height - this.jumpOffset);
+        p.fill(this.flashTime > 0 ? [255, 255, 255] : this.color);
+        p.stroke(30, 100, 30);
+        // Slime shape
+        p.beginShape();
+        p.vertex(-12, 0);
+        p.bezierVertex(-12, -15, 12, -15, 12, 0);
+        p.vertex(12, 0);
+        p.endShape(p.CLOSE);
+        
+        // Eyes
+        p.fill(0);
+        p.circle(-5, -5, 3);
+        p.circle(5, -5, 3);
+        p.pop();
+    }
+}
+
+export class ShadowKnight extends Enemy {
+    constructor(x, y) {
+        super(x, y, "KNIGHT");
+        this.stats.hp = 120;
+        this.stats.attack = 15;
+        this.stats.speed = 2.5;
+        this.stats.defense = 5;
+        this.xpValue = 50;
+        this.width = 30;
+        this.height = 40;
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x + this.width/2, this.y + this.height/2);
+        p.scale(this.facing, 1);
+        p.fill(this.flashTime > 0 ? [255, 0, 0] : [50, 50, 60]);
+        // Armor
+        p.rect(-10, -15, 20, 30);
+        // Helmet
+        p.fill(30);
+        p.circle(0, -20, 24);
+        // Red Eyes
+        p.fill(255, 0, 0);
+        p.rect(2, -22, 6, 2);
+        p.pop();
+    }
+}
+
+export class Boss extends Enemy {
+    constructor(x, y) {
+        super(x, y, "BOSS");
+        this.stats.hp = 1000;
+        this.stats.maxHp = 1000;
+        this.stats.attack = 30;
+        this.stats.speed = 1;
+        this.width = 80;
+        this.height = 80;
+        this.xpValue = 5000;
+        this.attackRange = 100;
+    }
+    
+    aiBehavior(player, dist) {
+        // Boss moves slower but relentless
+        const angle = getAngle(this.x, this.y, player.x, player.y);
+        this.vx = Math.cos(angle) * this.stats.speed;
+        this.vy = Math.sin(angle) * this.stats.speed;
+        
+        if (dist < 150 && this.attackCooldown <= 0) {
+            // Special Boss Attack (Shockwave)
+            this.attackCooldown = 120;
+            // Spawn projectiles in circle
+            for (let i = 0; i < 8; i++) {
+                const theta = (Math.PI * 2 / 8) * i;
+                const px = this.x + this.width/2;
+                const py = this.y + this.height/2;
+                gameState.projectiles.push(new Projectile(px, py, px + Math.cos(theta)*100, py + Math.sin(theta)*100, 4, 15, "enemy"));
+            }
+        }
+    }
+    
+    die() {
+        super.die();
+        gameState.gamePhase = "GAME_OVER_WIN";
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x + this.width/2, this.y + this.height/2);
+        
+        // Aura
+        p.noFill();
+        p.stroke(100, 0, 100, 100);
+        p.strokeWeight(2);
+        p.circle(0, 0, 90 + Math.sin(gameState.frameCount * 0.1) * 10);
+        
+        p.fill(this.flashTime > 0 ? [255, 100, 100] : [20, 0, 40]);
+        p.noStroke();
+        p.rect(-40, -40, 80, 80);
+        
+        // Menacing face
+        p.fill(255, 255, 0);
+        p.triangle(-20, -10, -10, 0, -20, 0);
+        p.triangle(20, -10, 10, 0, 20, 0);
+        
+        // HP Bar overhead
+        p.fill(0);
+        p.rect(-40, -60, 80, 10);
+        p.fill(255, 0, 0);
+        p.rect(-40, -60, 80 * (this.stats.hp / this.stats.maxHp), 10);
+        
+        p.pop();
+    }
+}
+
+// --- Item / Projectile ---
+
+export class Projectile extends Entity {
+    constructor(x, y, targetX, targetY, speed, damage, owner) {
+        super(x, y, 10, 10);
+        this.damage = damage;
+        this.owner = owner; // 'player' or 'enemy'
+        this.lifetime = 120;
+        
+        const angle = getAngle(x, y, targetX, targetY);
+        this.vx = Math.cos(angle) * speed;
+        this.vy = Math.sin(angle) * speed;
+        this.color = [255, 100, 100];
+    }
+    
+    update() {
+        super.update();
+        this.lifetime--;
+        if (this.lifetime <= 0) this.dead = true;
+        
+        // Collision
+        if (this.owner === "player") {
+            gameState.enemies.forEach(e => {
+                if (checkCircleRect({x: this.x, y: this.y, radius: 5}, e)) {
+                    e.takeDamage(this.damage);
+                    this.dead = true;
+                    createExplosion(this.x, this.y, 5, this.color);
+                }
+            });
+        } else {
+            if (gameState.player && checkCircleRect({x: this.x, y: this.y, radius: 5}, gameState.player)) {
+                gameState.player.takeDamage(this.damage);
+                this.dead = true;
+                createExplosion(this.x, this.y, 5, this.color);
+            }
+        }
+    }
+    
+    render(p) {
+        p.fill(this.color);
+        p.circle(this.x, this.y, 10);
+    }
+}
+
+export class Loot extends Entity {
+    constructor(x, y, type) {
+        super(x, y, 16, 16);
+        this.type = type; // 'POTION', 'GOLD'
+        this.bobOffset = 0;
+    }
+    
+    update() {
+        this.bobOffset = Math.sin(gameState.frameCount * 0.1) * 3;
+    }
+    
+    collect(player) {
+        if (this.type === "POTION") {
+            player.heal(50);
+        }
+        // Could add sound effect trigger here (if allowed)
+    }
+    
+    render(p) {
+        p.push();
+        p.translate(this.x + 8, this.y + 8 + this.bobOffset);
+        if (this.type === "POTION") {
+            p.fill(255, 100, 100);
+            p.rect(-4, -6, 8, 12);
+            p.fill(255);
+            p.rect(-2, -6, 4, 2); // Cap
+        }
+        p.pop();
+    }
+}
+</file>
+
+<file name="physics.js">
+/**
+ * Physics engine and collision detection utilities.
+ */
+
+import { WORLD_WIDTH, WORLD_HEIGHT } from './globals.js';
+
+/**
+ * Check collision between two rectangles.
+ */
+export function checkRectOverlap(r1, r2) {
+    return (
+        r1.x < r2.x + r2.width &&
+        r1.x + r1.width > r2.x &&
+        r1.y < r2.y + r2.height &&
+        r1.y + r1.height > r2.y
+    );
+}
+
+/**
+ * Check collision between a circle and a rectangle.
+ */
+export function checkCircleRect(circle, rect) {
+    // Find the closest point on the rectangle to the circle center
+    let testX = circle.x;
+    let testY = circle.y;
+
+    if (circle.x < rect.x) testX = rect.x;
+    else if (circle.x > rect.x + rect.width) testX = rect.x + rect.width;
+
+    if (circle.y < rect.y) testY = rect.y;
+    else if (circle.y > rect.y + rect.height) testY = rect.y + rect.height;
+
+    let distX = circle.x - testX;
+    let distY = circle.y - testY;
+    let distance = Math.sqrt((distX * distX) + (distY * distY));
+
+    return distance <= circle.radius;
+}
+
+/**
+ * Check collision between two circles.
+ */
+export function checkCircleCircle(c1, c2) {
+    const dx = c1.x - c2.x;
+    const dy = c1.y - c2.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    return distance < c1.radius + c2.radius;
+}
+
+/**
+ * Calculate distance between two points.
+ */
+export function getDistance(x1, y1, x2, y2) {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    return Math.sqrt(dx * dx + dy * dy);
+}
+
+/**
+ * Get angle between two points in radians.
+ */
+export function getAngle(x1, y1, x2, y2) {
+    return Math.atan2(y2 - y1, x2 - x1);
+}
+
+/**
+ * Constrain an entity within the world bounds.
+ */
+export function constrainToWorld(entity) {
+    let collided = false;
+    
+    if (entity.x < 0) {
+        entity.x = 0;
+        entity.vx = 0;
+        collided = true;
+    }
+    if (entity.x + entity.width > WORLD_WIDTH) {
+        entity.x = WORLD_WIDTH - entity.width;
+        entity.vx = 0;
+        collided = true;
+    }
+    if (entity.y < 0) {
+        entity.y = 0;
+        entity.vy = 0;
+        collided = true;
+    }
+    if (entity.y + entity.height > WORLD_HEIGHT) {
+        entity.y = WORLD_HEIGHT - entity.height;
+        entity.vy = 0;
+        collided = true;
+    }
+    
+    return collided;
+}
+
+/**
+ * Simple 1D linear interpolation
+ */
+export function lerp(start, end, amt) {
+    return (1 - amt) * start + amt * end;
+}
+
+/**
+ * Standard vector normalization
+ */
+export function normalizeVector(vx, vy) {
+    const mag = Math.sqrt(vx * vx + vy * vy);
+    if (mag === 0) return { x: 0, y: 0 };
+    return { x: vx / mag, y: vy / mag };
+}
+</file>
+
+<file name="particles.js">
+/**
+ * Particle system for visual effects.
+ * Includes floating numbers, blood splatters, and skill effects.
+ */
+
+import { gameState, COLORS } from './globals.js';
+
+export class Particle {
+    constructor(x, y, life) {
+        this.x = x;
+        this.y = y;
+        this.vx = (Math.random() - 0.5) * 2;
+        this.vy = (Math.random() - 0.5) * 2;
+        this.life = life;
+        this.maxLife = life;
+        this.dead = false;
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life--;
+        if (this.life <= 0) this.dead = true;
+    }
+
+    render(p) {
+        // Override
+    }
+}
+
+export class FloatingText extends Particle {
+    constructor(x, y, text, color, size = 16) {
+        super(x, y, 60); // 1 second life
+        this.text = text;
+        this.color = color;
+        this.size = size;
+        this.vy = -1.5; // Float up
+        this.vx = 0;
+    }
+
+    update() {
+        super.update();
+        this.vy *= 0.95; // Slow down ascent
+    }
+
+    render(p) {
+        p.push();
+        p.textAlign(p.CENTER);
+        p.textSize(this.size);
+        // Fade out
+        const alpha = p.map(this.life, 0, this.maxLife, 0, 255);
+        p.fill(this.color[0], this.color[1], this.color[2], alpha);
+        p.noStroke();
+        p.text(this.text, this.x, this.y);
+        p.stroke(0, alpha);
+        p.strokeWeight(1);
+        p.text(this.text, this.x, this.y);
+        p.pop();
+    }
+}
+
+export class BloodParticle extends Particle {
+    constructor(x, y, color = [200, 0, 0]) {
+        super(x, y, 30 + Math.random() * 20);
+        this.vx = (Math.random() - 0.5) * 6;
+        this.vy = (Math.random() - 0.5) * 6;
+        this.size = Math.random() * 4 + 2;
+        this.color = color;
+        this.gravity = 0.2;
+    }
+
+    update() {
+        super.update();
+        this.vy += this.gravity;
+        this.size *= 0.95;
+    }
+
+    render(p) {
+        p.noStroke();
+        p.fill(this.color[0], this.color[1], this.color[2], p.map(this.life, 0, this.maxLife, 0, 255));
+        p.circle(this.x, this.y, this.size);
+    }
+}
+
+export class SparkParticle extends Particle {
+    constructor(x, y, color = [255, 255, 200]) {
+        super(x, y, 15);
+        this.vx = (Math.random() - 0.5) * 10;
+        this.vy = (Math.random() - 0.5) * 10;
+        this.color = color;
+    }
+
+    update() {
+        super.update();
+        this.vx *= 0.8;
+        this.vy *= 0.8;
+    }
+
+    render(p) {
+        p.stroke(this.color);
+        p.strokeWeight(2);
+        p.line(this.x, this.y, this.x - this.vx, this.y - this.vy);
+    }
+}
+
+export class SlashEffect extends Particle {
+    constructor(x, y, angle, size) {
+        super(x, y, 10); // Very short life
+        this.angle = angle;
+        this.size = size;
+        this.arcSize = p => p.QUARTER_PI; // Default
+        this.color = [200, 230, 255];
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        p.rotate(this.angle);
+        p.noFill();
+        p.stroke(this.color[0], this.color[1], this.color[2], p.map(this.life, 0, this.maxLife, 0, 200));
+        p.strokeWeight(3);
+        p.strokeCap(p.ROUND);
+        
+        // Draw an arc slash
+        const s = this.size * 1.5;
+        p.arc(0, 0, s, s, -p.QUARTER_PI, p.QUARTER_PI);
+        
+        p.pop();
+    }
+}
+
+// Helper to spawn text
+export function spawnDamageText(x, y, amount, isCrit) {
+    const color = isCrit ? COLORS.crit_text : COLORS.damage_text;
+    const size = isCrit ? 24 : 16;
+    const text = isCrit ? amount + "!" : amount;
+    gameState.particles.push(new FloatingText(x, y - 20, text, color, size));
+}
+
+export function spawnHealText(x, y, amount) {
+    gameState.particles.push(new FloatingText(x, y - 20, "+" + amount, COLORS.heal_text, 18));
+}
+
+// Helper to spawn explosion
+export function createExplosion(x, y, count, color) {
+    for (let i = 0; i < count; i++) {
+        gameState.particles.push(new BloodParticle(x, y, color));
+    }
+    for (let i = 0; i < Math.floor(count/2); i++) {
+        gameState.particles.push(new SparkParticle(x, y));
+    }
+}
+</file>
+
+<file name="input.js">
+/**
+ * Input handling and Automated Test Controller.
+ */
+
+import { gameState } from './globals.js';
+import { getDistance } from './physics.js';
+
+export function handleInput(p) {
+    // Phase control keys
+    if (p.keyIsDown(13)) { // Enter
+        // Only process Enter for input state, game.js will handle phase transition
+        // if (gameState.gamePhase === "START") {
+        //     gameState.gamePhase = "PLAYING"; // REMOVED: game.js's p.draw handles phase transition and initGameWorld
+        // }
+    }
+    
+    if (p.keyIsDown(27)) { // ESC
+        // Debounce simple
+        if (p.frameCount % 10 === 0) { // Simple debounce hack or use keyPressed
+            if (gameState.gamePhase === "PLAYING") gameState.gamePhase = "PAUSED";
+            else if (gameState.gamePhase === "PAUSED") gameState.gamePhase = "PLAYING";
+        }
+    }
+    
+    // R key handling is now solely in game.js's p.keyPressed for a soft restart.
+    // if (p.keyIsDown(82)) { // R
+    //     if (gameState.gamePhase.startsWith("GAME_OVER")) {
+    //         window.location.reload(); // Hard reset for simplicity or call resetGameState
+    //     }
+    // }
+
+    // Reset inputs
+    gameState.inputs = {
+        up: false, down: false, left: false, right: false,
+        attack: false, skill: false, dash: false
+    };
+
+    if (gameState.gamePhase === "PLAYING") {
+        if (gameState.controlMode === "HUMAN") {
+            handleHumanInput(p);
+        } else {
+            handleAutomatedInput(p);
+        }
+    }
+}
+
+function handleHumanInput(p) {
+    if (p.keyIsDown(p.LEFT_ARROW)) gameState.inputs.left = true;
+    if (p.keyIsDown(p.RIGHT_ARROW)) gameState.inputs.right = true;
+    if (p.keyIsDown(p.UP_ARROW)) gameState.inputs.up = true;
+    if (p.keyIsDown(p.DOWN_ARROW)) gameState.inputs.down = true;
+    
+    if (p.keyIsDown(32)) gameState.inputs.attack = true; // Space
+    if (p.keyIsDown(90)) gameState.inputs.skill = true; // Z
+    if (p.keyIsDown(16)) gameState.inputs.dash = true; // Shift
+}
+
+// --- Automated Testing Controller ---
+
+function handleAutomatedInput(p) {
+    const mode = gameState.controlMode;
+    const player = gameState.player;
+    if (!player) return;
+
+    if (mode === "TEST_1") {
+        // Movement square
+        const t = Math.floor(gameState.frameCount / 60) % 4;
+        if (t === 0) gameState.inputs.right = true;
+        else if (t === 1) gameState.inputs.down = true;
+        else if (t === 2) gameState.inputs.left = true;
+        else if (t === 3) gameState.inputs.up = true;
+        
+    } else if (mode === "TEST_2" || mode === "TEST_3") {
+        // Seek and destroy
+        // Find nearest enemy
+        let target = null;
+        let minDist = 10000;
+        
+        gameState.enemies.forEach(e => {
+            const d = getDistance(player.x, player.y, e.x, e.y);
+            if (d < minDist) {
+                minDist = d;
+                target = e;
+            }
+        });
+        
+        if (target) {
+            // Move towards
+            if (target.x > player.x + 10) gameState.inputs.right = true;
+            if (target.x < player.x - 10) gameState.inputs.left = true;
+            if (target.y > player.y + 10) gameState.inputs.down = true;
+            if (target.y < player.y - 10) gameState.inputs.up = true;
+            
+            // Attack if close
+            if (minDist < 60) {
+                gameState.inputs.attack = true;
+                if (Math.random() < 0.05) gameState.inputs.skill = true;
+            }
+            
+            // Dash to close gap
+            if (minDist > 100 && Math.random() < 0.02) gameState.inputs.dash = true;
+            
+        } else {
+            // Idle or wander
+            gameState.inputs.right = true;
+            if (Math.random() < 0.1) gameState.inputs.dash = true;
+        }
+    }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

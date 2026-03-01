@@ -1,0 +1,458 @@
+<analysis>
+- Issue identified: The game's auto-restart functionality, triggered after a 'GAME_OVER_WIN' or 'GAME_OVER_LOSE' state, currently returns the player to the "press enter to begin" start screen. The user feedback requests that auto-restart should bypass this initial screen and directly put them into gameplay. Additionally, the auto-restart was triggering even on non-final level wins, which is undesirable as the player should have the option to advance to the next level.
+- Files affected: `game.js`, `input.js`
+- Changes needed:
+    1.  Rename the existing `p.resetGameToStart` function in `game.js` to `p.resetGameToStartScreen` to clarify its purpose of returning to the initial menu.
+    2.  Modify the auto-restart logic within `p.draw` in `game.js` to:
+        *   Only trigger auto-restart for 'GAME_OVER_LOSE' (restarting the current level) or 'GAME_OVER_WIN' on the final level (restarting the entire game from level 1).
+        *   Prevent auto-restart for 'GAME_OVER_WIN' on non-final levels, allowing the player to manually press ENTER to advance.
+        *   Ensure that when auto-restart *does* trigger, it sets `gameState.gamePhase` directly to 'PLAYING' instead of 'START', bypassing the "press enter" screen.
+    3.  Update the 'R' key handler in `input.js` to call the renamed `p.resetGameToStartScreen` function, maintaining its original behavior of returning to the start screen.
+    4.  Refine the `window.loadLevel` function in `game.js` (used for dev mode) to directly initialize the specified level and set the game phase to 'PLAYING', removing its reliance on the full game reset function.
+</analysis>
+<code filename="game.js">
+// game.js - Main game file
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { initializeLevel, findMatches, clearMatches, applyGravity, refillBoard, 
+         removeMarkedTiles, checkObjectivesComplete, isStable } from './boardLogic.js';
+import { handleKeyPressed, setupControlMode } from './input.js';
+import { renderStartScreen, renderGame, renderGameOver } from './rendering.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Initialize logs
+  p.logs = {
+    game_info: [],
+    inputs: [],
+    player_info: []
+  };
+
+  // Renamed: Function to fully reset the game to the start screen (used by 'R' key)
+  p.resetGameToStartScreen = function() {
+    // Clear any pending auto-restart
+    clearTimeout(gameState.autoRestartTimeoutId);
+    gameState.autoRestartScheduled = false;
+    gameState.autoRestartTimeoutId = null;
+
+    gameState.gamePhase = 'START';
+    gameState.currentLevel = 1; // Reset to level 1 for full restart
+    gameState.totalScore = 0; // Reset total score for full restart
+    initializeLevel(gameState.currentLevel, p); // Re-initialize level 1
+    
+    p.logs.game_info.push({
+      data: { phase: 'START', action: 'game_reset_to_start_screen' },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.randomSeed(42);
+    p.frameRate(60);
+    
+    // Initialize control mode
+    setupControlMode();
+    
+    // Initialize first level
+    initializeLevel(1, p);
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: { phase: 'START', level: 1 },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+
+  p.draw = function() {
+    // Render based on phase
+    if (gameState.gamePhase === 'START') {
+      renderStartScreen(p);
+    } else if (gameState.gamePhase === 'PLAYING' || gameState.gamePhase === 'PAUSED') {
+      // Update entities
+      gameState.entities.forEach(tile => tile.update());
+      
+      // Handle animations and cascades
+      if (gameState.isAnimating) {
+        handleAnimations(p);
+      }
+      
+      // Check win/lose conditions
+      if (!gameState.isAnimating && gameState.movesRemaining === 0 && !checkObjectivesComplete()) {
+        gameState.gamePhase = 'GAME_OVER_LOSE';
+        p.logs.game_info.push({
+          data: { phase: 'GAME_OVER_LOSE', finalScore: gameState.score },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      } else if (!gameState.isAnimating && checkObjectivesComplete() && gameState.movesRemaining >= 0) {
+        // Add bonus
+        const bonus = gameState.movesRemaining * 20;
+        gameState.score += bonus;
+        
+        if (gameState.currentLevel < 5) {
+          gameState.gamePhase = 'GAME_OVER_WIN';
+          p.logs.game_info.push({
+            data: { phase: 'GAME_OVER_WIN', finalScore: gameState.score, level: gameState.currentLevel },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+        } else {
+          gameState.gamePhase = 'GAME_OVER_WIN';
+          gameState.totalScore += gameState.score;
+          p.logs.game_info.push({
+            data: { phase: 'GAME_OVER_WIN', finalScore: gameState.score, totalScore: gameState.totalScore },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+        }
+      }
+      
+      renderGame(p);
+    } else if (gameState.gamePhase === 'GAME_OVER_WIN' || gameState.gamePhase === 'GAME_OVER_LOSE') {
+      renderGameOver(p);
+
+      // Auto-restart logic: Only auto-restart if game lost, or if all levels complete.
+      // If win and not final level, player should press ENTER to advance.
+      if (!gameState.autoRestartScheduled) {
+        let restartAction = null;
+        if (gameState.gamePhase === 'GAME_OVER_LOSE') {
+          restartAction = () => {
+            gameState.gamePhase = 'PLAYING'; // Go directly to playing
+            initializeLevel(gameState.currentLevel, p); // Restart current level
+            p.logs.game_info.push({
+              data: { phase: 'PLAYING', level: gameState.currentLevel, action: 'auto_restart_level_lost' },
+              framecount: p.frameCount,
+              timestamp: Date.now()
+            });
+          };
+        } else if (gameState.gamePhase === 'GAME_OVER_WIN' && gameState.currentLevel === 5) {
+          restartAction = () => {
+            gameState.gamePhase = 'PLAYING'; // Go directly to playing
+            gameState.currentLevel = 1; // Restart from level 1
+            gameState.totalScore = 0; // Reset total score for a new game
+            initializeLevel(gameState.currentLevel, p);
+            p.logs.game_info.push({
+              data: { phase: 'PLAYING', level: 1, action: 'auto_restart_game_complete' },
+              framecount: p.frameCount,
+              timestamp: Date.now()
+            });
+          };
+        }
+
+        if (restartAction) {
+          gameState.autoRestartScheduled = true;
+          gameState.autoRestartTimeoutId = setTimeout(() => {
+            // Clear flags inside the timeout callback to ensure it's cleared even if another event cancels it
+            clearTimeout(gameState.autoRestartTimeoutId);
+            gameState.autoRestartScheduled = false;
+            gameState.autoRestartTimeoutId = null;
+            restartAction(); // Execute the determined restart action
+          }, 1000); // 1 second delay
+        }
+      }
+    }
+    
+    // Log player info periodically
+    if (p.frameCount % 60 === 0 && gameState.gamePhase === 'PLAYING') {
+      p.logs.player_info.push({
+        screen_x: gameState.cursorX,
+        screen_y: gameState.cursorY,
+        game_x: gameState.cursorX,
+        game_y: gameState.cursorY,
+        framecount: p.frameCount
+      });
+    }
+  };
+
+  function handleAnimations(p) {
+    // Remove marked tiles that are fully faded
+    removeMarkedTiles();
+    
+    // Check if all animations are done
+    if (isStable()) {
+      // Apply gravity
+      const moved = applyGravity();
+      if (moved) {
+        return; // Wait for gravity to settle
+      }
+      
+      // Refill board
+      const refilled = refillBoard(p);
+      if (refilled) {
+        return; // Wait for new tiles to settle
+      }
+      
+      // Check for new matches (cascades)
+      const matches = findMatches();
+      if (matches.length > 0) {
+        gameState.comboMultiplier += 0.25;
+        clearMatches(matches, p);
+        return;
+      }
+      
+      // No more matches, animation complete
+      gameState.isAnimating = false;
+      gameState.comboMultiplier = 1.0;
+    }
+  }
+
+  p.keyPressed = function() {
+    handleKeyPressed(p);
+    return false; // Prevent default
+  };
+}, document.body);
+
+// Expose game instance and state getter
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    // Clear any pending auto-restart
+    clearTimeout(state.autoRestartTimeoutId);
+    state.autoRestartScheduled = false;
+    state.autoRestartTimeoutId = null;
+
+    state.currentLevel = levelNum;
+    state.gamePhase = "PLAYING"; // Go directly to playing
+    state.totalScore = 0; // Reset total score when loading a level via dev tools
+    initializeLevel(levelNum, gameInstance); // Initialize the specified level
+    gameInstance.logs.game_info.push({
+      data: { phase: 'PLAYING', level: levelNum, action: 'dev_load_level' },
+      framecount: gameInstance.frameCount,
+      timestamp: Date.now()
+    });
+  }
+};
+window.getGameState = function() {
+  return gameState;
+};
+
+// Handle game over for level progression
+document.addEventListener('keydown', (e) => {
+  if (gameState.gamePhase === 'GAME_OVER_WIN' && e.keyCode === 13 && gameState.currentLevel < 5) {
+    // New: Clear any pending auto-restart if user presses ENTER to go to next level
+    clearTimeout(gameState.autoRestartTimeoutId);
+    gameState.autoRestartScheduled = false;
+    gameState.autoRestartTimeoutId = null;
+
+    // ENTER to next level
+    gameState.currentLevel++;
+    initializeLevel(gameState.currentLevel, gameInstance);
+    gameState.gamePhase = 'PLAYING';
+    gameInstance.logs.game_info.push({
+      data: { phase: 'PLAYING', level: gameState.currentLevel },
+      framecount: gameInstance.frameCount,
+      timestamp: Date.now()
+    });
+  }
+});
+</code>
+<code filename="input.js">
+// input.js - Input handling
+import { gameState, TILE_SIZE, GRID_OFFSET_X, GRID_OFFSET_Y } from './globals.js';
+import { canSwapTiles, swapTiles, findMatches, clearMatches, activateSpecialPiece, findBestMove } from './boardLogic.js';
+
+export function handleKeyPressed(p) { // 'p' (the p5 instance) is now passed to access p.resetGameToStartScreen
+  const key = p.key;
+  const keyCode = p.keyCode;
+
+  // Log input
+  p.logs.inputs.push({
+    input_type: 'keyPressed',
+    data: { key, keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+
+  if (gameState.gamePhase === 'START') {
+    if (keyCode === 13) { // ENTER
+      gameState.gamePhase = 'PLAYING';
+      p.logs.game_info.push({
+        data: { phase: 'PLAYING' },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  } else if (gameState.gamePhase === 'PLAYING') {
+    if (keyCode === 27) { // ESC
+      gameState.gamePhase = 'PAUSED';
+      p.logs.game_info.push({
+        data: { phase: 'PAUSED' },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    } else if (!gameState.isAnimating) {
+      handleGameplayInput(keyCode, p);
+    }
+  } else if (gameState.gamePhase === 'PAUSED') {
+    if (keyCode === 27) { // ESC
+      gameState.gamePhase = 'PLAYING';
+      p.logs.game_info.push({
+        data: { phase: 'PLAYING' },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  } else if (gameState.gamePhase === 'GAME_OVER_WIN' || gameState.gamePhase === 'GAME_OVER_LOSE') {
+    if (keyCode === 82) { // R
+      // Call the comprehensive reset function, which also cancels auto-restart
+      // This will take the player back to the "press enter to begin" screen.
+      if (p && typeof p.resetGameToStartScreen === 'function') {
+        p.resetGameToStartScreen();
+      } else {
+        // Fallback for manual restart if resetGameToStartScreen isn't available (should not happen)
+        // Note: This fallback doesn't fully reset all game state variables as per the new requirement,
+        // but it maintains existing 'R' key behavior if the new function is somehow missing.
+        clearTimeout(gameState.autoRestartTimeoutId); // Still try to clear auto-restart
+        gameState.autoRestartScheduled = false;
+        gameState.autoRestartTimeoutId = null;
+
+        gameState.gamePhase = 'START';
+        gameState.totalScore += gameState.score; // This specific line of old logic is kept for fallback consistency
+        p.logs.game_info.push({
+          data: { phase: 'START', action: 'manual_restart_fallback' },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+  }
+}
+
+function handleGameplayInput(keyCode, p) {
+  const size = gameState.board.length;
+
+  // Arrow keys and WASD
+  if (keyCode === 37 || keyCode === 65) { // LEFT or A
+    gameState.cursorX = Math.max(0, gameState.cursorX - 1);
+  } else if (keyCode === 39 || keyCode === 68) { // RIGHT or D
+    gameState.cursorX = Math.min(size - 1, gameState.cursorX + 1);
+  } else if (keyCode === 38 || keyCode === 87) { // UP or W
+    gameState.cursorY = Math.max(0, gameState.cursorY - 1);
+  } else if (keyCode === 40 || keyCode === 83) { // DOWN or S
+    gameState.cursorY = Math.min(size - 1, gameState.cursorY + 1);
+  } else if (keyCode === 32) { // SPACE
+    handleSpacePress(p);
+  } else if (keyCode === 72) { // H for hint
+    handleHintPress(p);
+  }
+}
+
+function handleHintPress(p) {
+  if (gameState.hintsRemaining > 0) {
+    const bestMove = findBestMove();
+    if (bestMove) {
+      gameState.hintedTiles = [bestMove.tile1, bestMove.tile2];
+      gameState.hintsRemaining--;
+      
+      // Log hint usage
+      p.logs.game_info.push({
+        data: { 
+          action: 'hint_used', 
+          expectedScore: bestMove.score,
+          tile1: { x: bestMove.tile1.gridX, y: bestMove.tile1.gridY },
+          tile2: { x: bestMove.tile2.gridX, y: bestMove.tile2.gridY }
+        },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+      
+      // Clear hint after 3 seconds
+      setTimeout(() => {
+        gameState.hintedTiles = [];
+      }, 3000);
+    }
+  }
+}
+
+function handleSpacePress(p) {
+  const currentTile = gameState.board[gameState.cursorY][gameState.cursorX];
+  
+  if (!currentTile) return;
+
+  // Clear hint visualization when player makes a move
+  gameState.hintedTiles = [];
+
+  // If no tile selected, select current
+  if (!gameState.selectedTile) {
+    gameState.selectedTile = currentTile;
+  } else {
+    // Try to swap or activate
+    if (gameState.selectedTile === currentTile) {
+      // Same tile - activate if special
+      if (currentTile.specialType) {
+        executeMove(() => {
+          activateSpecialPiece(currentTile, p);
+          currentTile.markedForClear = true;
+          gameState.isAnimating = true;
+          gameState.comboMultiplier = 1.0;
+        }, p);
+        gameState.selectedTile = null;
+      } else {
+        // Deselect
+        gameState.selectedTile = null;
+      }
+    } else if (canSwapTiles(gameState.selectedTile, currentTile)) {
+      // Valid swap
+      const tile1 = gameState.selectedTile;
+      const tile2 = currentTile;
+      
+      executeMove(() => {
+        swapTiles(tile1, tile2);
+        
+        // Check for matches after a brief delay
+        setTimeout(() => {
+          const matches = findMatches();
+          if (matches.length === 0) {
+            // No matches, swap back
+            swapTiles(tile1, tile2);
+          } else {
+            // Valid move
+            gameState.comboMultiplier = 1.0;
+            clearMatches(matches, p);
+            gameState.isAnimating = true;
+          }
+        }, 200);
+      }, p);
+      
+      gameState.selectedTile = null;
+    } else {
+      // Invalid swap, just select new tile
+      gameState.selectedTile = currentTile;
+    }
+  }
+}
+
+function executeMove(action, p) {
+  if (gameState.movesRemaining > 0) {
+    gameState.movesRemaining--;
+    action();
+  }
+}
+
+export function setupControlMode() {
+  // Expose setControlMode globally for HTML buttons
+  // This function will only be called for 'HUMAN' mode now.
+  window.setControlMode = (mode) => {
+    if (mode === 'HUMAN') {
+      gameState.controlMode = 'HUMAN'; // Ensure it's always human
+      
+      // Update button states: only 'humanModeBtn' exists and should be active
+      const humanBtn = document.getElementById('humanModeBtn');
+      if (humanBtn) {
+        humanBtn.classList.add('active');
+      }
+    }
+  };
+
+  // Ensure the 'Human Mode' button is active on initial load
+  const humanBtn = document.getElementById('humanModeBtn');
+  if (humanBtn) {
+    humanBtn.classList.add('active');
+  }
+}
+</code>

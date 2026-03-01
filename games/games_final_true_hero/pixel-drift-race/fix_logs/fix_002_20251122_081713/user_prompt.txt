@@ -1,0 +1,1990 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you make sure to add coins, and then treat the triangles as boost pads? 
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Pixel Drift Race</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic Acceleration)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (AI Win)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Race through increasingly challenging tracks in this top-down arcade racer! Navigate your car through traffic, avoid obstacles, and master the art of drifting. Progress through suburban streets, busy city roads, and treacherous mountain passes before facing off against the ultimate boss car. Collect cash to upgrade your vehicle's engine, acceleration, and handling. Complete each level without losing all your health to advance. Can you defeat The Enforcer and claim victory?</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;"><strong>CONTROLS:</strong><br>Arrow Up / W: <strong>HOLD</strong> to Accelerate Continuously<br>Arrow Left / A: <strong>TAP</strong> to Move Left One Lane<br>Arrow Right / D: <strong>TAP</strong> to Move Right One Lane<br>Space: <strong>HOLD</strong> to Brake<br>Enter: Start Game<br>Esc: Pause / Unpause<br>R: Restart (return to start screen)<br><br><em>Note: Hold acceleration for continuous speed boost. Tap left/right for discrete lane changes!</em></p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="/games/pixel-drift-race/game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+// globals.js - Global constants and game state
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+
+// Game phases
+export const PHASE_START = "START";
+export const PHASE_PLAYING = "PLAYING";
+export const PHASE_PAUSED = "PAUSED";
+export const PHASE_GAME_OVER_WIN = "GAME_OVER_WIN";
+export const PHASE_GAME_OVER_LOSE = "GAME_OVER_LOSE";
+
+// Lane configuration
+export const NUM_LANES = 3;
+export const LANE_WIDTH = 120;
+export const TRACK_WIDTH = NUM_LANES * LANE_WIDTH;
+export const TRACK_X_OFFSET = (CANVAS_WIDTH - TRACK_WIDTH) / 2;
+
+// Player car constants - TAP-BASED CONTROLS
+export const PLAYER_CAR_WIDTH = 30;
+export const PLAYER_CAR_HEIGHT = 50;
+export const PLAYER_START_Y = CANVAS_HEIGHT - 100;
+export const BASELINE_SPEED = 4; // Constant cruising speed
+export const MAX_SPEED = 12; // Increased for tap-based
+export const SPEED_BOOST = 3.0; // Significant boost per tap (~45 mph)
+export const CONTINUOUS_DECELERATION = 0.05; // Gradual slowdown when not boosting
+export const LANE_CHANGE_DISTANCE = LANE_WIDTH; // Full lane change per tap
+export const BRAKE_FORCE = 2.0; // Speed reduction per brake tap
+export const MAX_HEALTH = 100;
+
+// Tap-based movement constants
+export const TAP_COOLDOWN = 5; // Frames between taps to prevent spam
+
+// Drift constants (simplified for tap-based)
+export const DRIFT_SPEED_THRESHOLD = 3;
+export const DRIFT_DURATION_FOR_BONUS = 30; // frames (0.5 seconds at 60fps)
+export const DRIFT_POINTS = 20;
+export const DRIFT_BOOST_MULTIPLIER = 1.3;
+
+// Rival car constants
+export const RIVAL_CAR_WIDTH = 28;
+export const RIVAL_CAR_HEIGHT = 45;
+export const RIVAL_SPAWN_INTERVAL = 120; // frames
+
+// Obstacle constants
+export const OBSTACLE_SPAWN_INTERVAL = 90; // frames
+
+// Coin/Reward constants
+export const COIN_SPAWN_INTERVAL = 80; // frames
+export const COIN_CASH_VALUE = 10;
+export const COIN_SCORE_VALUE = 25;
+
+// Ramp boost constants
+export const RAMP_SPEED_BOOST = 4; // Speed increase when hitting ramp
+export const RAMP_BOOST_DURATION = 30; // frames
+
+// Boss constants
+export const BOSS_WIDTH = 50;
+export const BOSS_HEIGHT = 70;
+export const BOSS_MAX_HEALTH = 300;
+
+// Collision damage
+export const OBSTACLE_DAMAGE = 15;
+export const RIVAL_DAMAGE = 10;
+export const BOSS_DAMAGE = 20;
+
+// Scoring
+export const POINTS_OVERTAKE = 10;
+export const POINTS_DRIFT = 20;
+export const POINTS_AIRTIME = 50;
+export const POINTS_LEVEL_COMPLETE = 100;
+export const POINTS_BOSS_DEFEAT = 500;
+
+// Cash rewards
+export const CASH_LEVEL_1 = 50;
+export const CASH_LEVEL_2 = 100;
+export const CASH_LEVEL_3 = 150;
+export const CASH_BOSS = 300;
+
+// Level definitions
+export const LEVELS = [
+  {
+    id: 1,
+    name: "Suburban Sprint",
+    theme: "suburban",
+    targetTime: 60,
+    rivalCount: 3,
+    rivalSpeed: 2,
+    obstacleFrequency: 1.0,
+    cashReward: CASH_LEVEL_1,
+    isBoss: false
+  },
+  {
+    id: 2,
+    name: "City Rush",
+    theme: "city",
+    targetTime: 90,
+    rivalCount: 5,
+    rivalSpeed: 3,
+    obstacleFrequency: 1.5,
+    cashReward: CASH_LEVEL_2,
+    isBoss: false
+  },
+  {
+    id: 3,
+    name: "Mountain Pass Ascent",
+    theme: "mountain",
+    targetTime: 120,
+    rivalCount: 8,
+    rivalSpeed: 4,
+    obstacleFrequency: 2.0,
+    cashReward: CASH_LEVEL_3,
+    isBoss: false
+  },
+  {
+    id: 4,
+    name: "Boss Battle: The Enforcer",
+    theme: "arena",
+    targetTime: null,
+    rivalCount: 0,
+    rivalSpeed: 0,
+    obstacleFrequency: 0,
+    cashReward: CASH_BOSS,
+    isBoss: true
+  }
+];
+
+// Game state object
+export const gameState = {
+  gamePhase: PHASE_START,
+  controlMode: "HUMAN",
+  player: null,
+  entities: [],
+  rivals: [],
+  obstacles: [],
+  coins: [],
+  boss: null,
+  projectiles: [],
+  particles: [],
+  score: 0,
+  cash: 0,
+  currentLevel: 1,
+  levelStartTime: 0,
+  scrollSpeed: 0,
+  cameraY: 0,
+  framesSinceRivalSpawn: 0,
+  framesSinceObstacleSpawn: 0,
+  framesSinceCoinSpawn: 0,
+  driftChainMultiplier: 1,
+  consecutiveDrifts: 0,
+  noCollisionBonus: true,
+  upgrades: {
+    engine: 0,
+    acceleration: 0,
+    handling: 0
+  },
+  levelDistance: 0,
+  levelLength: 3000,
+  inputState: {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    space: false
+  }
+};
+
+// Upgrade costs and effects
+export const UPGRADE_COSTS = {
+  engine: [100, 200, 300],
+  acceleration: [100, 200, 300],
+  handling: [100, 200, 300]
+};
+
+export const UPGRADE_EFFECTS = {
+  engine: [1.2, 1.4, 1.6],
+  acceleration: [1.2, 1.4, 1.6],
+  handling: [1.2, 1.4, 1.6]
+};
+// Expose gameState to window for debugging and recording scripts
+if (typeof window !== 'undefined') {
+  window.getGameState = () => gameState;
+}
+</file>
+
+<file name="game.js">
+// game.js - Main game file
+
+import { 
+  gameState, CANVAS_WIDTH, CANVAS_HEIGHT, TARGET_FPS,
+  PHASE_START, PHASE_PLAYING
+} from './globals.js';
+import { renderGame } from './rendering.js';
+import { updateGame, resetLevel } from './gameLogic.js';
+import { handleKeyPressed, handleKeyReleased, updateInputFromTestController } from './input.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Initialize logs
+  p.logs = {
+    game_info: [],
+    inputs: [],
+    player_info: []
+  };
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(TARGET_FPS);
+    p.randomSeed(42);
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: { phase: PHASE_START, action: "game_initialized" },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+
+  p.draw = function() {
+    // Update test controller if not in human mode
+    if (gameState.controlMode !== "HUMAN") {
+      updateInputFromTestController(p);
+      
+      // Auto-start for test modes
+      if (gameState.gamePhase === PHASE_START) {
+        gameState.gamePhase = PHASE_PLAYING;
+        gameState.currentLevel = 1;
+        gameState.score = 0;
+        resetLevel(p);
+      }
+    }
+
+    // Update game logic
+    updateGame(p);
+
+    // Render
+    renderGame(p);
+  };
+
+  p.keyPressed = function() {
+    handleKeyPressed(p);
+    return false; // Prevent default behavior
+  };
+
+  p.keyReleased = function() {
+    handleKeyReleased(p);
+    return false;
+  };
+});
+
+// Expose game instance and state globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+window.getGameState = function() {
+  return gameState;
+};
+
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = document.querySelectorAll('.control-button');
+  buttons.forEach(btn => btn.classList.remove('active'));
+  
+  if (mode === "HUMAN") {
+    document.getElementById('humanModeBtn').classList.add('active');
+  } else if (mode === "TEST_1") {
+    document.getElementById('test_1_ModeBtn').classList.add('active');
+  } else if (mode === "TEST_2") {
+    document.getElementById('test_2_ModeBtn').classList.add('active');
+  }
+  
+  gameInstance.logs.game_info.push({
+    data: { action: "control_mode_changed", mode: mode },
+    framecount: gameInstance.frameCount,
+    timestamp: Date.now()
+  });
+};
+</file>
+
+<file name="collision.js">
+// collision.js - Collision detection and handling
+
+import { gameState } from './globals.js';
+import { 
+  OBSTACLE_DAMAGE, RIVAL_DAMAGE, BOSS_DAMAGE, 
+  POINTS_BOSS_DEFEAT, COIN_CASH_VALUE, COIN_SCORE_VALUE,
+  RAMP_SPEED_BOOST
+} from './globals.js';
+import { Particle } from './entities.js';
+
+export function checkCollisions(p) {
+  if (!gameState.player) return;
+
+  const player = gameState.player;
+  
+  // Check collisions with rivals
+  gameState.rivals.forEach(rival => {
+    if (checkRectCollision(player, rival)) {
+      player.takeDamage(RIVAL_DAMAGE);
+      createCollisionEffect(p, player.x, player.y);
+      // Remove rival on collision
+      const index = gameState.rivals.indexOf(rival);
+      if (index > -1) {
+        gameState.rivals.splice(index, 1);
+      }
+    }
+  });
+
+  // Check collisions with obstacles
+  gameState.obstacles.forEach(obstacle => {
+    if (checkRectCollision(player, obstacle)) {
+      // Special handling for ramps - they boost speed instead of damaging
+      if (obstacle.type === 'ramp') {
+        player.applyRampBoost(RAMP_SPEED_BOOST);
+        createBoostEffect(p, player.x, player.y);
+        gameState.score += 15; // Bonus points for hitting ramp
+      } else {
+        // Other obstacles cause damage
+        player.takeDamage(OBSTACLE_DAMAGE);
+        createCollisionEffect(p, player.x, player.y);
+      }
+      
+      // Remove obstacle on collision
+      const index = gameState.obstacles.indexOf(obstacle);
+      if (index > -1) {
+        gameState.obstacles.splice(index, 1);
+      }
+    }
+  });
+
+  // Check collisions with coins
+  gameState.coins.forEach(coin => {
+    if (checkRectCollision(player, coin)) {
+      // Collect coin
+      gameState.cash += COIN_CASH_VALUE;
+      gameState.score += COIN_SCORE_VALUE;
+      createCoinEffect(p, coin.x, coin.y);
+      
+      // Remove coin
+      const index = gameState.coins.indexOf(coin);
+      if (index > -1) {
+        gameState.coins.splice(index, 1);
+      }
+    }
+  });
+
+  // Check collisions with boss
+  if (gameState.boss) {
+    if (checkRectCollision(player, gameState.boss)) {
+      player.takeDamage(BOSS_DAMAGE);
+      createCollisionEffect(p, player.x, player.y);
+      
+      // Damage boss if vulnerable
+      if (gameState.boss.vulnerable) {
+        gameState.boss.takeDamage(20);
+        createCollisionEffect(p, gameState.boss.x, gameState.boss.y);
+        
+        if (gameState.boss.health <= 0) {
+          gameState.score += POINTS_BOSS_DEFEAT;
+          gameState.boss = null;
+        }
+      }
+    }
+  }
+
+  // Check collisions with boss projectiles
+  gameState.projectiles.forEach(projectile => {
+    if (checkCircleRectCollision(projectile, player)) {
+      player.takeDamage(15);
+      createCollisionEffect(p, player.x, player.y);
+      const index = gameState.projectiles.indexOf(projectile);
+      if (index > -1) {
+        gameState.projectiles.splice(index, 1);
+      }
+    }
+  });
+}
+
+function checkRectCollision(obj1, obj2) {
+  return obj1.x - obj1.width / 2 < obj2.x + obj2.width / 2 &&
+         obj1.x + obj1.width / 2 > obj2.x - obj2.width / 2 &&
+         obj1.y - obj1.height / 2 < obj2.y + obj2.height / 2 &&
+         obj1.y + obj1.height / 2 > obj2.y - obj2.height / 2;
+}
+
+function checkCircleRectCollision(circle, rect) {
+  const distX = Math.abs(circle.x - rect.x);
+  const distY = Math.abs(circle.y - rect.y);
+
+  if (distX > (rect.width / 2 + circle.width / 2)) return false;
+  if (distY > (rect.height / 2 + circle.height / 2)) return false;
+
+  if (distX <= (rect.width / 2)) return true;
+  if (distY <= (rect.height / 2)) return true;
+
+  const dx = distX - rect.width / 2;
+  const dy = distY - rect.height / 2;
+  return (dx * dx + dy * dy <= (circle.width / 2 * circle.width / 2));
+}
+
+function createCollisionEffect(p, x, y) {
+  for (let i = 0; i < 10; i++) {
+    gameState.particles.push(new Particle(p, x, y, 'spark'));
+  }
+}
+
+function createBoostEffect(p, x, y) {
+  for (let i = 0; i < 15; i++) {
+    const particle = new Particle(p, x, y, 'spark');
+    particle.vx = p.random(-3, 3);
+    particle.vy = p.random(2, 5); // Particles fly backward
+    gameState.particles.push(particle);
+  }
+}
+
+function createCoinEffect(p, x, y) {
+  for (let i = 0; i < 8; i++) {
+    const particle = new Particle(p, x, y, 'spark');
+    particle.vx = p.random(-2, 2);
+    particle.vy = p.random(-2, 2);
+    gameState.particles.push(particle);
+  }
+}
+</file>
+
+<file name="rendering.js">
+// rendering.js - Rendering functions
+
+import { 
+  gameState, CANVAS_WIDTH, CANVAS_HEIGHT, PHASE_START,
+  PHASE_PLAYING, PHASE_PAUSED, PHASE_GAME_OVER_WIN,
+  PHASE_GAME_OVER_LOSE, TRACK_X_OFFSET, TRACK_WIDTH,
+  LANE_WIDTH, NUM_LANES, LEVELS
+} from './globals.js';
+
+export function renderGame(p) {
+  p.background(40, 40, 40);
+
+  if (gameState.gamePhase === PHASE_START) {
+    renderStartScreen(p);
+  } else if (gameState.gamePhase === PHASE_PLAYING) {
+    renderPlayingScreen(p);
+  } else if (gameState.gamePhase === PHASE_PAUSED) {
+    renderPlayingScreen(p);
+    renderPauseOverlay(p);
+  } else if (gameState.gamePhase === PHASE_GAME_OVER_WIN || gameState.gamePhase === PHASE_GAME_OVER_LOSE) {
+    renderGameOverScreen(p);
+  }
+}
+
+function renderStartScreen(p) {
+  // Background gradient
+  for (let i = 0; i < CANVAS_HEIGHT; i++) {
+    const inter = p.map(i, 0, CANVAS_HEIGHT, 0, 1);
+    const c = p.lerpColor(p.color(20, 30, 40), p.color(60, 40, 30), inter);
+    p.stroke(c);
+    p.line(0, i, CANVAS_WIDTH, i);
+  }
+
+  // Title
+  p.fill(255, 220, 50);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text("PIXEL DRIFT RACE", CANVAS_WIDTH / 2, 80);
+
+  // Decorative elements
+  p.fill(100, 220, 100);
+  p.noStroke();
+  p.rect(CANVAS_WIDTH / 2 - 15, 130, 30, 50, 5);
+  p.fill(40);
+  p.rect(CANVAS_WIDTH / 2 - 12, 135, 7, 10);
+  p.rect(CANVAS_WIDTH / 2 + 5, 135, 7, 10);
+
+  // Description
+  p.fill(200, 200, 200);
+  p.textSize(14);
+  p.text("Race through challenging tracks!", CANVAS_WIDTH / 2, 200);
+  p.text("Avoid obstacles, drift for bonuses, defeat the boss!", CANVAS_WIDTH / 2, 220);
+
+  // Instructions
+  p.fill(150, 200, 255);
+  p.textSize(12);
+  p.textAlign(p.LEFT, p.CENTER);
+  const startX = 100;
+  const startY = 260;
+  p.text("↑/W: Accelerate", startX, startY);
+  p.text("←/→ or A/D: Steer", startX, startY + 20);
+  p.text("SPACE: Drift/Brake", startX, startY + 40);
+  p.text("ESC: Pause", startX, startY + 60);
+
+  p.textAlign(p.RIGHT, p.CENTER);
+  const rightX = CANVAS_WIDTH - 100;
+  p.text("Complete levels to progress", rightX, startY);
+  p.text("Collect cash for upgrades", rightX, startY + 20);
+  p.text("Master drifting for bonuses", rightX, startY + 40);
+  p.text("Defeat The Enforcer to win!", rightX, startY + 60);
+
+  // Start prompt
+  p.fill(255, 255, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(20);
+  const flash = p.sin(p.frameCount * 0.1) > 0;
+  if (flash) {
+    p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 360);
+  }
+}
+
+function renderPlayingScreen(p) {
+  // Render background based on level theme
+  renderBackground(p);
+
+  // Render track
+  renderTrack(p);
+
+  // Render entities
+  gameState.obstacles.forEach(obstacle => obstacle.render());
+  gameState.rivals.forEach(rival => rival.render());
+  if (gameState.boss) {
+    gameState.boss.render();
+  }
+  gameState.projectiles.forEach(projectile => projectile.render());
+  
+  if (gameState.player) {
+    gameState.player.render();
+  }
+
+  // Render particles
+  gameState.particles.forEach(particle => particle.render());
+
+  // Render UI
+  renderUI(p);
+}
+
+function renderBackground(p) {
+  const level = LEVELS[gameState.currentLevel - 1];
+  const theme = level.theme;
+
+  if (theme === 'suburban') {
+    // Green background with trees
+    p.background(80, 150, 80);
+    for (let i = 0; i < 5; i++) {
+      const x = (i * 150 + (gameState.cameraY % 150)) % CANVAS_HEIGHT;
+      p.fill(40, 100, 40);
+      p.noStroke();
+      p.circle(50, x, 30);
+      p.circle(CANVAS_WIDTH - 50, x, 30);
+    }
+  } else if (theme === 'city') {
+    // City buildings
+    p.background(60, 60, 80);
+    for (let i = 0; i < 10; i++) {
+      const x = (i * 100 + (gameState.cameraY % 100)) % CANVAS_HEIGHT;
+      p.fill(40, 40, 60);
+      p.rect(10, x, 40, 60);
+      p.rect(CANVAS_WIDTH - 50, x, 40, 60);
+      p.fill(100, 100, 80);
+      for (let w = 0; w < 3; w++) {
+        p.rect(15 + w * 10, x + 10, 6, 8);
+      }
+    }
+  } else if (theme === 'mountain') {
+    // Rocky mountain background
+    p.background(100, 80, 60);
+    for (let i = 0; i < 8; i++) {
+      const x = (i * 120 + (gameState.cameraY % 120)) % CANVAS_HEIGHT;
+      p.fill(80, 60, 40);
+      p.triangle(30, x + 60, 10, x + 10, 50, x + 10);
+      p.triangle(CANVAS_WIDTH - 30, x + 60, CANVAS_WIDTH - 10, x + 10, CANVAS_WIDTH - 50, x + 10);
+    }
+  } else if (theme === 'arena') {
+    // Arena with grid pattern
+    p.background(30, 30, 50);
+    p.stroke(50, 50, 80);
+    p.strokeWeight(1);
+    for (let i = 0; i < CANVAS_WIDTH; i += 30) {
+      p.line(i, 0, i, CANVAS_HEIGHT);
+    }
+    for (let i = 0; i < CANVAS_HEIGHT; i += 30) {
+      p.line(0, i, CANVAS_WIDTH, i);
+    }
+  }
+}
+
+function renderTrack(p) {
+  // Road surface
+  p.fill(60, 60, 60);
+  p.noStroke();
+  p.rect(TRACK_X_OFFSET, 0, TRACK_WIDTH, CANVAS_HEIGHT);
+
+  // Lane dividers
+  p.stroke(255, 255, 255);
+  p.strokeWeight(2);
+  const dashLength = 20;
+  const gapLength = 20;
+  const offset = (gameState.cameraY % (dashLength + gapLength));
+
+  for (let lane = 1; lane < NUM_LANES; lane++) {
+    const x = TRACK_X_OFFSET + lane * LANE_WIDTH;
+    for (let y = -offset; y < CANVAS_HEIGHT; y += dashLength + gapLength) {
+      p.line(x, y, x, y + dashLength);
+    }
+  }
+
+  // Track edges
+  p.stroke(255, 200, 0);
+  p.strokeWeight(4);
+  p.line(TRACK_X_OFFSET, 0, TRACK_X_OFFSET, CANVAS_HEIGHT);
+  p.line(TRACK_X_OFFSET + TRACK_WIDTH, 0, TRACK_X_OFFSET + TRACK_WIDTH, CANVAS_HEIGHT);
+}
+
+function renderUI(p) {
+  // Score
+  p.fill(255);
+  p.noStroke();
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(16);
+  p.text(`SCORE: ${gameState.score}`, 10, 10);
+
+  // Level
+  p.textAlign(p.RIGHT, p.TOP);
+  const level = LEVELS[gameState.currentLevel - 1];
+  p.text(`LEVEL ${gameState.currentLevel}: ${level.name}`, CANVAS_WIDTH - 10, 10);
+
+  // Cash
+  p.textAlign(p.LEFT, p.BOTTOM);
+  p.text(`CASH: $${gameState.cash}`, 10, CANVAS_HEIGHT - 10);
+
+  // Speed
+  if (gameState.player) {
+    p.textAlign(p.RIGHT, p.BOTTOM);
+    const mph = Math.floor(gameState.player.speed * 15);
+    p.text(`${mph} MPH`, CANVAS_WIDTH - 10, CANVAS_HEIGHT - 10);
+  }
+
+  // Drift chain multiplier
+  if (gameState.driftChainMultiplier > 1) {
+    p.textAlign(p.CENTER, p.TOP);
+    p.fill(255, 255, 100);
+    p.textSize(20);
+    p.text(`DRIFT x${gameState.driftChainMultiplier.toFixed(1)}`, CANVAS_WIDTH / 2, 40);
+  }
+
+  // Level progress for race levels
+  if (!level.isBoss && gameState.levelLength > 0) {
+    const progress = gameState.levelDistance / gameState.levelLength;
+    const barWidth = 200;
+    const barHeight = 10;
+    const barX = CANVAS_WIDTH / 2 - barWidth / 2;
+    const barY = 35;
+
+    p.fill(50);
+    p.noStroke();
+    p.rect(barX, barY, barWidth, barHeight);
+
+    p.fill(100, 220, 100);
+    p.rect(barX, barY, barWidth * progress, barHeight);
+
+    p.fill(255);
+    p.textAlign(p.CENTER, p.TOP);
+    p.textSize(10);
+    p.text("PROGRESS", CANVAS_WIDTH / 2, barY - 12);
+  }
+}
+
+function renderPauseOverlay(p) {
+  // Semi-transparent overlay
+  p.fill(0, 0, 0, 150);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+  // Pause text
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text("PAUSED", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 40);
+
+  p.textSize(20);
+  p.text("ESC to Resume", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+  p.text("R to Restart", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+
+  // Small indicator in top right
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(14);
+  p.text("PAUSED", CANVAS_WIDTH - 10, 10);
+}
+
+function renderGameOverScreen(p) {
+  // Background gradient
+  for (let i = 0; i < CANVAS_HEIGHT; i++) {
+    const inter = p.map(i, 0, CANVAS_HEIGHT, 0, 1);
+    const c = gameState.gamePhase === PHASE_GAME_OVER_WIN ? 
+      p.lerpColor(p.color(20, 40, 20), p.color(40, 80, 40), inter) :
+      p.lerpColor(p.color(40, 20, 20), p.color(80, 40, 40), inter);
+    p.stroke(c);
+    p.line(0, i, CANVAS_WIDTH, i);
+  }
+
+  // Title
+  if (gameState.gamePhase === PHASE_GAME_OVER_WIN) {
+    p.fill(100, 255, 100);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(56);
+    p.text("VICTORY!", CANVAS_WIDTH / 2, 100);
+    
+    p.textSize(24);
+    p.fill(200, 255, 200);
+    p.text("You defeated The Enforcer!", CANVAS_WIDTH / 2, 150);
+  } else {
+    p.fill(255, 100, 100);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(56);
+    p.text("GAME OVER", CANVAS_WIDTH / 2, 100);
+    
+    p.textSize(24);
+    p.fill(255, 200, 200);
+    p.text("Your car was destroyed", CANVAS_WIDTH / 2, 150);
+  }
+
+  // Stats
+  p.fill(255);
+  p.textSize(20);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 220);
+  p.text(`Total Cash: $${gameState.cash}`, CANVAS_WIDTH / 2, 250);
+  p.text(`Level Reached: ${gameState.currentLevel}`, CANVAS_WIDTH / 2, 280);
+
+  // Instructions
+  p.textSize(24);
+  p.fill(255, 255, 150);
+  const flash = p.sin(p.frameCount * 0.1) > 0;
+  if (flash) {
+    p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, 340);
+  }
+}
+</file>
+
+<file name="entities.js">
+// entities.js - Game entity classes
+
+import { 
+  PLAYER_CAR_WIDTH, PLAYER_CAR_HEIGHT, PLAYER_START_Y,
+  BASELINE_SPEED, MAX_SPEED, SPEED_BOOST, CONTINUOUS_DECELERATION,
+  LANE_CHANGE_DISTANCE, BRAKE_FORCE, TAP_COOLDOWN,
+  MAX_HEALTH, DRIFT_SPEED_THRESHOLD, DRIFT_DURATION_FOR_BONUS,
+  DRIFT_POINTS, DRIFT_BOOST_MULTIPLIER, NUM_LANES, LANE_WIDTH,
+  TRACK_X_OFFSET, RIVAL_CAR_WIDTH, RIVAL_CAR_HEIGHT,
+  OBSTACLE_DAMAGE, RIVAL_DAMAGE, BOSS_DAMAGE, BOSS_WIDTH,
+  BOSS_HEIGHT, BOSS_MAX_HEALTH, CANVAS_WIDTH, CANVAS_HEIGHT,
+  POINTS_OVERTAKE, gameState, UPGRADE_EFFECTS, RAMP_BOOST_DURATION
+} from './globals.js';
+
+export class PlayerCar {
+  constructor(p, lane) {
+    this.p = p;
+    this.lane = lane;
+    this.x = TRACK_X_OFFSET + lane * LANE_WIDTH + LANE_WIDTH / 2;
+    this.y = PLAYER_START_Y;
+    this.targetX = this.x;
+    this.speed = 0; // Start at zero speed
+    this.maxSpeed = MAX_SPEED;
+    this.health = MAX_HEALTH;
+    this.width = PLAYER_CAR_WIDTH;
+    this.height = PLAYER_CAR_HEIGHT;
+    this.isDrifting = false;
+    this.driftFrames = 0;
+    this.driftBonus = false;
+    this.tiltAngle = 0;
+    this.invulnerableFrames = 0;
+    this.flashTimer = 0;
+    this.exhaustParticles = [];
+    this.driftTrails = [];
+    this.color = [100, 220, 100];
+    this.rampBoostFrames = 0; // Track ramp boost duration
+    
+    // Tap detection for lane changes - track previous states
+    this.prevLeftPressed = false;
+    this.prevRightPressed = false;
+    
+    // Cooldowns to prevent spam on lane changes
+    this.leftCooldown = 0;
+    this.rightCooldown = 0;
+  }
+
+  update() {
+    // Apply upgrades
+    const engineBoost = gameState.upgrades.engine > 0 ? UPGRADE_EFFECTS.engine[gameState.upgrades.engine - 1] : 1;
+    const accelBoost = gameState.upgrades.acceleration > 0 ? UPGRADE_EFFECTS.acceleration[gameState.upgrades.acceleration - 1] : 1;
+    const handlingBoost = gameState.upgrades.handling > 0 ? UPGRADE_EFFECTS.handling[gameState.upgrades.handling - 1] : 1;
+
+    this.maxSpeed = MAX_SPEED * engineBoost;
+    
+    // Update ramp boost
+    if (this.rampBoostFrames > 0) {
+      this.rampBoostFrames--;
+      // Add boost particles
+      if (this.p.frameCount % 2 === 0) {
+        for (let i = 0; i < 3; i++) {
+          this.exhaustParticles.push({
+            x: this.x + this.p.random(-10, 10),
+            y: this.y + this.height / 2,
+            life: 30,
+            alpha: 220
+          });
+        }
+      }
+    }
+    
+    // CONTINUOUS INPUT: Up Arrow/W - Hold to Accelerate
+    if (gameState.inputState.up) {
+      // Continuously apply acceleration while key is held
+      const accelAmount = 0.15 * accelBoost; // Gradual acceleration
+      this.speed = this.p.min(this.speed + accelAmount, this.maxSpeed);
+      
+      // Add exhaust particles periodically for visual feedback
+      if (this.p.frameCount % 5 === 0) {
+        for (let i = 0; i < 2; i++) {
+          this.exhaustParticles.push({
+            x: this.x,
+            y: this.y + this.height / 2,
+            life: 25,
+            alpha: 180
+          });
+        }
+      }
+    }
+
+    // TAP DETECTION: Left Arrow/A - Tap to Move Left One Lane
+    const leftJustPressed = gameState.inputState.left && !this.prevLeftPressed;
+    if (leftJustPressed && this.leftCooldown === 0) {
+      // Calculate target lane (move left = decrease lane index)
+      const targetLane = this.lane - 1;
+      
+      // Check if target lane is valid
+      if (targetLane >= 0) {
+        // Set target to the exact center of the target lane
+        this.targetX = TRACK_X_OFFSET + targetLane * LANE_WIDTH + LANE_WIDTH / 2;
+        this.lane = targetLane;
+        this.leftCooldown = TAP_COOLDOWN;
+        
+        // Visual feedback - tilt
+        this.tiltAngle = -0.15;
+      }
+    }
+    this.prevLeftPressed = gameState.inputState.left;
+
+    // TAP DETECTION: Right Arrow/D - Tap to Move Right One Lane
+    const rightJustPressed = gameState.inputState.right && !this.prevRightPressed;
+    if (rightJustPressed && this.rightCooldown === 0) {
+      // Calculate target lane (move right = increase lane index)
+      const targetLane = this.lane + 1;
+      
+      // Check if target lane is valid
+      if (targetLane < NUM_LANES) {
+        // Set target to the exact center of the target lane
+        this.targetX = TRACK_X_OFFSET + targetLane * LANE_WIDTH + LANE_WIDTH / 2;
+        this.lane = targetLane;
+        this.rightCooldown = TAP_COOLDOWN;
+        
+        // Visual feedback - tilt
+        this.tiltAngle = 0.15;
+      }
+    }
+    this.prevRightPressed = gameState.inputState.right;
+
+    // CONTINUOUS INPUT: Space - Hold to Brake
+    if (gameState.inputState.space) {
+      // Continuously apply brake while key is held
+      this.speed = this.p.max(0, this.speed - 0.2);
+    }
+
+    // Update cooldowns
+    if (this.leftCooldown > 0) this.leftCooldown--;
+    if (this.rightCooldown > 0) this.rightCooldown--;
+
+    // Always decelerate gradually (natural slowdown when not accelerating)
+    if (!gameState.inputState.up) {
+      this.speed = this.p.max(0, this.speed - CONTINUOUS_DECELERATION);
+    }
+
+    // Move towards target position (smooth movement for lane changes)
+    const moveSpeed = 15; // Fast movement for tap-based lane changes
+    if (this.p.abs(this.x - this.targetX) > 1) {
+      if (this.x < this.targetX) {
+        this.x = this.p.min(this.x + moveSpeed, this.targetX);
+      } else if (this.x > this.targetX) {
+        this.x = this.p.max(this.x - moveSpeed, this.targetX);
+      }
+    } else {
+      this.x = this.targetX;
+      // Return tilt to neutral when stopped
+      this.tiltAngle = this.p.lerp(this.tiltAngle, 0, 0.2);
+    }
+
+    // Simplified drift detection (visual only, no complex mechanics)
+    const isMoving = this.p.abs(this.x - this.targetX) > 1;
+    if (isMoving && this.speed > DRIFT_SPEED_THRESHOLD) {
+      this.isDrifting = true;
+      this.driftFrames++;
+      
+      // Add drift trails for visual effect
+      if (this.p.frameCount % 3 === 0) {
+        this.driftTrails.push({
+          x: this.x - 10,
+          y: this.y + this.height / 2,
+          life: 20,
+          alpha: 150
+        });
+        this.driftTrails.push({
+          x: this.x + 10,
+          y: this.y + this.height / 2,
+          life: 20,
+          alpha: 150
+        });
+      }
+
+      // Drift bonus for sustained high-speed movement
+      if (this.driftFrames >= DRIFT_DURATION_FOR_BONUS && !this.driftBonus) {
+        this.driftBonus = true;
+        gameState.score += DRIFT_POINTS * gameState.driftChainMultiplier;
+        gameState.consecutiveDrifts++;
+        gameState.driftChainMultiplier = this.p.min(5, 1 + gameState.consecutiveDrifts * 0.5);
+      }
+    } else {
+      if (this.isDrifting && this.driftFrames > 0) {
+        // Reset drift
+        this.isDrifting = false;
+        this.driftFrames = 0;
+        this.driftBonus = false;
+      }
+    }
+
+    // Update particles
+    this.exhaustParticles = this.exhaustParticles.filter(p => {
+      p.life--;
+      p.alpha -= 7.5;
+      p.y += 2;
+      return p.life > 0;
+    });
+
+    this.driftTrails = this.driftTrails.filter(t => {
+      t.life--;
+      t.alpha -= 7.5;
+      t.y += gameState.scrollSpeed;
+      return t.life > 0;
+    });
+
+    // Update invulnerability
+    if (this.invulnerableFrames > 0) {
+      this.invulnerableFrames--;
+      this.flashTimer++;
+    }
+  }
+
+  applyRampBoost(boost) {
+    this.speed = this.p.min(this.speed + boost, this.maxSpeed * 1.5); // Allow temporary overspeed
+    this.rampBoostFrames = RAMP_BOOST_DURATION;
+  }
+
+  takeDamage(amount) {
+    if (this.invulnerableFrames > 0) return;
+    
+    this.health = this.p.max(0, this.health - amount);
+    this.invulnerableFrames = 60;
+    this.flashTimer = 0;
+    gameState.noCollisionBonus = false;
+    gameState.driftChainMultiplier = 1;
+    gameState.consecutiveDrifts = 0;
+  }
+
+  render() {
+    const p = this.p;
+    p.push();
+    p.translate(this.x, this.y);
+    p.rotate(this.tiltAngle);
+
+    // Draw drift trails
+    this.driftTrails.forEach(trail => {
+      p.stroke(255, 255, 255, trail.alpha);
+      p.strokeWeight(3);
+      p.point(trail.x - this.x, trail.y - this.y);
+    });
+
+    // Draw exhaust particles
+    this.exhaustParticles.forEach(particle => {
+      const color = this.rampBoostFrames > 0 ? [255, 200, 50] : [100, 100, 100];
+      p.fill(...color, particle.alpha);
+      p.noStroke();
+      p.circle(particle.x - this.x, particle.y - this.y, 4);
+    });
+
+    // Flash when hit
+    const isFlashing = this.invulnerableFrames > 0 && this.flashTimer % 8 < 4;
+    if (!isFlashing) {
+      // Glow effect during ramp boost
+      if (this.rampBoostFrames > 0) {
+        p.fill(255, 200, 50, 80);
+        p.noStroke();
+        p.rect(-this.width / 2 - 3, -this.height / 2 - 3, this.width + 6, this.height + 6, 7);
+      }
+
+      // Car body
+      p.fill(...this.color);
+      p.stroke(0);
+      p.strokeWeight(2);
+      p.rect(-this.width / 2, -this.height / 2, this.width, this.height, 5);
+
+      // Windshield
+      p.fill(150, 200, 255, 150);
+      p.rect(-this.width / 2 + 5, -this.height / 2 + 5, this.width - 10, 15);
+
+      // Wheels
+      p.fill(40);
+      p.rect(-this.width / 2 - 3, -this.height / 2 + 10, 6, 12);
+      p.rect(this.width / 2 - 3, -this.height / 2 + 10, 6, 12);
+      p.rect(-this.width / 2 - 3, this.height / 2 - 22, 6, 12);
+      p.rect(this.width / 2 - 3, this.height / 2 - 22, 6, 12);
+
+      // Tail lights (brake lights) - show when braking
+      if (gameState.inputState.space) {
+        p.fill(255, 0, 0);
+        p.noStroke();
+        p.circle(-this.width / 2 + 5, this.height / 2 - 5, 4);
+        p.circle(this.width / 2 - 5, this.height / 2 - 5, 4);
+      }
+    }
+
+    p.pop();
+
+    // Draw health bar
+    this.renderHealthBar();
+  }
+
+  renderHealthBar() {
+    const p = this.p;
+    const barWidth = 40;
+    const barHeight = 4;
+    const barX = this.x - barWidth / 2;
+    const barY = this.y + this.height / 2 + 10;
+    
+    const healthPercent = this.health / MAX_HEALTH;
+    
+    p.fill(50);
+    p.noStroke();
+    p.rect(barX, barY, barWidth, barHeight);
+    
+    const healthColor = healthPercent > 0.5 ? [100, 220, 100] : healthPercent > 0.25 ? [220, 180, 50] : [220, 50, 50];
+    p.fill(...healthColor);
+    p.rect(barX, barY, barWidth * healthPercent, barHeight);
+  }
+}
+
+export class Coin {
+  constructor(p, lane, y = -50) {
+    this.p = p;
+    this.lane = lane;
+    this.x = TRACK_X_OFFSET + lane * LANE_WIDTH + LANE_WIDTH / 2;
+    this.y = y;
+    this.width = 20;
+    this.height = 20;
+    this.rotationAngle = 0;
+    this.bobOffset = 0;
+  }
+
+  update() {
+    this.y += gameState.scrollSpeed;
+    this.rotationAngle += 0.1;
+    this.bobOffset = Math.sin(this.p.frameCount * 0.1) * 3;
+  }
+
+  render() {
+    const p = this.p;
+    p.push();
+    p.translate(this.x, this.y + this.bobOffset);
+    p.rotate(this.rotationAngle);
+
+    // Outer glow
+    p.fill(255, 215, 0, 100);
+    p.noStroke();
+    p.circle(0, 0, this.width + 6);
+
+    // Coin body
+    p.fill(255, 215, 0);
+    p.stroke(200, 170, 0);
+    p.strokeWeight(2);
+    p.circle(0, 0, this.width);
+
+    // Inner detail
+    p.fill(255, 235, 50);
+    p.noStroke();
+    p.circle(0, 0, this.width * 0.6);
+
+    // Dollar sign
+    p.fill(200, 170, 0);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(14);
+    p.text('$', 0, 0);
+
+    p.pop();
+  }
+
+  isOffScreen() {
+    return this.y > CANVAS_HEIGHT + 50;
+  }
+}
+
+export class RivalCar {
+  constructor(p, lane, speed, y = -50) {
+    this.p = p;
+    this.lane = lane;
+    this.x = TRACK_X_OFFSET + lane * LANE_WIDTH + LANE_WIDTH / 2;
+    this.y = y;
+    this.speed = speed;
+    this.width = RIVAL_CAR_WIDTH;
+    this.height = RIVAL_CAR_HEIGHT;
+    this.hasBeenOvertaken = false;
+    this.color = this.generateColor();
+  }
+
+  generateColor() {
+    const colors = [
+      [200, 50, 50],
+      [50, 100, 200],
+      [200, 200, 50],
+      [150, 50, 200],
+      [200, 100, 50]
+    ];
+    return colors[Math.floor(this.p.random() * colors.length)];
+  }
+
+  update() {
+    this.y += gameState.scrollSpeed - this.speed;
+
+    // Check if overtaken by player
+    if (!this.hasBeenOvertaken && gameState.player && this.y > gameState.player.y) {
+      this.hasBeenOvertaken = true;
+      gameState.score += POINTS_OVERTAKE;
+    }
+
+    // Simple AI: occasionally change lanes
+    if (this.p.random() < 0.002) {
+      const newLane = this.p.floor(this.p.random(NUM_LANES));
+      this.lane = newLane;
+      this.x = TRACK_X_OFFSET + newLane * LANE_WIDTH + LANE_WIDTH / 2;
+    }
+  }
+
+  render() {
+    const p = this.p;
+    p.push();
+    p.translate(this.x, this.y);
+
+    // Car body
+    p.fill(...this.color);
+    p.stroke(0);
+    p.strokeWeight(2);
+    p.rect(-this.width / 2, -this.height / 2, this.width, this.height, 4);
+
+    // Windshield
+    p.fill(100, 150, 200, 150);
+    p.rect(-this.width / 2 + 4, this.height / 2 - 15, this.width - 8, 10);
+
+    // Wheels
+    p.fill(40);
+    p.rect(-this.width / 2 - 2, -this.height / 2 + 8, 5, 10);
+    p.rect(this.width / 2 - 3, -this.height / 2 + 8, 5, 10);
+    p.rect(-this.width / 2 - 2, this.height / 2 - 18, 5, 10);
+    p.rect(this.width / 2 - 3, this.height / 2 - 18, 5, 10);
+
+    p.pop();
+  }
+
+  isOffScreen() {
+    return this.y > CANVAS_HEIGHT + 50;
+  }
+}
+
+export class Obstacle {
+  constructor(p, type, lane, y = -50) {
+    this.p = p;
+    this.type = type; // 'pothole', 'barrier', 'oil', 'ramp'
+    this.lane = lane;
+    this.x = TRACK_X_OFFSET + lane * LANE_WIDTH + LANE_WIDTH / 2;
+    this.y = y;
+    this.width = this.getWidth();
+    this.height = this.getHeight();
+  }
+
+  getWidth() {
+    switch (this.type) {
+      case 'pothole': return 20;
+      case 'barrier': return LANE_WIDTH - 20;
+      case 'oil': return 40;
+      case 'ramp': return 60;
+      default: return 30;
+    }
+  }
+
+  getHeight() {
+    switch (this.type) {
+      case 'pothole': return 20;
+      case 'barrier': return 15;
+      case 'oil': return 30;
+      case 'ramp': return 20;
+      default: return 30;
+    }
+  }
+
+  update() {
+    this.y += gameState.scrollSpeed;
+  }
+
+  render() {
+    const p = this.p;
+    p.push();
+    p.translate(this.x, this.y);
+
+    switch (this.type) {
+      case 'pothole':
+        p.fill(30, 30, 30);
+        p.stroke(50);
+        p.strokeWeight(2);
+        p.circle(0, 0, this.width);
+        p.fill(40, 40, 40);
+        p.circle(0, 0, this.width * 0.6);
+        break;
+
+      case 'barrier':
+        p.fill(200, 200, 50);
+        p.stroke(0);
+        p.strokeWeight(2);
+        p.rect(-this.width / 2, -this.height / 2, this.width, this.height);
+        // Stripes
+        for (let i = 0; i < 4; i++) {
+          p.fill(0);
+          p.rect(-this.width / 2 + i * 20, -this.height / 2, 10, this.height);
+        }
+        break;
+
+      case 'oil':
+        p.fill(20, 20, 40, 180);
+        p.noStroke();
+        p.ellipse(0, 0, this.width, this.height);
+        p.fill(40, 40, 60, 100);
+        p.ellipse(5, 5, this.width * 0.7, this.height * 0.7);
+        break;
+
+      case 'ramp':
+        // Make ramp look like a speed booster with glow
+        p.fill(50, 255, 50, 120);
+        p.noStroke();
+        p.triangle(-this.width / 2 - 5, this.height / 2 + 5, this.width / 2 + 5, this.height / 2 + 5, 0, -this.height / 2 - 5);
+        
+        p.fill(100, 255, 100);
+        p.stroke(50, 200, 50);
+        p.strokeWeight(2);
+        p.triangle(-this.width / 2, this.height / 2, this.width / 2, this.height / 2, 0, -this.height / 2);
+        
+        // Speed lines inside
+        p.stroke(200, 255, 200);
+        p.strokeWeight(2);
+        p.line(0, -5, 0, 5);
+        p.line(-8, 0, -4, 0);
+        p.line(4, 0, 8, 0);
+        break;
+    }
+
+    p.pop();
+  }
+
+  isOffScreen() {
+    return this.y > CANVAS_HEIGHT + 50;
+  }
+}
+
+export class BossCar {
+  constructor(p) {
+    this.p = p;
+    this.x = CANVAS_WIDTH / 2;
+    this.y = 100;
+    this.width = BOSS_WIDTH;
+    this.height = BOSS_HEIGHT;
+    this.health = BOSS_MAX_HEALTH;
+    this.maxHealth = BOSS_MAX_HEALTH;
+    this.speed = 2;
+    this.attackTimer = 0;
+    this.attackCooldown = 120;
+    this.ramming = false;
+    this.ramTarget = null;
+    this.vulnerable = false;
+    this.phase = 1; // 1, 2, 3 for different attack patterns
+  }
+
+  update() {
+    // Update phase based on health
+    if (this.health < this.maxHealth * 0.66 && this.phase === 1) {
+      this.phase = 2;
+      this.attackCooldown = 90;
+    } else if (this.health < this.maxHealth * 0.33 && this.phase === 2) {
+      this.phase = 3;
+      this.attackCooldown = 60;
+    }
+
+    // Move towards player horizontally
+    if (gameState.player && !this.ramming) {
+      const targetX = gameState.player.x;
+      if (this.p.abs(this.x - targetX) > 5) {
+        this.x += (targetX - this.x) * 0.02;
+      }
+    }
+
+    // Attack logic
+    this.attackTimer++;
+    if (this.attackTimer >= this.attackCooldown) {
+      this.attack();
+      this.attackTimer = 0;
+    }
+
+    // Ramming behavior
+    if (this.ramming) {
+      this.y += 8;
+      if (this.y > CANVAS_HEIGHT - 100) {
+        this.y = 100;
+        this.ramming = false;
+        this.vulnerable = true;
+        setTimeout(() => { this.vulnerable = false; }, 2000);
+      }
+    } else {
+      // Return to top position
+      if (this.y > 100) {
+        this.y -= 2;
+      }
+    }
+
+    // Keep boss within track bounds
+    this.x = this.p.constrain(this.x, TRACK_X_OFFSET + this.width / 2, TRACK_X_OFFSET + TRACK_WIDTH - this.width / 2);
+  }
+
+  attack() {
+    const attackType = this.p.floor(this.p.random(this.phase));
+    
+    switch (attackType) {
+      case 0:
+        // Ram attack
+        this.ramming = true;
+        break;
+      case 1:
+        // Spawn mines
+        this.spawnMines();
+        break;
+      case 2:
+        // Shoot projectiles
+        this.shootProjectiles();
+        break;
+    }
+  }
+
+  spawnMines() {
+    for (let i = 0; i < 3; i++) {
+      const lane = this.p.floor(this.p.random(NUM_LANES));
+      gameState.obstacles.push(new Obstacle(this.p, 'pothole', lane, this.y + 50));
+    }
+  }
+
+  shootProjectiles() {
+    gameState.projectiles.push(new BossProjectile(this.p, this.x - 15, this.y + this.height / 2));
+    gameState.projectiles.push(new BossProjectile(this.p, this.x + 15, this.y + this.height / 2));
+  }
+
+  takeDamage(amount) {
+    this.health = this.p.max(0, this.health - amount);
+  }
+
+  render() {
+    const p = this.p;
+    p.push();
+    p.translate(this.x, this.y);
+
+    // Glow effect when vulnerable
+    if (this.vulnerable) {
+      p.fill(255, 255, 0, 100);
+      p.noStroke();
+      p.rect(-this.width / 2 - 5, -this.height / 2 - 5, this.width + 10, this.height + 10, 8);
+    }
+
+    // Boss body
+    p.fill(150, 30, 30);
+    p.stroke(0);
+    p.strokeWeight(3);
+    p.rect(-this.width / 2, -this.height / 2, this.width, this.height, 6);
+
+    // Armor plates
+    p.fill(100, 20, 20);
+    p.rect(-this.width / 2 + 5, -this.height / 2, 10, 20);
+    p.rect(this.width / 2 - 15, -this.height / 2, 10, 20);
+
+    // Windshield
+    p.fill(50, 50, 50, 200);
+    p.rect(-this.width / 2 + 8, -this.height / 2 + 8, this.width - 16, 15);
+
+    // Wheels
+    p.fill(20);
+    p.rect(-this.width / 2 - 4, -this.height / 2 + 15, 8, 14);
+    p.rect(this.width / 2 - 4, -this.height / 2 + 15, 8, 14);
+    p.rect(-this.width / 2 - 4, this.height / 2 - 29, 8, 14);
+    p.rect(this.width / 2 - 4, this.height / 2 - 29, 8, 14);
+
+    // Weapons
+    p.fill(80, 80, 80);
+    p.rect(-this.width / 2 - 8, 0, 6, 20);
+    p.rect(this.width / 2 + 2, 0, 6, 20);
+
+    p.pop();
+
+    // Health bar
+    this.renderHealthBar();
+  }
+
+  renderHealthBar() {
+    const p = this.p;
+    const barWidth = 100;
+    const barHeight = 8;
+    const barX = this.x - barWidth / 2;
+    const barY = 20;
+    
+    const healthPercent = this.health / this.maxHealth;
+    
+    p.fill(50);
+    p.noStroke();
+    p.rect(barX, barY, barWidth, barHeight);
+    
+    p.fill(200, 50, 50);
+    p.rect(barX, barY, barWidth * healthPercent, barHeight);
+    
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(10);
+    p.text("THE ENFORCER", this.x, barY - 10);
+  }
+}
+
+export class BossProjectile {
+  constructor(p, x, y) {
+    this.p = p;
+    this.x = x;
+    this.y = y;
+    this.speed = 6;
+    this.width = 8;
+    this.height = 8;
+  }
+
+  update() {
+    this.y += this.speed;
+  }
+
+  render() {
+    const p = this.p;
+    p.fill(255, 100, 0);
+    p.stroke(255, 50, 0);
+    p.strokeWeight(2);
+    p.circle(this.x, this.y, this.width);
+    p.fill(255, 200, 0);
+    p.noStroke();
+    p.circle(this.x, this.y, this.width * 0.5);
+  }
+
+  isOffScreen() {
+    return this.y > CANVAS_HEIGHT + 20;
+  }
+}
+
+export class Particle {
+  constructor(p, x, y, type) {
+    this.p = p;
+    this.x = x;
+    this.y = y;
+    this.vx = p.random(-2, 2);
+    this.vy = p.random(-2, 2);
+    this.life = 30;
+    this.maxLife = 30;
+    this.type = type; // 'explosion', 'spark', 'smoke'
+    this.size = p.random(3, 8);
+  }
+
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.vy += 0.1; // gravity
+    this.life--;
+  }
+
+  render() {
+    const p = this.p;
+    const alpha = (this.life / this.maxLife) * 255;
+    
+    p.noStroke();
+    if (this.type === 'explosion') {
+      p.fill(255, 150, 0, alpha);
+    } else if (this.type === 'spark') {
+      p.fill(255, 255, 100, alpha);
+    } else {
+      p.fill(100, 100, 100, alpha);
+    }
+    
+    p.circle(this.x, this.y, this.size);
+  }
+
+  isDead() {
+    return this.life <= 0;
+  }
+}
+</file>
+
+<file name="gameLogic.js">
+// gameLogic.js - Core game logic
+
+import { 
+  gameState, PHASE_PLAYING, PHASE_GAME_OVER_WIN, PHASE_GAME_OVER_LOSE,
+  LEVELS, POINTS_LEVEL_COMPLETE, RIVAL_SPAWN_INTERVAL,
+  OBSTACLE_SPAWN_INTERVAL, COIN_SPAWN_INTERVAL, NUM_LANES, CANVAS_HEIGHT
+} from './globals.js';
+import { PlayerCar, RivalCar, Obstacle, Coin, BossCar, Particle } from './entities.js';
+import { checkCollisions } from './collision.js';
+
+export function updateGame(p) {
+  if (gameState.gamePhase !== PHASE_PLAYING) return;
+
+  const currentLevel = LEVELS[gameState.currentLevel - 1];
+
+  // Update camera/scroll
+  if (gameState.player) {
+    gameState.scrollSpeed = gameState.player.speed;
+    gameState.cameraY += gameState.scrollSpeed;
+    
+    if (!currentLevel.isBoss) {
+      gameState.levelDistance += gameState.scrollSpeed;
+    }
+  }
+
+  // Update player
+  if (gameState.player) {
+    gameState.player.update();
+    
+    // Check if player is dead
+    if (gameState.player.health <= 0) {
+      createExplosion(p, gameState.player.x, gameState.player.y);
+      gameState.gamePhase = PHASE_GAME_OVER_LOSE;
+      p.logs.game_info.push({
+        data: { phase: PHASE_GAME_OVER_LOSE, reason: "player_death" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+      return;
+    }
+  }
+
+  // Update boss
+  if (gameState.boss) {
+    gameState.boss.update();
+    
+    if (gameState.boss.health <= 0) {
+      createExplosion(p, gameState.boss.x, gameState.boss.y);
+      gameState.cash += currentLevel.cashReward;
+      gameState.gamePhase = PHASE_GAME_OVER_WIN;
+      p.logs.game_info.push({
+        data: { phase: PHASE_GAME_OVER_WIN, reason: "boss_defeated" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+      return;
+    }
+  }
+
+  // Update rivals
+  gameState.rivals.forEach(rival => rival.update());
+  gameState.rivals = gameState.rivals.filter(rival => !rival.isOffScreen());
+
+  // Update obstacles
+  gameState.obstacles.forEach(obstacle => obstacle.update());
+  gameState.obstacles = gameState.obstacles.filter(obstacle => !obstacle.isOffScreen());
+
+  // Update coins
+  gameState.coins.forEach(coin => coin.update());
+  gameState.coins = gameState.coins.filter(coin => !coin.isOffScreen());
+
+  // Update projectiles
+  gameState.projectiles.forEach(projectile => projectile.update());
+  gameState.projectiles = gameState.projectiles.filter(projectile => !projectile.isOffScreen());
+
+  // Update particles
+  gameState.particles.forEach(particle => particle.update());
+  gameState.particles = gameState.particles.filter(particle => !particle.isDead());
+
+  // Spawn rivals (for non-boss levels)
+  if (!currentLevel.isBoss) {
+    gameState.framesSinceRivalSpawn++;
+    if (gameState.framesSinceRivalSpawn >= RIVAL_SPAWN_INTERVAL) {
+      spawnRival(p, currentLevel);
+      gameState.framesSinceRivalSpawn = 0;
+    }
+
+    // Spawn obstacles
+    gameState.framesSinceObstacleSpawn++;
+    if (gameState.framesSinceObstacleSpawn >= OBSTACLE_SPAWN_INTERVAL / currentLevel.obstacleFrequency) {
+      spawnObstacle(p);
+      gameState.framesSinceObstacleSpawn = 0;
+    }
+
+    // Spawn coins
+    gameState.framesSinceCoinSpawn++;
+    if (gameState.framesSinceCoinSpawn >= COIN_SPAWN_INTERVAL) {
+      spawnCoin(p);
+      gameState.framesSinceCoinSpawn = 0;
+    }
+  }
+
+  // Check collisions
+  checkCollisions(p);
+
+  // Check level completion (for race levels)
+  if (!currentLevel.isBoss && gameState.levelDistance >= gameState.levelLength) {
+    completeLevel(p, currentLevel);
+  }
+
+  // Log player info
+  if (gameState.player && p.frameCount % 10 === 0) {
+    p.logs.player_info.push({
+      screen_x: gameState.player.x,
+      screen_y: gameState.player.y,
+      game_x: gameState.player.x,
+      game_y: gameState.cameraY + gameState.player.y,
+      framecount: p.frameCount
+    });
+  }
+}
+
+function spawnRival(p, level) {
+  if (gameState.rivals.length >= level.rivalCount) return;
+  
+  const lane = p.floor(p.random(NUM_LANES));
+  const rival = new RivalCar(p, lane, level.rivalSpeed);
+  gameState.rivals.push(rival);
+}
+
+function spawnObstacle(p) {
+  const types = ['pothole', 'barrier', 'oil', 'ramp'];
+  const type = types[p.floor(p.random(types.length))];
+  const lane = p.floor(p.random(NUM_LANES));
+  
+  const obstacle = new Obstacle(p, type, lane);
+  gameState.obstacles.push(obstacle);
+}
+
+function spawnCoin(p) {
+  const lane = p.floor(p.random(NUM_LANES));
+  const coin = new Coin(p, lane);
+  gameState.coins.push(coin);
+}
+
+function completeLevel(p, level) {
+  gameState.score += POINTS_LEVEL_COMPLETE;
+  gameState.cash += level.cashReward;
+  
+  // Bonus for no collisions
+  if (gameState.noCollisionBonus) {
+    gameState.score += Math.floor(POINTS_LEVEL_COMPLETE * 0.5);
+  }
+  
+  if (gameState.currentLevel < LEVELS.length) {
+    gameState.currentLevel++;
+    resetLevel(p);
+  } else {
+    gameState.gamePhase = PHASE_GAME_OVER_WIN;
+    p.logs.game_info.push({
+      data: { phase: PHASE_GAME_OVER_WIN, reason: "all_levels_complete" },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+
+export function resetLevel(p) {
+  const currentLevel = LEVELS[gameState.currentLevel - 1];
+  
+  gameState.player = new PlayerCar(p, Math.floor(NUM_LANES / 2));
+  gameState.rivals = [];
+  gameState.obstacles = [];
+  gameState.coins = [];
+  gameState.projectiles = [];
+  gameState.particles = [];
+  gameState.scrollSpeed = 0;
+  gameState.cameraY = 0;
+  gameState.levelDistance = 0;
+  gameState.levelLength = currentLevel.targetTime ? currentLevel.targetTime * 60 * 5 : 3000;
+  gameState.framesSinceRivalSpawn = 0;
+  gameState.framesSinceObstacleSpawn = 0;
+  gameState.framesSinceCoinSpawn = 0;
+  gameState.driftChainMultiplier = 1;
+  gameState.consecutiveDrifts = 0;
+  gameState.noCollisionBonus = true;
+  
+  if (currentLevel.isBoss) {
+    gameState.boss = new BossCar(p);
+  } else {
+    gameState.boss = null;
+  }
+  
+  gameState.levelStartTime = Date.now();
+  
+  p.logs.game_info.push({
+    data: { phase: PHASE_PLAYING, level: gameState.currentLevel, levelName: currentLevel.name },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function createExplosion(p, x, y) {
+  for (let i = 0; i < 30; i++) {
+    gameState.particles.push(new Particle(p, x, y, 'explosion'));
+  }
+  for (let i = 0; i < 20; i++) {
+    gameState.particles.push(new Particle(p, x, y, 'spark'));
+  }
+  for (let i = 0; i < 15; i++) {
+    gameState.particles.push(new Particle(p, x, y, 'smoke'));
+  }
+}
+</file>
+
+<file name="input.js">
+// input.js - Input handling
+
+import { 
+  gameState, PHASE_START, PHASE_PLAYING, PHASE_PAUSED,
+  PHASE_GAME_OVER_WIN, PHASE_GAME_OVER_LOSE
+} from './globals.js';
+import { resetLevel } from './gameLogic.js';
+
+export function handleKeyPressed(p) {
+  p.logs.inputs.push({
+    input_type: "keyPressed",
+    data: { key: p.key, keyCode: p.keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+
+  // ENTER - Start game
+  if (p.keyCode === 13) {
+    if (gameState.gamePhase === PHASE_START) {
+      gameState.gamePhase = PHASE_PLAYING;
+      gameState.currentLevel = 1;
+      gameState.score = 0;
+      resetLevel(p);
+    }
+  }
+
+  // ESC - Pause/Unpause
+  if (p.keyCode === 27) {
+    if (gameState.gamePhase === PHASE_PLAYING) {
+      gameState.gamePhase = PHASE_PAUSED;
+      p.logs.game_info.push({
+        data: { phase: PHASE_PAUSED },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    } else if (gameState.gamePhase === PHASE_PAUSED) {
+      gameState.gamePhase = PHASE_PLAYING;
+      p.logs.game_info.push({
+        data: { phase: PHASE_PLAYING },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+
+  // R - Restart
+  if (p.keyCode === 82) {
+    if (gameState.gamePhase === PHASE_GAME_OVER_WIN || 
+        gameState.gamePhase === PHASE_GAME_OVER_LOSE ||
+        gameState.gamePhase === PHASE_PAUSED) {
+      gameState.gamePhase = PHASE_START;
+      gameState.currentLevel = 1;
+      gameState.score = 0;
+      gameState.cash = 0;
+      p.logs.game_info.push({
+        data: { phase: PHASE_START, action: "restart" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+
+  // Game controls (only during PLAYING phase)
+  if (gameState.gamePhase === PHASE_PLAYING) {
+    // Arrow Up or W (87)
+    if (p.keyCode === 38 || p.keyCode === 87) {
+      gameState.inputState.up = true;
+    }
+
+    // Arrow Left or A (65)
+    if (p.keyCode === 37 || p.keyCode === 65) {
+      gameState.inputState.left = true;
+    }
+
+    // Arrow Right or D (68)
+    if (p.keyCode === 39 || p.keyCode === 68) {
+      gameState.inputState.right = true;
+    }
+
+    // Space (32)
+    if (p.keyCode === 32) {
+      gameState.inputState.space = true;
+    }
+  }
+}
+
+export function handleKeyReleased(p) {
+  p.logs.inputs.push({
+    input_type: "keyReleased",
+    data: { key: p.key, keyCode: p.keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+
+  if (gameState.gamePhase === PHASE_PLAYING) {
+    // Arrow Up or W
+    if (p.keyCode === 38 || p.keyCode === 87) {
+      gameState.inputState.up = false;
+    }
+
+    // Arrow Left or A
+    if (p.keyCode === 37 || p.keyCode === 65) {
+      gameState.inputState.left = false;
+    }
+
+    // Arrow Right or D
+    if (p.keyCode === 39 || p.keyCode === 68) {
+      gameState.inputState.right = false;
+    }
+
+    // Space
+    if (p.keyCode === 32) {
+      gameState.inputState.space = false;
+    }
+  }
+}
+
+export function updateInputFromTestController(p) {
+  if (gameState.controlMode === "HUMAN") return;
+
+  // Reset all inputs
+  gameState.inputState.up = false;
+  gameState.inputState.left = false;
+  gameState.inputState.right = false;
+  gameState.inputState.space = false;
+
+  if (gameState.controlMode === "TEST_1") {
+    // Basic testing: just accelerate
+    gameState.inputState.up = true;
+  } else if (gameState.controlMode === "TEST_2") {
+    // Win test: accelerate, avoid obstacles, complete level
+    gameState.inputState.up = true;
+    
+    if (gameState.player) {
+      // Simple AI to avoid obstacles
+      let targetLane = gameState.player.lane;
+      let minThreat = Infinity;
+      
+      for (let lane = 0; lane < 3; lane++) {
+        let threat = 0;
+        
+        // Check obstacles in this lane
+        gameState.obstacles.forEach(obs => {
+          if (obs.lane === lane && obs.y > gameState.player.y - 100 && obs.y < gameState.player.y + 200) {
+            threat += 100 / Math.max(1, obs.y - gameState.player.y);
+          }
+        });
+        
+        // Check rivals in this lane
+        gameState.rivals.forEach(rival => {
+          if (rival.lane === lane && rival.y > gameState.player.y - 100 && rival.y < gameState.player.y + 200) {
+            threat += 50 / Math.max(1, Math.abs(rival.y - gameState.player.y));
+          }
+        });
+        
+        if (threat < minThreat) {
+          minThreat = threat;
+          targetLane = lane;
+        }
+      }
+      
+      if (targetLane < gameState.player.lane) {
+        gameState.inputState.left = true;
+      } else if (targetLane > gameState.player.lane) {
+        gameState.inputState.right = true;
+      }
+      
+      // Drift when changing lanes at high speed
+      if (gameState.player.speed > 4 && gameState.player.x !== gameState.player.targetX) {
+        gameState.inputState.space = true;
+      }
+    }
+  }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

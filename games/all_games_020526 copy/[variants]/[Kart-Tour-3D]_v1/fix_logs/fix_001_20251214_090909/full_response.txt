@@ -1,0 +1,589 @@
+<analysis>
+- Issue identified: The user wants to implement a continuous score calculation based on player rank and coins, store it in `gameState.score`, and display it persistently across all relevant game phases. The existing `gameState` does not have a `score` property, the calculation logic is not integrated, and the UI only calculates a `totalScore` locally for the `GAME_OVER` screen.
+- Files affected:
+    - `globals.js`: To add the `score` property to `gameState`.
+    - `game.js`: To initialize `gameState.score` on game setup and update it continuously in the game loop.
+    - `ui.js`: To display `gameState.score` in the HUD across phases and use it in the `GAME_OVER` screen.
+- Changes needed:
+    - Add `score: 0` to the `gameState` object in `globals.js`.
+    - In `game.js`, add `gameState.score = 0;` to the `setupGame` function for proper reset.
+    - In `game.js`, add the provided score calculation logic within the `gameLoop` function, ensuring it updates `gameState.score` every frame when `gameState.player` exists.
+    - In `ui.js`, add a new `fillText` call at the top of `renderUI` to display `SCORE: {gameState.score}` at a suitable position (e.g., top-left, below coins), making it visible across all phases.
+    - In `ui.js`, modify the `GAME_OVER` phase display to use `gameState.score` directly instead of a locally calculated `totalScore`.
+</analysis>
+<code filename="globals.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const gameState = {
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", 
+    
+    // Core Three.js components
+    scene: null,
+    camera: null,
+    renderer: null,
+    gameContainer: null,
+    
+    // Time
+    frameCount: 0,
+    deltaTime: 0,
+    elapsedTime: 0,
+    
+    // Game Entities
+    player: null,
+    opponents: [],
+    itemBoxes: [],
+    projectiles: [],
+    coins: [], // Active coins
+    barriers: [], // Obstacles to dodge
+    track: null,
+    
+    // State
+    lapsTotal: 3,
+    debugMode: false,
+    score: 0, // NEW: Add score to gameState
+    
+    // Lighting
+    lights: [],
+    
+    // Input State
+    keys: {
+        ArrowUp: false,
+        ArrowDown: false,
+        ArrowLeft: false,
+        ArrowRight: false,
+        w: false,
+        a: false,
+        s: false,
+        d: false,
+        " ": false,
+        Shift: false
+    },
+
+    // Auto-restart state
+    autoRestartScheduled: false,
+    autoRestartTimeoutId: null
+};
+
+// Expose gameState globally
+window.getGameState = () => gameState;
+</code>
+<code filename="game.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Track } from './track.js';
+import { Player, Opponent, ItemBox, SpeedLines, Coin, Barrier } from './entities.js';
+import { updateCamera } from './camera.js';
+import { initUI, renderUI } from './ui.js';
+import { randomRange, randomChoice } from './utils.js';
+
+function init() {
+    // 1. Setup Container
+    const container = document.createElement('div');
+    container.id = 'game-container';
+    container.style.width = `${CANVAS_WIDTH}px`;
+    container.style.height = `${CANVAS_HEIGHT}px`;
+    container.style.position = 'relative';
+    container.style.overflow = 'hidden';
+    document.body.appendChild(container);
+    gameState.gameContainer = container;
+
+    // 2. Setup Renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+    renderer.shadowMap.enabled = true;
+    container.appendChild(renderer.domElement);
+    gameState.renderer = renderer;
+
+    // 3. Setup Scene & Camera
+    gameState.scene = new THREE.Scene();
+    gameState.scene.background = new THREE.Color(0x87CEEB);
+    gameState.scene.fog = new THREE.Fog(0x87CEEB, 20, 150);
+
+    gameState.camera = new THREE.PerspectiveCamera(60, CANVAS_WIDTH / CANVAS_HEIGHT, 0.1, 500);
+    
+    // 4. Lights
+    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+    gameState.scene.add(ambient);
+    
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+    dirLight.position.set(50, 100, 50);
+    dirLight.castShadow = true;
+    dirLight.shadow.camera.left = -50;
+    dirLight.shadow.camera.right = 50;
+    dirLight.shadow.camera.top = 50;
+    dirLight.shadow.camera.bottom = -50;
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
+    gameState.scene.add(dirLight);
+
+    // 5. Initialize Game Objects
+    setupGame();
+    initUI();
+    
+    // 6. Events
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    
+    // 7. Start Loop
+    requestAnimationFrame(gameLoop);
+}
+
+function setupGame() {
+    // Clear existing
+    if (gameState.track) gameState.scene.remove(gameState.track.mesh);
+    // Cleanup speed lines if exists
+    if (gameState.speedLines) {
+        gameState.speedLines.destroy();
+        gameState.speedLines = null;
+    }
+    
+    // Remove entities but keep lights and cameras
+    // Use isLight and isCamera properties to properly detect Three.js lights and cameras
+    gameState.scene.children = gameState.scene.children.filter(c => c.isLight || c.isCamera); 
+    
+    gameState.player = null;
+    gameState.opponents = [];
+    gameState.itemBoxes = [];
+    gameState.projectiles = [];
+    gameState.coins = [];
+    gameState.barriers = [];
+    gameState.score = 0; // NEW: Reset score on game setup
+    
+    // Reset auto-restart state when game is set up
+    if (gameState.autoRestartTimeoutId) {
+        clearTimeout(gameState.autoRestartTimeoutId);
+        gameState.autoRestartTimeoutId = null;
+    }
+    gameState.autoRestartScheduled = false;
+
+    // Seed random
+    Math.seedrandom('42');
+    
+    // Create Ground Plane (Visual only, physics logic is in Kart class)
+    const groundGeo = new THREE.PlaneGeometry(1000, 1000);
+    const groundMat = new THREE.MeshStandardMaterial({ 
+        color: 0x5c9c54, // Grass green
+        roughness: 1.0,
+        metalness: 0.0
+    });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.5; // Slightly below track level
+    ground.receiveShadow = true;
+    gameState.scene.add(ground);
+    
+    // Create Track
+    gameState.track = new Track();
+    
+    // Spawn Player
+    const startPos = gameState.track.points[0];
+    // Offset slightly
+    gameState.player = new Player(startPos.x + 3, startPos.y + 1, startPos.z);
+    
+    // Face track direction
+    const t0 = gameState.track.points[1];
+    // Fix: Look at a point at the same height as the player to prevent downward pitch (tilting)
+    gameState.player.mesh.lookAt(t0.x, startPos.y + 1, t0.z);
+    
+    // Spawn Opponents
+    const colors = [0x0000FF, 0x00FF00, 0xFFA500];
+    for (let i = 0; i < 3; i++) {
+        const offX = (i % 2 === 0 ? -1 : 1) * (4 + i);
+        // Fix: Spawn opponents ahead of start line (positive Z) so they don't trigger immediate lap completion
+        const zOff = 5 * (Math.floor(i/2) + 1); 
+        // Simple positioning relative to start - rough approx
+        const opp = new Opponent(startPos.x + offX, startPos.y + 1, startPos.z + zOff, colors[i]);
+        // Fix: Opponents also need to look straight ahead, not into the ground
+        opp.mesh.lookAt(t0.x, startPos.y + 1, t0.z + zOff); // Look parallel to track
+        gameState.opponents.push(opp);
+    }
+    
+    // Spawn Item Boxes
+    for (let i = 0; i < gameState.track.points.length; i += 20) {
+        if (i === 0) continue; // Skip start
+        const pt = gameState.track.points[i];
+        const box = new ItemBox(pt.x, pt.y + 1, pt.z);
+        gameState.itemBoxes.push(box);
+    }
+
+    // Spawn Coins (Abundance)
+    const trackPoints = gameState.track.points;
+    for (let i = 10; i < trackPoints.length; i += 4) {
+        // 60% chance to spawn a group of coins at this segment
+        if (Math.random() < 0.6) {
+            const pt = trackPoints[i];
+            const nextPt = trackPoints[(i + 1) % trackPoints.length];
+            
+            // Calculate track normal (right vector)
+            const tangent = new THREE.Vector3().subVectors(nextPt, pt).normalize();
+            const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
+            
+            // Spawn a row of 3 coins
+            for (let offset = -1; offset <= 1; offset++) {
+                const spacing = 3.0;
+                const coinPos = pt.clone().add(normal.clone().multiplyScalar(offset * spacing));
+                // Add some Y height
+                const coin = new Coin(coinPos.x, coinPos.y + 0.8, coinPos.z);
+                gameState.coins.push(coin);
+            }
+        }
+    }
+
+    // Spawn Barriers (NEW!)
+    const barrierTypes = ['cone', 'barrel', 'box'];
+    for (let i = 15; i < trackPoints.length; i += 12) {
+        // Place barriers at strategic points on the track
+        const pt = trackPoints[i];
+        const nextPt = trackPoints[(i + 1) % trackPoints.length];
+        
+        // Calculate track normal (right vector)
+        const tangent = new THREE.Vector3().subVectors(nextPt, pt).normalize();
+        const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
+        
+        // Randomly place barrier on left, center, or right of track
+        const position = randomChoice([-1, 0, 1]); // -1=left, 0=center, 1=right
+        const spacing = 4.0;
+        const barrierPos = pt.clone().add(normal.clone().multiplyScalar(position * spacing));
+        
+        const barrierType = randomChoice(barrierTypes);
+        const barrier = new Barrier(barrierPos.x, barrierPos.y, barrierPos.z, barrierType);
+        gameState.barriers.push(barrier);
+    }
+
+    // Initialize Speed Lines
+    gameState.speedLines = new SpeedLines();
+}
+
+// Function to handle game restart (manual or automatic)
+function restartGame() {
+    // Clear any pending auto-restart
+    if (gameState.autoRestartTimeoutId) {
+        clearTimeout(gameState.autoRestartTimeoutId);
+        gameState.autoRestartTimeoutId = null;
+    }
+    gameState.autoRestartScheduled = false; // Reset flag
+
+    setupGame();
+    gameState.gamePhase = "START";
+}
+
+
+let lastTime = performance.now();
+function gameLoop(now) {
+    requestAnimationFrame(gameLoop);
+    
+    const dt = Math.min((now - lastTime) / 1000, 0.1); // Cap dt
+    lastTime = now;
+    
+    gameState.deltaTime = dt;
+    gameState.elapsedTime += dt;
+    gameState.frameCount++;
+    
+    if (gameState.gamePhase === "PLAYING") {
+        // Update Entities
+        if (gameState.player) gameState.player.update(dt);
+        gameState.opponents.forEach(o => o.update(dt));
+        gameState.itemBoxes.forEach(b => b.update(dt));
+        gameState.projectiles.forEach(p => p.update(dt));
+        gameState.coins.forEach(c => c.update(dt));
+        gameState.barriers.forEach(b => b.update(dt));
+        
+        // Handle Physics Interactions
+        checkCollisions();
+        
+        updateRankings();
+    }
+
+    // Auto-restart logic
+    if (gameState.gamePhase.startsWith("GAME_OVER")) {
+        if (!gameState.autoRestartScheduled) {
+            gameState.autoRestartScheduled = true;
+            gameState.autoRestartTimeoutId = setTimeout(() => {
+                restartGame();
+            }, 1000); // 1 second
+        }
+    } else {
+        // If game phase is not GAME_OVER, ensure any pending auto-restart is cancelled
+        if (gameState.autoRestartTimeoutId) {
+            clearTimeout(gameState.autoRestartTimeoutId);
+            gameState.autoRestartTimeoutId = null;
+            gameState.autoRestartScheduled = false;
+        }
+    }
+
+    // Update Speed Lines
+    if (gameState.speedLines && gameState.player) {
+        gameState.speedLines.update(dt, gameState.player.speed);
+    }
+    
+    // NEW: Update score continuously every frame (regardless of phase, but only if player exists)
+    if (gameState.player) {
+        const rankBonus = (5 - gameState.player.rank) * 1000; // 1st=4000, 4th=1000
+        const coinBonus = gameState.player.coins * 100;
+        gameState.score = rankBonus + coinBonus;
+    }
+    
+    // Camera always updates (orbit in start, follow in play)
+    updateCamera(dt);
+    
+    // Render
+    gameState.renderer.render(gameState.scene, gameState.camera);
+    renderUI();
+}
+
+function checkCollisions() {
+    const karts = [gameState.player, ...gameState.opponents];
+    
+    // Kart-to-kart collisions
+    for (let i = 0; i < karts.length; i++) {
+        for (let j = i + 1; j < karts.length; j++) {
+            const k1 = karts[i];
+            const k2 = karts[j];
+            
+            if (!k1 || !k2 || k1.dead || k2.dead) continue;
+            
+            // Simple distance-based collision (cylinders)
+            // Ignore Y for collision to prevent driving over each other
+            const dx = k1.mesh.position.x - k2.mesh.position.x;
+            const dz = k1.mesh.position.z - k2.mesh.position.z;
+            const distSq = dx * dx + dz * dz;
+            const minDist = 2.2; // Combined radius approx
+            
+            if (distSq < minDist * minDist) {
+                const dist = Math.sqrt(distSq);
+                const overlap = minDist - dist;
+                
+                // Normal vector
+                let nx = dx / dist;
+                let nz = dz / dist;
+                
+                // Fallback if exactly on top
+                if (dist < 0.001) { nx = 1; nz = 0; }
+                
+                // 1. Separate positions
+                const moveX = nx * overlap * 0.5;
+                const moveZ = nz * overlap * 0.5;
+                
+                k1.mesh.position.x += moveX;
+                k1.mesh.position.z += moveZ;
+                k2.mesh.position.x -= moveX;
+                k2.mesh.position.z -= moveZ;
+                
+                // 2. Apply Bounce Impulse
+                const bounceForce = 20.0;
+                k1.bumpVelocity.x += nx * bounceForce;
+                k1.bumpVelocity.z += nz * bounceForce;
+                k2.bumpVelocity.x -= nx * bounceForce;
+                k2.bumpVelocity.z -= nz * bounceForce;
+                
+                // 3. Friction (slow down on impact)
+                k1.speed *= 0.9;
+                k2.speed *= 0.9;
+            }
+        }
+    }
+    
+    // Kart-to-barrier collisions (NEW!)
+    gameState.barriers.forEach(barrier => {
+        if (barrier.dead) return;
+        
+        karts.forEach(kart => {
+            if (!kart || kart.dead) return;
+            
+            // Distance-based collision with barrier
+            const dx = kart.mesh.position.x - barrier.mesh.position.x;
+            const dz = kart.mesh.position.z - barrier.mesh.position.z;
+            const distSq = dx * dx + dz * dz;
+            const minDist = 1.5 + barrier.radius; // Kart radius ~1.5
+            
+            if (distSq < minDist * minDist) {
+                const dist = Math.sqrt(distSq);
+                const overlap = minDist - dist;
+                
+                // Normal vector from barrier to kart
+                let nx = dx / dist;
+                let nz = dz / dist;
+                
+                // Fallback if exactly on top
+                if (dist < 0.001) { nx = 1; nz = 0; }
+                
+                // 1. Push kart away from barrier
+                kart.mesh.position.x += nx * overlap;
+                kart.mesh.position.z += nz * overlap;
+                
+                // 2. Apply bounce-back impulse
+                const bounceForce = 30.0;
+                kart.bumpVelocity.x += nx * bounceForce;
+                kart.bumpVelocity.z += nz * bounceForce;
+                
+                // 3. Slow down kart significantly
+                kart.speed *= 0.5;
+            }
+        });
+    });
+}
+
+function updateRankings() {
+    // Simple ranking based on lap + checkpoint index
+    const racers = [gameState.player, ...gameState.opponents];
+    racers.sort((a, b) => {
+        const scoreA = a.lap * 10000 + a.checkpointIndex;
+        const scoreB = b.lap * 10000 + b.checkpointIndex;
+        return scoreB - scoreA; // Descending
+    });
+    
+    const playerRank = racers.indexOf(gameState.player) + 1;
+    gameState.player.rank = playerRank;
+}
+
+function onKeyDown(e) {
+    const key = e.key;
+    if (gameState.keys.hasOwnProperty(key)) gameState.keys[key] = true;
+    if (e.code === 'Space') gameState.keys[" "] = true; // Fix space mapping
+    
+    // Phase controls
+    if (key === 'Enter' && gameState.gamePhase === "START") {
+        gameState.gamePhase = "PLAYING";
+    }
+    if (key === 'Escape') {
+        if (gameState.gamePhase === "PLAYING") gameState.gamePhase = "PAUSED";
+        else if (gameState.gamePhase === "PAUSED") gameState.gamePhase = "PLAYING";
+    }
+    if (key.toLowerCase() === 'r' && gameState.gamePhase.startsWith("GAME_OVER")) {
+        // Manual restart takes precedence and cancels auto-restart
+        restartGame();
+    }
+}
+
+function onKeyUp(e) {
+    const key = e.key;
+    if (gameState.keys.hasOwnProperty(key)) gameState.keys[key] = false;
+    if (e.code === 'Space') gameState.keys[" "] = false;
+}
+
+// Global hook for controls (used by HTML buttons)
+window.setControlMode = (mode) => {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+};
+
+// Init
+init();
+</code>
+<code filename="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+let uiContext = null;
+
+export function initUI() {
+    const uiCanvas = document.createElement('canvas');
+    uiCanvas.width = CANVAS_WIDTH;
+    uiCanvas.height = CANVAS_HEIGHT;
+    uiCanvas.style.position = 'absolute';
+    uiCanvas.style.top = '0';
+    uiCanvas.style.left = '0';
+    uiCanvas.style.pointerEvents = 'none';
+    
+    if (gameState.gameContainer) {
+        gameState.gameContainer.appendChild(uiCanvas);
+        uiContext = uiCanvas.getContext('2d');
+    }
+}
+
+export function renderUI() {
+    if (!uiContext) return;
+    
+    // Clear
+    uiContext.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    const p = gameState.player;
+    
+    // NEW: Always display score if player exists, as requested
+    if (p) {
+        uiContext.fillStyle = "#FFD700"; // Gold color for score
+        uiContext.font = "bold 20px Arial";
+        uiContext.textAlign = "left";
+        uiContext.fillText(`SCORE: ${gameState.score}`, 20, 90); // Position it below coins
+    }
+
+    if (gameState.gamePhase === "PLAYING") {
+        // HUD
+        uiContext.fillStyle = "white";
+        uiContext.font = "bold 20px Arial";
+        
+        // Lap
+        uiContext.textAlign = "left";
+        uiContext.fillText(`LAP ${p.lap} / ${gameState.lapsTotal}`, 20, 30);
+        
+        // Coins
+        uiContext.fillStyle = "#FFD700";
+        uiContext.fillText(`COINS: ${p.coins}`, 20, 60);
+        
+        // Position
+        uiContext.fillStyle = "white";
+        uiContext.textAlign = "right";
+        uiContext.fillText(`POS ${p.rank} / 4`, CANVAS_WIDTH - 20, 30);
+        
+        // Speed
+        uiContext.textAlign = "left";
+        const speedKmh = Math.abs(Math.floor(p.speed * 3));
+        uiContext.fillText(`${speedKmh} KM/H`, 20, CANVAS_HEIGHT - 20);
+        
+        // Item
+        uiContext.strokeStyle = "white";
+        uiContext.lineWidth = 2;
+        uiContext.strokeRect(CANVAS_WIDTH/2 - 30, 20, 60, 60);
+        if (p.item) {
+            uiContext.textAlign = "center";
+            uiContext.fillStyle = "#FFFF00";
+            uiContext.fillText(p.item[0], CANVAS_WIDTH/2, 55); // Draw first letter
+        }
+        
+    } else if (gameState.gamePhase === "START") {
+        uiContext.fillStyle = "rgba(0,0,0,0.5)";
+        uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        
+        uiContext.fillStyle = "white";
+        uiContext.textAlign = "center";
+        uiContext.font = "bold 40px Arial";
+        uiContext.fillText("press enter to begin", CANVAS_WIDTH/2, 150);
+        
+    } else if (gameState.gamePhase === "PAUSED") {
+        uiContext.fillStyle = "rgba(0,0,0,0.5)";
+        uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        uiContext.fillStyle = "white";
+        uiContext.textAlign = "center";
+        uiContext.font = "bold 30px Arial";
+        uiContext.fillText("PAUSED", CANVAS_WIDTH/2, 200);
+        
+    } else if (gameState.gamePhase.startsWith("GAME_OVER")) {
+        uiContext.fillStyle = "rgba(0,0,0,0.7)";
+        uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        
+        uiContext.fillStyle = gameState.gamePhase === "GAME_OVER_WIN" ? "#00FF00" : "#FF0000";
+        uiContext.textAlign = "center";
+        uiContext.font = "bold 40px Arial";
+        const msg = gameState.gamePhase === "GAME_OVER_WIN" ? "YOU WON!" : "GAME OVER";
+        uiContext.fillText(msg, CANVAS_WIDTH/2, 140);
+        
+        // Score Calculation - Removed local calculation, now using gameState.score
+        // const rankBonus = (5 - p.rank) * 1000; 
+        // const coinBonus = p.coins * 100;
+        // const totalScore = rankBonus + coinBonus;
+        
+        uiContext.fillStyle = "white";
+        uiContext.font = "bold 24px Arial";
+        uiContext.fillText(`Rank: ${p.rank}/4  |  Coins: ${p.coins}`, CANVAS_WIDTH/2, 190);
+        uiContext.fillStyle = "#FFD700";
+        uiContext.fillText(`TOTAL SCORE: ${gameState.score}`, CANVAS_WIDTH/2, 230); // Use gameState.score
+        
+        uiContext.fillStyle = "white";
+        uiContext.font = "20px Arial";
+        uiContext.fillText("Press R to Restart", CANVAS_WIDTH/2, 280);
+    }
+}
+</code>

@@ -1,0 +1,648 @@
+<analysis>
+- Issue identified: The game currently has only 3 levels, but the feedback requests 9 levels (3 easy, 3 medium, 3 hard)
+- Files affected: grid.js (level layouts), levels.js (time limits), game.js (level progression logic), index.html (description text)
+- Changes needed: 
+  1. Add 6 more level layouts to grid.js (total of 9 levels with increasing difficulty)
+  2. Expand time limits array in levels.js to support 9 levels
+  3. Update level progression check in game.js from `< 3` to `< 9`
+  4. Update game description in index.html to reflect 9 levels
+</analysis>
+
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Bubble Cash</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic testing)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Welcome to Bubble Cash! Clear all the colored bubbles from the board before time runs out. Aim your bubble shooter to match 3 or more bubbles of the same color to pop them. Make strategic shots to create chain reactions and cause bubbles to detach and fall for bonus points. Complete all 9 increasingly challenging levels (3 easy, 3 medium, 3 hard) to win the game!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;"><strong>Arrow Left:</strong> Rotate shooter left<br><strong>Arrow Right:</strong> Rotate shooter right<br><strong>Space:</strong> Fire bubble<br><strong>Z:</strong> Swap current bubble with next bubble<br><strong>Enter:</strong> Start game (from start screen)<br><strong>Esc:</strong> Pause/Unpause game<br><strong>R:</strong> Restart (return to start screen)</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</code>
+
+<code filename="grid.js">
+// grid.js - Grid management and bubble placement
+
+import { BUBBLE_RADIUS, BUBBLE_DIAMETER, CANVAS_WIDTH, BUBBLE_COLORS } from './globals.js';
+import { createBubble } from './bubble.js';
+
+export function getGridPosition(row, col) {
+  const offsetX = (row % 2 === 1) ? BUBBLE_RADIUS : 0;
+  const x = col * BUBBLE_DIAMETER + BUBBLE_RADIUS + offsetX + 60;
+  const y = row * (BUBBLE_DIAMETER * 0.866) + BUBBLE_RADIUS + 30;
+  return { x, y };
+}
+
+export function findNearestGridPosition(x, y) {
+  let minDist = Infinity;
+  let bestRow = 0;
+  let bestCol = 0;
+
+  for (let row = 0; row < 12; row++) {
+    const colCount = (row % 2 === 0) ? 12 : 11;
+    for (let col = 0; col < colCount; col++) {
+      const pos = getGridPosition(row, col);
+      const dist = Math.sqrt((x - pos.x) ** 2 + (y - pos.y) ** 2);
+      if (dist < minDist) {
+        minDist = dist;
+        bestRow = row;
+        bestCol = col;
+      }
+    }
+  }
+
+  return { row: bestRow, col: bestCol };
+}
+
+export function createLevelLayout(level) {
+  const layouts = [
+    // Level 1: Easy - sparse, simple clusters
+    [
+      [-1, -1, -1, 0, 0, 1, 1, 0, 0, -1, -1, -1],
+      [-1, -1, -1, 0, 1, 1, 0, 0, -1, -1, -1],
+      [-1, -1, 2, 2, 0, 0, 1, 1, -1, -1, -1, -1],
+      [-1, -1, 2, 0, 0, 1, 1, -1, -1, -1, -1],
+      [-1, -1, 3, 3, 3, 0, 0, -1, -1, -1, -1, -1]
+    ],
+    // Level 2: Easy - slightly more bubbles, clear patterns
+    [
+      [-1, -1, 0, 0, 1, 1, 2, 2, 0, 0, -1, -1],
+      [-1, -1, 0, 1, 1, 2, 2, 0, 0, -1, -1],
+      [-1, -1, 1, 1, 0, 0, 2, 2, 1, 1, -1, -1],
+      [-1, -1, 1, 0, 0, 2, 2, 1, 1, -1, -1],
+      [-1, -1, 3, 3, 1, 1, 0, 0, 3, 3, -1, -1],
+      [-1, -1, 3, 1, 1, 0, 0, 3, 3, -1, -1]
+    ],
+    // Level 3: Easy - more spread out, simple matching
+    [
+      [-1, -1, 0, 1, 2, 0, 1, 2, 0, 1, -1, -1],
+      [-1, -1, 1, 2, 0, 1, 2, 0, 1, -1, -1],
+      [-1, -1, 2, 0, 1, 2, 0, 1, 2, 0, -1, -1],
+      [-1, -1, 0, 1, 2, 0, 1, 2, 0, -1, -1],
+      [-1, -1, 3, 3, 3, 1, 1, 1, 2, 2, -1, -1],
+      [-1, -1, 3, 3, 1, 1, 2, 2, 0, -1, -1]
+    ],
+    // Level 4: Medium - denser, more colors
+    [
+      [-1, -1, 0, 1, 2, 3, 0, 1, 2, 3, -1, -1],
+      [-1, -1, 1, 0, 3, 2, 1, 0, 3, -1, -1],
+      [-1, -1, 2, 3, 0, 1, 2, 3, 0, 1, -1, -1],
+      [-1, -1, 0, 1, 2, 3, 0, 1, 2, -1, -1],
+      [-1, -1, 1, 0, 4, 4, 1, 0, 3, 2, -1, -1],
+      [-1, -1, 2, 4, 4, 1, 0, 3, 2, -1, -1]
+    ],
+    // Level 5: Medium - mixed patterns, more strategic
+    [
+      [-1, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4, -1],
+      [-1, 1, 2, 3, 4, 0, 1, 2, 3, 4, -1],
+      [-1, 2, 2, 0, 0, 1, 1, 3, 3, 4, 4, -1],
+      [-1, 2, 0, 0, 1, 1, 3, 3, 4, 4, -1],
+      [-1, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, -1],
+      [-1, 0, 1, 1, 2, 2, 3, 3, 4, 4, -1],
+      [-1, -1, 1, 1, 2, 2, 3, 3, 4, -1, -1, -1]
+    ],
+    // Level 6: Medium - complex patterns, all basic colors
+    [
+      [-1, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, -1],
+      [-1, 1, 0, 3, 2, 5, 4, 1, 0, 3, -1],
+      [-1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, -1],
+      [-1, 3, 4, 5, 0, 1, 2, 3, 4, 5, -1],
+      [-1, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, -1],
+      [-1, 0, 1, 1, 2, 2, 3, 3, 4, 4, -1],
+      [-1, -1, 5, 5, 0, 0, 1, 1, 2, -1, -1, -1]
+    ],
+    // Level 7: Hard - very dense, complex patterns
+    [
+      [0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5],
+      [5, 4, 3, 2, 1, 0, 5, 4, 3, 2, 1],
+      [0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5],
+      [5, 5, 4, 4, 3, 3, 2, 2, 1, 1, 0],
+      [0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5],
+      [5, 4, 3, 2, 1, 0, 5, 4, 3, 2, 1],
+      [1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4],
+      [0, 0, 0, 5, 5, 5, 1, 1, 1, 2, 2]
+    ],
+    // Level 8: Hard - challenging layout, many colors
+    [
+      [0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5],
+      [1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5],
+      [2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 0, 1],
+      [3, 4, 5, 0, 1, 2, 3, 4, 5, 0, 1],
+      [0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5],
+      [5, 5, 4, 4, 3, 3, 2, 2, 1, 1, 0],
+      [0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5],
+      [5, 4, 3, 2, 1, 0, 5, 4, 3, 2, 1],
+      [0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3]
+    ],
+    // Level 9: Hard - ultimate challenge, full grid
+    [
+      [0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5],
+      [5, 4, 3, 2, 1, 0, 5, 4, 3, 2, 1],
+      [0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5],
+      [5, 5, 4, 4, 3, 3, 2, 2, 1, 1, 0],
+      [0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5],
+      [5, 4, 3, 2, 1, 0, 5, 4, 3, 2, 1],
+      [0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5],
+      [5, 5, 4, 4, 3, 3, 2, 2, 1, 1, 0],
+      [0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5],
+      [1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5]
+    ]
+  ];
+
+  const layout = layouts[level - 1];
+  const bubbles = [];
+
+  for (let row = 0; row < layout.length; row++) {
+    for (let col = 0; col < layout[row].length; col++) {
+      const colorIndex = layout[row][col];
+      if (colorIndex >= 0) {
+        const pos = getGridPosition(row, col);
+        const bubble = createBubble(pos.x, pos.y, colorIndex, row, col);
+        bubbles.push(bubble);
+      }
+    }
+  }
+
+  return bubbles;
+}
+
+export function getAvailableColors(bubbleGrid) {
+  const colors = new Set();
+  for (const bubble of bubbleGrid) {
+    if (!bubble.popping && !bubble.falling) {
+      colors.add(bubble.colorIndex);
+    }
+  }
+  return Array.from(colors);
+}
+
+export function getRandomColorFromGrid(bubbleGrid, p) {
+  const availableColors = getAvailableColors(bubbleGrid);
+  if (availableColors.length === 0) {
+    return Math.floor(p.random(BUBBLE_COLORS.length));
+  }
+  return availableColors[Math.floor(p.random(availableColors.length))];
+}
+
+export function isPositionOccupied(bubbleGrid, row, col) {
+  return bubbleGrid.some(b => b.gridRow === row && b.gridCol === col && !b.popping && !b.falling);
+}
+
+export function getConnectedBubbles(bubbleGrid, startBubble) {
+  const visited = new Set();
+  const connected = [];
+  const queue = [startBubble];
+
+  while (queue.length > 0) {
+    const bubble = queue.shift();
+    const key = `${bubble.gridRow},${bubble.gridCol}`;
+
+    if (visited.has(key)) continue;
+    visited.add(key);
+
+    if (bubble.colorIndex === startBubble.colorIndex && !bubble.popping && !bubble.falling) {
+      connected.push(bubble);
+      const neighbors = getNeighbors(bubbleGrid, bubble.gridRow, bubble.gridCol);
+      queue.push(...neighbors);
+    }
+  }
+
+  return connected;
+}
+
+export function getNeighbors(bubbleGrid, row, col) {
+  const neighbors = [];
+  const isEvenRow = row % 2 === 0;
+
+  const offsets = isEvenRow
+    ? [[-1, -1], [-1, 0], [0, -1], [0, 1], [1, -1], [1, 0]]
+    : [[-1, 0], [-1, 1], [0, -1], [0, 1], [1, 0], [1, 1]];
+
+  for (const [dr, dc] of offsets) {
+    const newRow = row + dr;
+    const newCol = col + dc;
+    const bubble = bubbleGrid.find(b => b.gridRow === newRow && b.gridCol === newCol && !b.popping && !b.falling);
+    if (bubble) {
+      neighbors.push(bubble);
+    }
+  }
+
+  return neighbors;
+}
+
+export function findDetachedBubbles(bubbleGrid) {
+  const attached = new Set();
+  const queue = [];
+
+  // Start with top row
+  for (const bubble of bubbleGrid) {
+    if (bubble.gridRow === 0 && !bubble.popping && !bubble.falling) {
+      queue.push(bubble);
+      attached.add(`${bubble.gridRow},${bubble.gridCol}`);
+    }
+  }
+
+  // BFS to find all attached bubbles
+  while (queue.length > 0) {
+    const bubble = queue.shift();
+    const neighbors = getNeighbors(bubbleGrid, bubble.gridRow, bubble.gridCol);
+
+    for (const neighbor of neighbors) {
+      const key = `${neighbor.gridRow},${neighbor.gridCol}`;
+      if (!attached.has(key)) {
+        attached.add(key);
+        queue.push(neighbor);
+      }
+    }
+  }
+
+  // Find detached bubbles
+  const detached = [];
+  for (const bubble of bubbleGrid) {
+    const key = `${bubble.gridRow},${bubble.gridCol}`;
+    if (!attached.has(key) && !bubble.popping && !bubble.falling) {
+      detached.push(bubble);
+    }
+  }
+
+  return detached;
+}
+</code>
+
+<code filename="levels.js">
+// levels.js - Level management
+
+import { gameState } from './globals.js';
+import { createLevelLayout } from './grid.js';
+
+export function getLevelTimeLimit(level) {
+  const timeLimits = [
+    90, // Level 1 - Easy
+    85, // Level 2 - Easy
+    80, // Level 3 - Easy
+    75, // Level 4 - Medium
+    70, // Level 5 - Medium
+    65, // Level 6 - Medium
+    60, // Level 7 - Hard
+    55, // Level 8 - Hard
+    50  // Level 9 - Hard
+  ];
+  return timeLimits[level - 1] || 60;
+}
+
+export function initializeLevel(level, p) {
+  gameState.currentLevel = level;
+  gameState.bubbleGrid = createLevelLayout(level);
+  gameState.timerRemaining = getLevelTimeLimit(level);
+  gameState.levelStartTime = p.millis();
+  gameState.canFire = true;
+  gameState.swapAvailable = true;
+
+  // Log level start
+  p.logs.game_info.push({
+    data: { event: 'level_start', level: level },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function updateTimer(p) {
+  if (gameState.gamePhase === 'PLAYING') {
+    const elapsed = (p.millis() - gameState.levelStartTime) / 1000;
+    gameState.timerRemaining = Math.max(0, getLevelTimeLimit(gameState.currentLevel) - elapsed);
+
+    if (gameState.timerRemaining <= 0) {
+      return true; // Time's up
+    }
+  }
+  return false;
+}
+
+export function calculateTimeBonus() {
+  return Math.floor(gameState.timerRemaining * 5);
+}
+</code>
+
+<code filename="game.js">
+// game.js - Main game file
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, SHOOTER_Y } from './globals.js';
+import { createShooter, generateNextBubble, drawAimingGuide } from './shooter.js';
+import { initializeLevel, updateTimer, calculateTimeBonus } from './levels.js';
+import { checkProjectileCollision, checkLoseCondition, checkWinCondition } from './collision.js';
+import { drawUI, drawStartScreen, drawPausedIndicator, drawGameOverScreen, drawLevelTransition } from './ui.js';
+import { handleKeyPressed, handleContinuousInput } from './input.js';
+import { executeTestAction } from './testing.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  let initialized = false;
+
+  // Initialize logs
+  p.logs = {
+    game_info: [],
+    inputs: [],
+    player_info: []
+  };
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+
+    // Initialize game state
+    gameState.player = createShooter();
+    gameState.entities = [];
+
+    initialized = true;
+
+    // Log initial state
+    p.logs.game_info.push({
+      data: { event: 'game_initialized', gamePhase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+
+  p.draw = function() {
+    p.background(20, 30, 50);
+
+    if (!initialized) return;
+
+    // Handle game phases
+    if (gameState.gamePhase === 'START') {
+      drawStartScreen(p);
+    } else if (gameState.gamePhase === 'PLAYING') {
+      updatePlayingPhase(p);
+      renderPlayingPhase(p);
+    } else if (gameState.gamePhase === 'PAUSED') {
+      renderPlayingPhase(p);
+      drawPausedIndicator(p);
+    } else if (gameState.gamePhase === 'LEVEL_TRANSITION') {
+      updateLevelTransition(p);
+      drawLevelTransition(p);
+    } else if (gameState.gamePhase === 'GAME_OVER_WIN') {
+      drawGameOverScreen(p, true);
+    } else if (gameState.gamePhase === 'GAME_OVER_LOSE') {
+      drawGameOverScreen(p, false);
+    }
+  };
+
+  function updatePlayingPhase(p) {
+    // Initialize level if needed
+    if (gameState.bubbleGrid.length === 0) {
+      initializeLevel(gameState.currentLevel, p);
+    }
+
+    // Generate bubbles if needed
+    if (!gameState.projectileBubble && gameState.canFire) {
+      gameState.projectileBubble = generateNextBubble(p);
+    }
+    if (!gameState.nextBubble) {
+      gameState.nextBubble = generateNextBubble(p);
+    }
+
+    // Handle input
+    handleContinuousInput(p);
+    executeTestAction(p);
+
+    // Update timer
+    if (updateTimer(p)) {
+      // Time's up - lose condition
+      transitionToGameOver(false, p);
+      return;
+    }
+
+    // Update bubbles
+    gameState.bubbleGrid = gameState.bubbleGrid.filter(bubble => {
+      const shouldRemove = bubble.update();
+      return !shouldRemove;
+    });
+
+    // Update projectiles
+    for (let i = gameState.entities.length - 1; i >= 0; i--) {
+      const projectile = gameState.entities[i];
+      if (projectile.active) {
+        projectile.x += projectile.vx * projectile.speed;
+        projectile.y += projectile.vy * projectile.speed;
+
+        // Wall bouncing
+        if (projectile.x - projectile.radius < 0) {
+          projectile.x = projectile.radius;
+          projectile.vx = Math.abs(projectile.vx);
+        }
+        if (projectile.x + projectile.radius > CANVAS_WIDTH) {
+          projectile.x = CANVAS_WIDTH - projectile.radius;
+          projectile.vx = -Math.abs(projectile.vx);
+        }
+
+        // Check collisions
+        if (checkProjectileCollision(projectile, p)) {
+          gameState.entities.splice(i, 1);
+          gameState.canFire = true;
+
+          // Generate new next bubble
+          if (!gameState.nextBubble) {
+            gameState.nextBubble = generateNextBubble(p);
+          }
+        }
+      }
+    }
+
+    // Check win/lose conditions
+    if (checkLoseCondition()) {
+      transitionToGameOver(false, p);
+      return;
+    }
+
+    if (checkWinCondition() && gameState.bubbleGrid.length === 0) {
+      // Add time bonus
+      const bonus = calculateTimeBonus();
+      gameState.score += bonus;
+
+      // Check if more levels
+      if (gameState.currentLevel < 9) {
+        transitionToNextLevel(p);
+      } else {
+        transitionToGameOver(true, p);
+      }
+    }
+
+    // Log player info periodically
+    if (p.frameCount % 30 === 0 && gameState.player) {
+      p.logs.player_info.push({
+        screen_x: gameState.player.x,
+        screen_y: gameState.player.y,
+        game_x: gameState.player.x,
+        game_y: gameState.player.y,
+        framecount: p.frameCount
+      });
+    }
+  }
+
+  function renderPlayingPhase(p) {
+    // Draw lose line
+    p.push();
+    p.stroke(255, 0, 0, 50);
+    p.strokeWeight(2);
+    p.line(0, CANVAS_HEIGHT - 100, CANVAS_WIDTH, CANVAS_HEIGHT - 100);
+    p.pop();
+
+    // Draw bubbles
+    for (const bubble of gameState.bubbleGrid) {
+      bubble.draw(p);
+    }
+
+    // Draw projectiles
+    for (const projectile of gameState.entities) {
+      if (projectile.active) {
+        p.push();
+        p.fill(...projectile.color);
+        p.stroke(255, 255, 255, 200);
+        p.strokeWeight(2);
+        p.ellipse(projectile.x, projectile.y, projectile.radius * 2);
+        p.pop();
+      }
+    }
+
+    // Draw shooter
+    if (gameState.player) {
+      drawAimingGuide(gameState.player, p);
+      gameState.player.draw(p);
+    }
+
+    // Draw current and next bubbles
+    if (gameState.projectileBubble) {
+      gameState.projectileBubble.x = CANVAS_WIDTH / 2;
+      gameState.projectileBubble.y = SHOOTER_Y;
+      gameState.projectileBubble.draw(p);
+    }
+
+    if (gameState.nextBubble) {
+      gameState.nextBubble.x = CANVAS_WIDTH / 2 + 60;
+      gameState.nextBubble.y = SHOOTER_Y;
+      p.push();
+      p.scale(0.7);
+      p.translate((CANVAS_WIDTH / 2 + 60) * 0.3 / 0.7, SHOOTER_Y * 0.3 / 0.7);
+      gameState.nextBubble.draw(p);
+      p.pop();
+
+      // Draw "NEXT" label
+      p.push();
+      p.fill(255);
+      p.textSize(12);
+      p.textAlign(p.CENTER, p.TOP);
+      p.noStroke();
+      p.text('NEXT', CANVAS_WIDTH / 2 + 60, SHOOTER_Y + 30);
+      p.pop();
+    }
+
+    // Draw UI
+    drawUI(p);
+  }
+
+  function transitionToNextLevel(p) {
+    gameState.gamePhase = 'LEVEL_TRANSITION';
+    gameState.currentLevel++;
+    gameState.transitionTimer = p.millis();
+    gameState.bubbleGrid = [];
+    gameState.entities = [];
+
+    p.logs.game_info.push({
+      data: { event: 'level_complete', level: gameState.currentLevel - 1, score: gameState.score },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+
+  function updateLevelTransition(p) {
+    if (p.millis() - gameState.transitionTimer > 3000) {
+      gameState.gamePhase = 'PLAYING';
+      initializeLevel(gameState.currentLevel, p);
+    }
+  }
+
+  function transitionToGameOver(isWin, p) {
+    gameState.gamePhase = isWin ? 'GAME_OVER_WIN' : 'GAME_OVER_LOSE';
+    gameState.finalScore = gameState.score;
+
+    p.logs.game_info.push({
+      data: { event: 'game_over', win: isWin, finalScore: gameState.finalScore },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+
+  p.keyPressed = function() {
+    handleKeyPressed(p);
+  };
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Control mode setter
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  gameState.testActions = [];
+  gameState.testActionIndex = 0;
+
+  // Update button states
+  const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+
+  const modeMap = {
+    'HUMAN': 'humanModeBtn',
+    'TEST_1': 'test_1_ModeBtn',
+    'TEST_2': 'test_2_ModeBtn'
+  };
+
+  const activeBtn = document.getElementById(modeMap[mode]);
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+};
+</code>

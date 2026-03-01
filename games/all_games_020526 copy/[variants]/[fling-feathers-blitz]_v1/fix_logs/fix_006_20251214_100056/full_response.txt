@@ -1,0 +1,121 @@
+<analysis>
+- Issue identified: The bird disappears upon launch because it is added to `gameState.activeBirds` but not to `gameState.entities`. The renderer only draws objects present in `gameState.entities`. Furthermore, because the bird is not in `gameState.entities`, the off-screen cleanup logic (in `physics.js`) ignores it. If the invisible bird flies off-screen, it is never marked as inactive, causing the game to wait indefinitely for the bird to "finish", which prevents the next turn or game restart logic from proceeding correctly.
+- Files affected: `input.js`
+- Changes needed: 
+  1. In `launchBird`, push the newly created bird to `gameState.entities`.
+  2. In `handleKeyPressed` (for the 'Z' ability), push any new birds (e.g., from the Blue bird split ability) to `gameState.entities`.
+</analysis>
+
+<code filename="input.js">
+import { gameState, BIRD_TYPES, MAX_PULL_DISTANCE, LAUNCH_POWER_MULTIPLIER, SLINGSHOT_X, SLINGSHOT_Y } from './globals.js';
+import { Bird } from './entities.js';
+import { startGame, restartGame, loadNextLevel } from './game.js';
+
+export function handleKeyPressed(p, key, keyCode) {
+  // Track key state
+  gameState.keysPressed[keyCode] = true;
+
+  // Global controls
+  if (keyCode === 27) { // ESC
+    if (gameState.gamePhase === "PLAYING") {
+      gameState.gamePhase = "PAUSED";
+    } else if (gameState.gamePhase === "PAUSED") {
+      gameState.gamePhase = "PLAYING";
+    }
+  }
+  
+  if (key === 'r' || key === 'R') {
+    restartGame(p);
+    return;
+  }
+
+  // Phase specific controls
+  if (gameState.gamePhase === "START") {
+    if (keyCode === 13) { // ENTER
+      startGame(p);
+    }
+  } else if (gameState.gamePhase === "LEVEL_COMPLETE") {
+    if (keyCode === 13) { // ENTER
+      loadNextLevel(p);
+    }
+  } else if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+    if (keyCode === 13) { // ENTER
+      restartGame(p);
+    }
+  } else if (gameState.gamePhase === "PLAYING") {
+    // Bird Ability
+    if (key === 'z' || key === 'Z') {
+       gameState.activeBirds.forEach(bird => {
+         if (bird.active && !bird.abilityUsed) {
+           const result = bird.useAbility(gameState, p);
+           if (result && Array.isArray(result)) {
+             // Handle split birds (Blue bird)
+             gameState.activeBirds.push(...result);
+             gameState.entities.push(...result); // Add split birds to entities for rendering and physics tracking
+           }
+         }
+       });
+    }
+  }
+}
+
+export function handleKeyReleased(p, key, keyCode) {
+  gameState.keysPressed[keyCode] = false;
+  
+  // Space: Launch bird
+  if (keyCode === 32) { // SPACE
+    if (gameState.gamePhase === "PLAYING" && gameState.isAiming) {
+      launchBird();
+    }
+  }
+}
+
+export function updateAiming(p) {
+  if (!gameState.isAiming) return;
+  
+  // Initialize pull position if needed
+  if (!gameState.slingshotPullPos) {
+    gameState.slingshotPullPos = { x: -20, y: 20 };
+  }
+
+  const moveSpeed = 1.5;
+  
+  // Arrow keys to move the pull position
+  if (gameState.keysPressed[p.LEFT_ARROW]) gameState.slingshotPullPos.x -= moveSpeed;
+  if (gameState.keysPressed[p.RIGHT_ARROW]) gameState.slingshotPullPos.x += moveSpeed;
+  if (gameState.keysPressed[p.UP_ARROW]) gameState.slingshotPullPos.y -= moveSpeed;
+  if (gameState.keysPressed[p.DOWN_ARROW]) gameState.slingshotPullPos.y += moveSpeed;
+  
+  // Constrain to max pull distance
+  const distSq = gameState.slingshotPullPos.x ** 2 + gameState.slingshotPullPos.y ** 2;
+  if (distSq > MAX_PULL_DISTANCE ** 2) {
+    const dist = Math.sqrt(distSq);
+    const ratio = MAX_PULL_DISTANCE / dist;
+    gameState.slingshotPullPos.x *= ratio;
+    gameState.slingshotPullPos.y *= ratio;
+  }
+}
+
+function launchBird() {
+  if (!gameState.slingshotPullPos || gameState.birdsRemaining.length === 0) return;
+  
+  const birdType = gameState.birdsRemaining.shift();
+  
+  // Create bird at slingshot position
+  const bird = new Bird(SLINGSHOT_X, SLINGSHOT_Y, birdType);
+  
+  // Calculate launch velocity (opposite to pull vector)
+  const vx = -gameState.slingshotPullPos.x * LAUNCH_POWER_MULTIPLIER;
+  const vy = -gameState.slingshotPullPos.y * LAUNCH_POWER_MULTIPLIER;
+  
+  const Matter = window.Matter;
+  if (Matter && bird.body) {
+    Matter.Body.setVelocity(bird.body, { x: vx, y: vy });
+  }
+  
+  gameState.activeBirds.push(bird);
+  gameState.entities.push(bird); // Add bird to entities for rendering and physics tracking
+  gameState.isAiming = false;
+  gameState.slingshotPullPos = null;
+}
+</code>

@@ -1,0 +1,222 @@
+<analysis>
+- Issue identified: The player overshoots tiles over time due to a slight mismatch between `FORWARD_SPEED` and the physics-driven jump distance (drift). Additionally, the user explicitly requested to "land always in the center of the tile" to fix this and assist gameplay.
+- Files affected: `globals.js`, `physics.js`
+- Changes needed:
+  1.  In `globals.js`, tune `FORWARD_SPEED` from 0.323 to 0.3125 to mathematically align with the 32-frame jump cycle and 10-unit tile spacing.
+  2.  In `physics.js`, inside `checkPlayerTileCollisions`, snap the player's X and Z positions to the tile's center upon landing.
+  3.  In `physics.js`, move the `player.mesh.position.copy` call to after the collision check to ensures the visual mesh renders at the snapped position immediately, preventing visual jitter.
+</analysis>
+
+<code filename="globals.js">
+/**
+ * Global constants and state management for Neon Hop
+ */
+
+// Canvas dimensions hard constrained
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Game constants
+export const WORLD_GRAVITY = -0.05;
+export const BOUNCE_FORCE = 0.8;
+export const FORWARD_SPEED = 0.3125; // Exact sync: 10 units / 32 frames flight time
+export const LATERAL_SPEED = 0.4;
+export const LATERAL_FRICTION = 0.9;
+export const MAX_LATERAL_SPEED = 0.5;
+export const TILE_SIZE = 4;
+export const TILE_SPACING = 10; // Restored to 10 to match physics jump distance
+export const WIN_DISTANCE = 1000;
+
+// Colors
+export const COLOR_BG = 0x110515; // Deep purple/black
+export const COLOR_PLAYER = 0x00ffff; // Cyan
+export const COLOR_TILE_BASE = 0x2a1a3a;
+export const COLOR_TILE_EMISSIVE = 0xff00ff; // Magenta
+export const COLOR_COLLECTIBLE = 0xffd700; // Gold
+
+// Game State Object
+export const gameState = {
+    // Core state
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2, TEST_3
+    
+    // Time tracking
+    frameCount: 0,
+    deltaTime: 0,
+    lastFrameTime: 0,
+    startTime: 0,
+    
+    // Three.js core
+    scene: null,
+    camera: null,
+    renderer: null,
+    gameContainer: null,
+    
+    // Lighting
+    lights: [],
+    ambientLight: null,
+    directionalLight: null,
+    
+    // Game entities and data
+    player: null,
+    entities: [],      // Generic entity list for updates
+    tiles: [],         // Specific list for platform logic
+    collectibles: [],  // Points
+    particles: [],     // Visual effects
+    
+    // Physics
+    gravity: { x: 0, y: WORLD_GRAVITY, z: 0 },
+    
+    // Scoring
+    score: 0,
+    distance: 0,
+    combo: 0,
+    maxCombo: 0,
+    
+    // Camera state
+    cameraOffset: { x: 0, y: 12, z: -15 }, // Behind and up
+    cameraLookAtOffset: { x: 0, y: 0, z: 10 },
+    
+    // Input state
+    keys: {
+        ArrowLeft: false,
+        ArrowRight: false,
+        ArrowUp: false,
+        ArrowDown: false,
+        KeyA: false,
+        KeyD: false,
+        KeyW: false,
+        KeyS: false,
+        Space: false,
+        Shift: false,
+        KeyZ: false
+    }
+};
+
+// Global accessor as required
+window.getGameState = () => gameState;
+
+// Logging system (write-only)
+export const logs = {
+    game_info: [],
+    player_info: [],
+    inputs: []
+};
+window.logs = logs;
+
+// Helper to log game info
+export function logGameInfo(info, data = {}) {
+    logs.game_info.push({
+        info: info,
+        data: data,
+        game_status: gameState.gamePhase,
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+}
+</code>
+
+<code filename="physics.js">
+/**
+ * Physics engine for bouncing ball mechanics
+ */
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, WORLD_GRAVITY, TILE_SIZE, BOUNCE_FORCE } from './globals.js';
+import { sphereIntersectsBox } from './utils.js';
+
+export function updatePhysics(deltaTime) {
+    const player = gameState.player;
+    if (!player) return;
+
+    // Apply Gravity
+    player.velocity.y += gameState.gravity.y * (deltaTime * 60); // Normalize to 60fps base
+
+    // Update Position
+    player.position.add(player.velocity.clone().multiplyScalar(deltaTime * 60));
+    
+    // Check floor/tile collisions
+    checkPlayerTileCollisions(player);
+    
+    // Update mesh position after physics and collision correction
+    // This ensures that if we snap the player, the mesh renders at the snapped position immediately
+    player.mesh.position.copy(player.position);
+    
+    // Check death plane
+    if (player.position.y < -10) {
+        handleDeath();
+    }
+}
+
+function checkPlayerTileCollisions(player) {
+    // Optimization: Only check tiles nearby based on Z index
+    // Since tiles are sorted by Z usually or we can filter
+    const playerZ = player.position.z;
+    const nearbyTiles = gameState.tiles.filter(t => 
+        Math.abs(t.position.z - playerZ) < (TILE_SIZE * 2)
+    );
+
+    let landed = false;
+
+    for (const tile of nearbyTiles) {
+        // Tile dimensions
+        const halfSize = TILE_SIZE / 2;
+        const tileTopSurface = tile.position.y + 0.5; // Box height is 1, so top is y + 0.5
+
+        // Horizontal (XZ plane) bounds check
+        const dx = Math.abs(player.position.x - tile.position.x);
+        const dz = Math.abs(player.position.z - tile.position.z);
+        
+        if (dx < halfSize + player.radius && 
+            dz < halfSize + player.radius) {
+            
+            // Vertical check for landing on top of the tile
+            const playerBottom = player.position.y - player.radius;
+
+            if (player.velocity.y < 0 && // Player is falling
+                playerBottom <= tileTopSurface && // Player's bottom is at or below tile's top surface
+                player.position.y > tile.position.y - 0.5) // Player's center is above tile's bottom (prevents collision with underside/deep sides)
+            {
+                // BOUNCE!
+                player.velocity.y = BOUNCE_FORCE;
+                player.position.y = tileTopSurface + player.radius; // Snap to surface
+                
+                // Snap to tile center to prevent drift and overshoot
+                player.position.x = tile.position.x;
+                player.position.z = tile.position.z;
+                
+                landed = true;
+                
+                // Trigger tile effect
+                tile.onLand();
+                gameState.combo++;
+                gameState.score += 10 * Math.min(gameState.combo, 10);
+                
+                // Create impact particles
+                createImpactEffect(player.position.clone().setY(tileTopSurface));
+                
+                break; // Only bounce off one tile
+            }
+        }
+    }
+    
+    if (!landed) {
+        gameState.combo = 0; // Reset combo if player misses a tile
+    }
+}
+
+function handleDeath() {
+    if (gameState.gamePhase === "PLAYING") {
+        gameState.gamePhase = "GAME_OVER_LOSE";
+        console.log("Player died!");
+    }
+}
+
+function createImpactEffect(position) {
+    // Import dynamically or use global hook if needed, 
+    // but for now we'll assume a global particle spawner or event
+    // Using a simplified approach here directly if possible, or skip
+    if (gameState.player && gameState.player.spawnParticles) {
+        gameState.player.spawnParticles(position, 10, 0xffff00);
+    }
+}
+</code>

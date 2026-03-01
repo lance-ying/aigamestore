@@ -1,0 +1,1362 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you make the selection of beakers more visible 
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 700px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">AquaSort Puzzle</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic testing)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 700px; margin: 0 auto 20px auto; line-height: 1.4;">Welcome to AquaSort Puzzle! Your goal is to sort colored liquids into tubes so that each tube contains only one color. Select a source tube, then pour its contents into a compatible destination tube. You can only pour if the colors match or the destination is empty, and there's enough space. Complete all 9 levels (3 Easy, 3 Medium, 3 Hard) with strategic moves to win!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 700px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Left/Right: Navigate between tubes | Space: Select tube to pour from, then select destination to pour into | Z: Undo last move | ESC: Pause/Resume game | Enter: Start game (from start screen) | R: Restart (returns to start screen from game over)</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+// globals.js - Global state and constants
+
+export const CANVAS_WIDTH = 700;
+export const CANVAS_HEIGHT = 400;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE",
+  LEVEL_COMPLETE: "LEVEL_COMPLETE"
+};
+
+export const gameState = {
+  gamePhase: GAME_PHASES.START,
+  controlMode: "HUMAN",
+  
+  // Level and score
+  currentLevel: 1,
+  totalScore: 0,
+  levelMovesMade: 0,
+  levelMaxMoves: 0,
+  levelUndoCount: 0,
+  
+  // Tubes
+  tubes: [],
+  selectedTubeIndex: -1,
+  highlightedTubeIndex: 0,
+  
+  // Undo system
+  previousStates: [],
+  
+  // Animation
+  isAnimating: false,
+  animationProgress: 0,
+  animationDuration: 30, // frames
+  animationSourceIndex: -1,
+  animationDestIndex: -1,
+  animationWaterColor: null,
+  animationWaterAmount: 0,
+  
+  // Player (for logging purposes)
+  player: {
+    x: CANVAS_WIDTH / 2,
+    y: CANVAS_HEIGHT / 2
+  }
+};
+
+// Level configurations
+export const LEVELS = [
+  {
+    level: 1,
+    difficulty: 'Easy',
+    maxMoves: 8,
+    tubes: [
+      { capacity: 4, colors: ['red', 'blue', 'red', 'blue'] },
+      { capacity: 4, colors: ['blue', 'red', 'blue', 'red'] },
+      { capacity: 4, colors: [] }
+    ]
+  },
+  {
+    level: 2,
+    difficulty: 'Easy',
+    maxMoves: 10,
+    tubes: [
+      { capacity: 4, colors: ['red', 'blue', 'green', 'red'] },
+      { capacity: 4, colors: ['blue', 'green', 'red', 'blue'] },
+      { capacity: 4, colors: ['green', 'red', 'blue', 'green'] },
+      { capacity: 4, colors: [] }
+    ]
+  },
+  {
+    level: 3,
+    difficulty: 'Easy',
+    maxMoves: 15,
+    tubes: [
+      { capacity: 4, colors: ['red', 'blue', 'yellow', 'red'] },
+      { capacity: 4, colors: ['blue', 'green', 'red', 'blue'] },
+      { capacity: 4, colors: ['green', 'yellow', 'blue', 'green'] },
+      { capacity: 4, colors: ['yellow', 'red', 'green', 'yellow'] },
+      { capacity: 4, colors: [] }
+    ]
+  },
+  {
+    level: 4,
+    difficulty: 'Medium',
+    maxMoves: 20,
+    tubes: [
+      { capacity: 4, colors: ['red', 'blue', 'yellow', 'green'] },
+      { capacity: 4, colors: ['blue', 'green', 'red', 'yellow'] },
+      { capacity: 4, colors: ['green', 'yellow', 'blue', 'red'] },
+      { capacity: 4, colors: ['yellow', 'red', 'green', 'blue'] },
+      { capacity: 4, colors: [] },
+      { capacity: 4, colors: [] }
+    ]
+  },
+  {
+    level: 5,
+    difficulty: 'Medium',
+    maxMoves: 25,
+    tubes: [
+      { capacity: 4, colors: ['red', 'blue', 'yellow', 'purple'] },
+      { capacity: 4, colors: ['blue', 'green', 'red', 'blue'] },
+      { capacity: 4, colors: ['green', 'yellow', 'purple', 'red'] },
+      { capacity: 4, colors: ['yellow', 'purple', 'green', 'yellow'] },
+      { capacity: 4, colors: ['purple', 'red', 'green', 'blue'] },
+      { capacity: 4, colors: [] },
+      { capacity: 4, colors: [] }
+    ]
+  },
+  {
+    level: 6,
+    difficulty: 'Medium',
+    maxMoves: 35,
+    tubes: [
+      { capacity: 4, colors: ['red', 'blue', 'yellow', 'purple'] },
+      { capacity: 4, colors: ['blue', 'green', 'orange', 'red'] },
+      { capacity: 4, colors: ['green', 'yellow', 'purple', 'orange'] },
+      { capacity: 4, colors: ['yellow', 'red', 'green', 'orange'] },
+      { capacity: 4, colors: ['purple', 'orange', 'green', 'yellow'] },
+      { capacity: 4, colors: ['blue', 'red', 'purple', 'blue'] },
+      { capacity: 4, colors: [] },
+      { capacity: 4, colors: [] }
+    ]
+  },
+  {
+    level: 7,
+    difficulty: 'Hard',
+    maxMoves: 40,
+    tubes: [
+      { capacity: 4, colors: ['red', 'blue', 'yellow', 'purple'] },
+      { capacity: 4, colors: ['blue', 'green', 'orange', 'red'] },
+      { capacity: 4, colors: ['green', 'yellow', 'purple', 'pink'] },
+      { capacity: 4, colors: ['yellow', 'red', 'green', 'orange'] },
+      { capacity: 4, colors: ['purple', 'orange', 'pink', 'yellow'] },
+      { capacity: 4, colors: ['blue', 'red', 'purple', 'pink'] },
+      { capacity: 4, colors: ['orange', 'pink', 'blue', 'green'] },
+      { capacity: 4, colors: [] },
+      { capacity: 4, colors: [] }
+    ]
+  },
+  {
+    level: 8,
+    difficulty: 'Hard',
+    maxMoves: 50,
+    tubes: [
+      { capacity: 4, colors: ['red', 'blue', 'yellow', 'purple'] },
+      { capacity: 4, colors: ['blue', 'green', 'orange', 'red'] },
+      { capacity: 4, colors: ['green', 'yellow', 'pink', 'orange'] },
+      { capacity: 4, colors: ['yellow', 'red', 'green', 'pink'] },
+      { capacity: 4, colors: ['purple', 'orange', 'pink', 'yellow'] },
+      { capacity: 4, colors: ['blue', 'red', 'purple', 'pink'] },
+      { capacity: 4, colors: ['orange', 'purple', 'green', 'blue'] },
+      { capacity: 4, colors: [] },
+      { capacity: 4, colors: [] }
+    ]
+  },
+  {
+    level: 9,
+    difficulty: 'Hard',
+    maxMoves: 60,
+    tubes: [
+      { capacity: 4, colors: ['red', 'blue', 'yellow', 'purple'] },
+      { capacity: 4, colors: ['blue', 'green', 'cyan', 'red'] },
+      { capacity: 4, colors: ['green', 'yellow', 'pink', 'orange'] },
+      { capacity: 4, colors: ['yellow', 'red', 'green', 'pink'] },
+      { capacity: 4, colors: ['purple', 'orange', 'cyan', 'yellow'] },
+      { capacity: 4, colors: ['blue', 'red', 'purple', 'pink'] },
+      { capacity: 4, colors: ['orange', 'purple', 'cyan', 'blue'] },
+      { capacity: 4, colors: ['pink', 'orange', 'cyan', 'green'] },
+      { capacity: 4, colors: [] },
+      { capacity: 4, colors: [] }
+    ]
+  }
+];
+
+export const COLOR_MAP = {
+  'red': [220, 50, 50],
+  'blue': [50, 120, 220],
+  'green': [50, 200, 80],
+  'yellow': [240, 200, 30],
+  'purple': [180, 60, 200],
+  'orange': [255, 140, 30],
+  'pink': [255, 120, 180],
+  'cyan': [0, 220, 220]
+};
+
+export function getGameState() {
+  return gameState;
+}
+
+// Expose globally
+if (typeof window !== 'undefined') {
+  window.getGameState = getGameState;
+}
+</file>
+
+<file name="tube.js">
+// tube.js - Tube class and related functions
+
+import { COLOR_MAP } from './globals.js';
+
+export class Tube {
+  constructor(capacity, colors, x, y, width, p) {
+    this.capacity = capacity;
+    this.colors = [...colors];
+    this.x = x;
+    this.y = y;
+    this.width = width;
+    this.p = p;
+    
+    // Calculate dimensions
+    this.totalHeight = 200;
+    this.layerHeight = this.totalHeight / this.capacity;
+  }
+  
+  draw(isHighlighted, isSelected) {
+    const p = this.p;
+    
+    // Draw tube outline
+    p.push();
+    p.noFill();
+    
+    if (isSelected) {
+      p.strokeWeight(4);
+      p.stroke(255, 220, 0);
+    } else if (isHighlighted) {
+      p.strokeWeight(3);
+      p.stroke(150, 200, 255);
+    } else {
+      p.strokeWeight(2);
+      p.stroke(200, 200, 200);
+    }
+    
+    // Draw rounded rectangle for tube
+    p.rect(this.x, this.y, this.width, this.totalHeight, 0, 0, 15, 15);
+    p.pop();
+    
+    // Draw water layers
+    this.drawWaterLayers();
+  }
+  
+  drawWaterLayers() {
+    const p = this.p;
+    
+    for (let i = 0; i < this.colors.length; i++) {
+      const color = this.colors[i];
+      const rgb = COLOR_MAP[color] || [200, 200, 200];
+      
+      p.push();
+      p.noStroke();
+      p.fill(...rgb);
+      
+      const layerY = this.y + this.totalHeight - (i + 1) * this.layerHeight;
+      
+      if (i === 0) {
+        // Bottom layer with rounded corners
+        p.rect(this.x, layerY, this.width, this.layerHeight, 0, 0, 15, 15);
+      } else {
+        p.rect(this.x, layerY, this.width, this.layerHeight);
+      }
+      p.pop();
+    }
+  }
+  
+  drawPartialLayer(color, amount) {
+    // Draw a partial layer for animation
+    const p = this.p;
+    const rgb = COLOR_MAP[color] || [200, 200, 200];
+    
+    p.push();
+    p.noStroke();
+    p.fill(...rgb);
+    
+    const layerY = this.y + this.totalHeight - this.colors.length * this.layerHeight - amount * this.layerHeight;
+    
+    p.rect(this.x, layerY, this.width, amount * this.layerHeight);
+    p.pop();
+  }
+  
+  getTopColor() {
+    if (this.colors.length === 0) return null;
+    return this.colors[this.colors.length - 1];
+  }
+  
+  getTopContiguousLayer() {
+    if (this.colors.length === 0) return { color: null, amount: 0 };
+    
+    const topColor = this.colors[this.colors.length - 1];
+    let amount = 0;
+    
+    for (let i = this.colors.length - 1; i >= 0; i--) {
+      if (this.colors[i] === topColor) {
+        amount++;
+      } else {
+        break;
+      }
+    }
+    
+    return { color: topColor, amount };
+  }
+  
+  getRemainingCapacity() {
+    return this.capacity - this.colors.length;
+  }
+  
+  isEmpty() {
+    return this.colors.length === 0;
+  }
+  
+  isFull() {
+    return this.colors.length === this.capacity;
+  }
+  
+  isSorted() {
+    if (this.colors.length === 0) return true;
+    if (this.colors.length !== this.capacity) return false;
+    
+    const firstColor = this.colors[0];
+    return this.colors.every(c => c === firstColor);
+  }
+  
+  canPourInto(destinationTube) {
+    if (this.isEmpty()) return false;
+    if (destinationTube.isFull()) return false;
+    
+    const sourceLayer = this.getTopContiguousLayer();
+    const destTopColor = destinationTube.getTopColor();
+    
+    // Check color compatibility
+    if (destTopColor !== null && destTopColor !== sourceLayer.color) {
+      return false;
+    }
+    
+    // Check capacity
+    if (destinationTube.getRemainingCapacity() < sourceLayer.amount) {
+      return false;
+    }
+    
+    return true;
+  }
+  
+  pour(destinationTube) {
+    if (!this.canPourInto(destinationTube)) return null;
+    
+    const layer = this.getTopContiguousLayer();
+    
+    // Remove from source
+    for (let i = 0; i < layer.amount; i++) {
+      this.colors.pop();
+    }
+    
+    // Add to destination
+    for (let i = 0; i < layer.amount; i++) {
+      destinationTube.colors.push(layer.color);
+    }
+    
+    return layer;
+  }
+}
+
+export function canPour(sourceTube, destTube) {
+  return sourceTube.canPourInto(destTube);
+}
+</file>
+
+<file name="game.js">
+// game.js - Main game file
+
+import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT, getGameState } from './globals.js';
+import { handleKeyPressed } from './input.js';
+import { updateAnimation } from './gameLogic.js';
+import { 
+  renderStartScreen, 
+  renderPlayingScreen, 
+  renderPausedScreen, 
+  renderLevelComplete,
+  renderGameOverWin,
+  renderGameOverLose 
+} from './rendering.js';
+import { getTestAction, applyTestAction } from './testController.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Initialize logs
+  p.logs = {
+    game_info: [],
+    inputs: [],
+    player_info: []
+  };
+  
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.randomSeed(42);
+    p.frameRate(60);
+    
+    // Initialize game state
+    gameState.gamePhase = GAME_PHASES.START;
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: { phase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+  
+  p.draw = function() {
+    // Handle test mode
+    if (gameState.controlMode !== 'HUMAN') {
+      const testAction = getTestAction(p);
+      if (testAction) {
+        applyTestAction(testAction, p);
+      }
+    }
+    
+    // Update animations
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      updateAnimation(p);
+    }
+    
+    // Render based on game phase
+    if (gameState.gamePhase === GAME_PHASES.START) {
+      renderStartScreen(p);
+    } else if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      renderPlayingScreen(p);
+    } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+      renderPausedScreen(p);
+    } else if (gameState.gamePhase === GAME_PHASES.LEVEL_COMPLETE) {
+      renderLevelComplete(p);
+    } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN) {
+      renderGameOverWin(p);
+    } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+      renderGameOverLose(p);
+    }
+    
+    // Log player info periodically
+    if (p.frameCount % 60 === 0) {
+      p.logs.player_info.push({
+        screen_x: gameState.player.x,
+        screen_y: gameState.player.y,
+        game_x: gameState.player.x,
+        game_y: gameState.player.y,
+        framecount: p.frameCount
+      });
+    }
+  };
+  
+  p.keyPressed = function() {
+    handleKeyPressed(p);
+    return false; // Prevent default
+  };
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button styles
+  document.querySelectorAll('.control-button').forEach(btn => {
+    btn.classList.remove('active');
+  });
+  
+  if (mode === 'HUMAN') {
+    document.getElementById('humanModeBtn').classList.add('active');
+  } else if (mode === 'TEST_1') {
+    document.getElementById('test_1_ModeBtn').classList.add('active');
+  } else if (mode === 'TEST_2') {
+    document.getElementById('test_2_ModeBtn').classList.add('active');
+  }
+};
+</file>
+
+<file name="levelManager.js">
+// levelManager.js - Level loading and management
+
+import { gameState, LEVELS, GAME_PHASES, CANVAS_WIDTH } from './globals.js';
+import { Tube } from './tube.js';
+
+export function loadLevel(levelNumber, p) {
+  if (levelNumber < 1 || levelNumber > LEVELS.length) {
+    return false;
+  }
+  
+  const levelConfig = LEVELS[levelNumber - 1];
+  
+  gameState.currentLevel = levelNumber;
+  gameState.levelMaxMoves = levelConfig.maxMoves;
+  gameState.levelMovesMade = 0;
+  gameState.levelUndoCount = 0;
+  gameState.selectedTubeIndex = -1;
+  gameState.highlightedTubeIndex = 0;
+  gameState.previousStates = [];
+  gameState.isAnimating = false;
+  
+  // Create tubes
+  gameState.tubes = [];
+  const numTubes = levelConfig.tubes.length;
+  const tubeWidth = 50;
+  const spacing = 70;
+  const startX = (CANVAS_WIDTH - (numTubes * spacing - 20)) / 2;
+  const tubeY = 150;
+  
+  for (let i = 0; i < numTubes; i++) {
+    const tubeConfig = levelConfig.tubes[i];
+    const tube = new Tube(
+      tubeConfig.capacity,
+      tubeConfig.colors,
+      startX + i * spacing,
+      tubeY,
+      tubeWidth,
+      p
+    );
+    gameState.tubes.push(tube);
+  }
+  
+  return true;
+}
+
+export function checkLevelComplete() {
+  // Check if all tubes are sorted
+  return gameState.tubes.every(tube => tube.isSorted());
+}
+
+export function calculateLevelScore() {
+  const baseScore = 100;
+  const moveBonus = Math.max(0, (gameState.levelMaxMoves - gameState.levelMovesMade) * 5);
+  const undoBonus = gameState.levelUndoCount === 0 ? 50 : 0;
+  
+  return baseScore + moveBonus + undoBonus;
+}
+
+export function advanceToNextLevel(p) {
+  if (gameState.currentLevel < LEVELS.length) {
+    loadLevel(gameState.currentLevel + 1, p);
+    gameState.gamePhase = GAME_PHASES.PLAYING;
+    return true;
+  } else {
+    gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
+    return false;
+  }
+}
+</file>
+
+<file name="rendering.js">
+// rendering.js - All rendering functions
+
+import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT, COLOR_MAP, LEVELS } from './globals.js';
+
+export function renderStartScreen(p) {
+  p.background(20, 30, 50);
+  
+  // Title
+  p.push();
+  p.fill(100, 200, 255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text('AquaSort Puzzle', CANVAS_WIDTH / 2, 80);
+  p.pop();
+  
+  // Description
+  p.push();
+  p.fill(200, 220, 255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(16);
+  p.text('Sort all colored liquids into separate tubes!', CANVAS_WIDTH / 2, 150);
+  p.text('Each tube must contain only one color.', CANVAS_WIDTH / 2, 175);
+  p.pop();
+  
+  // Instructions
+  p.push();
+  p.fill(180, 200, 220);
+  p.textAlign(p.LEFT, p.CENTER);
+  p.textSize(14);
+  const instructY = 220;
+  p.text('← → : Navigate between tubes', 100, instructY);
+  p.text('SPACE : Select tube / Pour', 100, instructY + 25);
+  p.text('Z : Undo last move', 100, instructY + 50);
+  p.text('ESC : Pause game', 100, instructY + 75);
+  p.pop();
+  
+  // Start prompt
+  p.push();
+  p.fill(255, 220, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(24);
+  const pulse = p.sin(p.frameCount * 0.1) * 20 + 235;
+  p.fill(pulse, 200, 100);
+  p.text('PRESS ENTER TO START', CANVAS_WIDTH / 2, 350);
+  p.pop();
+}
+
+export function renderPlayingScreen(p) {
+  p.background(30, 40, 60);
+  
+  // Draw UI
+  renderUI(p);
+  
+  // Draw tubes
+  for (let i = 0; i < gameState.tubes.length; i++) {
+    const tube = gameState.tubes[i];
+    const isHighlighted = i === gameState.highlightedTubeIndex;
+    const isSelected = i === gameState.selectedTubeIndex;
+    
+    tube.draw(isHighlighted, isSelected);
+  }
+  
+  // Draw animation
+  if (gameState.isAnimating) {
+    renderPourAnimation(p);
+  }
+}
+
+function renderUI(p) {
+  p.push();
+  p.fill(255);
+  p.textSize(18);
+  
+  // Score - top left
+  p.textAlign(p.LEFT, p.TOP);
+  p.text(`SCORE: ${gameState.totalScore}`, 10, 10);
+  
+  // Level and Difficulty - top center
+  const levelConfig = LEVELS[gameState.currentLevel - 1];
+  const difficulty = levelConfig ? levelConfig.difficulty : '';
+  p.textAlign(p.CENTER, p.TOP);
+  p.text(`LEVEL ${gameState.currentLevel} - ${difficulty.toUpperCase()}`, CANVAS_WIDTH / 2, 10);
+  
+  // Moves - top right
+  p.textAlign(p.RIGHT, p.TOP);
+  const movesColor = gameState.levelMovesMade >= gameState.levelMaxMoves ? [255, 100, 100] : [255, 255, 255];
+  p.fill(...movesColor);
+  p.text(`MOVES: ${gameState.levelMovesMade}/${gameState.levelMaxMoves}`, CANVAS_WIDTH - 10, 10);
+  
+  p.pop();
+}
+
+function renderPourAnimation(p) {
+  const progress = gameState.animationProgress / gameState.animationDuration;
+  const sourceTube = gameState.tubes[gameState.animationSourceIndex];
+  const destTube = gameState.tubes[gameState.animationDestIndex];
+  
+  const rgb = COLOR_MAP[gameState.animationWaterColor] || [200, 200, 200];
+  
+  // Draw flowing water effect
+  p.push();
+  p.noStroke();
+  p.fill(...rgb, 200);
+  
+  // Calculate positions
+  const sourceTop = sourceTube.y + sourceTube.totalHeight - (sourceTube.colors.length + 1) * sourceTube.layerHeight;
+  const destTop = destTube.y + destTube.totalHeight - destTube.colors.length * sourceTube.layerHeight;
+  
+  const currentY = p.lerp(sourceTop, destTop, progress);
+  const currentX = p.lerp(sourceTube.x + sourceTube.width / 2, destTube.x + destTube.width / 2, progress);
+  
+  // Draw water stream
+  p.ellipse(currentX, currentY, 15, 30);
+  
+  p.pop();
+  
+  // Draw partial layers
+  if (progress < 0.5) {
+    // Leaving source
+    const removeAmount = gameState.animationWaterAmount * progress * 2;
+    sourceTube.drawPartialLayer(gameState.animationWaterColor, gameState.animationWaterAmount - removeAmount);
+  } else {
+    // Entering destination
+    const addAmount = gameState.animationWaterAmount * (progress - 0.5) * 2;
+    destTube.drawPartialLayer(gameState.animationWaterColor, addAmount);
+  }
+}
+
+export function renderPausedScreen(p) {
+  renderPlayingScreen(p);
+  
+  // Overlay
+  p.push();
+  p.fill(0, 0, 0, 150);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  p.pop();
+  
+  // Paused text
+  p.push();
+  p.fill(255);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(20);
+  p.text('PAUSED', CANVAS_WIDTH - 10, 10);
+  p.pop();
+  
+  // Instructions
+  p.push();
+  p.fill(255, 220, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(24);
+  p.text('PRESS ESC TO RESUME', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  p.pop();
+}
+
+export function renderLevelComplete(p) {
+  p.background(30, 40, 60);
+  
+  // Celebration effect
+  for (let i = 0; i < 20; i++) {
+    const x = (p.frameCount * 2 + i * 30) % CANVAS_WIDTH;
+    const y = p.random(50, 150);
+    const size = p.random(5, 15);
+    const colors = [[255, 220, 100], [100, 200, 255], [255, 100, 150]];
+    const col = colors[i % 3];
+    
+    p.push();
+    p.noStroke();
+    p.fill(...col, 200);
+    p.ellipse(x, y, size, size);
+    p.pop();
+  }
+  
+  // Level complete text
+  const levelConfig = LEVELS[gameState.currentLevel - 1];
+  const difficulty = levelConfig ? levelConfig.difficulty : '';
+  
+  p.push();
+  p.fill(255, 220, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(40);
+  p.text(`LEVEL ${gameState.currentLevel} COMPLETE!`, CANVAS_WIDTH / 2, 100);
+  p.textSize(24);
+  p.fill(200, 220, 255);
+  p.text(`(${difficulty})`, CANVAS_WIDTH / 2, 135);
+  p.pop();
+  
+  // Score breakdown
+  const levelScore = calculateLevelScore();
+  p.push();
+  p.fill(200, 220, 255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(20);
+  p.text(`Level Score: +${levelScore}`, CANVAS_WIDTH / 2, 200);
+  p.text(`Total Score: ${gameState.totalScore}`, CANVAS_WIDTH / 2, 230);
+  p.pop();
+  
+  // Continue prompt
+  p.push();
+  p.fill(255, 220, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(20);
+  const pulse = p.sin(p.frameCount * 0.1) * 20 + 235;
+  p.fill(pulse, 200, 100);
+  
+  if (gameState.currentLevel < LEVELS.length) {
+    p.text('PRESS SPACE FOR NEXT LEVEL', CANVAS_WIDTH / 2, 320);
+  } else {
+    p.text('PRESS SPACE TO FINISH', CANVAS_WIDTH / 2, 320);
+  }
+  p.pop();
+}
+
+export function renderGameOverWin(p) {
+  p.background(30, 40, 60);
+  
+  // Celebration particles
+  for (let i = 0; i < 50; i++) {
+    const x = (p.frameCount * 3 + i * 12) % CANVAS_WIDTH;
+    const y = p.random(0, CANVAS_HEIGHT);
+    const size = p.random(3, 10);
+    const colors = [[255, 220, 100], [100, 200, 255], [255, 100, 150], [100, 255, 150]];
+    const col = colors[i % 4];
+    
+    p.push();
+    p.noStroke();
+    p.fill(...col, 180);
+    p.ellipse(x, y, size, size);
+    p.pop();
+  }
+  
+  // Win text
+  p.push();
+  p.fill(255, 220, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text('CONGRATULATIONS!', CANVAS_WIDTH / 2, 100);
+  p.pop();
+  
+  p.push();
+  p.fill(200, 220, 255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(24);
+  p.text('You completed all 9 levels!', CANVAS_WIDTH / 2, 160);
+  p.text(`Final Score: ${gameState.totalScore}`, CANVAS_WIDTH / 2, 210);
+  p.pop();
+  
+  // Restart prompt
+  p.push();
+  p.fill(255, 220, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(20);
+  p.text('PRESS R TO RESTART', CANVAS_WIDTH / 2, 320);
+  p.pop();
+}
+
+export function renderGameOverLose(p) {
+  p.background(40, 20, 30);
+  
+  // Game over text
+  p.push();
+  p.fill(255, 100, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text('GAME OVER', CANVAS_WIDTH / 2, 120);
+  p.pop();
+  
+  const levelConfig = LEVELS[gameState.currentLevel - 1];
+  const difficulty = levelConfig ? levelConfig.difficulty : '';
+  
+  p.push();
+  p.fill(200, 150, 150);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(20);
+  p.text(`Level ${gameState.currentLevel} (${difficulty}) - Out of moves!`, CANVAS_WIDTH / 2, 180);
+  p.text(`Score: ${gameState.totalScore}`, CANVAS_WIDTH / 2, 220);
+  p.pop();
+  
+  // Restart prompt
+  p.push();
+  p.fill(255, 220, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(20);
+  p.text('PRESS R TO RESTART', CANVAS_WIDTH / 2, 320);
+  p.pop();
+}
+
+function calculateLevelScore() {
+  const baseScore = 100;
+  const moveBonus = Math.max(0, (gameState.levelMaxMoves - gameState.levelMovesMade) * 5);
+  const undoBonus = gameState.levelUndoCount === 0 ? 50 : 0;
+  
+  return baseScore + moveBonus + undoBonus;
+}
+</file>
+
+<file name="testController.js">
+// testController.js - Automated testing controllers
+
+import { gameState, GAME_PHASES } from './globals.js';
+import { handleKeyPressed } from './input.js';
+
+export function getTestAction(p) {
+  if (gameState.controlMode === 'HUMAN') {
+    return null;
+  }
+  
+  if (gameState.controlMode === 'TEST_1') {
+    return getTest1Action(p);
+  }
+  
+  if (gameState.controlMode === 'TEST_2') {
+    return getTest2Action(p);
+  }
+  
+  return null;
+}
+
+function getTest1Action(p) {
+  // Basic testing: Navigate and attempt pours to demonstrate gameplay
+  if (gameState.gamePhase === GAME_PHASES.START) {
+    if (p.frameCount % 60 === 30) {
+      return { keyCode: 13 }; // ENTER to start
+    }
+  }
+  
+  if (gameState.gamePhase === GAME_PHASES.PLAYING && !gameState.isAnimating) {
+    const cycle = Math.floor(p.frameCount / 40) % 10;
+    
+    // Demonstrate navigation
+    if (cycle === 0) {
+      return { keyCode: 39 }; // Arrow right
+    } else if (cycle === 1) {
+      return { keyCode: 39 }; // Arrow right
+    } else if (cycle === 2) {
+      return { keyCode: 37 }; // Arrow left
+    } else if (cycle === 3) {
+      return { keyCode: 32 }; // Space - select
+    } else if (cycle === 4) {
+      return { keyCode: 39 }; // Arrow right to destination
+    } else if (cycle === 5) {
+      return { keyCode: 32 }; // Space - pour
+    } else if (cycle === 7) {
+      return { keyCode: 90 }; // Z - undo to demonstrate
+    }
+  }
+  
+  if (gameState.gamePhase === GAME_PHASES.LEVEL_COMPLETE) {
+    if (p.frameCount % 60 === 0) {
+      return { keyCode: 32 }; // Space to continue
+    }
+  }
+  
+  if (gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE || 
+      gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN) {
+    if (p.frameCount % 120 === 0) {
+      return { keyCode: 82 }; // R to restart
+    }
+  }
+  
+  return null;
+}
+
+function getTest2Action(p) {
+  // Winning strategy for Level 1
+  if (gameState.gamePhase === GAME_PHASES.START) {
+    if (p.frameCount % 60 === 30) {
+      return { keyCode: 13 }; // ENTER to start
+    }
+  }
+  
+  if (gameState.gamePhase === GAME_PHASES.PLAYING && !gameState.isAnimating) {
+    // Wait a bit between moves for visibility
+    if (p.frameCount % 45 !== 0) {
+      return null;
+    }
+    
+    const moves = gameState.levelMovesMade;
+    
+    // Winning sequence for Level 1
+    // Initial state:
+    // Tube 0: [red, blue, green, red]
+    // Tube 1: [blue, green, red, blue]
+    // Tube 2: [green, red, blue, green]
+    // Tube 3: []
+    
+    if (moves === 0) {
+      // Select tube 0
+      gameState.highlightedTubeIndex = 0;
+      return { keyCode: 32 };
+    } else if (moves === 1) {
+      // Pour to tube 3 (empty) - moves red
+      gameState.highlightedTubeIndex = 3;
+      return { keyCode: 32 };
+    } else if (moves === 2) {
+      // Select tube 1
+      gameState.highlightedTubeIndex = 1;
+      return { keyCode: 32 };
+    } else if (moves === 3) {
+      // Pour to tube 0 - blue to blue
+      gameState.highlightedTubeIndex = 0;
+      return { keyCode: 32 };
+    } else if (moves === 4) {
+      // Select tube 2
+      gameState.highlightedTubeIndex = 2;
+      return { keyCode: 32 };
+    } else if (moves === 5) {
+      // Pour to tube 1 - green to green
+      gameState.highlightedTubeIndex = 1;
+      return { keyCode: 32 };
+    } else if (moves === 6) {
+      // Select tube 2
+      gameState.highlightedTubeIndex = 2;
+      return { keyCode: 32 };
+    } else if (moves === 7) {
+      // Pour to tube 3 - red to red
+      gameState.highlightedTubeIndex = 3;
+      return { keyCode: 32 };
+    } else if (moves === 8) {
+      // Select tube 2
+      gameState.highlightedTubeIndex = 2;
+      return { keyCode: 32 };
+    } else if (moves === 9) {
+      // Pour to tube 0 - blue to blue
+      gameState.highlightedTubeIndex = 0;
+      return { keyCode: 32 };
+    } else {
+      // Try to find any valid move
+      for (let i = 0; i < gameState.tubes.length; i++) {
+        if (gameState.tubes[i].isEmpty() || gameState.tubes[i].isSorted()) continue;
+        
+        for (let j = 0; j < gameState.tubes.length; j++) {
+          if (i !== j && gameState.tubes[i].canPourInto(gameState.tubes[j])) {
+            if (gameState.selectedTubeIndex === -1) {
+              gameState.highlightedTubeIndex = i;
+              return { keyCode: 32 };
+            } else {
+              gameState.highlightedTubeIndex = j;
+              return { keyCode: 32 };
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  if (gameState.gamePhase === GAME_PHASES.LEVEL_COMPLETE) {
+    if (p.frameCount % 60 === 0) {
+      return { keyCode: 32 }; // Space to continue
+    }
+  }
+  
+  if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN) {
+    if (p.frameCount % 120 === 0) {
+      return { keyCode: 82 }; // R to restart
+    }
+  }
+  
+  if (gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+    if (p.frameCount % 120 === 0) {
+      return { keyCode: 82 }; // R to restart
+    }
+  }
+  
+  return null;
+}
+
+export function applyTestAction(action, p) {
+  if (!action) return;
+  
+  // Simulate key press
+  p.keyCode = action.keyCode;
+  p.key = String.fromCharCode(action.keyCode);
+  
+  // Call the key handler directly
+  handleKeyPressed(p);
+}
+</file>
+
+<file name="gameLogic.js">
+// gameLogic.js - Core game logic
+
+import { gameState, GAME_PHASES } from './globals.js';
+import { checkLevelComplete, calculateLevelScore } from './levelManager.js';
+
+export function saveState() {
+  // Deep copy current state
+  const stateCopy = {
+    tubes: gameState.tubes.map(tube => ({
+      capacity: tube.capacity,
+      colors: [...tube.colors]
+    })),
+    moves: gameState.levelMovesMade
+  };
+  
+  gameState.previousStates.push(stateCopy);
+}
+
+export function undoLastMove(p) {
+  if (gameState.previousStates.length === 0) return;
+  
+  const prevState = gameState.previousStates.pop();
+  
+  // Restore tube states
+  for (let i = 0; i < gameState.tubes.length; i++) {
+    gameState.tubes[i].colors = [...prevState.tubes[i].colors];
+  }
+  
+  gameState.levelMovesMade = prevState.moves;
+  gameState.levelUndoCount++;
+  
+  p.logs.game_info.push({
+    data: { action: 'undo', moves: gameState.levelMovesMade },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function updateAnimation(p) {
+  if (!gameState.isAnimating) return;
+  
+  gameState.animationProgress++;
+  
+  if (gameState.animationProgress >= gameState.animationDuration) {
+    // Complete the pour
+    const sourceTube = gameState.tubes[gameState.animationSourceIndex];
+    const destTube = gameState.tubes[gameState.animationDestIndex];
+    
+    // Remove from source
+    for (let i = 0; i < gameState.animationWaterAmount; i++) {
+      sourceTube.colors.pop();
+    }
+    
+    // Add to destination
+    for (let i = 0; i < gameState.animationWaterAmount; i++) {
+      destTube.colors.push(gameState.animationWaterColor);
+    }
+    
+    gameState.levelMovesMade++;
+    gameState.isAnimating = false;
+    
+    // Check win/lose conditions
+    if (checkLevelComplete()) {
+      const levelScore = calculateLevelScore();
+      gameState.totalScore += levelScore;
+      gameState.gamePhase = GAME_PHASES.LEVEL_COMPLETE;
+      
+      p.logs.game_info.push({
+        data: { 
+          phase: gameState.gamePhase, 
+          level: gameState.currentLevel,
+          score: levelScore,
+          totalScore: gameState.totalScore
+        },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    } else if (gameState.levelMovesMade >= gameState.levelMaxMoves) {
+      gameState.gamePhase = GAME_PHASES.GAME_OVER_LOSE;
+      
+      p.logs.game_info.push({
+        data: { 
+          phase: gameState.gamePhase,
+          level: gameState.currentLevel
+        },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+}
+</file>
+
+<file name="input.js">
+// input.js - Input handling
+
+import { gameState, GAME_PHASES, LEVELS } from './globals.js';
+import { saveState, undoLastMove } from './gameLogic.js';
+import { loadLevel, advanceToNextLevel } from './levelManager.js';
+
+export function handleKeyPressed(p) {
+  const key = p.key;
+  const keyCode = p.keyCode;
+  
+  // Log input
+  p.logs.inputs.push({
+    input_type: 'keyPressed',
+    data: { key, keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  
+  // ENTER - Start game
+  if (keyCode === 13 && gameState.gamePhase === GAME_PHASES.START) {
+    loadLevel(1, p);
+    gameState.gamePhase = GAME_PHASES.PLAYING;
+    gameState.totalScore = 0;
+    
+    p.logs.game_info.push({
+      data: { phase: gameState.gamePhase, level: gameState.currentLevel },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    return;
+  }
+  
+  // R - Restart to start screen
+  if (keyCode === 82) {
+    if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || 
+        gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+      gameState.gamePhase = GAME_PHASES.START;
+      gameState.totalScore = 0;
+      gameState.currentLevel = 1;
+      
+      p.logs.game_info.push({
+        data: { phase: gameState.gamePhase },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+    return;
+  }
+  
+  // ESC - Pause/Unpause
+  if (keyCode === 27) {
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      gameState.gamePhase = GAME_PHASES.PAUSED;
+      p.logs.game_info.push({
+        data: { phase: gameState.gamePhase },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+      gameState.gamePhase = GAME_PHASES.PLAYING;
+      p.logs.game_info.push({
+        data: { phase: gameState.gamePhase },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+    return;
+  }
+  
+  // SPACE - Advance to next level (from LEVEL_COMPLETE phase)
+  if (keyCode === 32 && gameState.gamePhase === GAME_PHASES.LEVEL_COMPLETE) {
+    if (gameState.currentLevel < LEVELS.length) {
+      advanceToNextLevel(p);
+    } else {
+      gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
+    }
+    
+    p.logs.game_info.push({
+      data: { 
+        phase: gameState.gamePhase,
+        level: gameState.currentLevel
+      },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    return;
+  }
+  
+  // Game controls only work during PLAYING phase
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) return;
+  if (gameState.isAnimating) return;
+  
+  // Arrow Left - Navigate left
+  if (keyCode === 37) {
+    gameState.highlightedTubeIndex = (gameState.highlightedTubeIndex - 1 + gameState.tubes.length) % gameState.tubes.length;
+    return;
+  }
+  
+  // Arrow Right - Navigate right
+  if (keyCode === 39) {
+    gameState.highlightedTubeIndex = (gameState.highlightedTubeIndex + 1) % gameState.tubes.length;
+    return;
+  }
+  
+  // Space - Select/Pour
+  if (keyCode === 32) {
+    handleSpacePress(p);
+    return;
+  }
+  
+  // Z - Undo
+  if (keyCode === 90 || key === 'z' || key === 'Z') {
+    undoLastMove(p);
+    return;
+  }
+}
+
+function handleSpacePress(p) {
+  if (gameState.selectedTubeIndex === -1) {
+    // Select source tube
+    const tube = gameState.tubes[gameState.highlightedTubeIndex];
+    if (!tube.isEmpty()) {
+      gameState.selectedTubeIndex = gameState.highlightedTubeIndex;
+    }
+  } else {
+    // Attempt pour
+    const sourceTube = gameState.tubes[gameState.selectedTubeIndex];
+    const destTube = gameState.tubes[gameState.highlightedTubeIndex];
+    
+    if (gameState.selectedTubeIndex !== gameState.highlightedTubeIndex) {
+      if (sourceTube.canPourInto(destTube)) {
+        saveState();
+        startPourAnimation(gameState.selectedTubeIndex, gameState.highlightedTubeIndex, p);
+      }
+    }
+    
+    gameState.selectedTubeIndex = -1;
+  }
+}
+
+function startPourAnimation(sourceIndex, destIndex, p) {
+  const sourceTube = gameState.tubes[sourceIndex];
+  const layer = sourceTube.getTopContiguousLayer();
+  
+  gameState.isAnimating = true;
+  gameState.animationProgress = 0;
+  gameState.animationSourceIndex = sourceIndex;
+  gameState.animationDestIndex = destIndex;
+  gameState.animationWaterColor = layer.color;
+  gameState.animationWaterAmount = layer.amount;
+}
+
+export { handleSpacePress, startPourAnimation };
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

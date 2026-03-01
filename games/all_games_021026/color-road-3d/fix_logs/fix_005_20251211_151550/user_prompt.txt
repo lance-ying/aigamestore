@@ -1,0 +1,1429 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you make it so that the curved roads don't have gaps, during curved sections, there still seeesm to have some gaps 
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Color Road 3D</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #111; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; color: #fff; font-family: sans-serif; }
+      
+      /* Container styles are handled by JS to ensure iframe compat, but we style the wrapper here */
+      #wrapper { position: relative; width: 600px; }
+      
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; transition: background 0.2s; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #007bff; }
+      
+      h1 { margin: 0 0 10px 0; font-size: 24px; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }
+      p { color: #ccc; font-size: 14px; margin: 5px 0; text-align: center; max-width: 600px; }
+    </style>
+  </head>
+  <body>
+    <div id="wrapper">
+        <div style="text-align: center; margin-bottom: 20px;">
+          <h1 id="gameTitle">Color Road 3D</h1>
+          <div class="control-buttons">
+            <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN', this)">Human Mode</button>
+            <button id="test1ModeBtn" class="control-button" onclick="setMode('TEST_1', this)">TEST: Movement</button>
+            <button id="test2ModeBtn" class="control-button" onclick="setMode('TEST_2', this)">TEST: Collection</button>
+          </div>
+          <p id="gameDescription">Roll to the ball which has the same color! Avoid different colors.</p>
+          <p id="gameControls">Controls: Arrow Keys to Move/Speed • ENTER to Start • ESC to Pause</p>
+        </div>
+        
+        <!-- Game container will be appended here by game.js if not found, but we let game.js create it to be safe -->
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/seedrandom/3.0.5/seedrandom.min.js"></script>
+    
+    <script>
+        function setMode(mode, btn) {
+            if(window.setControlMode) window.setControlMode(mode);
+            
+            // UI update
+            document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            
+            // Update focus so keyboard works immediately
+            document.body.focus();
+        }
+    </script>
+    
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+/**
+ * Global Game State Object
+ * Holds the entire state of the application
+ */
+export const gameState = {
+    // Core Game Status
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2, etc.
+    
+    // Score & Stats
+    score: 0,
+    highScore: 0,
+    distance: 0,
+    speed: 0,
+    baseSpeed: 40.0, // Increased from 15.0
+    speedMultiplier: 1.0,
+
+    // Time
+    frameCount: 0,
+    deltaTime: 0,
+    lastTime: 0,
+    
+    // Three.js Core
+    scene: null,
+    camera: null,
+    renderer: null,
+    gameContainer: null,
+    
+    // Entities
+    player: null,
+    entities: [], // Generic list for updates
+    roadSegments: [],
+    obstacles: [], // Balls to collect/avoid
+    ramps: [],
+    particles: [],
+    speedEffect: null,
+    
+    // Environment
+    lights: [],
+    
+    // Systems
+    cameraMode: "chase", // chase, orbit
+    cameraOffset: new THREE.Vector3(0, 8, 12),
+    gravity: -50.0, // Increased gravity for snappier jumps
+    
+    // Level Generation State
+    spawnZ: 0, // Z position to spawn next segment
+    segmentLength: 4, // Reduced from 20 for smoother, connected road
+    lastRampZ: 0,
+    
+    // Automated Testing State
+    testState: {
+        timer: 0,
+        stage: 0,
+        initialScore: 0
+    }
+};
+
+// Global Constants
+export const COLORS = {
+    RED: 0xFF3333,
+    GREEN: 0x33FF33,
+    BLUE: 0x3333FF,
+    YELLOW: 0xFFFF33,
+    WHITE: 0xFFFFFF,
+    ROAD: 0x222222,
+    ROAD_STRIPE: 0x444444,
+    BACKGROUND: 0x87CEEB,
+    SPEEDLINE: 0xFFFFFF
+};
+
+export const COLOR_KEYS = ['RED', 'GREEN', 'BLUE'];
+
+export const GAME_CONSTANTS = {
+    LANE_WIDTH: 3.5,
+    PLAYER_RADIUS: 0.8,
+    BALL_RADIUS: 0.8,
+    RAMP_LENGTH: 5,
+    RAMP_HEIGHT: 1.5,
+    JUMP_FORCE: 15.0, // Reduced from 25.0 to prevent overshooting balls
+    VIEW_DISTANCE: 160 // Increased slightly for higher speed
+};
+
+// Logging System
+export function initLogs() {
+    window.logs = {
+        game_info: [],
+        player_info: [],
+        inputs: []
+    };
+}
+
+export function logGameInfo(status, data = {}) {
+    if (!window.logs) initLogs();
+    window.logs.game_info.push({
+        game_status: status,
+        data: data,
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+}
+
+export function logPlayerInfo() {
+    if (!window.logs) initLogs();
+    if (!gameState.player) return;
+    
+    // Project 3D position to 2D screen space for logging
+    const p = gameState.player.mesh.position.clone();
+    p.project(gameState.camera);
+    
+    const x = (p.x * .5 + .5) * 600;
+    const y = (-(p.y * .5) + .5) * 400;
+
+    window.logs.player_info.push({
+        screen_x: x,
+        screen_y: y,
+        game_x: gameState.player.mesh.position.x,
+        game_y: gameState.player.mesh.position.y,
+        game_z: gameState.player.mesh.position.z,
+        color: gameState.player.colorName,
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+}
+
+export function logInput(type, key, keyCode) {
+    if (!window.logs) initLogs();
+    window.logs.inputs.push({
+        input_type: type,
+        data: { key, keyCode },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+}
+
+// Global Accessor
+export function getGameState() {
+    return gameState;
+}
+window.getGameState = getGameState;
+</file>
+
+<file name="game.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, GAME_CONSTANTS, initLogs, logGameInfo, logPlayerInfo, logInput, COLORS } from './globals.js';
+import { seedRandom } from './utils.js';
+import { Player, SpeedEffect } from './entities.js';
+import { setupCamera, updateCamera } from './camera.js';
+import { updatePhysics } from './physics.js';
+import { setupUI, renderUI } from './ui.js';
+import { initLevel, updateLevelGeneration } from './level_generator.js';
+
+// Setup Main Function
+function init() {
+    // 1. Setup Logging
+    initLogs();
+    
+    // 2. Setup Container
+    const container = document.createElement('div');
+    container.id = 'game-container';
+    container.style.width = '600px';
+    container.style.height = '400px';
+    container.style.position = 'relative';
+    container.style.overflow = 'hidden';
+    document.body.appendChild(container);
+    gameState.gameContainer = container;
+    
+    // 3. Setup Three.js Scene
+    gameState.scene = new THREE.Scene();
+    gameState.scene.background = new THREE.Color(COLORS.BACKGROUND);
+    gameState.scene.fog = new THREE.Fog(COLORS.BACKGROUND, 30, 90);
+    
+    // 4. Setup Renderer
+    gameState.renderer = new THREE.WebGLRenderer({ antialias: true });
+    gameState.renderer.setSize(600, 400);
+    gameState.renderer.shadowMap.enabled = true;
+    gameState.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    container.appendChild(gameState.renderer.domElement);
+    
+    // 5. Setup Camera
+    setupCamera();
+    
+    // 6. Setup Lighting
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    gameState.scene.add(ambientLight);
+    
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(10, 20, 10);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 1024;
+    dirLight.shadow.mapSize.height = 1024;
+    dirLight.shadow.camera.near = 0.5;
+    dirLight.shadow.camera.far = 50;
+    dirLight.shadow.camera.left = -20;
+    dirLight.shadow.camera.right = 20;
+    dirLight.shadow.camera.top = 20;
+    dirLight.shadow.camera.bottom = -20;
+    gameState.scene.add(dirLight);
+    
+    // 7. Setup UI
+    setupUI();
+    
+    // 8. Initialize Random
+    seedRandom('42');
+    
+    // 9. Input Listeners
+    setupInputs();
+    
+    // 10. Start Loop
+    gameState.lastTime = performance.now();
+    gameState.gamePhase = "START";
+    
+    // Init empty world for background
+    initLevel();
+    
+    requestAnimationFrame(gameLoop);
+    
+    logGameInfo("GAME_INIT");
+}
+
+function startGame() {
+    resetGame();
+    gameState.gamePhase = "PLAYING";
+    logGameInfo("GAME_START");
+}
+
+function resetGame() {
+    // Clear entities
+    if(gameState.player) {
+        gameState.player.dispose();
+        gameState.player = null;
+    }
+    if(gameState.speedEffect) {
+        gameState.speedEffect.dispose();
+        gameState.speedEffect = null;
+    }
+    
+    gameState.obstacles.forEach(e => e.dispose());
+    gameState.obstacles = [];
+    gameState.ramps.forEach(e => e.dispose());
+    gameState.ramps = [];
+    gameState.particles.forEach(e => e.dispose());
+    gameState.particles = [];
+    
+    // Reset World
+    gameState.roadSegments.forEach(e => e.dispose());
+    initLevel();
+    
+    // Reset Stats
+    gameState.score = 0;
+    gameState.speed = gameState.baseSpeed;
+    gameState.frameCount = 0;
+    
+    // Create Player
+    gameState.player = new Player();
+    
+    // Create Speed Effect
+    gameState.speedEffect = new SpeedEffect();
+    
+    // Reset Camera
+    updateCamera(0);
+}
+
+function setupInputs() {
+    window.addEventListener('keydown', (e) => {
+        logInput('keydown', e.key, e.keyCode);
+        
+        if (e.code === 'Enter') {
+            if (gameState.gamePhase === "START") startGame();
+        }
+        else if (e.code === 'Escape') {
+            if (gameState.gamePhase === "PLAYING") gameState.gamePhase = "PAUSED";
+            else if (gameState.gamePhase === "PAUSED") gameState.gamePhase = "PLAYING";
+        }
+        else if (e.code === 'KeyR') {
+            if (gameState.gamePhase === "GAME_OVER_LOSE" || gameState.gamePhase === "GAME_OVER_WIN") {
+                gameState.gamePhase = "START";
+            }
+        }
+        
+        // Gameplay Inputs
+        if (gameState.gamePhase === "PLAYING" && gameState.player) {
+            handleGameInput(e.code, true);
+        }
+    });
+    
+    window.addEventListener('keyup', (e) => {
+        if (gameState.gamePhase === "PLAYING" && gameState.player) {
+            handleGameInput(e.code, false);
+        }
+    });
+    
+    // Handle Window Control Modes (for test harness)
+    window.setControlMode = (mode) => {
+        gameState.controlMode = mode;
+        console.log("Control Mode set to:", mode);
+        // Reset state for tests
+        if (mode.startsWith("TEST")) {
+             gameState.gamePhase = "START";
+             startGame(); // Auto start for tests
+             gameState.testState.timer = 0;
+             gameState.testState.stage = 0;
+        }
+    };
+}
+
+function handleGameInput(code, isPressed) {
+    if (!gameState.player) return;
+    
+    const laneWidth = GAME_CONSTANTS.LANE_WIDTH;
+    
+    if (isPressed) {
+        if (code === 'ArrowLeft' || code === 'KeyA') {
+            // Move left lane if possible
+            if (gameState.player.targetX > -laneWidth + 0.1) {
+                gameState.player.targetX -= laneWidth;
+            }
+        }
+        if (code === 'ArrowRight' || code === 'KeyD') {
+            if (gameState.player.targetX < laneWidth - 0.1) {
+                gameState.player.targetX += laneWidth;
+            }
+        }
+        if (code === 'ArrowUp' || code === 'KeyW') {
+            gameState.speedMultiplier = 1.5;
+        }
+        if (code === 'ArrowDown' || code === 'KeyS') {
+            gameState.speedMultiplier = 0.5;
+        }
+    } else {
+        if (code === 'ArrowUp' || code === 'KeyW' || code === 'ArrowDown' || code === 'KeyS') {
+            gameState.speedMultiplier = 1.0;
+        }
+    }
+    
+    // Clamp target
+    gameState.player.targetX = Math.round(gameState.player.targetX / laneWidth) * laneWidth;
+}
+
+function gameLoop(time) {
+    requestAnimationFrame(gameLoop);
+    
+    const dt = Math.min((time - gameState.lastTime) / 1000, 0.1); // Cap dt
+    gameState.lastTime = time;
+    gameState.deltaTime = dt;
+    gameState.frameCount++;
+    
+    if (gameState.gamePhase === "PLAYING") {
+        updateGame(dt);
+        // Apply automated test logic
+        if (gameState.controlMode !== "HUMAN") {
+            runAutomatedTests(dt);
+        }
+    }
+    
+    if (gameState.player) {
+        logPlayerInfo();
+    }
+    
+    gameState.renderer.render(gameState.scene, gameState.camera);
+    renderUI();
+}
+
+function updateGame(dt) {
+    // Level Gen
+    updateLevelGeneration();
+    
+    // Entities
+    if (gameState.player) gameState.player.update(dt);
+    if (gameState.speedEffect) gameState.speedEffect.update(dt);
+    
+    gameState.obstacles.forEach(e => e.update(dt));
+    gameState.particles.forEach(e => e.update(dt));
+    
+    // Physics
+    updatePhysics(dt);
+    
+    // Camera
+    updateCamera(dt);
+}
+
+// Automated Test Logic
+function runAutomatedTests(dt) {
+    gameState.testState.timer += dt;
+    const t = gameState.testState.timer;
+    
+    if (gameState.controlMode === "TEST_1") {
+        // Test basic movement
+        if (t > 0.5 && gameState.testState.stage === 0) {
+            handleGameInput('ArrowLeft', true);
+            gameState.testState.stage++;
+        }
+        if (t > 1.0 && gameState.testState.stage === 1) {
+            handleGameInput('ArrowRight', true);
+            handleGameInput('ArrowRight', true); // Go to right lane
+            gameState.testState.stage++;
+        }
+    }
+    else if (gameState.controlMode === "TEST_2") {
+        // Test winning/collecting
+        // Force spawn a matching ball directly in front
+        if (gameState.testState.stage === 0) {
+            const z = gameState.player.mesh.position.z - 20;
+            // Need to account for curve in test
+            const roadX = import('./utils.js').then(m => m.getRoadCurve(z)).catch(() => 0); // Async issue in sync loop, but tests are rough
+            // Simplification: just spawn at player's current X for test
+            const ball = new import('./entities.js').BallObstacle(gameState.player.mesh.position.x, z, gameState.player.colorName);
+            gameState.obstacles.push(ball);
+            gameState.testState.initialScore = gameState.score;
+            gameState.testState.stage++;
+        }
+        // Verify score increase handled in physics logic implicitly
+    }
+}
+
+// Start
+init();
+</file>
+
+<file name="ui.js">
+import { gameState } from './globals.js';
+
+let uiCanvas, uiContext;
+
+export function setupUI() {
+    uiCanvas = document.createElement('canvas');
+    uiCanvas.width = 600;
+    uiCanvas.height = 400;
+    uiCanvas.style.position = 'absolute';
+    uiCanvas.style.top = '0';
+    uiCanvas.style.left = '0';
+    uiCanvas.style.pointerEvents = 'none';
+    uiCanvas.style.zIndex = '100';
+    
+    // Append to container
+    if (gameState.gameContainer) {
+        gameState.gameContainer.appendChild(uiCanvas);
+    } else {
+        document.body.appendChild(uiCanvas); // Fallback
+    }
+    
+    uiContext = uiCanvas.getContext('2d');
+}
+
+export function renderUI() {
+    if (!uiContext) return;
+    
+    // Clear
+    uiContext.clearRect(0, 0, 600, 400);
+    
+    const w = 600;
+    const h = 400;
+    
+    if (gameState.gamePhase === "START") {
+        drawOverlay(0.7);
+        drawText(w/2, h/2 - 40, "COLOR ROAD", 48, "white", "center", "bold");
+        drawText(w/2, h/2 + 20, "PRESS ENTER TO START", 24, "white", "center");
+        drawText(w/2, h/2 + 60, "Controls: Arrows / WASD", 16, "#cccccc", "center");
+    }
+    else if (gameState.gamePhase === "PLAYING") {
+        drawHUD();
+    }
+    else if (gameState.gamePhase === "PAUSED") {
+        drawHUD(); // Keep HUD visible
+        drawOverlay(0.5);
+        drawText(w/2, h/2, "PAUSED", 40, "white", "center", "bold");
+        drawText(w/2, h/2 + 40, "Press ESC to Resume", 20, "white", "center");
+    }
+    else if (gameState.gamePhase === "GAME_OVER_LOSE") {
+        drawHUD();
+        drawOverlay(0.8);
+        drawText(w/2, h/2 - 40, "GAME OVER", 48, "#ff3333", "center", "bold");
+        drawText(w/2, h/2 + 20, `Final Score: ${gameState.score}`, 32, "white", "center");
+        drawText(w/2, h/2 + 70, "Press R to Restart", 20, "white", "center");
+    }
+}
+
+function drawHUD() {
+    drawText(20, 40, `Score: ${gameState.score}`, 24, "white", "left", "bold");
+    
+    // Speed indicator
+    const speedPct = Math.min(100, (gameState.speed / 50) * 100);
+    uiContext.fillStyle = "rgba(0,0,0,0.5)";
+    uiContext.fillRect(20, 60, 100, 10);
+    uiContext.fillStyle = `hsl(${120 - speedPct}, 100%, 50%)`;
+    uiContext.fillRect(20, 60, speedPct, 10);
+}
+
+function drawOverlay(alpha) {
+    uiContext.fillStyle = `rgba(0,0,0,${alpha})`;
+    uiContext.fillRect(0, 0, 600, 400);
+}
+
+function drawText(x, y, text, size, color, align, weight = "normal") {
+    uiContext.font = `${weight} ${size}px Arial`;
+    uiContext.fillStyle = color;
+    uiContext.textAlign = align;
+    uiContext.fillText(text, x, y);
+}
+</file>
+
+<file name="level_generator.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, COLORS, GAME_CONSTANTS, COLOR_KEYS } from './globals.js';
+import { randomChoice, randomRange, randomInt, getRoadCurve, getRoadDerivative } from './utils.js';
+import { BallObstacle, Ramp, RoadSegment } from './entities.js';
+
+let lastObjectSpawnZ = 0;
+let expectedPlayerColor = 'RED';
+
+export function initLevel() {
+    gameState.spawnZ = 0;
+    lastObjectSpawnZ = 0;
+    expectedPlayerColor = 'RED';
+    
+    // Sync with player if exists, though usually player is created after level init
+    if (gameState.player) {
+        expectedPlayerColor = gameState.player.colorName;
+    }
+    
+    gameState.roadSegments = [];
+    
+    // Create initial safe road
+    // Since segments are shorter now, we spawn more to cover the same distance
+    for(let i=0; i<40; i++) {
+        spawnSegment(false);
+    }
+}
+
+export function updateLevelGeneration() {
+    // Keep spawning road ahead of player
+    // Player moves in -Z direction
+    const playerZ = gameState.player ? gameState.player.mesh.position.z : 0;
+    const viewDist = GAME_CONSTANTS.VIEW_DISTANCE;
+    
+    // While spawn point is within view distance
+    while (gameState.spawnZ > playerZ - viewDist) {
+        // Determine if we should spawn objects
+        // Increased spacing from 20 to 30 to make the game fairer at high speeds
+        let spawnObj = false;
+        if (gameState.spawnZ <= lastObjectSpawnZ - 30) {
+            spawnObj = true;
+            lastObjectSpawnZ = gameState.spawnZ;
+        }
+        
+        spawnSegment(spawnObj);
+    }
+    
+    // Cleanup old segments
+    for (let i = gameState.roadSegments.length - 1; i >= 0; i--) {
+        const seg = gameState.roadSegments[i];
+        if (seg.mesh.position.z > playerZ + 20) { // If behind player
+            seg.dispose();
+            gameState.roadSegments.splice(i, 1);
+        }
+    }
+}
+
+function spawnSegment(spawnObjects) {
+    const length = gameState.segmentLength;
+    const z = gameState.spawnZ; // This 'z' is the front edge of the new segment
+    
+    // RoadSegment constructor adds 0.2 to length for drawing, so actual drawn length is length + 0.2
+    const actualDrawLength = length + 0.2; 
+    // Calculate curve position and rotation for the center of the *drawn* segment
+    const segmentCenterZ = z - actualDrawLength / 2;
+    
+    const x = getRoadCurve(segmentCenterZ);
+    const rot = Math.atan(getRoadDerivative(segmentCenterZ));
+    
+    const segment = new RoadSegment(z, length, x, rot); // Pass 'z' as the front edge
+    gameState.roadSegments.push(segment);
+    
+    if (spawnObjects) {
+        const type = randomChoice(['BALLS', 'BALLS', 'RAMP', 'EMPTY']);
+        
+        // Don't spawn ramp too close to last one
+        if (type === 'RAMP' && Math.abs(z - gameState.lastRampZ) < 50) {
+            spawnBalls(z); // Fallback
+        } else if (type === 'RAMP') {
+            spawnRamp(z);
+        } else if (type === 'BALLS') {
+            spawnBalls(z);
+        }
+    }
+    
+    gameState.spawnZ -= length;
+}
+
+function spawnBalls(z) {
+    const laneWidth = GAME_CONSTANTS.LANE_WIDTH;
+    const lanes = [-laneWidth, 0, laneWidth];
+    
+    // Determine pattern
+    const pattern = Math.random();
+    
+    // Use expected color instead of current player color to ensure solvability
+    const playerColor = expectedPlayerColor;
+    
+    // Calculate road offset for this Z
+    const roadX = getRoadCurve(z);
+    
+    if (pattern < 0.7) {
+        // Standard: One matching, others random wrong
+        const correctLane = randomChoice(lanes);
+        
+        lanes.forEach(laneOffset => {
+            let color;
+            if (laneOffset === correctLane) {
+                color = playerColor;
+            } else {
+                // Pick a wrong color
+                const wrongColors = COLOR_KEYS.filter(c => c !== playerColor);
+                color = randomChoice(wrongColors);
+            }
+            const ball = new BallObstacle(roadX + laneOffset, z, color);
+            gameState.obstacles.push(ball);
+        });
+    } else {
+        // Line of matching balls
+        const laneOffset = randomChoice(lanes);
+        // Spawn 3 balls in a line
+        for(let i=0; i<3; i++) {
+            const ballZ = z - i*3;
+            const ballX = getRoadCurve(ballZ) + laneOffset;
+            const ball = new BallObstacle(ballX, ballZ, playerColor);
+            gameState.obstacles.push(ball);
+        }
+    }
+}
+
+function spawnRamp(z) {
+    const laneWidth = GAME_CONSTANTS.LANE_WIDTH;
+    const lanes = [-laneWidth, 0, laneWidth];
+    const laneOffset = randomChoice(lanes);
+    
+    // Pick a new color for the ramp based on expected color
+    const playerColor = expectedPlayerColor;
+    const newColors = COLOR_KEYS.filter(c => c !== playerColor);
+    const nextColor = randomChoice(newColors);
+    
+    // Update expected color for future generation
+    expectedPlayerColor = nextColor;
+    
+    const roadX = getRoadCurve(z);
+    
+    const ramp = new Ramp(roadX + laneOffset, z, nextColor);
+    gameState.ramps.push(ramp);
+    gameState.lastRampZ = z;
+    
+    // Spawn balls matching NEW color after the ramp
+    // Push balls further back so player has time to land from jump
+    const trailLength = 5;
+    const trailSpacing = 4;
+    const jumpDistance = 40;
+    
+    for(let i=1; i<=trailLength; i++) {
+        const ballZ = z - jumpDistance - i*trailSpacing; // Increased distance from 20 to 40
+        const ballX = getRoadCurve(ballZ) + laneOffset;
+        const ball = new BallObstacle(ballX, ballZ, nextColor);
+        gameState.obstacles.push(ball);
+    }
+    
+    // Update lastObjectSpawnZ to cover the trail so we don't spawn overlapping objects
+    // The last ball is at z - jumpDistance - trailLength*trailSpacing
+    const lastBallZ = z - jumpDistance - (trailLength * trailSpacing);
+    lastObjectSpawnZ = lastBallZ;
+}
+</file>
+
+<file name="entities.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, COLORS, GAME_CONSTANTS, COLOR_KEYS } from './globals.js';
+import { createBallTexture, getColorValue, getRoadCurve, getRoadDerivative } from './utils.js';
+
+// Shared geometries and materials to optimize performance
+const ballGeometry = new THREE.SphereGeometry(GAME_CONSTANTS.BALL_RADIUS, 32, 32);
+const ballTexture = createBallTexture();
+
+/**
+ * Base Entity Class
+ */
+class Entity {
+    constructor() {
+        this.mesh = null;
+        this.active = true;
+    }
+    
+    update(dt) {}
+    
+    dispose() {
+        if (this.mesh) {
+            gameState.scene.remove(this.mesh);
+            if(this.mesh.geometry) this.mesh.geometry.dispose();
+            // Don't dispose shared materials/textures aggressively
+        }
+        this.active = false;
+    }
+}
+
+/**
+ * Player Class
+ */
+export class Player extends Entity {
+    constructor() {
+        super();
+        this.colorName = 'RED'; // Start color
+        
+        const material = new THREE.MeshStandardMaterial({
+            color: COLORS[this.colorName],
+            roughness: 0.1,
+            metalness: 0.2,
+            map: ballTexture
+        });
+        
+        this.mesh = new THREE.Mesh(ballGeometry, material);
+        this.mesh.position.set(0, GAME_CONSTANTS.BALL_RADIUS, 0);
+        this.mesh.castShadow = true;
+        this.mesh.receiveShadow = true;
+        gameState.scene.add(this.mesh);
+        
+        // Physics
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        this.targetX = 0; // Relative lane position (offset from road center)
+        this.currentLaneX = 0; // Smoothed relative position
+        this.isJumping = false;
+        this.jumpVelocity = 0;
+        this.groundY = GAME_CONSTANTS.BALL_RADIUS;
+    }
+    
+    update(dt) {
+        // Lateral Movement (Smoothing) - Lerp the lane offset, not world X
+        const lerpFactor = 10.0 * dt;
+        this.currentLaneX += (this.targetX - this.currentLaneX) * lerpFactor;
+        
+        // Forward Movement
+        this.mesh.position.z -= gameState.speed * dt;
+        
+        // Calculate World X based on Curve + Lane Offset
+        const roadCenterX = getRoadCurve(this.mesh.position.z);
+        this.mesh.position.x = roadCenterX + this.currentLaneX;
+        
+        // Vertical Physics (Gravity)
+        if (this.isJumping || this.mesh.position.y > this.groundY) {
+            this.jumpVelocity += gameState.gravity * dt;
+            this.mesh.position.y += this.jumpVelocity * dt;
+            
+            // Ground collision
+            if (this.mesh.position.y <= this.groundY) {
+                this.mesh.position.y = this.groundY;
+                this.jumpVelocity = 0;
+                this.isJumping = false;
+            }
+        }
+        
+        // Rotation (Rolling effect)
+        // Circumference = 2 * PI * r. Rotation = distance / r
+        const rotationSpeed = gameState.speed * dt / GAME_CONSTANTS.PLAYER_RADIUS;
+        this.mesh.rotateX(-rotationSpeed);
+        
+        // Tilt based on lateral movement
+        const tilt = (this.targetX - this.currentLaneX) * 0.5;
+        // Also align with road bank (derivative)
+        const roadBank = -getRoadDerivative(this.mesh.position.z) * 0.5;
+        this.mesh.rotation.z = -tilt + roadBank;
+        
+        // Align mesh Y rotation with road curve
+        this.mesh.rotation.y = Math.atan(getRoadDerivative(this.mesh.position.z));
+    }
+    
+    setColor(colorName) {
+        this.colorName = colorName;
+        this.mesh.material.color.setHex(COLORS[colorName]);
+        // Emit particles or effect here
+    }
+    
+    jump(force) {
+        this.isJumping = true;
+        this.jumpVelocity = force;
+    }
+}
+
+/**
+ * Ball Obstacle / Collectible
+ */
+export class BallObstacle extends Entity {
+    constructor(x, z, colorName) {
+        super();
+        this.colorName = colorName;
+        
+        const material = new THREE.MeshStandardMaterial({
+            color: COLORS[colorName],
+            roughness: 0.4,
+            metalness: 0.1,
+            map: ballTexture
+        });
+        
+        this.mesh = new THREE.Mesh(ballGeometry, material);
+        this.mesh.position.set(x, GAME_CONSTANTS.BALL_RADIUS, z);
+        this.mesh.castShadow = true;
+        this.mesh.receiveShadow = true;
+        
+        gameState.scene.add(this.mesh);
+    }
+    
+    update(dt) {
+        // Simple idle animation
+        // this.mesh.scale.setScalar(1.0 + Math.sin(gameState.frameCount * 0.1) * 0.05);
+    }
+}
+
+/**
+ * Color Ramp
+ */
+export class Ramp extends Entity {
+    constructor(x, z, colorName) {
+        super();
+        this.colorName = colorName;
+        
+        const width = GAME_CONSTANTS.LANE_WIDTH * 0.9;
+        const length = GAME_CONSTANTS.RAMP_LENGTH;
+        const height = GAME_CONSTANTS.RAMP_HEIGHT;
+        
+        // Custom geometry for a ramp wedge
+        const geometry = new THREE.BufferGeometry();
+        const vertices = new Float32Array([
+            // Bottom
+            -width/2, 0, 0,
+             width/2, 0, 0,
+            -width/2, 0, length,
+            
+             width/2, 0, 0,
+             width/2, 0, length,
+            -width/2, 0, length,
+            
+            // Slope (Top)
+            -width/2, 0, 0,
+            -width/2, height, length,
+             width/2, 0, 0,
+             
+             width/2, 0, 0,
+            -width/2, height, length,
+             width/2, height, length
+        ]);
+        
+        geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+        geometry.computeVertexNormals();
+
+        const material = new THREE.MeshStandardMaterial({
+            color: COLORS[colorName],
+            emissive: COLORS[colorName],
+            emissiveIntensity: 0.2,
+            transparent: true,
+            opacity: 0.9
+        });
+        
+        this.mesh = new THREE.Mesh(geometry, material);
+        
+        // Orient ramp
+        this.mesh.rotation.y = Math.PI; // Face towards positive Z
+        this.mesh.position.set(x, 0, z);
+        
+        // Align with road rotation
+        const rot = Math.atan(getRoadDerivative(z));
+        this.mesh.rotation.y += rot;
+        
+        this.mesh.castShadow = true;
+        this.mesh.receiveShadow = true;
+        
+        gameState.scene.add(this.mesh);
+    }
+}
+
+/**
+ * Road Segment (Visual)
+ */
+export class RoadSegment extends Entity {
+    constructor(z, length, xOffset, rotationY) {
+        super();
+        // Add slight overlap to prevent gaps on curves
+        const drawLength = length + 0.2; // This is the actual length the plane will draw
+        const geometry = new THREE.PlaneGeometry(GAME_CONSTANTS.LANE_WIDTH * 3 + 4, drawLength);
+        const material = new THREE.MeshStandardMaterial({
+            color: COLORS.ROAD,
+            roughness: 0.8
+        });
+        
+        this.mesh = new THREE.Mesh(geometry, material);
+        
+        // Position and Rotate
+        // The 'z' parameter is the intended front edge of the segment.
+        // PlaneGeometry is centered at (0,0,0). After rotation.x = -Math.PI/2,
+        // local Y becomes world -Z. So to make the front edge (max Z) be at 'z',
+        // the mesh's world Z position must be 'z - drawLength/2'.
+        this.mesh.position.set(xOffset, -0.05, z - drawLength/2);
+        this.mesh.rotation.x = -Math.PI / 2;
+        
+        // Apply curve rotation around Y (which is Z in local plane space before X rotation)
+        // Since we rotated X by -90, local Z is World Y, local Y is World Z.
+        // So, rotation.z acts as a rotation around the World Y axis.
+        this.mesh.rotation.set(-Math.PI/2, 0, rotationY); 
+        
+        this.mesh.receiveShadow = true;
+        
+        gameState.scene.add(this.mesh);
+        
+        // Add stripes
+        const stripeGeo = new THREE.PlaneGeometry(0.2, drawLength);
+        const stripeMat = new THREE.MeshBasicMaterial({ color: COLORS.ROAD_STRIPE });
+        
+        const leftStripe = new THREE.Mesh(stripeGeo, stripeMat);
+        leftStripe.position.set(-GAME_CONSTANTS.LANE_WIDTH/2, 0.01, 0);
+        this.mesh.add(leftStripe);
+        
+        const rightStripe = new THREE.Mesh(stripeGeo, stripeMat);
+        rightStripe.position.set(GAME_CONSTANTS.LANE_WIDTH/2, 0.01, 0);
+        this.mesh.add(rightStripe);
+    }
+}
+
+/**
+ * Speed Effect (Speedlines)
+ */
+export class SpeedEffect extends Entity {
+    constructor() {
+        super();
+        const count = 50;
+        const geometry = new THREE.BufferGeometry();
+        const positions = [];
+        const colors = [];
+        
+        for(let i=0; i<count; i++) {
+            // Random positions in a tunnel around 0,0
+            const angle = Math.random() * Math.PI * 2;
+            const radius = 10 + Math.random() * 10;
+            const x = Math.cos(angle) * radius;
+            const y = Math.sin(angle) * radius + 5; // Offset up
+            const z = (Math.random() - 0.5) * 100;
+            
+            // Line segment
+            positions.push(x, y, z);
+            positions.push(x, y, z - 5); // Length 5
+            
+            colors.push(1, 1, 1);
+            colors.push(0, 0, 0); // Fade tail
+        }
+        
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+        
+        const material = new THREE.LineBasicMaterial({
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.5
+        });
+        
+        this.mesh = new THREE.LineSegments(geometry, material);
+        this.mesh.frustumCulled = false;
+        gameState.scene.add(this.mesh);
+    }
+    
+    update(dt) {
+        if (!gameState.player) return;
+        
+        // Keep effect centered on camera/player Z
+        const camZ = gameState.camera.position.z;
+        this.mesh.position.z = camZ - 20;
+        this.mesh.position.x = gameState.camera.position.x;
+        
+        // Animate lines to look like they are rushing past
+        const positions = this.mesh.geometry.attributes.position.array;
+        const speed = gameState.speed * 1.5; // Faster than player for effect
+        
+        for(let i=0; i<positions.length; i+=6) {
+            // Move Z (index 2 and 5)
+            positions[i+2] += speed * dt;
+            positions[i+5] += speed * dt;
+            
+            // Wrap around
+            if (positions[i+2] > 20) {
+                const len = positions[i+2] - positions[i+5];
+                positions[i+2] = -80;
+                positions[i+5] = -80 - len;
+            }
+        }
+        this.mesh.geometry.attributes.position.needsUpdate = true;
+        
+        // Scale opacity with speed
+        this.mesh.material.opacity = Math.min(0.8, (gameState.speed - 20) / 40);
+        this.mesh.visible = gameState.speed > 20;
+    }
+}
+
+/**
+ * Particle System for explosions/collections
+ */
+export class ParticleSystem extends Entity {
+    constructor(position, color, count = 20) {
+        super();
+        const geometry = new THREE.BufferGeometry();
+        const vertices = [];
+        const velocities = [];
+        
+        for(let i=0; i<count; i++) {
+            vertices.push(position.x, position.y, position.z);
+            velocities.push(
+                (Math.random() - 0.5) * 10,
+                (Math.random() - 0.5) * 10 + 5, // Upward bias
+                (Math.random() - 0.5) * 10
+            );
+        }
+        
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+        
+        const material = new THREE.PointsMaterial({
+            color: color,
+            size: 0.3,
+            transparent: true
+        });
+        
+        this.mesh = new THREE.Points(geometry, material);
+        this.velocities = velocities;
+        this.age = 0;
+        this.maxAge = 1.0;
+        
+        gameState.scene.add(this.mesh);
+        gameState.particles.push(this);
+    }
+    
+    update(dt) {
+        this.age += dt;
+        if (this.age >= this.maxAge) {
+            this.dispose();
+            return;
+        }
+        
+        const positions = this.mesh.geometry.attributes.position.array;
+        
+        for(let i=0; i<positions.length; i+=3) {
+            // Update pos
+            positions[i] += this.velocities[i] * dt;
+            positions[i+1] += this.velocities[i+1] * dt;
+            positions[i+2] += this.velocities[i+2] * dt;
+            
+            // Gravity
+            this.velocities[i+1] += gameState.gravity * dt;
+        }
+        
+        this.mesh.geometry.attributes.position.needsUpdate = true;
+        this.mesh.material.opacity = 1.0 - (this.age / this.maxAge);
+    }
+    
+    dispose() {
+        super.dispose();
+        const idx = gameState.particles.indexOf(this);
+        if(idx > -1) gameState.particles.splice(idx, 1);
+    }
+}
+</file>
+
+<file name="utils.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { COLORS } from './globals.js';
+
+/**
+ * Utility functions for geometry, random numbers, and math.
+ */
+
+// Initialize random seed (using external library if loaded, or simple fallback)
+export function seedRandom(seed) {
+    if (window.Math.seedrandom) {
+        window.Math.seedrandom(seed);
+    } else {
+        console.warn("seedrandom library not found, using Math.random");
+    }
+}
+
+/**
+ * Returns a random floating point number between min and max
+ */
+export function randomRange(min, max) {
+    return Math.random() * (max - min) + min;
+}
+
+/**
+ * Returns a random integer between min and max (inclusive)
+ */
+export function randomInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+/**
+ * Returns a random element from an array
+ */
+export function randomChoice(array) {
+    return array[Math.floor(Math.random() * array.length)];
+}
+
+/**
+ * Gets the numeric hex color value from a color name string
+ */
+export function getColorValue(colorName) {
+    return COLORS[colorName] || COLORS.WHITE;
+}
+
+/**
+ * Calculates the road X offset (curve) at a given Z position
+ */
+export function getRoadCurve(z) {
+    // Combine sine waves for a curvy road
+    // z is usually negative
+    return Math.sin(z * 0.02) * 15 + Math.sin(z * 0.05) * 5;
+}
+
+/**
+ * Calculates the derivative (slope) of the road curve at Z
+ * Used for rotating the road segments
+ */
+export function getRoadDerivative(z) {
+    // Derivative of sin(kz)*A is k*cos(kz)*A
+    return (0.02 * Math.cos(z * 0.02) * 15) + (0.05 * Math.cos(z * 0.05) * 5);
+}
+
+/**
+ * Creates a texture programmatically for the road stripes
+ */
+export function createRoadTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    
+    // Background
+    ctx.fillStyle = '#222222';
+    ctx.fillRect(0, 0, 64, 64);
+    
+    // Side lines
+    ctx.fillStyle = '#555555';
+    ctx.fillRect(0, 0, 4, 64);
+    ctx.fillRect(60, 0, 4, 64);
+    
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    // Anisotropy helps with texture blurring at oblique angles
+    texture.anisotropy = 16; 
+    
+    return texture;
+}
+
+/**
+ * Creates a simple noise-based texture for balls
+ */
+export function createBallTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    
+    // Base gradient
+    const grad = ctx.createRadialGradient(64, 64, 10, 64, 64, 64);
+    grad.addColorStop(0, '#FFFFFF');
+    grad.addColorStop(1, '#888888');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 128, 128);
+    
+    // Add some noise dots
+    for(let i=0; i<100; i++) {
+        ctx.fillStyle = `rgba(0,0,0,${Math.random() * 0.1})`;
+        ctx.beginPath();
+        ctx.arc(Math.random()*128, Math.random()*128, Math.random()*5, 0, Math.PI*2);
+        ctx.fill();
+    }
+    
+    return new THREE.CanvasTexture(canvas);
+}
+
+/**
+ * Check collision between two spheres
+ */
+export function checkSphereCollision(pos1, radius1, pos2, radius2) {
+    const distSq = pos1.distanceToSquared(pos2);
+    const radSum = radius1 + radius2;
+    return distSq < (radSum * radSum);
+}
+
+/**
+ * Check collision between sphere and box (AABBish approximation for ramps)
+ */
+export function checkSphereBoxCollision(spherePos, sphereRadius, boxPos, boxSize) {
+    // Transform sphere center to box local space (assuming axis aligned for simplicity or handled externally)
+    // For this game, ramps are aligned with Z axis mostly.
+    
+    const x = Math.max(boxPos.x - boxSize.x/2, Math.min(spherePos.x, boxPos.x + boxSize.x/2));
+    const y = Math.max(boxPos.y - boxSize.y/2, Math.min(spherePos.y, boxPos.y + boxSize.y/2));
+    const z = Math.max(boxPos.z - boxSize.z/2, Math.min(spherePos.z, boxPos.z + boxSize.z/2));
+
+    const distance = Math.sqrt(
+        (x - spherePos.x) * (x - spherePos.x) +
+        (y - spherePos.y) * (y - spherePos.y) +
+        (z - spherePos.z) * (z - spherePos.z)
+    );
+
+    return distance < sphereRadius;
+}
+</file>
+
+<file name="camera.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+
+export function setupCamera() {
+    const aspect = 600 / 400;
+    gameState.camera = new THREE.PerspectiveCamera(60, aspect, 0.1, 500);
+    gameState.camera.position.set(0, 5, 10);
+}
+
+export function updateCamera(dt) {
+    if (!gameState.player) return;
+
+    // Target position is behind and above the player
+    const targetPos = gameState.player.mesh.position.clone().add(gameState.cameraOffset);
+    
+    // Smooth follow
+    gameState.camera.position.lerp(targetPos, 5.0 * dt);
+    
+    // Look ahead of the player
+    const lookTarget = gameState.player.mesh.position.clone();
+    lookTarget.z -= 10; // Look 10 units ahead
+    lookTarget.y = 0; // Look at ground level roughly
+    
+    gameState.camera.lookAt(lookTarget);
+}
+
+export function shakeCamera(amount) {
+    // Simple instant shake offset
+    gameState.camera.position.x += (Math.random() - 0.5) * amount;
+    gameState.camera.position.y += (Math.random() - 0.5) * amount;
+}
+</file>
+
+<file name="physics.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, GAME_CONSTANTS, logGameInfo } from './globals.js';
+import { checkSphereCollision, checkSphereBoxCollision } from './utils.js';
+import { ParticleSystem } from './entities.js';
+
+export function updatePhysics(dt) {
+    if (gameState.gamePhase !== "PLAYING") return;
+    
+    const player = gameState.player;
+    if (!player) return;
+
+    // Check Obstacle Collisions
+    // We iterate backwards to allow safe removal
+    for (let i = gameState.obstacles.length - 1; i >= 0; i--) {
+        const obs = gameState.obstacles[i];
+        
+        // Simple optimization: only check if close enough in Z
+        if (Math.abs(player.mesh.position.z - obs.mesh.position.z) < 2.0) {
+            if (checkSphereCollision(player.mesh.position, GAME_CONSTANTS.PLAYER_RADIUS, obs.mesh.position, GAME_CONSTANTS.BALL_RADIUS)) {
+                handleBallCollision(obs);
+            }
+        }
+        
+        // Cull objects behind player
+        if (obs.mesh.position.z > player.mesh.position.z + 10) {
+            obs.dispose();
+            gameState.obstacles.splice(i, 1);
+        }
+    }
+    
+    // Check Ramp Collisions
+    for (let i = gameState.ramps.length - 1; i >= 0; i--) {
+        const ramp = gameState.ramps[i];
+        
+        // Z distance check
+        if (Math.abs(player.mesh.position.z - ramp.mesh.position.z) < GAME_CONSTANTS.RAMP_LENGTH + 2) {
+            // Use box check for ramp
+            // Note: Ramps are positioned at their 'front', extending -Z.
+            const rampCenterZ = ramp.mesh.position.z - GAME_CONSTANTS.RAMP_LENGTH / 2;
+            const rampPos = new THREE.Vector3(ramp.mesh.position.x, GAME_CONSTANTS.RAMP_HEIGHT/2, rampCenterZ);
+            const rampSize = new THREE.Vector3(GAME_CONSTANTS.LANE_WIDTH * 0.9, GAME_CONSTANTS.RAMP_HEIGHT, GAME_CONSTANTS.RAMP_LENGTH);
+            
+            if (checkSphereBoxCollision(player.mesh.position, GAME_CONSTANTS.PLAYER_RADIUS, rampPos, rampSize)) {
+                handleRampCollision(ramp);
+            }
+        }
+        
+        if (ramp.mesh.position.z > player.mesh.position.z + 10) {
+            ramp.dispose();
+            gameState.ramps.splice(i, 1);
+        }
+    }
+}
+
+function handleBallCollision(obstacle) {
+    if (obstacle.colorName === gameState.player.colorName) {
+        // MATCH!
+        gameState.score += 10;
+        gameState.speed += 0.2; // Slight speed up
+        new ParticleSystem(obstacle.mesh.position, obstacle.mesh.material.color);
+        obstacle.dispose();
+        
+        // Remove from array
+        const idx = gameState.obstacles.indexOf(obstacle);
+        if (idx > -1) gameState.obstacles.splice(idx, 1);
+        
+        logGameInfo("COLLECTED_BALL", { color: obstacle.colorName, score: gameState.score });
+    } else {
+        // CRASH!
+        gameOver("CRASH_WRONG_COLOR");
+    }
+}
+
+function handleRampCollision(ramp) {
+    // Only trigger if we aren't already jumping high or processed this ramp
+    if (gameState.player.mesh.position.y < GAME_CONSTANTS.RAMP_HEIGHT + 1) {
+        gameState.player.setColor(ramp.colorName);
+        gameState.player.jump(GAME_CONSTANTS.JUMP_FORCE); // Launch!
+        new ParticleSystem(gameState.player.mesh.position, ramp.mesh.material.color, 10);
+        logGameInfo("USED_RAMP", { newColor: ramp.colorName });
+    }
+}
+
+function gameOver(reason) {
+    gameState.gamePhase = "GAME_OVER_LOSE";
+    new ParticleSystem(gameState.player.mesh.position, gameState.player.mesh.material.color, 50);
+    // Hide player
+    gameState.player.mesh.visible = false;
+    logGameInfo("GAME_OVER", { reason: reason, finalScore: gameState.score });
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

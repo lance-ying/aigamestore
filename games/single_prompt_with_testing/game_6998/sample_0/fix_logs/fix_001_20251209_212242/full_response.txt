@@ -1,0 +1,156 @@
+<analysis>
+- Issue identified: The game attempts to import `p5.collide2d` as an ES module from `cdn.jsdelivr.net` within `physics.js`, but this specific URL and import method results in a 404 Not Found error. Furthermore, the `p5.collide2d` library is not actually used anywhere in the provided codebase; the collision detection logic (`checkAABB`) is custom-implemented in `physics.js`. The `index.html` also loads an unused global version of `p5.collide2d`.
+- Files affected: `physics.js`, `index.html`
+- Changes needed: Remove the unnecessary ES module import from `physics.js` and remove the unused script tag for `p5.collide2d` from `index.html`. This resolves the 404 error and removes an unused dependency.
+</analysis>
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Phantom Cat Adventure</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #111; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 2px solid #333; box-shadow: 0 0 20px rgba(0,0,0,0.5); width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 20px; cursor: pointer; background: #333; color: #fff; border: 1px solid #555; border-radius: 4px; font-weight: bold; transition: all 0.2s; }
+      .control-button:hover { background: #444; border-color: #888; }
+      .control-button.active { background: #00bcd4; color: #000; border-color: #00bcd4; }
+      h1 { color: #00bcd4; text-shadow: 0 0 10px rgba(0,188,212,0.3); margin-bottom: 20px; font-size: 2.5em; }
+      .info-text { color: #aaa; max-width: 600px; text-align: center; margin-bottom: 10px; font-size: 0.9em; line-height: 1.4; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle">Phantom Cat Adventure</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN', this)">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="setMode('TEST_1', this)">TEST (Movement)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="setMode('TEST_2', this)">TEST (Win Strategy)</button>
+      </div>
+      <p id="gameDescription" class="info-text">
+        Jump across neon platforms, collect Data Shards, and use your Phantom Ice powers to freeze enemies. Reach the portal to win!
+      </p>
+      <p id="gameControls" class="info-text">
+        Controls: Arrows to Move | Space to Jump | Z to Shoot | Shift to Sprint | R to Restart
+      </p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script type="module" src="game.js"></script>
+    <script>
+        function setMode(mode, btn) {
+            if(window.setControlMode) {
+                window.setControlMode(mode);
+                document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            }
+        }
+    </script>
+  </body>
+</html>
+</code>
+<code filename="physics.js">
+/**
+ * physics.js
+ * Handles collision detection, resolution, and physics calculations.
+ */
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, TILE_SIZE } from './globals.js';
+
+/**
+ * Checks AABB collision between two rectangular entities
+ */
+export function checkAABB(rect1, rect2) {
+    return (
+        rect1.x < rect2.x + rect2.width &&
+        rect1.x + rect1.width > rect2.x &&
+        rect1.y < rect2.y + rect2.height &&
+        rect1.y + rect1.height > rect2.y
+    );
+}
+
+/**
+ * Resolves collision between a dynamic entity (player/enemy) and static platforms.
+ * Uses a separated axis approach for stability.
+ */
+export function resolvePlatformCollisions(entity, platforms) {
+    entity.onGround = false;
+    entity.isWallSliding = false;
+    
+    // Optimization: Only check platforms near the entity
+    // A simple spatial check: platform is within X range of entity
+    const checkRange = TILE_SIZE * 3;
+    
+    for (const platform of platforms) {
+        // Broad phase culling
+        if (Math.abs((platform.x + platform.width/2) - (entity.x + entity.width/2)) > checkRange + platform.width) {
+            continue;
+        }
+
+        if (checkAABB(entity, platform)) {
+            // Determine penetration depths
+            const overlapX = (entity.width + platform.width) / 2 - Math.abs((entity.x + entity.width / 2) - (platform.x + platform.width / 2));
+            const overlapY = (entity.height + platform.height) / 2 - Math.abs((entity.y + entity.height / 2) - (platform.y + platform.height / 2));
+
+            // Resolve along the axis of least penetration
+            if (overlapX < overlapY) {
+                // Horizontal Collision
+                if (entity.x < platform.x) {
+                    entity.x -= overlapX; // Push left
+                    // Wall interaction logic could go here
+                } else {
+                    entity.x += overlapX; // Push right
+                }
+                entity.vx = 0;
+            } else {
+                // Vertical Collision
+                if (entity.y < platform.y) {
+                    entity.y -= overlapY; // Land on top
+                    entity.vy = 0;
+                    entity.onGround = true;
+                    // Special interaction for jump pads
+                    if (platform.type === 'BOUNCE') {
+                        entity.vy = -15; // Bounce!
+                        entity.onGround = false;
+                    }
+                } else {
+                    entity.y += overlapY; // Hit head
+                    entity.vy = 0;
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Apply general physics (gravity, friction) to an entity
+ */
+export function applyPhysics(entity, gravityStrength, frictionStrength) {
+    // Apply gravity
+    entity.vy += gravityStrength;
+    
+    // Apply friction to horizontal movement
+    if (entity.onGround) {
+        entity.vx *= frictionStrength;
+    } else {
+        entity.vx *= 0.95; // Air resistance
+    }
+    
+    // Update position
+    entity.x += entity.vx;
+    entity.y += entity.vy;
+    
+    // Terminal velocity
+    if (entity.vy > 15) entity.vy = 15;
+    
+    // Very small velocities to zero
+    if (Math.abs(entity.vx) < 0.1) entity.vx = 0;
+}
+
+/**
+ * Helper to determine if a point is inside a rect
+ */
+export function pointInRect(x, y, rx, ry, rw, rh) {
+    return x >= rx && x <= rx + rw && y >= ry && y <= ry + rh;
+}
+</code>

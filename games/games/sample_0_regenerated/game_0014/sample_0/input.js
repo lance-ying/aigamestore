@@ -1,0 +1,100 @@
+/**
+ * input.js
+ * Keyboard handling.
+ */
+import { gameState } from './globals.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const keys = {
+    left: false,
+    right: false,
+    up: false,
+    down: false,
+    jumpPressed: false, // flag for single frame press
+    shoot: false,
+    dodge: false,
+    interactPressed: false
+};
+
+// Buffer to store inputs from events until the next update loop
+const inputBuffer = {
+    jump: false,
+    interact: false
+};
+
+const KEY_CODES = {
+    LEFT: 37,
+    UP: 38,
+    RIGHT: 39,
+    DOWN: 40,
+    SPACE: 32,
+    Z: 90,
+    SHIFT: 16,
+    ENTER: 13,
+    ESC: 27,
+    R: 82
+};
+
+export function handleInput(p) {
+    // Transfer buffered inputs to frame state
+    keys.jumpPressed = inputBuffer.jump;
+    keys.interactPressed = inputBuffer.interact;
+    
+    // Clear buffer
+    inputBuffer.jump = false;
+    inputBuffer.interact = false;
+    
+    // Check Automated Input first
+    if (gameState.controlMode !== 'HUMAN') {
+        const action = get_automated_testing_action(gameState);
+        if (action) {
+            // Simulate keys based on action
+            // This is a simplified way to map bot output to input state
+            keys.left = action.left || false;
+            keys.right = action.right || false;
+            keys.up = action.up || false; // usually aiming
+            keys.down = action.down || false;
+            keys.shoot = action.shoot || false;
+            keys.dodge = action.dodge || false;
+            if (action.jump) keys.jumpPressed = true;
+            if (action.interact) keys.interactPressed = true;
+        }
+        return { keys };
+    }
+
+    // Human Input
+    keys.left = p.keyIsDown(KEY_CODES.LEFT);
+    keys.right = p.keyIsDown(KEY_CODES.RIGHT);
+    keys.up = p.keyIsDown(KEY_CODES.UP);
+    keys.down = p.keyIsDown(KEY_CODES.DOWN);
+    keys.shoot = p.keyIsDown(KEY_CODES.Z);
+    keys.dodge = p.keyIsDown(KEY_CODES.SHIFT);
+    
+    return { keys };
+}
+
+export function handleKeyPressed(p, keyCode) {
+    // Phase Controls
+    if (keyCode === KEY_CODES.ENTER) {
+        if (gameState.gamePhase === 'START') {
+            gameState.gamePhase = 'PLAYING';
+        }
+    }
+    if (keyCode === KEY_CODES.ESC) {
+        if (gameState.gamePhase === 'PLAYING') gameState.gamePhase = 'PAUSED';
+        else if (gameState.gamePhase === 'PAUSED') gameState.gamePhase = 'PLAYING';
+    }
+    if (keyCode === KEY_CODES.R) {
+        if (gameState.gamePhase === 'GAME_OVER_WIN' || gameState.gamePhase === 'GAME_OVER_LOSE') {
+            window.gameInstance.resetGame();
+        }
+    }
+
+    // Action Triggers
+    if (keyCode === KEY_CODES.SPACE) inputBuffer.jump = true;
+    if (keyCode === KEY_CODES.DOWN) inputBuffer.interact = true;
+}
+
+export function handleKeyReleased(p, keyCode) {
+    // Required by p5, but we use keyIsDown mostly
+}

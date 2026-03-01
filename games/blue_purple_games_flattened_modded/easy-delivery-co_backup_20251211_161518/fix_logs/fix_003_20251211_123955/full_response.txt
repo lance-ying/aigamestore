@@ -1,0 +1,705 @@
+<analysis>
+- Issue identified: The camera controls are coupled with driving controls (WASD/Arrows doing the same thing), preventing independent camera movement. The "Cockpit" (first-person) view is undesirable. The camera behavior is described as "weird", likely due to rigid following or clipping.
+- Files affected: `index.html`, `globals.js`, `input.js`, `game.js`, `ui.js`
+- Changes needed:
+    1.  `input.js`: Separate inputs. Map Arrows to driving (`up`, `down`, `left`, `right`) and WASD to camera (`camUp`, `camDown`, `camLeft`, `camRight`). Update `cycleCamera` to remove COCKPIT mode.
+    2.  `globals.js`: Add `cameraYaw` and `cameraPitch` to `gameState` to track manual camera rotation.
+    3.  `game.js`: Update `updateCamera` to use spherical coordinates based on `cameraYaw/Pitch` relative to the car. Implement camera rotation logic in `update`. Remove COCKPIT mode handling.
+    4.  `ui.js` & `index.html`: Update on-screen instructions to reflect the new control scheme.
+</analysis>
+
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Easy Delivery Co.</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      
+      /* Container ensures canvas and UI match perfectly */
+      #game-container { 
+        width: 600px; 
+        height: 400px; 
+        position: relative; 
+        box-shadow: 0 0 20px rgba(0,0,0,0.5);
+      }
+      
+      canvas { display: block; }
+      
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; font-family: monospace; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #ffcc00; color: #000; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 style="color: #ffcc00; font-family: 'Courier New', monospace; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 5px;">Easy Delivery Co.</h1>
+      <div style="color: #888; font-family: sans-serif; font-size: 12px; margin-bottom: 15px;">Est. 1994 • Oakhaven, XX</div>
+      
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN')">Play Mode</button>
+        <button id="test1ModeBtn" class="control-button" onclick="setMode('TEST_1')">Test Physics</button>
+      </div>
+      
+      <div style="color: #ccc; font-family: monospace; font-size: 12px; max-width: 600px; line-height: 1.4;">
+        ARROWS: Drive | WASD: Camera | SPACE: Interact | C: Toggle View | SHIFT: Boost
+      </div>
+    </div>
+
+    <!-- Game container is injected by game.js here to ensure order -->
+    
+    <script>
+      window.controlMode = 'HUMAN';
+      function setMode(mode) {
+        window.controlMode = mode;
+        if(window.getGameState) {
+           window.getGameState().controlMode = mode;
+        }
+        document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+        if(mode === 'HUMAN') document.getElementById('humanModeBtn').classList.add('active');
+        if(mode === 'TEST_1') document.getElementById('test1ModeBtn').classList.add('active');
+        
+        // Focus game for keyboard
+        const container = document.getElementById('game-container');
+        if(container) container.focus();
+      }
+    </script>
+
+    <!-- Dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/seedrandom/3.0.5/seedrandom.min.js"></script>
+    
+    <!-- Game Module -->
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</code>
+
+<code filename="globals.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// Game Constants
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+export const TIME_STEP = 1 / TARGET_FPS;
+
+// Physics Constants
+export const GRAVITY = -9.8;
+export const CAR_ACCELERATION = 15.0;
+export const CAR_MAX_SPEED = 30.0;
+export const CAR_TURN_SPEED = 2.5;
+export const CAR_FRICTION = 0.98;
+export const CAR_BRAKE_FORCE = 30.0;
+export const CAR_REVERSE_SPEED = 10.0;
+
+// Game World Constants
+export const TOWN_SIZE = 200;
+export const BUILDING_COUNT = 15;
+export const TREE_COUNT = 100;
+export const MYSTERY_THRESHOLD_1 = 3; // Deliveries to trigger level 1 weirdness
+export const MYSTERY_THRESHOLD_2 = 6; // Level 2
+export const MYSTERY_THRESHOLD_3 = 9; // Level 3
+
+// Initial Game State
+export const gameState = {
+    // Core state
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2, etc.
+    
+    // Time tracking
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Core Three.js objects
+    scene: null,
+    camera: null,
+    renderer: null,
+    gameContainer: null,
+    
+    // Lighting
+    ambientLight: null,
+    directionalLight: null,
+    fog: null,
+    
+    // Entities
+    player: null, // The car
+    buildings: [],
+    trees: [],
+    roads: [],
+    interactables: [], // Pickup/Delivery zones
+    mysteryEntities: [], // Watchers/Ghosts
+    
+    // Gameplay data
+    score: 0,
+    money: 0,
+    deliveriesCompleted: 0,
+    hasPackage: false,
+    currentObjective: null, // { type: 'PICKUP'|'DELIVER', location: Vector3, name: string }
+    fuel: 100,
+    
+    // Camera state
+    cameraMode: "FOLLOW", // FOLLOW, TOP
+    cameraOffset: new THREE.Vector3(0, 5, -10),
+    cameraLookAt: new THREE.Vector3(0, 0, 0),
+    cameraYaw: 0, // Horizontal rotation relative to car
+    cameraPitch: 0.3, // Vertical angle (radians)
+    cameraDistance: 12,
+    
+    // World state (for dynamic changes)
+    worldState: {
+        timeOfDay: 12.0, // 0-24
+        fogDensity: 0.02,
+        glitchIntensity: 0,
+        darknessLevel: 0
+    }
+};
+
+// Initialize logs for debugging and validation
+window.logs = {
+    game_info: [],
+    player_info: [],
+    inputs: []
+};
+
+// Global accessor
+window.getGameState = () => gameState;
+
+// Logging Helper
+export function logGameInfo(infoType, data) {
+    if (window.logs[infoType]) {
+        window.logs[infoType].push({
+            ...data,
+            frame: gameState.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+</code>
+
+<code filename="input.js">
+import { gameState } from './globals.js';
+
+export const inputs = {
+    // Drive
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    // Camera
+    camUp: false,
+    camDown: false,
+    camLeft: false,
+    camRight: false,
+    // Action
+    space: false,
+    boost: false,
+    prevSpace: false // For simple debounce
+};
+
+export function setupInputs() {
+    window.addEventListener('keydown', (e) => handleKey(e.key, e.keyCode, true));
+    window.addEventListener('keyup', (e) => handleKey(e.key, e.keyCode, false));
+}
+
+function handleKey(key, code, isPressed) {
+    // Phase controls
+    if (isPressed) {
+        if (code === 13) { // Enter
+            if (gameState.gamePhase === "START") gameState.gamePhase = "PLAYING";
+        }
+        if (code === 27) { // ESC
+            if (gameState.gamePhase === "PLAYING") gameState.gamePhase = "PAUSED";
+            else if (gameState.gamePhase === "PAUSED") gameState.gamePhase = "PLAYING";
+        }
+        if (code === 82) { // R
+            if (gameState.gamePhase.startsWith("GAME_OVER")) window.location.reload(); // Simple reload for restart logic safety
+        }
+        if (key.toLowerCase() === 'c') {
+            cycleCamera();
+        }
+    }
+
+    // Gameplay controls
+    
+    // Drive (Arrows)
+    if (code === 38) inputs.up = isPressed; // Up
+    if (code === 40) inputs.down = isPressed; // Down
+    if (code === 37) inputs.left = isPressed; // Left
+    if (code === 39) inputs.right = isPressed; // Right
+    
+    // Camera (WASD)
+    if (key.toLowerCase() === 'w') inputs.camUp = isPressed;
+    if (key.toLowerCase() === 's') inputs.camDown = isPressed;
+    if (key.toLowerCase() === 'a') inputs.camLeft = isPressed;
+    if (key.toLowerCase() === 'd') inputs.camRight = isPressed;
+
+    // Actions
+    if (code === 32) inputs.space = isPressed;
+    if (code === 16) inputs.boost = isPressed;
+}
+
+function cycleCamera() {
+    // Removed COCKPIT mode
+    if (gameState.cameraMode === "FOLLOW") gameState.cameraMode = "TOP";
+    else gameState.cameraMode = "FOLLOW";
+}
+
+// Log inputs for reproducibility
+export function logInputs() {
+    if (inputs.up || inputs.down || inputs.left || inputs.right || inputs.space) {
+        if (window.logs && window.logs.inputs) {
+            window.logs.inputs.push({
+                frame: gameState.frameCount,
+                inputState: { ...inputs },
+                timestamp: Date.now()
+            });
+        }
+    }
+}
+</code>
+
+<code filename="game.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, TARGET_FPS, MYSTERY_THRESHOLD_1, MYSTERY_THRESHOLD_2 } from './globals.js';
+import { setupWorld } from './world.js';
+import { Car } from './entities.js';
+import { setupInputs, inputs, logInputs } from './input.js';
+import { checkCollisions } from './physics.js';
+import { setupUI, renderUI } from './ui.js';
+import { randomChoice, lerp } from './utils.js';
+
+// Init
+function init() {
+    // Setup Container
+    const container = document.createElement('div');
+    container.id = 'game-container';
+    container.style.position = 'relative';
+    container.style.width = `${CANVAS_WIDTH}px`;
+    container.style.height = `${CANVAS_HEIGHT}px`;
+    container.style.overflow = 'hidden';
+    document.body.appendChild(container);
+    gameState.gameContainer = container;
+
+    // Renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+    renderer.shadowMap.enabled = true;
+    container.appendChild(renderer.domElement);
+    gameState.renderer = renderer;
+
+    // Scene
+    const scene = new THREE.Scene();
+    gameState.scene = scene;
+
+    // Camera
+    const camera = new THREE.PerspectiveCamera(60, CANVAS_WIDTH / CANVAS_HEIGHT, 0.1, 500);
+    gameState.camera = camera;
+
+    // Setup Game World
+    setupWorld();
+
+    // Create Player
+    // Fix: Spawn car away from the central building (Depot is at 0,0)
+    const player = new Car(0, 2, 20); 
+    gameState.player = player;
+
+    // UI
+    setupUI();
+    
+    // Inputs
+    setupInputs();
+
+    // Setup Test Modes
+    if (window.controlMode === "TEST_1" || window.controlMode === "TEST_2") {
+        gameState.controlMode = window.controlMode;
+        gameState.gamePhase = "PLAYING";
+    }
+
+    // Start Loop
+    requestAnimationFrame(gameLoop);
+}
+
+// Main Loop
+let lastTime = 0;
+function gameLoop(time) {
+    requestAnimationFrame(gameLoop);
+    
+    const dt = (time - lastTime) / 1000;
+    lastTime = time;
+    gameState.deltaTime = dt;
+    gameState.frameCount++;
+
+    update(dt);
+    render();
+}
+
+function update(dt) {
+    if (gameState.gamePhase !== "PLAYING") {
+        // Simple idle rotation for start screen
+        if (gameState.gamePhase === "START") {
+            gameState.camera.position.x = Math.sin(Date.now() * 0.0005) * 50;
+            gameState.camera.position.z = Math.cos(Date.now() * 0.0005) * 50;
+            gameState.camera.position.y = 30;
+            gameState.camera.lookAt(0, 0, 0);
+        }
+        return;
+    }
+
+    // Handle automated testing inputs
+    let activeInputs = inputs;
+    if (gameState.controlMode.startsWith("TEST")) {
+        activeInputs = handleTestInputs(gameState.controlMode);
+    } else {
+        logInputs();
+    }
+
+    // Update Player
+    gameState.player.update(dt, activeInputs);
+
+    // Update Camera Controls
+    const camSpeed = 2.0;
+    if (activeInputs.camLeft) gameState.cameraYaw += camSpeed * dt;
+    if (activeInputs.camRight) gameState.cameraYaw -= camSpeed * dt;
+    if (activeInputs.camUp) gameState.cameraPitch = Math.min(gameState.cameraPitch + camSpeed * dt, 1.2);
+    if (activeInputs.camDown) gameState.cameraPitch = Math.max(gameState.cameraPitch - camSpeed * dt, 0.1);
+
+    // Camera Follow Logic
+    updateCamera();
+
+    // Collisions
+    // Collect all collidables
+    const obstacles = [...gameState.buildings, ...gameState.trees];
+    checkCollisions(gameState.player, obstacles);
+
+    // Interaction Logic
+    handleInteractions(activeInputs);
+
+    // Mystery Logic
+    updateMysterySystem(dt);
+    
+    // Interactables animations
+    gameState.interactables.forEach(z => z.update(dt));
+    
+    // Fuel Check
+    if (gameState.fuel <= 0) {
+        gameState.gamePhase = "GAME_OVER_LOSE";
+    }
+}
+
+function updateCamera() {
+    const playerPos = gameState.player.mesh.position;
+    const playerRot = gameState.player.mesh.rotation.y;
+    
+    let targetPos = new THREE.Vector3();
+    let lookAtPos = playerPos.clone();
+
+    if (gameState.cameraMode === "FOLLOW") {
+        // Orbit Camera
+        // Calculate offset based on Yaw (relative to car) and Pitch
+        const totalYaw = playerRot + gameState.cameraYaw + Math.PI; // +PI to look at back
+        const dist = gameState.cameraDistance;
+        const yOffset = Math.sin(gameState.cameraPitch) * dist;
+        const hDist = Math.cos(gameState.cameraPitch) * dist;
+        
+        const xOffset = Math.sin(totalYaw) * hDist;
+        const zOffset = Math.cos(totalYaw) * hDist;
+
+        targetPos.set(
+            playerPos.x + xOffset,
+            playerPos.y + yOffset,
+            playerPos.z + zOffset
+        );
+        
+        lookAtPos.y += 1.5;
+
+        // Smart Camera: Avoid clipping through buildings/trees
+        // Cast ray from car to camera
+        const rayOrigin = lookAtPos.clone();
+        const direction = new THREE.Vector3().subVectors(targetPos, rayOrigin);
+        const fullDist = direction.length();
+        direction.normalize();
+
+        const raycaster = new THREE.Raycaster(rayOrigin, direction, 0, fullDist);
+        
+        // Collect obstacles for camera occlusion
+        const obstacles = [
+            ...gameState.buildings.map(b => b.mesh), 
+            ...gameState.trees
+        ];
+
+        const intersects = raycaster.intersectObjects(obstacles);
+        if (intersects.length > 0) {
+            // If blocked, move camera to the hit point (plus a small buffer towards the car)
+            const hit = intersects[0];
+            targetPos.copy(hit.point).add(direction.multiplyScalar(-0.5));
+            // Also lift slightly to maintain view if very close
+            if (hit.distance < 4) targetPos.y += 1.0;
+        }
+
+    } else if (gameState.cameraMode === "TOP") {
+        targetPos.set(playerPos.x, 50, playerPos.z);
+    }
+
+    // Smooth lerp
+    gameState.camera.position.lerp(targetPos, 0.15);
+    gameState.camera.lookAt(lookAtPos);
+}
+
+function handleInteractions(currInputs) {
+    if (currInputs.space && !currInputs.prevSpace) {
+        // Debounce handling inside input logic ideally, but check here
+        
+        let zoneFound = null;
+        for (const zone of gameState.interactables) {
+            if (zone.checkInteraction(gameState.player.mesh)) {
+                zoneFound = zone;
+                break;
+            }
+        }
+        
+        if (zoneFound) {
+            if (zoneFound.type === 'PICKUP' && !gameState.hasPackage) {
+                // Pick up
+                gameState.hasPackage = true;
+                // Assign random delivery destination
+                const destinations = gameState.interactables.filter(z => z.type === 'DELIVER');
+                const dest = randomChoice(destinations);
+                gameState.currentObjective = dest;
+                playSoundFeedback('pickup');
+            } else if (zoneFound.type === 'DELIVER' && gameState.hasPackage && gameState.currentObjective === zoneFound) {
+                // Deliver
+                gameState.hasPackage = false;
+                gameState.currentObjective = null;
+                gameState.deliveriesCompleted++;
+                gameState.money += 15.50; // Low wage lol
+                gameState.score += 100;
+                playSoundFeedback('deliver');
+            }
+        }
+        
+        currInputs.prevSpace = true;
+    }
+    
+    if (!currInputs.space) currInputs.prevSpace = false;
+}
+
+function updateMysterySystem(dt) {
+    // Progressive strangeness
+    const completed = gameState.deliveriesCompleted;
+    
+    if (completed >= MYSTERY_THRESHOLD_1) {
+        // Fog gets thicker
+        const targetDensity = 0.02 + (completed * 0.005);
+        gameState.scene.fog.density = lerp(gameState.scene.fog.density, targetDensity, dt * 0.1);
+        
+        // Sky darkens
+        const hex = gameState.scene.background.getHex();
+        if (hex > 0x111111) {
+            gameState.scene.background.lerp(new THREE.Color(0x111111), dt * 0.05);
+        }
+        
+        // Show watchers occasionally
+        if (Math.random() < 0.01) {
+            const watcher = randomChoice(gameState.mysteryEntities);
+            watcher.mesh.visible = !watcher.mesh.visible;
+        }
+    }
+    
+    if (completed >= MYSTERY_THRESHOLD_2) {
+        gameState.worldState.glitchIntensity = 0.02;
+    }
+}
+
+// Simple test input automation
+function handleTestInputs(mode) {
+    const testInputs = { ...inputs };
+    
+    if (mode === "TEST_1") {
+        // Just drive forward
+        testInputs.up = true;
+        if (gameState.frameCount % 100 > 50) testInputs.left = true;
+    }
+    
+    return testInputs;
+}
+
+// Placeholder sound visual feedback (since no audio allowed)
+function playSoundFeedback(type) {
+    // Log for debug
+    console.log(`[Sound Effect]: ${type}`);
+    // Flash UI
+    // ui logic handles visual feedback
+}
+
+function render() {
+    gameState.renderer.render(gameState.scene, gameState.camera);
+    renderUI();
+}
+
+// Init when module loads
+window.onload = init;
+</code>
+
+<code filename="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+let uiContext = null;
+
+export function setupUI() {
+    const uiCanvas = document.createElement('canvas');
+    uiCanvas.width = CANVAS_WIDTH;
+    uiCanvas.height = CANVAS_HEIGHT;
+    uiCanvas.style.position = 'absolute';
+    uiCanvas.style.top = '0';
+    uiCanvas.style.left = '0';
+    uiCanvas.style.pointerEvents = 'none';
+    uiCanvas.style.zIndex = '100';
+    
+    gameState.gameContainer.appendChild(uiCanvas);
+    uiContext = uiCanvas.getContext('2d');
+}
+
+export function renderUI() {
+    if (!uiContext) return;
+    
+    // Clear
+    uiContext.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    const phase = gameState.gamePhase;
+    
+    if (phase === "START") {
+        renderStartScreen();
+    } else if (phase === "PLAYING") {
+        renderHUD();
+        renderObjective();
+        renderMysteryEffects();
+    } else if (phase === "PAUSED") {
+        renderHUD();
+        renderPauseScreen();
+    } else if (phase.startsWith("GAME_OVER")) {
+        renderGameOver();
+    }
+}
+
+function renderStartScreen() {
+    drawOverlay('rgba(0,0,0,0.8)');
+    
+    uiContext.textAlign = 'center';
+    uiContext.fillStyle = '#ffcc00';
+    uiContext.font = 'bold 40px Courier New';
+    uiContext.fillText("EASY DELIVERY CO.", CANVAS_WIDTH/2, 120);
+    
+    uiContext.fillStyle = '#fff';
+    uiContext.font = '16px monospace';
+    uiContext.fillText("Deliver packages. Ask no questions.", CANVAS_WIDTH/2, 160);
+    
+    uiContext.font = '20px monospace';
+    uiContext.fillStyle = '#aaa';
+    uiContext.fillText("PRESS ENTER TO START", CANVAS_WIDTH/2, 300);
+    
+    uiContext.font = '12px monospace';
+    uiContext.fillText("Arrows: Drive | WASD: Camera | Space: Interact", CANVAS_WIDTH/2, 330);
+}
+
+function renderHUD() {
+    // Money/Score Top Left
+    uiContext.textAlign = 'left';
+    uiContext.font = 'bold 20px monospace';
+    uiContext.fillStyle = '#00ff00';
+    uiContext.fillText(`$${gameState.money.toFixed(2)}`, 20, 30);
+    
+    // Deliveries
+    uiContext.fillStyle = '#fff';
+    uiContext.font = '16px monospace';
+    uiContext.fillText(`Deliveries: ${gameState.deliveriesCompleted}`, 20, 55);
+    
+    // Score Component
+    uiContext.fillStyle = '#ffcc00';
+    uiContext.fillText(`Score: ${gameState.score}`, 20, 80);
+    
+    // Fuel Bar Bottom Right
+    const barW = 100;
+    const barH = 10;
+    uiContext.fillStyle = '#333';
+    uiContext.fillRect(CANVAS_WIDTH - 120, CANVAS_HEIGHT - 30, barW, barH);
+    
+    uiContext.fillStyle = gameState.fuel > 20 ? '#ff9900' : '#ff0000';
+    uiContext.fillRect(CANVAS_WIDTH - 120, CANVAS_HEIGHT - 30, barW * (gameState.fuel/100), barH);
+    uiContext.fillText("FUEL", CANVAS_WIDTH - 120, CANVAS_HEIGHT - 35);
+}
+
+function renderObjective() {
+    uiContext.textAlign = 'center';
+    uiContext.font = '18px monospace';
+    
+    let text = "";
+    if (gameState.hasPackage) {
+        uiContext.fillStyle = '#00aaff';
+        text = `DELIVER TO: ${gameState.currentObjective ? gameState.currentObjective.name : 'Unknown'}`;
+    } else {
+        uiContext.fillStyle = '#ffff00';
+        text = "RETURN TO DEPOT FOR PICKUP";
+    }
+    
+    uiContext.fillText(text, CANVAS_WIDTH/2, 40);
+}
+
+function renderPauseScreen() {
+    drawOverlay('rgba(0,0,0,0.5)');
+    uiContext.textAlign = 'center';
+    uiContext.fillStyle = '#fff';
+    uiContext.font = 'bold 30px monospace';
+    uiContext.fillText("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+}
+
+function renderGameOver() {
+    drawOverlay('rgba(0,0,0,0.9)');
+    uiContext.textAlign = 'center';
+    
+    if (gameState.gamePhase === "GAME_OVER_WIN") {
+        uiContext.fillStyle = '#00ff00';
+        uiContext.fillText("SHIFT COMPLETE", CANVAS_WIDTH/2, 150);
+    } else {
+        uiContext.fillStyle = '#ff0000';
+        uiContext.fillText("OUT OF GAS", CANVAS_WIDTH/2, 150);
+    }
+    
+    uiContext.fillStyle = '#fff';
+    uiContext.font = '20px monospace';
+    uiContext.fillText(`Total Earnings: $${gameState.money.toFixed(2)}`, CANVAS_WIDTH/2, 200);
+    uiContext.fillText("PRESS R TO RESTART", CANVAS_WIDTH/2, 250);
+}
+
+function renderMysteryEffects() {
+    // Glitch effect based on intensity
+    if (gameState.worldState.glitchIntensity > 0) {
+        if (Math.random() < gameState.worldState.glitchIntensity) {
+            const h = Math.random() * 50;
+            const y = Math.random() * CANVAS_HEIGHT;
+            const offset = (Math.random() - 0.5) * 20;
+            
+            // Simple canvas copy/paste for glitch slice
+            // Since we can't easily read back the 3D canvas efficiently here without composite,
+            // we will just draw digital noise bars.
+            uiContext.fillStyle = `rgba(${Math.random()*255}, 0, 0, 0.3)`;
+            uiContext.fillRect(0, y, CANVAS_WIDTH, h);
+            
+            // Random text
+            if (Math.random() < 0.1) {
+                uiContext.fillStyle = '#000';
+                uiContext.fillText("WAKE UP", Math.random()*CANVAS_WIDTH, Math.random()*CANVAS_HEIGHT);
+            }
+        }
+    }
+}
+
+function drawOverlay(color) {
+    uiContext.fillStyle = color;
+    uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+}
+</code>

@@ -1,7 +1,7 @@
 import { gameState, getGameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
 import { renderStartScreen, renderPlayingScreen, renderPausedScreen, renderGameOverScreen } from './rendering.js';
 import { handleKeyPressed, processAutomatedInput } from './input_handler.js';
-import { updateExecution } from './game_logic.js';
+import { updateExecution, initializeLevel } from './game_logic.js'; // Import initializeLevel
 import { get_automated_testing_action } from './automated_testing_controller.js';
 
 const p5 = window.p5;
@@ -66,19 +66,11 @@ let gameInstance = new p5(p => {
 window.gameInstance = gameInstance;
 // Expose level loading for dev mode
 window.loadLevel = function(levelNum) {
-  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
-  if (state) {
-    state.currentLevel = levelNum;
-    // Try common reset/start patterns
-    if (typeof resetGame === 'function') {
-      resetGame();
-    }
-    if (typeof startGame === 'function') {
-      startGame();
-    } else if (state.gamePhase !== undefined) {
-      state.gamePhase = "PLAYING";
-    }
-  }
+  // Directly use the module-scoped gameState object which is available here
+  // and call the imported initializeLevel function for proper setup.
+  gameState.currentLevel = levelNum;
+  initializeLevel(gameState.currentLevel);
+  gameState.gamePhase = "PLAYING"; // Ensure the game transitions to playing state
 };
 
 // Control mode switching

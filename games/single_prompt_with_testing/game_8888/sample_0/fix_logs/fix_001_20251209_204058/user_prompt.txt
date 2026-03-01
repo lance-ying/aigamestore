@@ -1,0 +1,1511 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+physics.js:6  GET https://cdn.jsdelivr.net/npm/p5.collide2d@1.0.0/+esm net::ERR_ABORTED 404 (Not Found)
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Cookie Kingdom Defense</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 4px solid #5D4037; border-radius: 8px; box-shadow: 0 0 20px rgba(0,0,0,0.5); width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; font-weight: bold; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #007bff; }
+      #gameTitle { color: #F48FB1; text-shadow: 2px 2px #000; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="font-family: 'Comic Sans MS', 'Chalkboard SE', sans-serif; margin-bottom: 10px;">Cookie Kingdom Defense</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN', this)">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="setMode('TEST_1', this)">TEST (Survival)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="setMode('TEST_2', this)">TEST (Combat)</button>
+        <button id="test_3_ModeBtn" class="control-button" onclick="setMode('TEST_3', this)">TEST (Collector)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">
+        Run, Jump, and Fight! Help the Gingerbread Hero defend Earthbread from the Cake Monsters.
+      </p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">
+        ARROWS: Move | SPACE: Jump | Z: Attack | SHIFT: Dash
+      </p>
+    </div>
+    
+    <script>
+      function setMode(mode, btn) {
+        if (window.setControlMode) window.setControlMode(mode);
+        document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        // If game is not playing, try to start it for tests
+        const gs = window.getGameState();
+        if (gs && gs.gamePhase === "START" && mode !== "HUMAN") {
+            // Auto start for tests
+            window.dispatchEvent(new KeyboardEvent('keydown', {'keyCode': 13}));
+        }
+      }
+    </script>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+/**
+ * Global constants and state management for Cookie Kingdom Defense.
+ */
+
+// Canvas Dimensions
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Game Colors (Cookie Run Inspired Palette)
+export const PALETTE = {
+    SKY_TOP: '#87CEEB',
+    SKY_BOTTOM: '#E0F7FA',
+    GROUND_TOP: '#8D6E63', // Chocolate
+    GROUND_BOTTOM: '#5D4037',
+    GRASS: '#AED581',      // Matcha icing
+    COOKIE_BODY: '#D7CCC8',
+    COOKIE_DARK: '#A1887F',
+    ICING: '#FFFFFF',
+    RED_JELLY: '#FF5252',
+    YELLOW_JELLY: '#FFD740',
+    ENEMY_CAKE: '#3E2723',
+    ENEMY_CREAM: '#F48FB1',
+    UI_BG: '#FFF3E0',
+    UI_BORDER: '#795548'
+};
+
+// Physics Constants
+export const GRAVITY = 0.6;
+export const TERMINAL_VELOCITY = 12;
+export const FRICTION = 0.85;
+export const GROUND_LEVEL = CANVAS_HEIGHT - 60;
+
+// Game State Object
+export const gameState = {
+    // Phases: START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    gamePhase: "START", 
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2, TEST_3
+    
+    // Time tracking
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    difficultyMultiplier: 1.0,
+    distanceTraveled: 0,
+    
+    // Player & Camera
+    player: null,
+    cameraX: 0,
+    cameraY: 0,
+    score: 0,
+    highScore: 0,
+    
+    // Entity Collections
+    entities: [],
+    enemies: [],
+    collectibles: [],
+    particles: [],
+    platforms: [],
+    projectiles: [],
+    backgroundElements: [], // Decor
+    
+    // Input state
+    keys: {},
+    
+    // Reset function
+    reset: function() {
+        this.score = 0;
+        this.distanceTraveled = 0;
+        this.difficultyMultiplier = 1.0;
+        this.entities = [];
+        this.enemies = [];
+        this.collectibles = [];
+        this.particles = [];
+        this.platforms = [];
+        this.projectiles = [];
+        this.backgroundElements = [];
+        this.cameraX = 0;
+        this.cameraY = 0;
+        // Player is recreated externally
+        this.player = null;
+    }
+};
+
+// Expose gameState globally as required
+export function getGameState() {
+    return gameState;
+}
+window.getGameState = getGameState;
+
+// Logger initialization helper
+export function initLogs(p) {
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+}
+</file>
+
+<file name="game.js">
+/**
+ * Main Game Entry Point.
+ * Sets up the p5 instance, game loop, and global state management.
+ */
+
+import { 
+    gameState, initLogs, CANVAS_WIDTH, CANVAS_HEIGHT, 
+    getGameState 
+} from './globals.js';
+import { Player } from './entities.js';
+import { handleKeyPressed, handleKeyReleased, KEYS } from './input.js';
+import { renderStartScreen, renderUI, renderGameOver, renderPaused } from './ui.js';
+import { initLevel, updateLevelGen } from './level.js';
+import { renderBackground } from './background.js';
+import { get_automated_testing_action } from './automated_test.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        initLogs(p);
+        
+        // Expose control mode setter for HTML buttons
+        window.setControlMode = (mode) => {
+            gameState.controlMode = mode;
+            console.log("Control Mode set to:", mode);
+            // Reset focus to canvas if needed
+        };
+        
+        // Initial Log
+        p.logs.game_info.push({
+            data: { gamePhase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    };
+
+    p.draw = function() {
+        // Time management
+        const currentTime = p.millis();
+        gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = currentTime;
+        gameState.frameCount = p.frameCount;
+
+        // --- PHASE HANDLING ---
+        switch (gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                break;
+                
+            case "PLAYING":
+                updateGame(p);
+                renderGame(p);
+                renderUI(p);
+                break;
+                
+            case "PAUSED":
+                renderGame(p); // Render underlying game frozen
+                renderPaused(p);
+                break;
+                
+            case "GAME_OVER_WIN":
+            case "GAME_OVER_LOSE":
+                renderGame(p);
+                renderGameOver(p, gameState.gamePhase === "GAME_OVER_WIN");
+                break;
+        }
+        
+        // --- INPUT HANDLING (Automated) ---
+        handleAutomatedInput(p);
+        
+        // --- RESTART LOGIC ---
+        if (gameState.requestRestart) {
+            resetGame();
+            gameState.requestRestart = false;
+            gameState.gamePhase = "START";
+        }
+    };
+
+    p.keyPressed = function() {
+        handleKeyPressed(p);
+    };
+
+    p.keyReleased = function() {
+        handleKeyReleased(p);
+    };
+});
+
+function resetGame() {
+    gameState.reset();
+    initLevel();
+    gameState.player = new Player(100, 300);
+    gameState.entities.push(gameState.player);
+}
+
+function updateGame(p) {
+    // If first time entering playing state
+    if (!gameState.player) {
+        resetGame();
+    }
+
+    // 1. Level Generation
+    updateLevelGen(p);
+
+    // 2. Update Entities
+    // Player
+    gameState.player.update(p);
+    
+    // Others
+    gameState.enemies.forEach(e => e.update(p));
+    gameState.collectibles.forEach(c => c.update(p));
+    gameState.particles.forEach(pt => pt.update(p));
+    
+    // 3. Cleanup Dead Entities
+    gameState.enemies = gameState.enemies.filter(e => !e.markedForDeletion);
+    gameState.collectibles = gameState.collectibles.filter(c => !c.markedForDeletion);
+    gameState.particles = gameState.particles.filter(pt => !pt.isDead());
+    
+    // 4. Update Camera (Follow Player X)
+    // Keep player at 1/3rd of screen approx
+    const targetCamX = gameState.player.x - 150;
+    // Smooth Lerp or direct lock for runner?
+    // Direct lock is better for runner to prevent player outrunning screen
+    gameState.cameraX = Math.max(0, targetCamX); 
+    
+    gameState.distanceTraveled = Math.max(gameState.distanceTraveled, gameState.player.x);
+}
+
+function renderGame(p) {
+    // 1. Background
+    renderBackground(p);
+    
+    // 2. World Elements
+    // Sort logic not strictly needed if arrays separated, but platforms behind entities is good
+    gameState.platforms.forEach(pl => pl.render(p));
+    
+    gameState.collectibles.forEach(c => c.render(p));
+    gameState.enemies.forEach(e => e.render(p));
+    
+    if (gameState.player) gameState.player.render(p);
+    
+    // 3. FX
+    gameState.particles.forEach(pt => pt.render(p));
+}
+
+function handleAutomatedInput(p) {
+    if (gameState.controlMode !== "HUMAN" && gameState.gamePhase === "PLAYING") {
+        const action = get_automated_testing_action();
+        if (action) {
+            // Simulate press
+            p.keyCode = action.keyCode;
+            handleKeyPressed(p);
+            
+            // Release immediately next frame effectively (for tap actions)
+            // Or for movement, we need sustained.
+            // The automated logic is polled every frame.
+            // If the logic returns same key, we keep it pressed?
+            // The current input handler adds to 'keys' map on press.
+            // We need a way to release keys if the bot stops requesting them.
+            
+            // NOTE: The automated_test.js is simple. Real simulation would need stateful key management.
+            // For this implementation, we just trigger the 'pressed' logic. 
+            // Continuous movement requires the bot to return the key every frame.
+            
+            // Hacky Reset for bot:
+            // In next frame, if bot doesn't request it, we should release it.
+            // But p5 keyReleased is event based.
+            // We'll trust the bot sends key every frame it wants held.
+            // We can auto-release keys not requested?
+            // Simplification: Just trigger the action function directly.
+            
+            if (action.keyCode === KEYS.RIGHT) gameState.player.vx += 1; // Direct influence for smoother bot
+        }
+    }
+}
+
+// Expose instance
+window.gameInstance = gameInstance;
+</file>
+
+<file name="ui.js">
+/**
+ * User Interface rendering.
+ * HUD, Menus, Overlays.
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, PALETTE } from './globals.js';
+
+export function renderUI(p) {
+    p.push();
+    
+    // Score
+    p.fill(255);
+    p.stroke(0);
+    p.strokeWeight(3);
+    p.textSize(24);
+    p.textAlign(p.LEFT, p.TOP);
+    p.text(`Score: ${Math.floor(gameState.score)}`, 20, 20);
+    p.text(`Dist: ${Math.floor(gameState.distanceTraveled)}m`, 20, 50);
+    
+    // Health Bar
+    const hpX = 20;
+    const hpY = 80;
+    const hpWidth = 200;
+    const hpHeight = 20;
+    
+    // Background
+    p.noStroke();
+    p.fill(0, 0, 0, 100);
+    p.rect(hpX, hpY, hpWidth, hpHeight, 10);
+    
+    // Fill
+    if (gameState.player) {
+        const hpPct = Math.max(0, gameState.player.health / gameState.player.maxHealth);
+        p.fill(PALETTE.RED_JELLY);
+        p.rect(hpX, hpY, hpWidth * hpPct, hpHeight, 10);
+    }
+    
+    // Icon (Simplified Head)
+    p.fill(PALETTE.COOKIE_BODY);
+    p.circle(hpX - 10, hpY + 10, 30);
+    
+    p.pop();
+}
+
+export function renderStartScreen(p) {
+    p.background(PALETTE.SKY_BOTTOM);
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    // Title
+    p.fill(PALETTE.GROUND_TOP);
+    p.stroke(255);
+    p.strokeWeight(4);
+    p.textSize(48);
+    p.text("COOKIE KINGDOM", CANVAS_WIDTH/2, CANVAS_HEIGHT/3);
+    p.text("DEFENSE", CANVAS_WIDTH/2, CANVAS_HEIGHT/3 + 50);
+    
+    // Prompt
+    p.noStroke();
+    p.fill(PALETTE.ENEMY_CAKE);
+    p.textSize(20);
+    if (Math.floor(p.frameCount / 30) % 2 === 0) {
+        p.text("PRESS ENTER TO START", CANVAS_WIDTH/2, CANVAS_HEIGHT * 0.7);
+    }
+    
+    p.textSize(14);
+    p.text("Arrows: Move | Space: Jump | Z: Attack | Shift: Dash", CANVAS_WIDTH/2, CANVAS_HEIGHT * 0.85);
+}
+
+export function renderGameOver(p, win) {
+    p.push();
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.stroke(255);
+    p.strokeWeight(4);
+    p.textSize(48);
+    
+    if (win) {
+        p.fill(PALETTE.GRASS);
+        p.text("VICTORY!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+    } else {
+        p.fill(PALETTE.RED_JELLY);
+        p.text("COOKIE CRUMBLED!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+    }
+    
+    p.fill(255);
+    p.noStroke();
+    p.textSize(24);
+    p.text(`Final Score: ${Math.floor(gameState.score)}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 20);
+    
+    p.textSize(18);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60);
+    p.pop();
+}
+
+export function renderPaused(p) {
+    p.push();
+    p.fill(0, 0, 0, 100);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(255);
+    p.textSize(40);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    p.pop();
+}
+</file>
+
+<file name="background.js">
+/**
+ * Parallax Background System.
+ * Renders decorative hills, trees, and cookie houses.
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, PALETTE } from './globals.js';
+import { worldToScreen } from './physics.js';
+
+class BackgroundLayer {
+    constructor(speed, renderFn) {
+        this.speed = speed;
+        this.renderFn = renderFn;
+    }
+    
+    render(p) {
+        const offsetX = -(gameState.cameraX * this.speed) % CANVAS_WIDTH;
+        
+        p.push();
+        p.translate(offsetX, 0);
+        this.renderFn(p, -CANVAS_WIDTH);      // Left buffer
+        this.renderFn(p, 0);                  // Center
+        this.renderFn(p, CANVAS_WIDTH);       // Right buffer
+        p.pop();
+    }
+}
+
+export function initBackgrounds() {
+    // Generate static assets/shapes if needed? 
+    // We will draw procedural shapes in the render functions.
+}
+
+export function renderBackground(p) {
+    // 1. Sky Gradient
+    p.background(PALETTE.SKY_BOTTOM);
+    
+    // 2. Far Hills (Slowest)
+    const farScroll = -(gameState.cameraX * 0.1) % CANVAS_WIDTH;
+    drawHills(p, farScroll, CANVAS_HEIGHT - 100, PALETTE.SKY_TOP, 100);
+    drawHills(p, farScroll + CANVAS_WIDTH, CANVAS_HEIGHT - 100, PALETTE.SKY_TOP, 100);
+    
+    // 3. Mid Hills (Medium)
+    const midScroll = -(gameState.cameraX * 0.3) % CANVAS_WIDTH;
+    drawHills(p, midScroll, CANVAS_HEIGHT - 50, '#C5E1A5', 50); // Lighter green
+    drawHills(p, midScroll + CANVAS_WIDTH, CANVAS_HEIGHT - 50, '#C5E1A5', 50);
+    
+    // 4. Decor (Cookie Houses, Trees) - Need to be locked to world space but far back
+    // For simplicity, we'll draw them relative to camera with parallax
+    drawDecor(p, midScroll, CANVAS_HEIGHT - 80);
+    drawDecor(p, midScroll + CANVAS_WIDTH, CANVAS_HEIGHT - 80);
+}
+
+function drawHills(p, x, y, color, height) {
+    p.fill(color);
+    p.noStroke();
+    p.beginShape();
+    p.vertex(x, CANVAS_HEIGHT);
+    p.vertex(x, y);
+    // Beziers for icing look
+    p.bezierVertex(x + 100, y - 50, x + 200, y + 50, x + 300, y);
+    p.bezierVertex(x + 400, y - 50, x + 500, y + 50, x + 600, y);
+    p.vertex(x + CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.endShape(p.CLOSE);
+}
+
+function drawDecor(p, x, y) {
+    // Simple Lollipop trees
+    p.push();
+    p.translate(x, y);
+    
+    // Tree 1
+    p.stroke(100, 50, 0);
+    p.strokeWeight(4);
+    p.line(100, 0, 100, -60);
+    p.noStroke();
+    p.fill(PALETTE.RED_JELLY);
+    p.circle(100, -60, 30);
+    p.fill(255);
+    p.circle(100, -60, 20);
+    p.fill(PALETTE.RED_JELLY);
+    p.circle(100, -60, 10);
+    
+    // Cookie House
+    p.translate(350, -20);
+    p.fill(PALETTE.GROUND_TOP);
+    p.rect(0, 0, 60, 40); // Base
+    p.fill(PALETTE.ICING);
+    p.triangle(-10, 0, 70, 0, 30, -40); // Roof
+    p.fill(PALETTE.YELLOW_JELLY);
+    p.rect(20, 20, 20, 20); // Door
+    
+    p.pop();
+}
+</file>
+
+<file name="entities.js">
+/**
+ * Game entities including Player, Enemies, Collectibles, and Platforms.
+ */
+
+import { gameState, GRAVITY, PALETTE, CANVAS_HEIGHT, CANVAS_WIDTH } from './globals.js';
+import { checkAABB, applyPhysics, worldToScreen, isOnScreen } from './physics.js';
+import { KEYS, isKeyDown } from './input.js';
+import { createExplosion } from './particles.js';
+
+// Base Entity Class
+class Entity {
+    constructor(x, y, width, height) {
+        this.x = x;
+        this.y = y;
+        this.width = width;
+        this.height = height;
+        this.vx = 0;
+        this.vy = 0;
+        this.ax = 0;
+        this.ay = 0;
+        this.markedForDeletion = false;
+        this.id = Math.random().toString(36).substr(2, 9);
+    }
+
+    update(p) { /* Override */ }
+    render(p) { /* Override */ }
+}
+
+// ------------------------------------------------------------------
+// PLAYER CLASS
+// ------------------------------------------------------------------
+export class Player extends Entity {
+    constructor(x, y) {
+        super(x, y, 40, 60);
+        this.speed = 5;
+        this.jumpForce = -12;
+        this.friction = 0.8;
+        this.grounded = false;
+        this.doubleJumpAvailable = true;
+        this.health = 100;
+        this.maxHealth = 100;
+        this.invincible = false;
+        this.invincibleTimer = 0;
+        
+        // State Machine
+        this.state = "IDLE"; // IDLE, RUN, JUMP, ATTACK, DASH, HURT
+        this.facing = 1; // 1 Right, -1 Left
+        this.animTimer = 0;
+        
+        // Attack logic
+        this.attackBox = { x: 0, y: 0, width: 40, height: 40, active: false };
+        this.attackCooldown = 0;
+    }
+
+    update(p) {
+        // 1. Input Handling
+        this.handleInput(p);
+
+        // 2. Physics
+        this.ay += GRAVITY;
+        applyPhysics(this);
+        
+        // 3. Collision with Platforms
+        this.grounded = false;
+        for (let platform of gameState.platforms) {
+            // Only check if falling down and above platform
+            if (this.vy >= 0 && 
+                this.y + this.height <= platform.y + platform.height && // was above or inside
+                this.x + this.width > platform.x && 
+                this.x < platform.x + platform.width) {
+                
+                // Predicted next position check
+                if (this.y + this.height + this.vy >= platform.y) {
+                    this.y = platform.y - this.height;
+                    this.vy = 0;
+                    this.grounded = true;
+                    this.doubleJumpAvailable = true;
+                }
+            }
+        }
+        
+        // 4. Update State/Timers
+        this.updateStatus();
+        
+        // 5. Attack Logic
+        if (this.attackBox.active) {
+            this.updateAttack();
+        }
+
+        // 6. Log Info
+        if (p.frameCount % 10 === 0 && p.logs) {
+            p.logs.player_info.push({
+                x: this.x, y: this.y, 
+                state: this.state, 
+                health: this.health,
+                framecount: p.frameCount
+            });
+        }
+        
+        // 7. Death Check
+        if (this.y > CANVAS_HEIGHT + 200 || this.health <= 0) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+        }
+    }
+
+    handleInput(p) {
+        // Movement is automatic in some runners, but we allow control here
+        if (isKeyDown(KEYS.RIGHT)) {
+            this.vx += 1;
+            this.facing = 1;
+            if (this.grounded) this.state = "RUN";
+        } else if (isKeyDown(KEYS.LEFT)) {
+            this.vx -= 1;
+            this.facing = -1;
+            if (this.grounded) this.state = "RUN";
+        } else {
+            if (this.grounded && this.state !== "ATTACK") this.state = "IDLE";
+        }
+        
+        // Clamp speed
+        const maxSpeed = this.state === "DASH" ? 10 : this.speed;
+        this.vx = Math.max(-maxSpeed, Math.min(maxSpeed, this.vx));
+
+        // State corrections
+        if (!this.grounded && this.state !== "ATTACK" && this.state !== "DASH") {
+            this.state = "JUMP";
+        }
+    }
+
+    jump() {
+        if (this.grounded) {
+            this.vy = this.jumpForce;
+            this.grounded = false;
+            createExplosion(this.x + this.width/2, this.y + this.height, 5, 'dust');
+        } else if (this.doubleJumpAvailable) {
+            this.vy = this.jumpForce * 0.9;
+            this.doubleJumpAvailable = false;
+            createExplosion(this.x + this.width/2, this.y + this.height, 5, 'sparkle');
+        }
+    }
+
+    attack() {
+        if (this.attackCooldown <= 0) {
+            this.state = "ATTACK";
+            this.attackBox.active = true;
+            this.attackCooldown = 20; // frames
+            // Attack animation timer
+            setTimeout(() => {
+                this.state = "IDLE";
+                this.attackBox.active = false;
+            }, 300); // 300ms attack duration
+        }
+    }
+
+    dash() {
+        if (this.attackCooldown <= 0) {
+            this.state = "DASH";
+            this.vx = this.facing * 15; // Burst of speed
+            this.invincible = true;
+            this.invincibleTimer = 20;
+            this.attackCooldown = 40;
+            createExplosion(this.x, this.y + this.height/2, 10, 'dust');
+        }
+    }
+    
+    updateStatus() {
+        if (this.attackCooldown > 0) this.attackCooldown--;
+        if (this.invincibleTimer > 0) {
+            this.invincibleTimer--;
+            if (this.invincibleTimer <= 0) this.invincible = false;
+        }
+        this.animTimer += 0.2;
+    }
+    
+    updateAttack() {
+        // Position attack box relative to player
+        this.attackBox.x = this.facing === 1 ? this.x + this.width : this.x - this.attackBox.width;
+        this.attackBox.y = this.y + 10;
+        
+        // Check collisions with enemies
+        gameState.enemies.forEach(enemy => {
+            if (checkAABB(this.attackBox, enemy)) {
+                enemy.takeDamage(10);
+                createExplosion(enemy.x, enemy.y, 5, 'crumb');
+            }
+        });
+    }
+
+    takeDamage(amount) {
+        if (this.invincible) return;
+        this.health -= amount;
+        this.invincible = true;
+        this.invincibleTimer = 60; // 1 sec invincibility
+        this.vy = -5; // Knockback
+        this.vx = -5 * this.facing;
+        this.state = "HURT";
+        createExplosion(this.x + this.width/2, this.y + this.height/2, 15, 'crumb');
+    }
+
+    render(p) {
+        const pos = worldToScreen(this.x, this.y);
+        
+        p.push();
+        p.translate(pos.x + this.width/2, pos.y + this.height/2);
+        
+        // Flicker if invincible
+        if (this.invincible && Math.floor(p.frameCount / 4) % 2 === 0) {
+            p.pop();
+            return;
+        }
+
+        // Scale based on facing
+        p.scale(this.facing, 1);
+        
+        // Draw Cookie Body
+        p.noStroke();
+        p.fill(PALETTE.COOKIE_BODY);
+        // Head
+        p.circle(0, -this.height/3, 30);
+        // Torso
+        p.rectMode(p.CENTER);
+        p.rect(0, 5, 25, 35, 8);
+        
+        // Legs (Animated)
+        let legOffset = 0;
+        if (this.state === "RUN") legOffset = Math.sin(this.animTimer) * 10;
+        p.stroke(PALETTE.COOKIE_BODY);
+        p.strokeWeight(8);
+        p.line(-5, 20, -10 + legOffset, 35);
+        p.line(5, 20, 10 - legOffset, 35);
+        
+        // Arms (Animated)
+        let armAngle = 0;
+        if (this.state === "ATTACK") armAngle = -Math.PI/2;
+        else if (this.state === "RUN") armAngle = Math.cos(this.animTimer) * 0.5;
+        
+        p.push();
+        p.translate(8, -5);
+        p.rotate(armAngle);
+        p.line(0, 0, 0, 15);
+        
+        // Candy Cane Weapon
+        if (this.state === "ATTACK") {
+            p.push();
+            p.stroke(255, 0, 0);
+            p.strokeWeight(4);
+            p.translate(0, 15);
+            p.rotate(-Math.PI/4);
+            p.noFill();
+            p.arc(10, 0, 20, 20, p.PI, 0); // Hook
+            p.line(0, 0, 0, 30); // Stick
+            p.pop();
+        }
+        p.pop(); // End Arm
+        
+        // Face
+        p.noStroke();
+        p.fill(255);
+        p.circle(-6, -38, 6); // Eye L
+        p.circle(6, -38, 6);  // Eye R
+        p.fill(0);
+        p.circle(-6, -38, 2); // Pupil
+        p.circle(6, -38, 2);
+        
+        // Mouth
+        p.noFill();
+        p.stroke(255);
+        p.strokeWeight(2);
+        p.arc(0, -32, 10, 8, 0, p.PI);
+
+        // Buttons
+        p.fill(255);
+        p.noStroke();
+        p.circle(0, -5, 5);
+        p.circle(0, 8, 5);
+
+        // Debug Attack Box
+        // if (this.attackBox.active) {
+        //     p.fill(255, 0, 0, 100);
+        //     p.rect(this.width/2 + this.attackBox.width/2, 0, this.attackBox.width, this.attackBox.height);
+        // }
+
+        p.pop();
+    }
+}
+
+// ------------------------------------------------------------------
+// ENEMY CLASS
+// ------------------------------------------------------------------
+export class Enemy extends Entity {
+    constructor(x, y, type) {
+        super(x, y, 40, 40);
+        this.type = type; // 'cake_hound', 'jelly_bat'
+        this.health = 20;
+        this.patrolStart = x;
+        this.patrolDist = 100;
+        this.dir = -1;
+        this.speed = type === 'jelly_bat' ? 3 : 2;
+        
+        if (type === 'jelly_bat') {
+            this.ay = 0; // Flying
+            this.flyOffset = Math.random() * Math.PI;
+        } else {
+            this.ay = GRAVITY;
+        }
+    }
+
+    update(p) {
+        // Physics
+        if (this.type !== 'jelly_bat') {
+            this.ay = GRAVITY;
+            this.vx = this.dir * this.speed;
+        } else {
+            this.vx = this.dir * this.speed;
+            this.y += Math.sin(p.frameCount * 0.1 + this.flyOffset) * 2;
+        }
+        
+        applyPhysics(this);
+        
+        // Platform collisions (Ground enemies only)
+        if (this.type !== 'jelly_bat') {
+            for (let platform of gameState.platforms) {
+                if (this.vy >= 0 && 
+                    this.y + this.height <= platform.y + platform.height &&
+                    this.x + this.width > platform.x && 
+                    this.x < platform.x + platform.width) {
+                    
+                    if (this.y + this.height + this.vy >= platform.y) {
+                        this.y = platform.y - this.height;
+                        this.vy = 0;
+                    }
+                }
+            }
+        }
+
+        // AI Logic: Turn around
+        if (Math.abs(this.x - this.patrolStart) > this.patrolDist) {
+            this.dir *= -1;
+        }
+        
+        // Player Collision (Damage)
+        if (gameState.player && checkAABB(this, gameState.player)) {
+            gameState.player.takeDamage(10);
+        }
+        
+        // Culling
+        if (this.x < gameState.cameraX - 200) this.markedForDeletion = true;
+    }
+
+    takeDamage(amount) {
+        this.health -= amount;
+        if (this.health <= 0) {
+            this.markedForDeletion = true;
+            gameState.score += 100;
+            createExplosion(this.x + this.width/2, this.y + this.height/2, 10, 'crumb');
+        }
+    }
+
+    render(p) {
+        if (!isOnScreen(this)) return;
+        const pos = worldToScreen(this.x, this.y);
+        
+        p.push();
+        p.translate(pos.x + this.width/2, pos.y + this.height/2);
+        p.scale(this.dir, 1); // Face direction
+        
+        if (this.type === 'cake_hound') {
+            // Body
+            p.fill(PALETTE.ENEMY_CAKE);
+            p.noStroke();
+            p.rectMode(p.CENTER);
+            p.rect(0, 0, 40, 30, 5);
+            // Head
+            p.circle(-15, -10, 20);
+            // Ears
+            p.fill(PALETTE.ENEMY_CREAM);
+            p.triangle(-20, -20, -10, -20, -15, -30);
+            // Legs
+            p.stroke(PALETTE.ENEMY_CAKE);
+            p.strokeWeight(5);
+            const legSwing = Math.sin(p.frameCount * 0.2) * 5;
+            p.line(-10, 15, -10 + legSwing, 25);
+            p.line(10, 15, 10 - legSwing, 25);
+        } else {
+            // Bat
+            p.fill(100, 0, 200);
+            p.circle(0, 0, 30);
+            // Wings
+            p.fill(150, 50, 250);
+            const wingFlap = Math.abs(Math.sin(p.frameCount * 0.5)) * 20;
+            p.triangle(-10, 0, -30, -10 + wingFlap, -20, 10);
+            p.triangle(10, 0, 30, -10 + wingFlap, 20, 10);
+        }
+        
+        p.pop();
+    }
+}
+
+// ------------------------------------------------------------------
+// COLLECTIBLE CLASS
+// ------------------------------------------------------------------
+export class Collectible extends Entity {
+    constructor(x, y, type) {
+        super(x, y, 20, 20);
+        this.type = type; // 'jelly_red', 'jelly_yellow'
+        this.value = type === 'jelly_red' ? 10 : 50;
+        this.bobOffset = Math.random() * Math.PI;
+        this.baseY = y;
+        this.radius = 10;
+    }
+
+    update(p) {
+        // Bobbing animation
+        this.y = this.baseY + Math.sin(p.frameCount * 0.05 + this.bobOffset) * 5;
+        
+        // Collision with Player
+        if (gameState.player && checkRectCircle(gameState.player, this)) {
+            gameState.score += this.value;
+            createExplosion(this.x, this.y, 5, 'sparkle');
+            this.markedForDeletion = true;
+        }
+        
+        if (this.x < gameState.cameraX - 200) this.markedForDeletion = true;
+    }
+
+    render(p) {
+        if (!isOnScreen(this)) return;
+        const pos = worldToScreen(this.x, this.y);
+        
+        p.push();
+        p.translate(pos.x, pos.y);
+        p.noStroke();
+        if (this.type === 'jelly_red') p.fill(PALETTE.RED_JELLY);
+        else p.fill(PALETTE.YELLOW_JELLY);
+        
+        p.circle(0, 0, this.radius * 2);
+        
+        // Shine
+        p.fill(255, 255, 255, 100);
+        p.circle(-3, -3, 5);
+        p.pop();
+    }
+}
+
+// ------------------------------------------------------------------
+// PLATFORM CLASS
+// ------------------------------------------------------------------
+export class Platform extends Entity {
+    constructor(x, y, width, height) {
+        super(x, y, width, height);
+    }
+    
+    // Static entity, no update logic needed usually, unless moving platform
+    
+    render(p) {
+        if (!isOnScreen(this)) return;
+        const pos = worldToScreen(this.x, this.y);
+        
+        p.push();
+        // Draw Icing top
+        p.fill(PALETTE.GRASS); // Matcha icing
+        p.noStroke();
+        p.rect(pos.x, pos.y, this.width, 10, 5, 5, 0, 0);
+        
+        // Draw Cake body
+        p.fill(PALETTE.GROUND_TOP);
+        p.rect(pos.x, pos.y + 10, this.width, this.height - 10, 0, 0, 5, 5);
+        
+        // Layer details
+        p.fill(PALETTE.GROUND_BOTTOM);
+        p.rect(pos.x, pos.y + 25, this.width, 5);
+        p.pop();
+    }
+}
+</file>
+
+<file name="automated_test.js">
+/**
+ * Automated Testing Controller
+ * Simulates input based on game state and test scenarios.
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { KEYS } from './input.js';
+
+export function get_automated_testing_action() {
+    if (!gameState.player) return null;
+    
+    switch (gameState.controlMode) {
+        case "TEST_1": // Survival
+            return runSurvivalBot();
+        case "TEST_2": // Combat
+            return runCombatBot();
+        case "TEST_3": // Collector
+            return runCollectorBot();
+        default:
+            return null;
+    }
+}
+
+function runSurvivalBot() {
+    // Always move right
+    const actions = [{ keyCode: KEYS.RIGHT }];
+    
+    // Check for pit or obstacle ahead
+    const scanX = gameState.player.x + 100;
+    const groundY = gameState.player.y + gameState.player.height + 5;
+    
+    let floorAhead = false;
+    for (let p of gameState.platforms) {
+        if (scanX > p.x && scanX < p.x + p.width) {
+            floorAhead = true; 
+            break;
+        }
+    }
+    
+    // Jump if no floor
+    if (!floorAhead && gameState.player.grounded) {
+        actions.push({ keyCode: KEYS.SPACE });
+    }
+    
+    // Random jump for obstacles
+    if (Math.random() < 0.02 && gameState.player.grounded) {
+        actions.push({ keyCode: KEYS.SPACE });
+    }
+
+    // Return one action per frame roughly (limitations of this simple interface)
+    // Actually the interface returns a single key event usually.
+    // We'll prioritize Jump over Right
+    if (!floorAhead && gameState.player.grounded) return { keyCode: KEYS.SPACE };
+    return { keyCode: KEYS.RIGHT };
+}
+
+function runCombatBot() {
+    // Detect enemy
+    let enemyNear = false;
+    for (let e of gameState.enemies) {
+        const d = Math.sqrt(Math.pow(e.x - gameState.player.x, 2) + Math.pow(e.y - gameState.player.y, 2));
+        if (d < 150) {
+            enemyNear = true;
+            break;
+        }
+    }
+    
+    if (enemyNear) {
+        return { keyCode: KEYS.Z }; // Attack!
+    }
+    
+    return { keyCode: KEYS.RIGHT };
+}
+
+function runCollectorBot() {
+    // Find nearest collectible
+    let nearest = null;
+    let minDist = 1000;
+    
+    for (let c of gameState.collectibles) {
+        const d = Math.sqrt(Math.pow(c.x - gameState.player.x, 2) + Math.pow(c.y - gameState.player.y, 2));
+        if (d < minDist && c.x > gameState.player.x) { // Only look forward
+            minDist = d;
+            nearest = c;
+        }
+    }
+    
+    if (nearest) {
+        if (nearest.y < gameState.player.y - 50 && gameState.player.grounded) {
+            return { keyCode: KEYS.SPACE }; // Jump for it
+        }
+    }
+    
+    return { keyCode: KEYS.RIGHT };
+}
+</file>
+
+<file name="physics.js">
+/**
+ * Physics engine and collision detection utilities.
+ * Uses p5.collide2D for precise shape interaction.
+ */
+
+import { collideRectRect, collideRectCircle, collideCircleCircle } from 'https://cdn.jsdelivr.net/npm/p5.collide2d@1.0.0/+esm';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+/**
+ * Simple AABB collision check
+ */
+export function checkAABB(rect1, rect2) {
+    return collideRectRect(
+        rect1.x, rect1.y, rect1.width, rect1.height,
+        rect2.x, rect2.y, rect2.width, rect2.height
+    );
+}
+
+/**
+ * Check collision between a rectangle (entity) and a circle (collectible/particle)
+ */
+export function checkRectCircle(rect, circle) {
+    return collideRectCircle(
+        rect.x, rect.y, rect.width, rect.height,
+        circle.x, circle.y, circle.radius
+    );
+}
+
+/**
+ * Apply basic physics to an entity
+ * @param {object} entity - Must have x, y, vx, vy, ax, ay properties
+ */
+export function applyPhysics(entity) {
+    // Apply Acceleration
+    entity.vx += entity.ax;
+    entity.vy += entity.ay;
+
+    // Apply Friction (Horizontal)
+    entity.vx *= entity.friction || 1;
+
+    // Apply Velocity
+    entity.x += entity.vx;
+    entity.y += entity.vy;
+
+    // Reset Acceleration
+    entity.ax = 0;
+    entity.ay = 0;
+}
+
+/**
+ * Constrain entity to world bounds (optional, mostly for Y axis to prevent falling forever if no pit)
+ */
+export function constrainToWorld(entity, worldHeight) {
+    if (entity.y > worldHeight + 200) {
+        // Entity fell off the world
+        if (entity.die) entity.die("falling");
+    }
+}
+
+/**
+ * Camera utility to convert World Space to Screen Space
+ */
+export function worldToScreen(x, y) {
+    return {
+        x: x - gameState.cameraX,
+        y: y - gameState.cameraY
+    };
+}
+
+/**
+ * Check if entity is potentially visible on screen (Broad phase culling)
+ */
+export function isOnScreen(entity, buffer = 100) {
+    const screenPos = entity.x - gameState.cameraX;
+    return (screenPos > -buffer && screenPos < CANVAS_WIDTH + buffer);
+}
+</file>
+
+<file name="particles.js">
+/**
+ * Particle system for visual effects.
+ */
+
+import { gameState } from './globals.js';
+import { worldToScreen } from './physics.js';
+
+export class Particle {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.vx = (Math.random() - 0.5) * 5;
+        this.vy = (Math.random() - 0.5) * 5;
+        this.life = 1.0;
+        this.decay = Math.random() * 0.03 + 0.01;
+        this.type = type; // 'crumb', 'sparkle', 'dust'
+        
+        switch(type) {
+            case 'crumb':
+                this.color = [210, 180, 140]; // Light brown
+                this.size = Math.random() * 6 + 2;
+                this.vy -= 2; // Initial pop up
+                break;
+            case 'sparkle':
+                this.color = [255, 255, 0];
+                this.size = Math.random() * 4 + 1;
+                this.decay = 0.05;
+                break;
+            case 'dust':
+                this.color = [200, 200, 200];
+                this.size = Math.random() * 8 + 4;
+                this.vx *= 0.2; // Move slower
+                this.vy = -1; // Float up
+                break;
+            default:
+                this.color = [255, 255, 255];
+                this.size = 4;
+        }
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life -= this.decay;
+        
+        if (this.type === 'crumb') {
+            this.vy += 0.2; // Gravity
+        }
+    }
+
+    render(p) {
+        const pos = worldToScreen(this.x, this.y);
+        p.noStroke();
+        p.fill(this.color[0], this.color[1], this.color[2], this.life * 255);
+        
+        if (this.type === 'sparkle') {
+            p.push();
+            p.translate(pos.x, pos.y);
+            p.rotate(p.frameCount * 0.2);
+            p.rect(0, 0, this.size, this.size); // Rotating rect for sparkle
+            p.pop();
+        } else {
+            p.circle(pos.x, pos.y, this.size);
+        }
+    }
+
+    isDead() {
+        return this.life <= 0;
+    }
+}
+
+export function createExplosion(x, y, count = 10, type = 'crumb') {
+    for (let i = 0; i < count; i++) {
+        gameState.particles.push(new Particle(x, y, type));
+    }
+}
+</file>
+
+<file name="input.js">
+/**
+ * Input handling system.
+ * Manages keyboard events and maps them to game actions.
+ */
+
+import { gameState } from './globals.js';
+
+// Key Codes
+export const KEYS = {
+    ENTER: 13,
+    ESC: 27,
+    SPACE: 32,
+    LEFT: 37,
+    UP: 38,
+    RIGHT: 39,
+    DOWN: 40,
+    Z: 90,
+    SHIFT: 16,
+    R: 82,
+    P: 80
+};
+
+/**
+ * Handles key press events from p5.js
+ * @param {object} p - p5 instance
+ */
+export function handleKeyPressed(p) {
+    const code = p.keyCode;
+    gameState.keys[code] = true;
+
+    // Log Input
+    if (p.logs) {
+        p.logs.inputs.push({
+            input_type: 'keyPressed',
+            data: { key: p.key, keyCode: code },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+
+    // Global Phase Controls
+    if (code === KEYS.ENTER) {
+        if (gameState.gamePhase === "START") {
+            gameState.gamePhase = "PLAYING";
+            logGameInfo(p, "Phase Changed to PLAYING");
+        }
+    }
+
+    if (code === KEYS.ESC || code === KEYS.P) {
+        if (gameState.gamePhase === "PLAYING") {
+            gameState.gamePhase = "PAUSED";
+            logGameInfo(p, "Game Paused");
+        } else if (gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = "PLAYING";
+            logGameInfo(p, "Game Resumed");
+        }
+    }
+
+    if (code === KEYS.R) {
+        if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+            // Restart handled in main loop to ensure clean reset
+            gameState.requestRestart = true;
+        }
+    }
+    
+    // Player specific 'trigger' inputs (Jump, Attack)
+    // Continuous inputs (Move) are handled in the update loop via checks
+    if (gameState.gamePhase === "PLAYING" && gameState.player) {
+        if (code === KEYS.SPACE) {
+            gameState.player.jump();
+        }
+        if (code === KEYS.Z) {
+            gameState.player.attack();
+        }
+        if (code === KEYS.SHIFT) {
+            gameState.player.dash();
+        }
+    }
+}
+
+/**
+ * Handles key release events from p5.js
+ * @param {object} p - p5 instance
+ */
+export function handleKeyReleased(p) {
+    const code = p.keyCode;
+    gameState.keys[code] = false;
+
+    if (p.logs) {
+        p.logs.inputs.push({
+            input_type: 'keyReleased',
+            data: { key: p.key, keyCode: code },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+
+/**
+ * Check if a specific key is currently held down
+ * @param {number} keyCode 
+ * @returns {boolean}
+ */
+export function isKeyDown(keyCode) {
+    return !!gameState.keys[keyCode];
+}
+
+/**
+ * Helper to log game info
+ */
+function logGameInfo(p, message) {
+    if (p.logs) {
+        p.logs.game_info.push({
+            data: { message: message, gamePhase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+</file>
+
+<file name="level.js">
+/**
+ * Procedural Level Generation.
+ * Creates platforms, enemies, and collectibles as the player progresses.
+ */
+
+import { gameState, CANVAS_HEIGHT, CANVAS_WIDTH, GROUND_LEVEL } from './globals.js';
+import { Platform, Enemy, Collectible } from './entities.js';
+
+let nextSpawnX = 0;
+
+export function initLevel() {
+    nextSpawnX = 0;
+    
+    // Create initial ground
+    createPlatformSegment(0, GROUND_LEVEL, CANVAS_WIDTH + 200);
+    nextSpawnX = CANVAS_WIDTH + 200;
+}
+
+export function updateLevelGen(p) {
+    // Generate ahead of the camera
+    const generationHorizon = gameState.cameraX + CANVAS_WIDTH * 2;
+    
+    while (nextSpawnX < generationHorizon) {
+        const segmentType = Math.floor(Math.random() * 5);
+        const segmentLength = 200 + Math.random() * 300;
+        
+        if (segmentType === 0) {
+            // Gap
+            nextSpawnX += 100 + Math.random() * 100;
+        } else if (segmentType === 1) {
+            // Higher Platform
+            createPlatformSegment(nextSpawnX, GROUND_LEVEL - 80, segmentLength);
+            spawnEntities(nextSpawnX, GROUND_LEVEL - 80, segmentLength);
+            nextSpawnX += segmentLength;
+        } else {
+            // Normal Ground
+            createPlatformSegment(nextSpawnX, GROUND_LEVEL, segmentLength);
+            spawnEntities(nextSpawnX, GROUND_LEVEL, segmentLength);
+            nextSpawnX += segmentLength;
+        }
+    }
+    
+    // Cleanup old entities
+    gameState.platforms = gameState.platforms.filter(p => p.x + p.width > gameState.cameraX - 400);
+}
+
+function createPlatformSegment(x, y, width) {
+    gameState.platforms.push(new Platform(x, y, width, 200));
+}
+
+function spawnEntities(x, y, width) {
+    // 30% chance for enemy
+    if (Math.random() < 0.3) {
+        const enemyX = x + Math.random() * (width - 40);
+        gameState.enemies.push(new Enemy(enemyX, y - 40, 'cake_hound'));
+    }
+    
+    // 20% chance for flying enemy
+    if (Math.random() < 0.2) {
+        const enemyX = x + Math.random() * (width - 40);
+        gameState.enemies.push(new Enemy(enemyX, y - 120, 'jelly_bat'));
+    }
+    
+    // 50% chance for collectibles (Arc shape or Line)
+    if (Math.random() < 0.5) {
+        const startX = x + 50;
+        for (let i = 0; i < 5; i++) {
+            if (startX + i*30 > x + width) break;
+            // Parabola of jellies
+            const jellyY = (y - 50) - Math.sin(i * 0.5) * 50; 
+            gameState.collectibles.push(new Collectible(startX + i * 30, jellyY, 'jelly_red'));
+        }
+    }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

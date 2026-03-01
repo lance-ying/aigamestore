@@ -1,0 +1,1918 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+no like, easy mode/show trajectory should apply for normal mode and easy mode, there should always be a trajectory shown
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 500px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <!-- Removed h1 id="gameTitle" as per feedback -->
+      <div class="control-buttons">
+        <button id="normalModeBtn" class="control-button" onclick="window.setDifficultyMode('NORMAL')">Normal Mode</button>
+        <button id="easyModeBtn" class="control-button active" onclick="window.setDifficultyMode('EASY')">Easy Mode (Show Trajectory)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Control a cannon at the ocean floor, defending against waves of sea creatures. Hunt fish across challenging levels, destroying them to earn points. Reach the target score before time runs out to become the ultimate!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Left (←): Rotate cannon counter-clockwise | Arrow Right (→): Rotate cannon clockwise | Space: Fire projectile | ENTER: Start game from menu | ESC: Pause/Unpause during gameplay | R: Return to menu from game over screen</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+// Global constants and game state
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 500;
+
+// Cannon constants
+export const CANNON_BASE_X = CANVAS_WIDTH / 2;
+export const CANNON_BASE_Y = CANVAS_HEIGHT - 120;
+export const CANNON_LENGTH = 40;
+export const CANNON_WIDTH = 20;
+export const CANNON_ROTATION_STEP = 5; // degrees
+export const MIN_CANNON_ANGLE = -90; // degrees from vertical (now allows horizontal left)
+export const MAX_CANNON_ANGLE = 90; // degrees from vertical (now allows horizontal right)
+export const FIRE_RATE_DELAY = 300; // milliseconds
+export const CANNON_RECOIL_DISTANCE = 5;
+export const CANNON_RECOIL_DURATION = 100; // milliseconds
+
+// Projectile constants
+export const PROJECTILE_RADIUS = 5;
+export const PROJECTILE_SPEED = 8;
+export const PROJECTILE_DAMAGE = 1;
+
+// Upgrade system
+export const UPGRADES = {
+  DAMAGE: {
+    name: 'Damage',
+    levels: [1, 2, 3, 5, 8],
+    costs: [0, 100, 300, 600, 1200]
+  },
+  FIRE_RATE: {
+    name: 'Fire Rate',
+    levels: [1, 0.8, 0.6, 0.4, 0.3],
+    costs: [0, 150, 400, 800, 1500]
+  },
+  ROTATION_SPEED: {
+    name: 'Rotation Speed',
+    levels: [1, 1.2, 1.4, 1.6, 2],
+    costs: [0, 100, 250, 500, 1000]
+  },
+  WEAPON_TYPE: {
+    name: 'Weapon Type',
+    levels: ['Normal', 'Spread', 'Piercing', 'Rapid'],
+    costs: [0, 200, 500, 1000]
+  }
+};
+
+// Fish type definitions
+export const FISH_TYPES = {
+  SARDINE: {
+    name: 'Sardine',
+    radius: 10,
+    health: 1,
+    points: 10,
+    speed: 1.5,
+    color: [50, 100, 255],
+    minSpeed: 1,
+    maxSpeed: 2
+  },
+  CLOWNFISH: {
+    name: 'Clownfish',
+    radius: 12,
+    health: 1,
+    points: 15,
+    speed: 2,
+    color: [255, 140, 0],
+    minSpeed: 1.5,
+    maxSpeed: 2.5
+  },
+  TUNA: {
+    name: 'Tuna',
+    radius: 15,
+    health: 2,
+    points: 25,
+    speed: 2,
+    color: [50, 200, 100],
+    minSpeed: 1.5,
+    maxSpeed: 2.5
+  },
+  SEAHORSE: {
+    name: 'Seahorse',
+    radius: 13,
+    health: 2,
+    points: 30,
+    speed: 1,
+    color: [255, 200, 100],
+    minSpeed: 0.8,
+    maxSpeed: 1.5
+  },
+  MANTA: {
+    name: 'Manta Ray',
+    radius: 20,
+    health: 3,
+    points: 50,
+    speed: 2.5,
+    color: [255, 150, 50],
+    minSpeed: 2,
+    maxSpeed: 3
+  },
+  JELLYFISH: {
+    name: 'Jellyfish',
+    radius: 18,
+    health: 3,
+    points: 60,
+    speed: 1.5,
+    color: [200, 100, 255],
+    minSpeed: 1,
+    maxSpeed: 2
+  },
+  SWORDFISH: {
+    name: 'Swordfish',
+    radius: 22,
+    health: 5,
+    points: 100,
+    speed: 3.5,
+    color: [100, 150, 255],
+    minSpeed: 3,
+    maxSpeed: 4
+  },
+  SHARK: {
+    name: 'Shark',
+    radius: 25,
+    health: 10,
+    points: 200,
+    speed: 3,
+    color: [120, 120, 140],
+    minSpeed: 2.5,
+    maxSpeed: 3.5
+  },
+  SQUID: {
+    name: 'Giant Squid',
+    radius: 35,
+    health: 25,
+    points: 500,
+    speed: 2,
+    color: [180, 50, 200],
+    minSpeed: 1.5,
+    maxSpeed: 2.5
+  }
+};
+
+// Level definitions - 9 levels total (3 easy, 3 medium, 3 hard)
+export const LEVELS = [
+  // EASY LEVELS (1-3)
+  {
+    number: 1,
+    name: "Shallow Waters",
+    targetScore: 100,
+    timeLimit: 70,
+    spawnRate: 2000,
+    maxFishOnScreen: 8,
+    fishTypes: ['SARDINE', 'CLOWNFISH', 'TUNA'],
+    fishWeights: [0.6, 0.3, 0.1]
+  },
+  {
+    number: 2,
+    name: "Coral Reef Calm",
+    targetScore: 200,
+    timeLimit: 75,
+    spawnRate: 1800,
+    maxFishOnScreen: 10,
+    fishTypes: ['SARDINE', 'CLOWNFISH', 'TUNA', 'SEAHORSE'],
+    fishWeights: [0.4, 0.3, 0.2, 0.1]
+  },
+  {
+    number: 3,
+    name: "Reef Awakening",
+    targetScore: 400,
+    timeLimit: 80,
+    spawnRate: 1600,
+    maxFishOnScreen: 11,
+    fishTypes: ['CLOWNFISH', 'TUNA', 'SEAHORSE', 'MANTA'],
+    fishWeights: [0.3, 0.3, 0.2, 0.2]
+  },
+  // MEDIUM LEVELS (4-6)
+  {
+    number: 4,
+    name: "Deep Sea Currents",
+    targetScore: 1200,
+    timeLimit: 80,
+    spawnRate: 1400,
+    maxFishOnScreen: 12,
+    fishTypes: ['TUNA', 'MANTA', 'JELLYFISH', 'SWORDFISH'],
+    fishWeights: [0.3, 0.3, 0.2, 0.2]
+  },
+  {
+    number: 5,
+    name: "Twilight Zone",
+    targetScore: 1800,
+    timeLimit: 85,
+    spawnRate: 1200,
+    maxFishOnScreen: 13,
+    fishTypes: ['MANTA', 'JELLYFISH', 'SWORDFISH', 'SHARK'],
+    fishWeights: [0.3, 0.2, 0.3, 0.2]
+  },
+  {
+    number: 6,
+    name: "Abyssal Frenzy",
+    targetScore: 2500,
+    timeLimit: 90,
+    spawnRate: 1000,
+    maxFishOnScreen: 15,
+    fishTypes: ['MANTA', 'SWORDFISH', 'SHARK'],
+    fishWeights: [0.3, 0.4, 0.3]
+  },
+  // HARD LEVELS (7-9)
+  {
+    number: 7,
+    name: "Midnight Depths",
+    targetScore: 3500,
+    timeLimit: 95,
+    spawnRate: 900,
+    maxFishOnScreen: 16,
+    fishTypes: ['JELLYFISH', 'SWORDFISH', 'SHARK', 'SQUID'],
+    fishWeights: [0.2, 0.3, 0.4, 0.1]
+  },
+  {
+    number: 8,
+    name: "Apex Predators",
+    targetScore: 4500,
+    timeLimit: 100,
+    spawnRate: 800,
+    maxFishOnScreen: 18,
+    fishTypes: ['SWORDFISH', 'SHARK', 'SQUID'],
+    fishWeights: [0.3, 0.5, 0.2]
+  },
+  {
+    number: 9,
+    name: "Leviathan's Lair",
+    targetScore: 6000,
+    timeLimit: 110,
+    spawnRate: 700,
+    maxFishOnScreen: 20,
+    fishTypes: ['MANTA', 'SHARK', 'SQUID'],
+    fishWeights: [0.3, 0.4, 0.3]
+  }
+];
+
+// Game state object
+export const gameState = {
+  player: null,
+  entities: [],
+  gamePhase: "START", // "START", "PLAYING", "PAUSED", "GAME_OVER_WIN", "GAME_OVER_LOSE"
+  controlMode: "HUMAN",
+  difficultyMode: "EASY", // "NORMAL" or "EASY"
+  score: 0,
+  totalGameScore: 0,
+  level: 0,
+  timeRemaining: 0,
+  levelStartTime: 0,
+  cannon: {
+    angle: 0,
+    x: CANNON_BASE_X,
+    y: CANNON_BASE_Y,
+    recoiling: false,
+    recoilStartTime: 0
+  },
+  projectiles: [],
+  fish: [],
+  lastShotTime: 0,
+  particles: [],
+  floatingTexts: [],
+  highScores: [],
+  bossSpawned: false,
+  keysPressed: {},
+  upgrades: {
+    damage: 0,
+    fireRate: 0,
+    rotationSpeed: 0,
+    weaponType: 0
+  },
+  // Auto-restart variables
+  autoRestartTimeoutId: null, // Stores the ID of the setTimeout for auto-restart
+  autoRestartScheduled: false // Flag to prevent multiple auto-restarts from being scheduled
+};
+
+// Expose gameState getter
+if (typeof window !== 'undefined') {
+  window.getGameState = function() {
+    return gameState;
+  };
+}
+</file>
+
+<file name="game.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { initGame, updateGame } from './gameLogic.js';
+import { renderGame } from './render.js';
+import { handleKeyPressed, handleKeyReleased, processContinuousInput } from './input.js';
+
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    initGame(p);
+  };
+  
+  p.draw = function() {
+    // Process continuous input (held keys)
+    processContinuousInput(p);
+    
+    // Update game logic
+    updateGame(p);
+    
+    // Render
+    renderGame(p);
+  };
+  
+  p.keyPressed = function() {
+    handleKeyPressed(p);
+    return false; // Prevent default
+  };
+  
+  p.keyReleased = function() {
+    handleKeyReleased(p);
+    return false; // Prevent default
+  };
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Control mode setter
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = ['humanModeBtn']; // Only human mode button remains
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const modeMap = {
+    'HUMAN': 'humanModeBtn',
+  };
+  
+  const activeBtn = document.getElementById(modeMap[mode]);
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+};
+
+// Difficulty mode setter
+window.setDifficultyMode = function(mode) {
+  gameState.difficultyMode = mode;
+  
+  // Update button states
+  const buttons = ['normalModeBtn', 'easyModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const modeMap = {
+    'NORMAL': 'normalModeBtn',
+    'EASY': 'easyModeBtn'
+  };
+  
+  const activeBtn = document.getElementById(modeMap[mode]);
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+};
+</file>
+
+<file name="ui.js">
+import { gameState, LEVELS, CANVAS_WIDTH, CANVAS_HEIGHT, UPGRADES } from './globals.js';
+
+export function drawUI(p) {
+  if (gameState.gamePhase === 'START') {
+    drawStartScreen(p);
+  } else if (gameState.gamePhase === 'PLAYING') {
+    drawPlayingUI(p);
+    drawUpgradePanel(p);
+  } else if (gameState.gamePhase === 'PAUSED') {
+    drawPlayingUI(p);
+    drawUpgradePanel(p);
+    drawPausedOverlay(p);
+  } else if (gameState.gamePhase === 'GAME_OVER_WIN' || gameState.gamePhase === 'GAME_OVER_LOSE') {
+    drawGameOverScreen(p);
+  }
+}
+
+function drawStartScreen(p) {
+  p.push();
+  
+  // Replaced game title with "press enter to begin"
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.fill(255); // Simple white color
+  p.noStroke(); // No stroke for simplicity
+  p.text('press enter to begin', CANVAS_WIDTH / 2, 80);
+  
+  // Instructions
+  p.textSize(16);
+  p.fill(255);
+  p.noStroke();
+  p.textAlign(p.LEFT, p.TOP);
+  
+  const instructions = [
+    'OBJECTIVE:',
+    '  Complete all 9 levels (3 easy, 3 medium, 3 hard)',
+    '  by reaching the target score before time runs out!',
+    '',
+    'FISH TYPES:',
+    '  Sardine (Blue) - 10 pts   Clownfish (Orange) - 15 pts',
+    '  Tuna (Green) - 25 pts     Seahorse (Yellow) - 30 pts',
+    '  Manta Ray (Orange) - 50pts  Jellyfish (Purple) - 60 pts',
+    '  Swordfish (Blue) - 100 pts  Shark (Grey) - 200 pts',
+    '  Giant Squid (Purple) - 500 pts',
+    '',
+    'CONTROLS:',
+    '  Arrow Keys - Aim cannon (hold for continuous rotation)',
+    '  SPACE - Fire',
+    '  1-4 - Purchase upgrades during gameplay',
+    '  ESC - Pause   R - Restart (from game over)'
+  ];
+  
+  let y = 155;
+  for (const line of instructions) {
+    p.text(line, 40, y);
+    y += 16;
+  }
+  
+  // Removed "PRESS ENTER TO START" prompt as the main title now serves this purpose.
+  
+  p.pop();
+}
+
+function drawPlayingUI(p) {
+  p.push();
+  p.textSize(18);
+  p.fill(255);
+  p.noStroke();
+  
+  // Score (top-left)
+  p.textAlign(p.LEFT, p.TOP);
+  p.text(`SCORE: ${String(gameState.score).padStart(5, '0')}`, 10, 10);
+  p.textSize(14);
+  p.text(`TOTAL: ${String(gameState.totalGameScore).padStart(5, '0')}`, 10, 32);
+  
+  // Level (top-right)
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(18);
+  const currentLevel = LEVELS[gameState.level - 1];
+  if (currentLevel) {
+    p.text(`LEVEL ${currentLevel.number}: ${currentLevel.name}`, CANVAS_WIDTH - 10, 10);
+    
+    // Target score
+    p.textSize(14);
+    p.text(`Target: ${currentLevel.targetScore}`, CANVAS_WIDTH - 10, 35);
+  }
+  
+  // Time remaining (top-center)
+  p.textAlign(p.CENTER, p.TOP);
+  p.textSize(20);
+  const timeColor = gameState.timeRemaining < 10 ? [255, 100, 100] : [255, 255, 255];
+  p.fill(...timeColor);
+  p.text(`TIME: ${Math.ceil(gameState.timeRemaining)}s`, CANVAS_WIDTH / 2, 10);
+  
+  p.pop();
+}
+
+function drawUpgradePanel(p) {
+  p.push();
+  
+  const panelX = 10;
+  const panelY = CANVAS_HEIGHT - 85;
+  const panelWidth = CANVAS_WIDTH - 20;
+  const panelHeight = 75;
+  
+  // Panel background
+  p.fill(0, 0, 0, 180);
+  p.stroke(100, 200, 255);
+  p.strokeWeight(2);
+  p.rect(panelX, panelY, panelWidth, panelHeight, 5);
+  
+  // Title
+  p.noStroke();
+  p.fill(255, 255, 100);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(14);
+  p.text('UPGRADES:', panelX + 10, panelY + 8);
+  
+  // Draw each upgrade
+  const upgradeTypes = ['DAMAGE', 'FIRE_RATE', 'ROTATION_SPEED', 'WEAPON_TYPE'];
+  const upgradeKeys = ['damage', 'fireRate', 'rotationSpeed', 'weaponType'];
+  const keyNumbers = ['1', '2', '3', '4'];
+  
+  p.textSize(10);
+  for (let i = 0; i < upgradeTypes.length; i++) {
+    const x = panelX + 15 + i * 143;
+    const y = panelY + 28;
+    
+    const upgradeType = upgradeTypes[i];
+    const upgradeKey = upgradeKeys[i];
+    const currentLevel = gameState.upgrades[upgradeKey];
+    const upgradeData = UPGRADES[upgradeType];
+    const maxLevel = upgradeData.levels.length - 1;
+    
+    // Upgrade name and level
+    p.fill(100, 200, 255);
+    p.text(`[${keyNumbers[i]}] ${upgradeData.name}`, x, y);
+    p.fill(255);
+    p.text(`Lv ${currentLevel}/${maxLevel}`, x, y + 13);
+    
+    // Current value
+    const currentValue = upgradeData.levels[currentLevel];
+    let valueText = '';
+    if (upgradeType === 'DAMAGE') {
+      valueText = `${currentValue}x`;
+    } else if (upgradeType === 'FIRE_RATE') {
+      valueText = `${Math.round(100 / currentValue)}%`;
+    } else if (upgradeType === 'ROTATION_SPEED') {
+      valueText = `${currentValue}x`;
+    } else if (upgradeType === 'WEAPON_TYPE') {
+      valueText = currentValue;
+    }
+    p.fill(150, 255, 150);
+    p.text(valueText, x + 65, y + 13);
+    
+    // Next upgrade cost or MAX
+    if (currentLevel < maxLevel) {
+      const nextCost = upgradeData.costs[currentLevel + 1];
+      const canAfford = gameState.totalGameScore >= nextCost;
+      p.fill(canAfford ? [255, 255, 100] : [150, 150, 150]);
+      p.text(`Next: ${nextCost}`, x, y + 26);
+    } else {
+      p.fill(255, 100, 255);
+      p.text('MAX', x, y + 26);
+    }
+  }
+  
+  p.pop();
+}
+
+function drawPausedOverlay(p) {
+  p.push();
+  
+  // Semi-transparent overlay
+  p.fill(0, 0, 0, 150);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Paused text
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.fill(255, 255, 0);
+  p.stroke(0);
+  p.strokeWeight(4);
+  p.text('PAUSED', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  
+  p.textSize(20);
+  p.noStroke();
+  p.fill(255);
+  p.text('Press ESC to resume', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+  
+  p.pop();
+}
+
+function drawGameOverScreen(p) {
+  p.push();
+  
+  const isWin = gameState.gamePhase === 'GAME_OVER_WIN';
+  
+  // Title
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(56);
+  p.fill(...(isWin ? [100, 255, 100] : [255, 100, 100]));
+  p.stroke(0);
+  p.strokeWeight(4);
+  p.text(isWin ? 'YOU WIN!' : 'GAME OVER', CANVAS_WIDTH / 2, 80);
+  
+  // Final score
+  p.textSize(24);
+  p.fill(255);
+  p.noStroke();
+  p.text(`Final Score: ${gameState.totalGameScore}`, CANVAS_WIDTH / 2, 150);
+  
+  // Level reached
+  if (!isWin) {
+    p.textSize(18);
+    p.text(`Level Reached: ${gameState.level}`, CANVAS_WIDTH / 2, 180);
+  }
+  
+  // High scores
+  p.textSize(20);
+  p.text('HIGH SCORES', CANVAS_WIDTH / 2, 220);
+  
+  p.textSize(16);
+  for (let i = 0; i < Math.min(5, gameState.highScores.length); i++) {
+    p.text(`${i + 1}. ${gameState.highScores[i]}`, CANVAS_WIDTH / 2, 250 + i * 25);
+  }
+  
+  // Restart prompt
+  p.textSize(24);
+  const alpha = (p.sin(p.frameCount * 0.1) + 1) * 127 + 128;
+  p.fill(255, 255, 0, alpha);
+  p.text('PRESS R TO RESTART', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 30);
+  
+  p.pop();
+}
+</file>
+
+<file name="collision.js">
+import { gameState, PROJECTILE_DAMAGE, UPGRADES } from './globals.js';
+import { Particle, FloatingText } from './entities.js';
+
+export function checkCollisions(p) {
+  // Check projectile-fish collisions
+  for (let i = gameState.projectiles.length - 1; i >= 0; i--) {
+    const projectile = gameState.projectiles[i];
+    if (!projectile.active) continue;
+    
+    let hitAnyFish = false;
+    
+    for (let j = gameState.fish.length - 1; j >= 0; j--) {
+      const fish = gameState.fish[j];
+      if (!fish.active) continue;
+      
+      const distance = p.dist(projectile.x, projectile.y, fish.x, fish.y);
+      
+      if (distance < projectile.radius + fish.radius) {
+        // Collision detected
+        hitAnyFish = true;
+        
+        // Only deactivate if not piercing or hit max targets
+        if (!projectile.piercing) {
+          projectile.active = false;
+        } else {
+          projectile.hitCount++;
+          if (projectile.hitCount >= 3) {
+            projectile.active = false;
+          }
+        }
+        
+        const damageMultiplier = UPGRADES.DAMAGE.levels[gameState.upgrades.damage];
+        const totalDamage = PROJECTILE_DAMAGE * damageMultiplier;
+        
+        const destroyed = fish.takeDamage(totalDamage);
+        
+        if (destroyed) {
+          // Create particles
+          for (let k = 0; k < 10; k++) {
+            gameState.particles.push(new Particle(fish.x, fish.y, p));
+          }
+          
+          // Add score
+          gameState.score += fish.points;
+          gameState.totalGameScore += fish.points;
+          
+          // Create floating text
+          gameState.floatingTexts.push(
+            new FloatingText(`+${fish.points}`, fish.x, fish.y, p)
+          );
+          
+          // Remove fish
+          fish.active = false;
+        }
+        
+        if (!projectile.piercing) {
+          break;
+        }
+      }
+    }
+  }
+  
+  // Remove inactive projectiles
+  gameState.projectiles = gameState.projectiles.filter(p => p.active);
+  
+  // Remove inactive fish
+  gameState.fish = gameState.fish.filter(f => f.active);
+  gameState.entities = gameState.entities.filter(e => e === gameState.player || e.active);
+}
+</file>
+
+<file name="cannon.js">
+import { 
+  gameState, 
+  CANNON_BASE_X, 
+  CANNON_BASE_Y, 
+  CANNON_LENGTH, 
+  CANNON_WIDTH,
+  CANNON_ROTATION_STEP,
+  MIN_CANNON_ANGLE,
+  MAX_CANNON_ANGLE,
+  FIRE_RATE_DELAY,
+  CANNON_RECOIL_DISTANCE,
+  CANNON_RECOIL_DURATION,
+  UPGRADES,
+  PROJECTILE_SPEED,
+  CANVAS_WIDTH,
+  CANVAS_HEIGHT
+} from './globals.js';
+import { Projectile } from './entities.js';
+
+export function rotateCannon(direction, p) {
+  if (gameState.gamePhase !== 'PLAYING') return;
+  
+  const rotationSpeed = UPGRADES.ROTATION_SPEED.levels[gameState.upgrades.rotationSpeed];
+  gameState.cannon.angle += direction * CANNON_ROTATION_STEP * rotationSpeed;
+  gameState.cannon.angle = p.constrain(
+    gameState.cannon.angle,
+    MIN_CANNON_ANGLE,
+    MAX_CANNON_ANGLE
+  );
+}
+
+export function fireCannon(p) {
+  if (gameState.gamePhase !== 'PLAYING') return;
+  
+  const fireRateMultiplier = UPGRADES.FIRE_RATE.levels[gameState.upgrades.fireRate];
+  let adjustedFireRate = FIRE_RATE_DELAY * fireRateMultiplier;
+  
+  // Rapid fire weapon shoots faster
+  const weaponType = UPGRADES.WEAPON_TYPE.levels[gameState.upgrades.weaponType];
+  if (weaponType === 'Rapid') {
+    adjustedFireRate *= 0.5;
+  }
+  
+  const now = Date.now();
+  if (now - gameState.lastShotTime < adjustedFireRate) return;
+  
+  gameState.lastShotTime = now;
+  gameState.cannon.recoiling = true;
+  gameState.cannon.recoilStartTime = now;
+  
+  // Calculate projectile spawn position at cannon tip
+  const radians = p.radians(gameState.cannon.angle);
+  const tipX = CANNON_BASE_X + p.sin(radians) * CANNON_LENGTH;
+  const tipY = CANNON_BASE_Y - p.cos(radians) * CANNON_LENGTH;
+  
+  // Fire based on weapon type
+  if (weaponType === 'Spread') {
+    // Fire 3 projectiles in a spread pattern
+    const spreadAngles = [-15, 0, 15];
+    for (const angleOffset of spreadAngles) {
+      const projectile = new Projectile(tipX, tipY, gameState.cannon.angle + angleOffset, p, weaponType);
+      gameState.projectiles.push(projectile);
+      gameState.entities.push(projectile);
+    }
+  } else {
+    // Fire single projectile
+    const projectile = new Projectile(tipX, tipY, gameState.cannon.angle, p, weaponType);
+    gameState.projectiles.push(projectile);
+    gameState.entities.push(projectile);
+  }
+}
+
+export function updateCannon() {
+  if (gameState.cannon.recoiling) {
+    const elapsed = Date.now() - gameState.cannon.recoilStartTime;
+    if (elapsed >= CANNON_RECOIL_DURATION) {
+      gameState.cannon.recoiling = false;
+    }
+  }
+}
+
+export function drawTrajectory(p) {
+  if (gameState.difficultyMode !== 'EASY') return;
+  if (gameState.gamePhase !== 'PLAYING') return;
+  
+  p.push();
+  
+  const weaponType = UPGRADES.WEAPON_TYPE.levels[gameState.upgrades.weaponType];
+  
+  // Calculate starting position at cannon tip
+  const radians = p.radians(gameState.cannon.angle);
+  const tipX = CANNON_BASE_X + p.sin(radians) * CANNON_LENGTH;
+  const tipY = CANNON_BASE_Y - p.cos(radians) * CANNON_LENGTH;
+  
+  // Draw trajectory based on weapon type
+  if (weaponType === 'Spread') {
+    // Draw 3 trajectories for spread
+    const spreadAngles = [-15, 0, 15];
+    for (const angleOffset of spreadAngles) {
+      drawSingleTrajectory(p, tipX, tipY, gameState.cannon.angle + angleOffset, PROJECTILE_SPEED);
+    }
+  } else if (weaponType === 'Rapid') {
+    // Rapid projectiles are faster
+    drawSingleTrajectory(p, tipX, tipY, gameState.cannon.angle, PROJECTILE_SPEED * 1.5);
+  } else {
+    // Normal or Piercing
+    drawSingleTrajectory(p, tipX, tipY, gameState.cannon.angle, PROJECTILE_SPEED);
+  }
+  
+  p.pop();
+}
+
+function drawSingleTrajectory(p, startX, startY, angle, speed) {
+  // Calculate velocity components
+  const radians = p.radians(angle);
+  const vx = p.sin(radians) * speed;
+  const vy = -p.cos(radians) * speed;
+  
+  // Simulate trajectory until it goes off screen
+  let x = startX;
+  let y = startY;
+  const maxSteps = 200; // Limit number of points
+  const points = [];
+  
+  for (let i = 0; i < maxSteps; i++) {
+    points.push({ x, y });
+    x += vx;
+    y += vy;
+    
+    // Stop if off screen
+    if (x < 0 || x > CANVAS_WIDTH || y < 0 || y > CANVAS_HEIGHT) {
+      break;
+    }
+  }
+  
+  // Draw dotted line trajectory
+  p.stroke(255, 255, 100, 150);
+  p.strokeWeight(2);
+  p.noFill();
+  
+  // Draw as series of small dashes
+  for (let i = 0; i < points.length - 1; i++) {
+    if (i % 3 === 0) { // Create dotted effect
+      p.line(points[i].x, points[i].y, points[i + 1].x, points[i + 1].y);
+    }
+  }
+  
+  // Draw a circle at the end to show where projectile would be
+  if (points.length > 0) {
+    const lastPoint = points[points.length - 1];
+    p.fill(255, 255, 100, 100);
+    p.noStroke();
+    p.circle(lastPoint.x, lastPoint.y, 8);
+  }
+}
+
+export function drawCannon(p) {
+  p.push();
+  
+  const recoilOffset = gameState.cannon.recoiling ? CANNON_RECOIL_DISTANCE : 0;
+  
+  p.translate(CANNON_BASE_X, CANNON_BASE_Y + recoilOffset);
+  p.rotate(p.radians(gameState.cannon.angle));
+  
+  // Draw cannon base
+  p.fill(40, 100, 40);
+  p.stroke(20, 60, 20);
+  p.strokeWeight(2);
+  p.rect(-CANNON_WIDTH / 2, 0, CANNON_WIDTH, 15);
+  
+  // Draw cannon barrel with weapon type coloring
+  const weaponType = UPGRADES.WEAPON_TYPE.levels[gameState.upgrades.weaponType];
+  let barrelColor = [60, 160, 60];
+  if (weaponType === 'Spread') {
+    barrelColor = [200, 160, 60];
+  } else if (weaponType === 'Piercing') {
+    barrelColor = [60, 180, 220];
+  } else if (weaponType === 'Rapid') {
+    barrelColor = [220, 100, 100];
+  }
+  
+  p.fill(...barrelColor);
+  p.stroke(barrelColor[0] * 0.6, barrelColor[1] * 0.6, barrelColor[2] * 0.6);
+  p.strokeWeight(2);
+  p.beginShape();
+  p.vertex(-CANNON_WIDTH / 2, 0);
+  p.vertex(-CANNON_WIDTH / 3, -CANNON_LENGTH);
+  p.vertex(CANNON_WIDTH / 3, -CANNON_LENGTH);
+  p.vertex(CANNON_WIDTH / 2, 0);
+  p.endShape(p.CLOSE);
+  
+  // Draw cannon tip highlight
+  p.noStroke();
+  p.fill(barrelColor[0] + 40, barrelColor[1] + 60, barrelColor[2] + 40);
+  p.circle(0, -CANNON_LENGTH + 5, 8);
+  
+  p.pop();
+}
+</file>
+
+<file name="render.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { drawCannon, drawTrajectory } from './cannon.js';
+import { drawUI } from './ui.js';
+
+export function renderGame(p) {
+  // Background
+  p.background(0, 100, 200);
+  
+  // Draw ambient bubbles
+  drawBubbles(p);
+  
+  if (gameState.gamePhase === 'START' || 
+      gameState.gamePhase === 'GAME_OVER_WIN' || 
+      gameState.gamePhase === 'GAME_OVER_LOSE') {
+    drawUI(p);
+    return;
+  }
+  
+  // Draw cannon
+  drawCannon(p);
+  
+  // Draw trajectory in easy mode
+  drawTrajectory(p);
+  
+  // Draw all entities
+  for (const entity of gameState.entities) {
+    if (entity.draw) {
+      entity.draw();
+    }
+  }
+  
+  // Draw particles
+  for (const particle of gameState.particles) {
+    particle.draw();
+  }
+  
+  // Draw floating texts
+  for (const text of gameState.floatingTexts) {
+    text.draw();
+  }
+  
+  // Draw UI overlay
+  drawUI(p);
+}
+
+// Ambient bubble effect
+const bubbles = [];
+function drawBubbles(p) {
+  // Initialize bubbles once
+  if (bubbles.length === 0) {
+    for (let i = 0; i < 20; i++) {
+      bubbles.push({
+        x: p.random(CANVAS_WIDTH),
+        y: p.random(CANVAS_HEIGHT),
+        size: p.random(3, 8),
+        speed: p.random(0.3, 0.8)
+      });
+    }
+  }
+  
+  // Update and draw bubbles
+  p.push();
+  p.noStroke();
+  for (const bubble of bubbles) {
+    bubble.y -= bubble.speed;
+    if (bubble.y < -10) {
+      bubble.y = CANVAS_HEIGHT + 10;
+      bubble.x = p.random(CANVAS_WIDTH);
+    }
+    
+    p.fill(150, 200, 255, 100);
+    p.circle(bubble.x, bubble.y, bubble.size);
+    p.fill(200, 230, 255, 150);
+    p.circle(bubble.x - bubble.size * 0.2, bubble.y - bubble.size * 0.2, bubble.size * 0.4);
+  }
+  p.pop();
+}
+</file>
+
+<file name="testing.js">
+import { gameState } from './globals.js';
+import { executeTestAction } from './input.js';
+
+export function updateTestingController(p) {
+  if (gameState.controlMode === 'HUMAN') return;
+  
+  if (gameState.controlMode === 'TEST_1') {
+    testBasic(p);
+  } else if (gameState.controlMode === 'TEST_2') {
+    testWin(p);
+  }
+}
+
+function testBasic(p) {
+  // Basic test: Start game, aim, and fire occasionally
+  if (gameState.gamePhase === 'START') {
+    if (p.frameCount % 60 === 30) {
+      executeTestAction('START', p);
+    }
+  } else if (gameState.gamePhase === 'PLAYING') {
+    // Aim randomly
+    if (p.frameCount % 30 === 0) {
+      const action = p.random() < 0.5 ? 'LEFT' : 'RIGHT';
+      executeTestAction(action, p);
+    }
+    
+    // Fire occasionally
+    if (p.frameCount % 20 === 0) {
+      executeTestAction('FIRE', p);
+    }
+    
+    // Test pause occasionally
+    if (p.frameCount % 300 === 0) {
+      executeTestAction('PAUSE', p);
+    }
+  } else if (gameState.gamePhase === 'PAUSED') {
+    if (p.frameCount % 60 === 0) {
+      executeTestAction('UNPAUSE', p);
+    }
+  } else if (gameState.gamePhase === 'GAME_OVER_WIN' || gameState.gamePhase === 'GAME_OVER_LOSE') {
+    if (p.frameCount % 120 === 0) {
+      executeTestAction('RESTART', p);
+    }
+  }
+}
+
+function testWin(p) {
+  // Aggressive test to try to win
+  if (gameState.gamePhase === 'START') {
+    if (p.frameCount % 60 === 30) {
+      executeTestAction('START', p);
+    }
+  } else if (gameState.gamePhase === 'PLAYING') {
+    // Find closest fish and aim at it
+    if (gameState.fish.length > 0) {
+      const cannonX = 300;
+      const cannonY = 370;
+      
+      let closestFish = null;
+      let minDist = Infinity;
+      
+      for (const fish of gameState.fish) {
+        const dist = p.dist(cannonX, cannonY, fish.x, fish.y);
+        if (dist < minDist) {
+          minDist = dist;
+          closestFish = fish;
+        }
+      }
+      
+      if (closestFish) {
+        const targetAngle = p.atan2(closestFish.x - cannonX, cannonY - closestFish.y);
+        const targetDegrees = p.degrees(targetAngle);
+        const currentAngle = gameState.cannon.angle;
+        
+        // Aim towards target
+        if (Math.abs(targetDegrees - currentAngle) > 5) {
+          if (targetDegrees > currentAngle) {
+            executeTestAction('RIGHT', p);
+          } else {
+            executeTestAction('LEFT', p);
+          }
+        }
+        
+        // Fire when roughly aimed
+        if (Math.abs(targetDegrees - currentAngle) < 15) {
+          executeTestAction('FIRE', p);
+        }
+      }
+    }
+    
+    // Fire more frequently
+    if (p.frameCount % 10 === 0) {
+      executeTestAction('FIRE', p);
+    }
+  } else if (gameState.gamePhase === 'GAME_OVER_WIN' || gameState.gamePhase === 'GAME_OVER_LOSE') {
+    if (p.frameCount % 120 === 0) {
+      executeTestAction('RESTART', p);
+    }
+  }
+}
+</file>
+
+<file name="entities.js">
+import { FISH_TYPES, PROJECTILE_RADIUS, PROJECTILE_SPEED, PROJECTILE_DAMAGE, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export class Projectile {
+  constructor(x, y, angle, p, weaponType = 'Normal') {
+    this.x = x;
+    this.y = y;
+    this.angle = angle; // in degrees
+    this.radius = PROJECTILE_RADIUS;
+    this.speed = PROJECTILE_SPEED;
+    this.active = true;
+    this.p = p;
+    this.weaponType = weaponType;
+    this.piercing = weaponType === 'Piercing';
+    this.hitCount = 0;
+    
+    // Adjust properties based on weapon type
+    if (weaponType === 'Rapid') {
+      this.speed = PROJECTILE_SPEED * 1.5;
+      this.radius = PROJECTILE_RADIUS * 0.8;
+    } else if (weaponType === 'Piercing') {
+      this.radius = PROJECTILE_RADIUS * 0.7;
+    }
+    
+    // Convert angle to velocity
+    const radians = this.p.radians(angle);
+    this.vx = this.p.sin(radians) * this.speed;
+    this.vy = -this.p.cos(radians) * this.speed;
+  }
+  
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    
+    // Deactivate if off screen
+    if (this.x < 0 || this.x > CANVAS_WIDTH || this.y < 0 || this.y > CANVAS_HEIGHT) {
+      this.active = false;
+    }
+  }
+  
+  draw() {
+    this.p.push();
+    
+    if (this.weaponType === 'Rapid') {
+      this.p.fill(255, 100, 100);
+      this.p.stroke(255, 50, 50);
+      this.p.strokeWeight(1);
+      this.p.circle(this.x, this.y, this.radius * 2);
+    } else if (this.weaponType === 'Piercing') {
+      this.p.fill(100, 255, 255);
+      this.p.stroke(50, 200, 255);
+      this.p.strokeWeight(2);
+      // Draw as elongated projectile
+      this.p.push();
+      this.p.translate(this.x, this.y);
+      this.p.rotate(this.p.atan2(this.vy, this.vx));
+      this.p.ellipse(0, 0, this.radius * 4, this.radius * 2);
+      this.p.pop();
+    } else if (this.weaponType === 'Spread') {
+      this.p.fill(255, 200, 100);
+      this.p.stroke(255, 150, 50);
+      this.p.strokeWeight(1);
+      this.p.circle(this.x, this.y, this.radius * 2);
+    } else {
+      this.p.fill(255, 255, 100);
+      this.p.noStroke();
+      this.p.circle(this.x, this.y, this.radius * 2);
+    }
+    
+    this.p.pop();
+  }
+}
+
+export class Fish {
+  constructor(type, x, y, direction, p) {
+    this.p = p;
+    this.type = type;
+    this.config = FISH_TYPES[type];
+    this.x = x;
+    this.y = y;
+    this.radius = this.config.radius;
+    this.health = this.config.health;
+    this.maxHealth = this.config.health;
+    this.points = this.config.points;
+    this.direction = direction; // angle in radians
+    this.speed = this.p.random(this.config.minSpeed, this.config.maxSpeed);
+    this.active = true;
+    this.hitFlashTimer = 0;
+    
+    // Movement variation for curves
+    this.curveOffset = this.p.random(-0.02, 0.02);
+    this.frameCount = 0;
+  }
+  
+  update() {
+    this.frameCount++;
+    
+    // Apply curve to movement
+    const curvedDirection = this.direction + this.p.sin(this.frameCount * 0.05) * this.curveOffset;
+    
+    this.x += this.p.cos(curvedDirection) * this.speed;
+    this.y += this.p.sin(curvedDirection) * this.speed;
+    
+    // Special movement for jellyfish (bobbing)
+    if (this.type === 'JELLYFISH') {
+      this.y += this.p.sin(this.frameCount * 0.1) * 0.5;
+    }
+    
+    // Deactivate if off screen
+    const margin = this.radius + 50;
+    if (this.x < -margin || this.x > CANVAS_WIDTH + margin || 
+        this.y < -margin || this.y > CANVAS_HEIGHT + margin) {
+      this.active = false;
+    }
+    
+    // Update hit flash
+    if (this.hitFlashTimer > 0) {
+      this.hitFlashTimer--;
+    }
+  }
+  
+  takeDamage(damage) {
+    this.health -= damage;
+    this.hitFlashTimer = 10;
+    return this.health <= 0;
+  }
+  
+  draw() {
+    this.p.push();
+    this.p.translate(this.x, this.y);
+    this.p.rotate(this.direction);
+    
+    // Draw hit flash
+    if (this.hitFlashTimer > 0) {
+      this.p.fill(255, 0, 0, 100);
+      this.p.noStroke();
+      this.p.circle(0, 0, this.radius * 2.5);
+    }
+    
+    // Draw fish body
+    const color = this.config.color;
+    this.p.fill(...color);
+    this.p.stroke(color[0] * 0.7, color[1] * 0.7, color[2] * 0.7);
+    this.p.strokeWeight(2);
+    
+    if (this.type === 'SHARK') {
+      // Triangular shark shape
+      this.p.beginShape();
+      this.p.vertex(this.radius, 0);
+      this.p.vertex(-this.radius * 0.8, -this.radius * 0.5);
+      this.p.vertex(-this.radius * 0.8, this.radius * 0.5);
+      this.p.endShape(this.p.CLOSE);
+      
+      // Dorsal fin
+      this.p.triangle(-this.radius * 0.3, -this.radius * 0.5,
+                      -this.radius * 0.3, -this.radius * 1.2,
+                      this.radius * 0.1, -this.radius * 0.5);
+    } else if (this.type === 'SQUID') {
+      // Body
+      this.p.ellipse(0, 0, this.radius * 2, this.radius * 1.5);
+      
+      // Tentacles
+      for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * this.p.TWO_PI - this.p.PI;
+        const tentacleLength = this.radius * 1.5;
+        const wave = this.p.sin(this.frameCount * 0.1 + i) * 5;
+        this.p.line(-this.radius * 0.5, 0,
+                   -this.radius * 0.5 - tentacleLength + wave,
+                   this.p.sin(angle) * this.radius * 0.8);
+      }
+      
+      // Eye
+      this.p.fill(255);
+      this.p.circle(this.radius * 0.3, 0, this.radius * 0.4);
+      this.p.fill(0);
+      this.p.circle(this.radius * 0.4, 0, this.radius * 0.2);
+    } else if (this.type === 'MANTA') {
+      // Manta ray wings
+      this.p.beginShape();
+      this.p.vertex(this.radius, 0);
+      this.p.vertex(-this.radius * 0.5, -this.radius * 1.2);
+      this.p.vertex(-this.radius, 0);
+      this.p.vertex(-this.radius * 0.5, this.radius * 1.2);
+      this.p.endShape(this.p.CLOSE);
+    } else if (this.type === 'JELLYFISH') {
+      // Bell/dome
+      this.p.arc(0, 0, this.radius * 2, this.radius * 2, this.p.PI, this.p.TWO_PI);
+      
+      // Tentacles
+      this.p.noFill();
+      for (let i = 0; i < 6; i++) {
+        const xOffset = (i - 2.5) * this.radius * 0.4;
+        const wave = this.p.sin(this.frameCount * 0.15 + i) * 3;
+        this.p.bezier(xOffset, 0,
+                     xOffset + wave, this.radius * 0.5,
+                     xOffset - wave, this.radius,
+                     xOffset, this.radius * 1.5);
+      }
+      this.p.fill(...color);
+    } else if (this.type === 'SWORDFISH') {
+      // Body
+      this.p.ellipse(0, 0, this.radius * 2, this.radius * 1.2);
+      
+      // Sword/bill
+      this.p.strokeWeight(3);
+      this.p.line(this.radius, 0, this.radius * 1.8, 0);
+      
+      // Dorsal fin
+      this.p.strokeWeight(2);
+      this.p.triangle(-this.radius * 0.2, -this.radius * 0.6,
+                     -this.radius * 0.2, -this.radius * 1.3,
+                     this.radius * 0.2, -this.radius * 0.6);
+      
+      // Tail
+      this.p.triangle(-this.radius, -this.radius * 0.5,
+                     -this.radius, this.radius * 0.5,
+                     -this.radius * 1.5, 0);
+    } else if (this.type === 'SEAHORSE') {
+      // S-shaped body
+      this.p.noFill();
+      this.p.strokeWeight(this.radius * 0.5);
+      this.p.bezier(0, -this.radius,
+                   this.radius * 0.3, -this.radius * 0.3,
+                   -this.radius * 0.3, this.radius * 0.3,
+                   0, this.radius);
+      
+      // Head
+      this.p.fill(...color);
+      this.p.strokeWeight(2);
+      this.p.circle(0, -this.radius, this.radius * 0.7);
+      
+      // Snout
+      this.p.strokeWeight(3);
+      this.p.line(0, -this.radius, this.radius * 0.5, -this.radius);
+    } else if (this.type === 'CLOWNFISH') {
+      // Body with stripes
+      this.p.ellipse(0, 0, this.radius * 2, this.radius * 1.5);
+      
+      // White stripes
+      this.p.fill(255);
+      this.p.noStroke();
+      this.p.ellipse(-this.radius * 0.5, 0, this.radius * 0.4, this.radius * 1.6);
+      this.p.ellipse(this.radius * 0.3, 0, this.radius * 0.4, this.radius * 1.6);
+      
+      // Tail
+      this.p.fill(...color);
+      this.p.stroke(color[0] * 0.7, color[1] * 0.7, color[2] * 0.7);
+      this.p.strokeWeight(2);
+      this.p.triangle(-this.radius, -this.radius * 0.3,
+                     -this.radius, this.radius * 0.3,
+                     -this.radius * 1.5, 0);
+    } else {
+      // Basic oval fish
+      this.p.ellipse(0, 0, this.radius * 2, this.radius * 1.5);
+      
+      // Tail
+      this.p.triangle(-this.radius, -this.radius * 0.3,
+                     -this.radius, this.radius * 0.3,
+                     -this.radius * 1.5, 0);
+    }
+    
+    // Draw health bar for larger fish
+    if (this.maxHealth > 3) {
+      this.p.noStroke();
+      const barWidth = this.radius * 2;
+      const barHeight = 4;
+      const healthPercent = this.health / this.maxHealth;
+      
+      // Background
+      this.p.fill(50, 50, 50);
+      this.p.rect(-barWidth / 2, -this.radius - 15, barWidth, barHeight);
+      
+      // Health
+      this.p.fill(...(healthPercent > 0.3 ? [50, 255, 50] : [255, 50, 50]));
+      this.p.rect(-barWidth / 2, -this.radius - 15, barWidth * healthPercent, barHeight);
+    }
+    
+    this.p.pop();
+  }
+}
+
+export class Particle {
+  constructor(x, y, p) {
+    this.x = x;
+    this.y = y;
+    this.vx = p.random(-3, 3);
+    this.vy = p.random(-3, 3);
+    this.life = 255;
+    this.p = p;
+  }
+  
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.life -= 8;
+  }
+  
+  draw() {
+    this.p.push();
+    this.p.noStroke();
+    this.p.fill(255, 200, 100, this.life);
+    this.p.circle(this.x, this.y, 6);
+    this.p.pop();
+  }
+  
+  isDead() {
+    return this.life <= 0;
+  }
+}
+
+export class FloatingText {
+  constructor(text, x, y, p) {
+    this.text = text;
+    this.x = x;
+    this.y = y;
+    this.life = 60;
+    this.p = p;
+  }
+  
+  update() {
+    this.y -= 1;
+    this.life -= 2;
+  }
+  
+  draw() {
+    this.p.push();
+    this.p.textAlign(this.p.CENTER, this.p.CENTER);
+    this.p.textSize(20);
+    this.p.fill(255, 255, 0, this.life * 4);
+    this.p.strokeWeight(3);
+    this.p.stroke(0, 0, 0, this.life * 4);
+    this.p.text(this.text, this.x, this.y);
+    this.p.pop();
+  }
+  
+  isDead() {
+    return this.life <= 0;
+  }
+}
+</file>
+
+<file name="gameLogic.js">
+import { gameState, LEVELS, CANVAS_WIDTH, CANVAS_HEIGHT, UPGRADES } from './globals.js';
+import { FishSpawner } from './spawner.js';
+import { updateCannon } from './cannon.js';
+import { checkCollisions } from './collision.js';
+
+let spawner = null;
+
+export function initGame(p) {
+  spawner = new FishSpawner(p);
+  loadHighScores();
+}
+
+export function startGame(p) {
+  gameState.gamePhase = 'PLAYING';
+  gameState.level = 1;
+  gameState.score = 0;
+  gameState.totalGameScore = 0;
+  gameState.cannon.angle = 0;
+  gameState.projectiles = [];
+  gameState.fish = [];
+  gameState.entities = [];
+  gameState.particles = [];
+  gameState.floatingTexts = [];
+  gameState.bossSpawned = false;
+  gameState.upgrades = {
+    damage: 0,
+    fireRate: 0,
+    rotationSpeed: 0,
+    weaponType: 0
+  };
+  
+  startLevel(p);
+}
+
+export function togglePause(p) {
+  if (gameState.gamePhase === 'PLAYING') {
+    gameState.gamePhase = 'PAUSED';
+  } else if (gameState.gamePhase === 'PAUSED') {
+    gameState.gamePhase = 'PLAYING';
+    // Adjust level start time to account for pause duration
+    const pauseDuration = Date.now() - gameState.levelStartTime - 
+                         (LEVELS[gameState.level - 1].timeLimit - gameState.timeRemaining) * 1000;
+    gameState.levelStartTime += pauseDuration;
+  }
+}
+
+export function restartGame(p) {
+  // Clear any pending auto-restart
+  if (gameState.autoRestartTimeoutId) {
+    clearTimeout(gameState.autoRestartTimeoutId);
+    gameState.autoRestartTimeoutId = null;
+  }
+  gameState.autoRestartScheduled = false;
+
+  gameState.gamePhase = 'START';
+  gameState.level = 0;
+  gameState.score = 0;
+  gameState.totalGameScore = 0;
+  gameState.cannon.angle = 0;
+  gameState.projectiles = [];
+  gameState.fish = [];
+  gameState.entities = [];
+  gameState.particles = [];
+  gameState.floatingTexts = [];
+  gameState.upgrades = {
+    damage: 0,
+    fireRate: 0,
+    rotationSpeed: 0,
+    weaponType: 0
+  };
+}
+
+export function purchaseUpgrade(upgradeType, p) {
+  if (gameState.gamePhase !== 'PLAYING') return;
+  
+  // Map camelCase state keys to UPPER_SNAKE_CASE UPGRADES keys
+  const upgradeMapping = {
+    'damage': 'DAMAGE',
+    'fireRate': 'FIRE_RATE',
+    'rotationSpeed': 'ROTATION_SPEED',
+    'weaponType': 'WEAPON_TYPE'
+  };
+  
+  const currentLevel = gameState.upgrades[upgradeType];
+  const upgradeData = UPGRADES[upgradeMapping[upgradeType]];
+  
+  if (!upgradeData) return;
+  
+  if (currentLevel >= upgradeData.levels.length - 1) {
+    // Already max level
+    return;
+  }
+  
+  const nextLevel = currentLevel + 1;
+  const cost = upgradeData.costs[nextLevel];
+  
+  if (gameState.totalGameScore >= cost) {
+    gameState.totalGameScore -= cost;
+    gameState.upgrades[upgradeType] = nextLevel;
+  }
+}
+
+export function updateGame(p) {
+  if (gameState.gamePhase !== 'PLAYING') return;
+  
+  const currentLevel = LEVELS[gameState.level - 1];
+  if (!currentLevel) return; // Should not happen if startLevel correctly validates.
+  
+  // Update time
+  const elapsed = (Date.now() - gameState.levelStartTime) / 1000;
+  gameState.timeRemaining = Math.max(0, currentLevel.timeLimit - elapsed);
+  
+  // Update cannon
+  updateCannon();
+  
+  // Update spawner
+  spawner.update();
+  
+  // Update all entities
+  for (const entity of gameState.entities) {
+    if (entity.update) {
+      entity.update();
+    }
+  }
+  
+  // Update particles
+  for (const particle of gameState.particles) {
+    particle.update();
+  }
+  gameState.particles = gameState.particles.filter(p => !p.isDead());
+  
+  // Update floating texts
+  for (const text of gameState.floatingTexts) {
+    text.update();
+  }
+  gameState.floatingTexts = gameState.floatingTexts.filter(t => !t.isDead());
+  
+  // Check collisions
+  checkCollisions(p);
+  
+  // Check win condition
+  if (gameState.score >= currentLevel.targetScore) {
+    completeLevel(p);
+  }
+  
+  // Check lose condition
+  if (gameState.timeRemaining <= 0 && gameState.score < currentLevel.targetScore) {
+    gameOver(p, false);
+  }
+}
+
+function startLevel(p) {
+  // Defensive check: Ensure gameState.level is a valid index for LEVELS.
+  // If gameState.level is 0 (initial state) or otherwise invalid, it indicates
+  // a logic error or state corruption preventing a proper level start.
+  // Instead of triggering an instant 'GAME OVER', we restart cleanly to the 'START' phase.
+  if (gameState.level < 1 || gameState.level > LEVELS.length) {
+    console.error("Attempted to start an invalid level:", gameState.level, ". Returning to start screen.");
+    restartGame(p); 
+    return;
+  }
+  
+  const currentLevel = LEVELS[gameState.level - 1];
+  
+  gameState.score = 0; // Reset score for the new level
+  gameState.timeRemaining = currentLevel.timeLimit;
+  gameState.levelStartTime = Date.now();
+  gameState.projectiles = [];
+  gameState.fish = [];
+  gameState.entities = [];
+  
+  spawner.setLevel(currentLevel);
+  spawner.lastSpawnTime = Date.now(); // Reset spawner timer for the new level
+}
+
+function completeLevel(p) {
+  if (gameState.level >= LEVELS.length) {
+    gameOver(p, true);
+  } else {
+    gameState.level++;
+    startLevel(p);
+  }
+}
+
+function gameOver(p, isWin) {
+  gameState.gamePhase = isWin ? 'GAME_OVER_WIN' : 'GAME_OVER_LOSE';
+  
+  // Update high scores
+  updateHighScores(gameState.totalGameScore);
+
+  // Add auto-restart logic
+  if (!gameState.autoRestartScheduled) {
+    gameState.autoRestartScheduled = true;
+    gameState.autoRestartTimeoutId = setTimeout(() => {
+      restartGame(p); // Pass the p5 instance to restartGame
+      gameState.autoRestartScheduled = false; // Reset flag after restart
+      gameState.autoRestartTimeoutId = null;
+    }, 1000); // 1 second delay
+  }
+}
+
+function loadHighScores() {
+  try {
+    const stored = localStorage.getItem('oceanHunterHighScores');
+    if (stored) {
+      gameState.highScores = JSON.parse(stored);
+    } else {
+      gameState.highScores = [];
+    }
+  } catch (e) {
+    gameState.highScores = [];
+  }
+}
+
+function updateHighScores(score) {
+  gameState.highScores.push(score);
+  gameState.highScores.sort((a, b) => b - a);
+  gameState.highScores = gameState.highScores.slice(0, 5);
+  
+  try {
+    localStorage.setItem('oceanHunterHighScores', JSON.stringify(gameState.highScores));
+  } catch (e) {
+    // Ignore storage errors
+  }
+}
+</file>
+
+<file name="input.js">
+import { gameState, LEVELS, UPGRADES, CANNON_ROTATION_STEP } from './globals.js';
+import { rotateCannon, fireCannon } from './cannon.js';
+import { startGame, togglePause, restartGame, purchaseUpgrade } from './gameLogic.js';
+
+export function handleKeyPressed(p) {
+  // Track key state for continuous movement
+  gameState.keysPressed[p.keyCode] = true;
+  
+  // ENTER - Start game
+  if (p.keyCode === 13) {
+    if (gameState.gamePhase === 'START') {
+      startGame(p);
+    }
+    return;
+  }
+  
+  // ESC - Pause/Unpause
+  if (p.keyCode === 27) {
+    if (gameState.gamePhase === 'PLAYING' || gameState.gamePhase === 'PAUSED') {
+      togglePause(p);
+    }
+    return;
+  }
+  
+  // R - Restart
+  if (p.keyCode === 82) {
+    if (gameState.gamePhase === 'GAME_OVER_WIN' || gameState.gamePhase === 'GAME_OVER_LOSE') {
+      // Cancel any pending auto-restart before manual restart
+      if (gameState.autoRestartTimeoutId) {
+        clearTimeout(gameState.autoRestartTimeoutId);
+        gameState.autoRestartTimeoutId = null;
+      }
+      gameState.autoRestartScheduled = false; // Reset flag
+
+      restartGame(p);
+    }
+    return;
+  }
+  
+  // E - Toggle easy mode (show trajectory)
+  if (p.keyCode === 69) {
+    if (typeof window !== 'undefined' && window.setDifficultyMode) {
+      const newMode = gameState.difficultyMode === 'EASY' ? 'NORMAL' : 'EASY';
+      window.setDifficultyMode(newMode);
+    }
+    return;
+  }
+  
+  // Game controls only work during PLAYING
+  if (gameState.gamePhase !== 'PLAYING') return;
+  
+  // Space - Fire (single press)
+  if (p.keyCode === 32) {
+    fireCannon(p);
+  }
+  
+  // Upgrades (1, 2, 3, 4 keys)
+  if (p.keyCode === 49) { // 1 key
+    purchaseUpgrade('damage', p);
+  }
+  if (p.keyCode === 50) { // 2 key
+    purchaseUpgrade('fireRate', p);
+  }
+  if (p.keyCode === 51) { // 3 key
+    purchaseUpgrade('rotationSpeed', p);
+  }
+  if (p.keyCode === 52) { // 4 key
+    purchaseUpgrade('weaponType', p);
+  }
+}
+
+export function handleKeyReleased(p) {
+  gameState.keysPressed[p.keyCode] = false;
+}
+
+// Process continuous movement from held keys
+export function processContinuousInput(p) {
+  if (gameState.gamePhase !== 'PLAYING') return;
+  
+  // Arrow Left - Rotate cannon left
+  if (gameState.keysPressed[37]) {
+    rotateCannon(-1, p);
+  }
+  
+  // Arrow Right - Rotate cannon right
+  if (gameState.keysPressed[39]) {
+    rotateCannon(1, p);
+  }
+}
+</file>
+
+<file name="spawner.js">
+import { FISH_TYPES, CANVAS_WIDTH, CANVAS_HEIGHT, gameState } from './globals.js';
+import { Fish } from './entities.js';
+
+export class FishSpawner {
+  constructor(p) {
+    this.p = p;
+    this.lastSpawnTime = 0;
+    this.currentLevel = null;
+  }
+  
+  setLevel(level) {
+    this.currentLevel = level;
+  }
+  
+  update() {
+    if (!this.currentLevel) return;
+    
+    const now = Date.now();
+    const timeSinceLastSpawn = now - this.lastSpawnTime;
+    
+    if (timeSinceLastSpawn >= this.currentLevel.spawnRate && 
+        gameState.fish.length < this.currentLevel.maxFishOnScreen) {
+      this.spawnFish();
+      this.lastSpawnTime = now;
+    }
+    
+    // Spawn boss in final level (level 9)
+    if (this.currentLevel.number === 9 && !gameState.bossSpawned && gameState.timeRemaining < 100) {
+      this.spawnBoss();
+      gameState.bossSpawned = true;
+    }
+  }
+  
+  spawnBoss() {
+    const side = this.p.random() < 0.5 ? 'left' : 'right';
+    let x, y, direction;
+    
+    if (side === 'left') {
+      x = -50;
+      y = CANVAS_HEIGHT / 2;
+      direction = 0;
+    } else {
+      x = CANVAS_WIDTH + 50;
+      y = CANVAS_HEIGHT / 2;
+      direction = this.p.PI;
+    }
+    
+    const fish = new Fish('SQUID', x, y, direction, this.p);
+    gameState.fish.push(fish);
+    gameState.entities.push(fish);
+  }
+  
+  spawnFish() {
+    if (!this.currentLevel) return;
+    
+    // Select fish type based on weights
+    const fishType = this.selectFishType();
+    
+    // Random spawn position and direction
+    const spawnSide = this.p.floor(this.p.random(4)); // 0=left, 1=right, 2=top, 3=bottom
+    let x, y, direction;
+    
+    switch (spawnSide) {
+      case 0: // Left
+        x = -50;
+        y = this.p.random(50, CANVAS_HEIGHT - 50);
+        direction = this.p.random(-0.3, 0.3);
+        break;
+      case 1: // Right
+        x = CANVAS_WIDTH + 50;
+        y = this.p.random(50, CANVAS_HEIGHT - 50);
+        direction = this.p.PI + this.p.random(-0.3, 0.3);
+        break;
+      case 2: // Top
+        x = this.p.random(50, CANVAS_WIDTH - 50);
+        y = -50;
+        direction = this.p.HALF_PI + this.p.random(-0.3, 0.3);
+        break;
+      case 3: // Bottom (rare)
+        x = this.p.random(50, CANVAS_WIDTH - 50);
+        y = CANVAS_HEIGHT + 50;
+        direction = -this.p.HALF_PI + this.p.random(-0.3, 0.3);
+        break;
+    }
+    
+    const fish = new Fish(fishType, x, y, direction, this.p);
+    gameState.fish.push(fish);
+    gameState.entities.push(fish);
+  }
+  
+  selectFishType() {
+    const random = this.p.random();
+    let cumulative = 0;
+    
+    for (let i = 0; i < this.currentLevel.fishTypes.length; i++) {
+      cumulative += this.currentLevel.fishWeights[i];
+      if (random <= cumulative) {
+        return this.currentLevel.fishTypes[i];
+      }
+    }
+    
+    return this.currentLevel.fishTypes[0];
+  }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

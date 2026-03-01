@@ -1,0 +1,1360 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+I can't move left or right and the objects in the game don't feel complete, and everything moves too slow, fix the movement please
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Untitled Goose Clone</title>
+    <style>
+      html, body { 
+          margin: 0; 
+          padding: 0; 
+          height: 100%; 
+          overflow: hidden; 
+          background: #222; 
+          font-family: Arial, sans-serif;
+      }
+      body { 
+          display: flex; 
+          flex-direction: column; 
+          justify-content: center; 
+          align-items: center; 
+      }
+      /* Ensure container is strictly sized */
+      #game-container {
+          box-shadow: 0 0 20px rgba(0,0,0,0.5);
+          background: #000;
+      }
+      canvas { 
+          display: block;
+      }
+      .control-buttons { 
+          display: flex; 
+          gap: 10px; 
+          margin-bottom: 15px; 
+          flex-wrap: wrap; 
+          justify-content: center; 
+      }
+      .control-button { 
+          padding: 8px 16px; 
+          cursor: pointer; 
+          background: #444; 
+          color: #fff; 
+          border: 1px solid #555; 
+          border-radius: 4px; 
+          transition: background 0.2s;
+      }
+      .control-button:hover { background: #555; }
+      .control-button:active { background: #666; }
+      h1 { color: #fff; font-size: 24px; margin-bottom: 10px; }
+      p { color: #aaa; margin: 5px 0; font-size: 14px; text-align: center; max-width: 600px; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1>Untitled Goose Clone</h1>
+      <div class="control-buttons">
+        <button class="control-button" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button class="control-button" onclick="window.setControlMode('TEST_1')">Test Movement</button>
+        <button class="control-button" onclick="window.setControlMode('TEST_2')">Test Win</button>
+      </div>
+      <p>Be a horrible goose. Steal things. Honk at people.</p>
+    </div>
+    
+    <!-- Game container will be injected here by game.js -->
+    
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/seedrandom/3.0.5/seedrandom.min.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const gameState = {
+    // Phase Management
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN",
+    
+    // Core Three.js
+    scene: null,
+    camera: null,
+    renderer: null,
+    gameContainer: null,
+    
+    // World & Physics
+    gravity: new THREE.Vector3(0, -0.5, 0), // Stronger gravity for snappy feeling
+    groundLevel: 0,
+    
+    // Entities
+    player: null,
+    gardener: null,
+    entities: [],     // All interactive objects (keys, rake, etc)
+    staticProps: [], // Fences, trees, etc
+    
+    // Game Logic
+    tasks: [],
+    score: 0,
+    
+    // Input State
+    keys: {
+        ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false,
+        w: false, a: false, s: false, d: false,
+        Shift: false,
+        " ": false, // Space
+        z: false,
+        Enter: false,
+        Escape: false,
+        r: false
+    },
+    
+    // Time
+    frameCount: 0,
+    deltaTime: 0,
+    lastTime: 0,
+    
+    // Debug/Logging
+    logs: {
+        game_info: [],
+        player_info: [],
+        inputs: []
+    }
+};
+
+// Log Helper
+export function logGameInfo(infoType, data) {
+    if (!gameState.logs[infoType]) return;
+    gameState.logs[infoType].push({
+        ...data,
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+}
+
+// Global accessor
+window.getGameState = () => gameState;
+window.logs = gameState.logs; // Expose strictly for requirements
+
+// Game Constants
+export const COLORS = {
+    GOOSE_WHITE: 0xFFFFFF,
+    GOOSE_BEAK: 0xFFA500,
+    GRASS: 0x7CFC00,
+    WATER: 0x00BFFF,
+    DIRT: 0x8B4513,
+    GARDENER_SHIRT: 0x87CEEB,
+    GARDENER_HAT: 0xD2B48C,
+    FENCE: 0xDEB887
+};
+
+export const ZONES = {
+    LAKE: { x: 15, z: 15, radius: 6 },
+    PICNIC: { x: -10, z: 10, radius: 4 }
+};
+</file>
+
+<file name="game.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, ZONES } from './globals.js';
+import { setupLighting } from './lighting.js';
+import { setupCamera, updateCamera } from './camera.js';
+import { Goose, Gardener, Item, StaticProp } from './entities.js';
+import { initTasks, checkTasks } from './task_system.js';
+import { initUI, renderUI } from './ui.js';
+
+// Setup Main System
+function init() {
+    // 1. Container
+    const container = document.createElement('div');
+    container.id = 'game-container';
+    container.style.width = `${CANVAS_WIDTH}px`;
+    container.style.height = `${CANVAS_HEIGHT}px`;
+    container.style.position = 'relative';
+    container.style.overflow = 'hidden';
+    document.body.appendChild(container);
+    gameState.gameContainer = container;
+
+    // 2. Renderer
+    gameState.renderer = new THREE.WebGLRenderer({ antialias: true });
+    gameState.renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+    gameState.renderer.shadowMap.enabled = true;
+    gameState.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    container.appendChild(gameState.renderer.domElement);
+
+    // 3. Scene
+    gameState.scene = new THREE.Scene();
+    gameState.scene.background = new THREE.Color(0x87CEEB); // Sky Blue
+    
+    // 4. Lights & Camera
+    setupLighting();
+    setupCamera();
+    
+    // 5. Input
+    setupInput();
+    
+    // 6. UI
+    initUI();
+    
+    // 7. Start Loop
+    gameState.lastTime = performance.now();
+    requestAnimationFrame(gameLoop);
+    
+    // Initial Logs
+    gameState.logs.game_info.push({ status: "initialized", timestamp: Date.now() });
+}
+
+function setupGameWorld() {
+    // Clear old
+    while(gameState.scene.children.length > 0){ 
+        gameState.scene.remove(gameState.scene.children[0]); 
+    }
+    // Re-add lights
+    setupLighting();
+    
+    // Reset State
+    gameState.entities = [];
+    gameState.staticProps = [];
+    gameState.score = 0;
+    
+    // Ground
+    const groundGeo = new THREE.PlaneGeometry(100, 100);
+    const groundMat = new THREE.MeshStandardMaterial({ color: 0x7CFC00 }); // Grass Green
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    gameState.scene.add(ground);
+    
+    // Lake
+    const lakeGeo = new THREE.CircleGeometry(ZONES.LAKE.radius, 32);
+    const lakeMat = new THREE.MeshStandardMaterial({ color: 0x00BFFF });
+    const lake = new THREE.Mesh(lakeGeo, lakeMat);
+    lake.rotation.x = -Math.PI / 2;
+    lake.position.set(ZONES.LAKE.x, 0.01, ZONES.LAKE.z); // Slightly above ground
+    lake.receiveShadow = true;
+    gameState.scene.add(lake);
+    
+    // Picnic Blanket
+    const blanketGeo = new THREE.PlaneGeometry(3, 3);
+    const blanketMat = new THREE.MeshStandardMaterial({ color: 0xFF0000 }); // Red Blanket
+    const blanket = new THREE.Mesh(blanketGeo, blanketMat);
+    blanket.rotation.x = -Math.PI / 2;
+    blanket.position.set(ZONES.PICNIC.x, 0.01, ZONES.PICNIC.z);
+    blanket.receiveShadow = true;
+    gameState.scene.add(blanket);
+
+    // Entities
+    gameState.player = new Goose(0, 0);
+    gameState.gardener = new Gardener(5, 5);
+    gameState.entities.push(gameState.player, gameState.gardener);
+    
+    // Items
+    createItem('Rake', 8, 8, 0x808080, 'long');
+    createItem('Radio', 10, -5, 0x333333, 'box');
+    createItem('Apple', -2, 4, 0xFF0000, 'sphere');
+    createItem('Sandwich', 5, 8, 0xF5DEB3, 'box'); // Wheat color
+    createItem('Thermos', 3, 3, 0x0000FF, 'box');
+    
+    // Props (Environment)
+    // Fences
+    for(let i=-20; i<=20; i+=2) {
+        if (Math.abs(i) > 4) { // Gap for gate
+            new StaticProp(i, -20, 'fence');
+            new StaticProp(i, 20, 'fence');
+            new StaticProp(-20, i, 'fence');
+            new StaticProp(20, i, 'fence');
+        }
+    }
+    
+    // Trees
+    new StaticProp(-15, -15, 'tree');
+    new StaticProp(15, -15, 'tree');
+    new StaticProp(-15, 15, 'tree');
+    
+    // Init Tasks
+    initTasks();
+    
+    // Setup Test Modes
+    if (gameState.controlMode === 'TEST_1') {
+        // Test movement
+        setTimeout(() => {
+            gameState.keys.ArrowUp = true;
+            gameState.keys.ArrowRight = true;
+            setTimeout(() => {
+                gameState.keys.ArrowUp = false;
+                gameState.keys.ArrowRight = false;
+            }, 1000); // Move for 1 sec
+        }, 500);
+    } 
+    else if (gameState.controlMode === 'TEST_2') {
+        // Test Win - auto complete
+        gameState.tasks.forEach(t => t.completed = true);
+    }
+}
+
+function createItem(name, x, z, color, type) {
+    const item = new Item(name, x, z, color, type);
+    gameState.entities.push(item);
+}
+
+function setupInput() {
+    window.addEventListener('keydown', e => {
+        if (gameState.keys.hasOwnProperty(e.key) || gameState.keys.hasOwnProperty(e.code)) {
+            gameState.keys[e.key] = true;
+            gameState.logs.inputs.push({ type: 'keydown', key: e.key, frame: gameState.frameCount });
+            
+            // Phase Controls
+            if (e.key === 'Enter' && gameState.gamePhase === 'START') {
+                setupGameWorld();
+                gameState.gamePhase = 'PLAYING';
+            }
+            if (e.key === 'Escape') {
+                gameState.gamePhase = gameState.gamePhase === 'PLAYING' ? 'PAUSED' : 'PLAYING';
+            }
+            if (e.key.toLowerCase() === 'r' && (gameState.gamePhase === 'GAME_OVER_WIN' || gameState.gamePhase === 'GAME_OVER_LOSE')) {
+                gameState.gamePhase = 'START';
+            }
+        }
+    });
+    
+    window.addEventListener('keyup', e => {
+        if (gameState.keys.hasOwnProperty(e.key)) {
+            gameState.keys[e.key] = false;
+        }
+    });
+    
+    // Control Mode Override
+    window.setControlMode = (mode) => {
+        gameState.controlMode = mode;
+        console.log("Control Mode set to:", mode);
+        // Reset if needed
+        gameState.gamePhase = "START";
+    };
+}
+
+function gameLoop(time) {
+    const dt = Math.min((time - gameState.lastTime) / 1000, 0.1);
+    gameState.lastTime = time;
+    gameState.frameCount++;
+    gameState.deltaTime = dt;
+
+    if (gameState.gamePhase === 'PLAYING') {
+        // Update all entities
+        for (const entity of gameState.entities) {
+            entity.update(dt);
+        }
+        
+        checkTasks();
+        updateCamera();
+    }
+
+    gameState.renderer.render(gameState.scene, gameState.camera);
+    renderUI();
+
+    requestAnimationFrame(gameLoop);
+}
+
+// Start
+init();
+</file>
+
+<file name="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+let canvas, ctx;
+
+export function initUI() {
+    // Check if canvas exists in container
+    const existing = document.querySelector('#ui-layer');
+    if (existing) existing.remove();
+
+    canvas = document.createElement('canvas');
+    canvas.id = 'ui-layer';
+    canvas.width = CANVAS_WIDTH;
+    canvas.height = CANVAS_HEIGHT;
+    canvas.style.position = 'absolute';
+    canvas.style.top = '0';
+    canvas.style.left = '0';
+    canvas.style.pointerEvents = 'none';
+    
+    if (gameState.gameContainer) {
+        gameState.gameContainer.appendChild(canvas);
+    } else {
+        document.body.appendChild(canvas);
+    }
+    
+    ctx = canvas.getContext('2d');
+}
+
+export function renderUI() {
+    if (!ctx) return;
+    
+    ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    if (gameState.gamePhase === "START") {
+        renderStartScreen();
+    } else if (gameState.gamePhase === "PLAYING") {
+        renderHUD();
+    } else if (gameState.gamePhase === "PAUSED") {
+        renderHUD();
+        renderPauseScreen();
+    } else if (gameState.gamePhase === "GAME_OVER_WIN") {
+        renderWinScreen();
+    } else if (gameState.gamePhase === "GAME_OVER_LOSE") {
+        // Not really used yet, but good practice
+        renderLoseScreen();
+    }
+}
+
+function renderStartScreen() {
+    ctx.fillStyle = 'rgba(0,0,0,0.8)';
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 36px "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('UNTITLED GOOSE CLONE', CANVAS_WIDTH/2, 120);
+    
+    ctx.font = '18px Arial';
+    ctx.fillText('It is a lovely morning in the village', CANVAS_WIDTH/2, 160);
+    ctx.fillText('and you are a horrible goose.', CANVAS_WIDTH/2, 185);
+    
+    ctx.fillStyle = '#FFA500'; // Beak color
+    ctx.font = 'bold 24px Arial';
+    ctx.fillText('PRESS ENTER TO HONK (START)', CANVAS_WIDTH/2, 280);
+    
+    ctx.fillStyle = '#ccc';
+    ctx.font = '14px Arial';
+    ctx.fillText('Controls: Arrows/WASD to Move | SPACE to Honk | Z to Grab', CANVAS_WIDTH/2, 330);
+    ctx.fillText('Shift to Run | ESC to Pause', CANVAS_WIDTH/2, 350);
+}
+
+function renderHUD() {
+    // Task List Paper Style
+    const paperW = 220;
+    const paperH = 180;
+    const pad = 10;
+    
+    ctx.fillStyle = '#fff';
+    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+    ctx.shadowBlur = 10;
+    ctx.fillRect(CANVAS_WIDTH - paperW - pad, pad, paperW, paperH);
+    ctx.shadowBlur = 0;
+    
+    // Notebook lines
+    ctx.strokeStyle = '#add8e6';
+    ctx.lineWidth = 1;
+    for(let i=0; i<8; i++) {
+        const y = pad + 40 + i * 20;
+        ctx.beginPath();
+        ctx.moveTo(CANVAS_WIDTH - paperW - pad, y);
+        ctx.lineTo(CANVAS_WIDTH - pad, y);
+        ctx.stroke();
+    }
+    
+    ctx.fillStyle = '#333';
+    ctx.font = 'bold 16px "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('TO DO LIST', CANVAS_WIDTH - paperW/2 - pad, pad + 25);
+    
+    ctx.textAlign = 'left';
+    ctx.font = '12px "Courier New", monospace';
+    
+    let yOff = pad + 45;
+    gameState.tasks.forEach(task => {
+        if (task.completed) {
+            ctx.fillStyle = '#888';
+            ctx.fillText('[x] ' + task.text, CANVAS_WIDTH - paperW - pad + 10, yOff);
+            // Strike through
+            ctx.beginPath();
+            ctx.moveTo(CANVAS_WIDTH - paperW - pad + 5, yOff - 4);
+            ctx.lineTo(CANVAS_WIDTH - pad - 5, yOff - 4);
+            ctx.stroke();
+        } else {
+            ctx.fillStyle = '#000';
+            ctx.fillText('[ ] ' + task.text, CANVAS_WIDTH - paperW - pad + 10, yOff);
+        }
+        yOff += 20;
+    });
+
+    // Score
+    ctx.fillStyle = '#fff';
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 3;
+    ctx.font = 'bold 24px Arial';
+    ctx.textAlign = 'left';
+    ctx.strokeText(`Score: ${gameState.score}`, 20, 40);
+    ctx.fillText(`Score: ${gameState.score}`, 20, 40);
+}
+
+function renderPauseScreen() {
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 40px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('PAUSED', CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    ctx.font = '20px Arial';
+    ctx.fillText('Press ESC to Resume', CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+}
+
+function renderWinScreen() {
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    ctx.fillStyle = '#333';
+    ctx.font = 'bold 48px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('LOVELY MORNING!', CANVAS_WIDTH/2, 150);
+    
+    ctx.font = '24px Arial';
+    ctx.fillText('All tasks completed.', CANVAS_WIDTH/2, 200);
+    ctx.fillText(`Final Score: ${gameState.score}`, CANVAS_WIDTH/2, 240);
+    
+    ctx.fillStyle = '#666';
+    ctx.font = '16px Arial';
+    ctx.fillText('Press R to play again', CANVAS_WIDTH/2, 300);
+}
+
+function renderLoseScreen() {
+    ctx.fillStyle = 'rgba(0,0,0,0.9)';
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    ctx.fillStyle = '#f00';
+    ctx.font = 'bold 48px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('CAUGHT!', CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    ctx.fillStyle = '#fff';
+    ctx.font = '16px Arial';
+    ctx.fillText('Press R to Restart', CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 50);
+}
+</file>
+
+<file name="lighting.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+
+export function setupLighting() {
+    // Ambient - soft white/yellow for morning feel
+    const ambientLight = new THREE.AmbientLight(0xfff5e6, 0.6);
+    gameState.scene.add(ambientLight);
+
+    // Sun - Directional
+    const sunLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    sunLight.position.set(50, 100, 50);
+    sunLight.castShadow = true;
+    
+    // Shadow properties for low-poly look
+    sunLight.shadow.mapSize.width = 2048;
+    sunLight.shadow.mapSize.height = 2048;
+    const d = 40;
+    sunLight.shadow.camera.left = -d;
+    sunLight.shadow.camera.right = d;
+    sunLight.shadow.camera.top = d;
+    sunLight.shadow.camera.bottom = -d;
+    sunLight.shadow.bias = -0.0005;
+    
+    gameState.scene.add(sunLight);
+    
+    // Subtle hemisphere light for sky/ground contrast
+    const hemiLight = new THREE.HemisphereLight(0x87CEEB, 0x8B4513, 0.4);
+    gameState.scene.add(hemiLight);
+}
+</file>
+
+<file name="task_system.js">
+import { gameState, ZONES } from './globals.js';
+import { dist, isInZone } from './utils.js';
+
+export function initTasks() {
+    gameState.tasks = [
+        {
+            id: 'rake_in_lake',
+            text: 'Rake in the Lake',
+            completed: false,
+            check: () => {
+                const rake = gameState.entities.find(e => e.name === 'Rake');
+                if (rake && isInZone(rake.mesh.position, ZONES.LAKE)) {
+                    return true;
+                }
+                return false;
+            }
+        },
+        {
+            id: 'steal_radio',
+            text: 'Steal the Radio (Take it to picnic blanket)',
+            completed: false,
+            check: () => {
+                const radio = gameState.entities.find(e => e.name === 'Radio');
+                if (radio && isInZone(radio.mesh.position, ZONES.PICNIC)) {
+                    return true;
+                }
+                return false;
+            }
+        },
+        {
+            id: 'honk_gardener',
+            text: 'Scare the Gardener with a Honk',
+            completed: false,
+            check: () => {
+                // This is event driven, but we can check state here too
+                // Or handled in Goose.honk -> Gardener.hearHonk
+                // Let's check gardener state
+                if (gameState.gardener && gameState.gardener.state === 'STARTLED') {
+                    return true;
+                }
+                return false;
+            }
+        },
+        {
+            id: 'picnic',
+            text: 'Have a Picnic (Apple, Sandwich, Thermos)',
+            completed: false,
+            check: () => {
+                const items = ['Apple', 'Sandwich', 'Thermos'];
+                let count = 0;
+                for (const name of items) {
+                    const item = gameState.entities.find(e => e.name === name);
+                    if (item && isInZone(item.mesh.position, ZONES.PICNIC)) {
+                        count++;
+                    }
+                }
+                return count === 3;
+            }
+        }
+    ];
+}
+
+export function checkTasks() {
+    let allComplete = true;
+    let changed = false;
+
+    for (const task of gameState.tasks) {
+        if (!task.completed) {
+            if (task.check()) {
+                task.completed = true;
+                gameState.score += 100;
+                changed = true;
+                // Visual feedback could go here
+            } else {
+                allComplete = false;
+            }
+        }
+    }
+    
+    // Win Condition
+    if (allComplete && gameState.gamePhase === "PLAYING") {
+        gameState.gamePhase = "GAME_OVER_WIN";
+    }
+}
+</file>
+
+<file name="entities.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, COLORS } from './globals.js';
+import { updatePhysics } from './physics.js';
+import { dist, clamp } from './utils.js';
+
+// Base Entity
+class Entity {
+    constructor(x, y, z) {
+        this.mesh = new THREE.Group();
+        this.mesh.position.set(x, y, z);
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        this.radius = 0.5;
+        gameState.scene.add(this.mesh);
+    }
+    
+    update(dt) {
+        updatePhysics(this, dt);
+    }
+}
+
+// The Horrible Goose
+export class Goose extends Entity {
+    constructor(x, z) {
+        super(x, 0, z);
+        this.radius = 0.8;
+        this.moveSpeed = 15;
+        this.runSpeed = 25;
+        this.turnSpeed = 10;
+        this.isHonking = false;
+        this.honkTimer = 0;
+        this.holdingItem = null;
+        this.animationTime = 0;
+        this.score = 0;
+
+        // Build Goose Model
+        this.buildModel();
+        
+        // State
+        this.facing = 0; // angle
+    }
+
+    buildModel() {
+        const bodyGeo = new THREE.SphereGeometry(0.7, 16, 16);
+        bodyGeo.scale(1, 0.7, 1.4);
+        const bodyMat = new THREE.MeshStandardMaterial({ color: COLORS.GOOSE_WHITE });
+        this.body = new THREE.Mesh(bodyGeo, bodyMat);
+        this.body.position.y = 0.7;
+        this.body.castShadow = true;
+        this.mesh.add(this.body);
+
+        const neckGeo = new THREE.CylinderGeometry(0.2, 0.3, 1.2, 12);
+        this.neck = new THREE.Mesh(neckGeo, bodyMat);
+        this.neck.position.set(0, 1.3, 0.8);
+        this.neck.rotation.x = -Math.PI / 6;
+        this.neck.castShadow = true;
+        this.mesh.add(this.neck);
+
+        const headGeo = new THREE.SphereGeometry(0.35, 12, 12);
+        this.head = new THREE.Mesh(headGeo, bodyMat);
+        this.head.position.set(0, 0.7, 0); // Relative to neck
+        this.neck.add(this.head);
+
+        const beakGeo = new THREE.ConeGeometry(0.15, 0.5, 12);
+        const beakMat = new THREE.MeshStandardMaterial({ color: COLORS.GOOSE_BEAK });
+        this.beak = new THREE.Mesh(beakGeo, beakMat);
+        this.beak.rotation.x = -Math.PI / 2;
+        this.beak.position.set(0, 0, 0.35);
+        this.head.add(this.beak);
+
+        // Legs
+        const legGeo = new THREE.CylinderGeometry(0.1, 0.1, 0.6, 8);
+        const legMat = new THREE.MeshStandardMaterial({ color: COLORS.GOOSE_BEAK });
+        
+        this.legL = new THREE.Mesh(legGeo, legMat);
+        this.legL.position.set(-0.3, 0.3, 0);
+        this.mesh.add(this.legL);
+
+        this.legR = new THREE.Mesh(legGeo, legMat);
+        this.legR.position.set(0.3, 0.3, 0);
+        this.mesh.add(this.legR);
+        
+        // Honk Visual
+        const ringGeo = new THREE.RingGeometry(0.5, 0.7, 32);
+        const ringMat = new THREE.MeshBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0, side: THREE.DoubleSide });
+        this.honkRing = new THREE.Mesh(ringGeo, ringMat);
+        this.honkRing.rotation.x = -Math.PI/2;
+        this.honkRing.position.y = 2;
+        this.mesh.add(this.honkRing);
+    }
+
+    update(dt) {
+        super.update(dt); // Physics
+        this.handleInput(dt);
+        this.animate(dt);
+        
+        // Log position for testing
+        if (gameState.frameCount % 60 === 0) {
+            gameState.logs.player_info.push({
+                x: this.mesh.position.x,
+                y: this.mesh.position.y,
+                z: this.mesh.position.z,
+                holding: this.holdingItem ? this.holdingItem.name : "none"
+            });
+        }
+    }
+
+    handleInput(dt) {
+        if (gameState.gamePhase !== "PLAYING") return;
+        
+        const k = gameState.keys;
+        const moveV = new THREE.Vector3(0, 0, 0);
+        let speed = k.Shift ? this.runSpeed : this.moveSpeed;
+
+        // Camera relative movement
+        // Ortho camera is rotated 45 deg Y. Forward (-Z in view) is (-1, 0, -1) in world approx
+        // Let's keep it simple: Arrow Up = World -Z, Down = +Z etc. for "Testability"
+        // But for isometric feel, we adjust.
+        // Let's map Up to (-1, 0, -1) normalized
+        
+        if (k.ArrowUp || k.w) moveV.z -= 1;
+        if (k.ArrowDown || k.s) moveV.z += 1;
+        if (k.ArrowLeft || k.a) moveV.x -= 1;
+        if (k.ArrowRight || k.d) moveV.x += 1;
+
+        // Adjust for Camera Angle (45 deg)
+        // Rotate input vector by -45 degrees around Y
+        const rot = Math.PI / 4;
+        const x = moveV.x * Math.cos(rot) - moveV.z * Math.sin(rot);
+        const z = moveV.x * Math.sin(rot) + moveV.z * Math.cos(rot);
+        moveV.set(x, 0, z);
+
+        if (moveV.lengthSq() > 0) {
+            moveV.normalize();
+            this.velocity.x = moveV.x * speed * dt;
+            this.velocity.z = moveV.z * speed * dt;
+            
+            // Rotation
+            const targetAngle = Math.atan2(moveV.x, moveV.z);
+            // Smooth rotation
+            let angleDiff = targetAngle - this.mesh.rotation.y;
+            while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+            while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+            this.mesh.rotation.y += angleDiff * this.turnSpeed * dt;
+            
+            this.isMoving = true;
+        } else {
+            this.velocity.x = 0;
+            this.velocity.z = 0;
+            this.isMoving = false;
+        }
+
+        // Actions
+        // Honk
+        if (k[" "] && !this.isHonking) {
+            this.honk();
+            gameState.keys[" "] = false; // consume key
+        }
+        
+        // Interact
+        if (k.z) {
+            this.interact();
+            gameState.keys.z = false; // consume
+        }
+    }
+
+    honk() {
+        this.isHonking = true;
+        this.honkTimer = 0.5;
+        this.honkRing.material.opacity = 1;
+        this.honkRing.scale.set(1, 1, 1);
+        
+        // Alert NPCs
+        if (gameState.gardener) {
+            gameState.gardener.hearHonk(this.mesh.position);
+        }
+    }
+
+    interact() {
+        if (this.holdingItem) {
+            // Drop
+            this.holdingItem.drop();
+            this.holdingItem = null;
+        } else {
+            // Try grab
+            // Find nearest grabbable item in front of goose
+            let bestItem = null;
+            let minDist = 2.0;
+            
+            const goosePos = this.mesh.position;
+            const gooseDir = new THREE.Vector3(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.mesh.rotation.y);
+
+            for (const item of gameState.entities) {
+                if (!item.isGrabbable) continue;
+                
+                const d = item.mesh.position.distanceTo(goosePos);
+                if (d < minDist) {
+                    // Check angle (must be roughly in front)
+                    const toItem = item.mesh.position.clone().sub(goosePos).normalize();
+                    const dot = gooseDir.dot(toItem);
+                    if (dot > 0.5) { // Within ~60 degrees
+                        minDist = d;
+                        bestItem = item;
+                    }
+                }
+            }
+            
+            if (bestItem) {
+                bestItem.grab(this);
+                this.holdingItem = bestItem;
+            }
+        }
+    }
+
+    animate(dt) {
+        // Honk Animation
+        if (this.honkTimer > 0) {
+            this.honkTimer -= dt;
+            const s = 1 + (0.5 - this.honkTimer) * 4;
+            this.honkRing.scale.set(s, s, s);
+            this.honkRing.material.opacity = this.honkTimer * 2;
+            
+            // Open beak
+            this.beak.rotation.x = -Math.PI / 2 - 0.3;
+        } else {
+            this.isHonking = false;
+            this.honkRing.material.opacity = 0;
+            this.beak.rotation.x = -Math.PI / 2;
+        }
+
+        // Walk Animation
+        if (this.isMoving) {
+            this.animationTime += dt * 10;
+            const waddle = Math.sin(this.animationTime) * 0.1;
+            this.body.rotation.z = waddle;
+            this.neck.rotation.z = -waddle; // Stabilize head
+            
+            // Legs
+            this.legL.rotation.x = Math.sin(this.animationTime) * 0.5;
+            this.legR.rotation.x = Math.sin(this.animationTime + Math.PI) * 0.5;
+        } else {
+            // Reset pose
+            this.body.rotation.z = 0;
+            this.neck.rotation.z = 0;
+            this.legL.rotation.x = 0;
+            this.legR.rotation.x = 0;
+        }
+    }
+}
+
+// Interactive Items (Rake, Radio, etc.)
+export class Item extends Entity {
+    constructor(name, x, z, color, type = "box") {
+        super(x, 1, z);
+        this.name = name;
+        this.color = color;
+        this.isGrabbable = true;
+        this.originalPos = new THREE.Vector3(x, 1, z);
+        
+        // Visuals
+        const mat = new THREE.MeshStandardMaterial({ color: color });
+        let geo;
+        
+        if (type === "box") geo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+        else if (type === "sphere") geo = new THREE.SphereGeometry(0.3, 8, 8);
+        else if (type === "long") geo = new THREE.BoxGeometry(0.2, 0.2, 1.5); // Rake handle
+        
+        this.visual = new THREE.Mesh(geo, mat);
+        this.visual.castShadow = true;
+        this.mesh.add(this.visual);
+        
+        // Rake specific
+        if (type === "long") {
+            const headGeo = new THREE.BoxGeometry(0.8, 0.1, 0.2);
+            const head = new THREE.Mesh(headGeo, mat);
+            head.position.z = 0.7;
+            this.visual.add(head);
+        }
+    }
+
+    grab(goose) {
+        // Parent to goose beak
+        this.isHeld = true;
+        // We need to attach to the beak bone effectively
+        // Since we are using simple hierarchy, we can simulate parenting by
+        // updating position in update() or literally adding to THREE Object
+        
+        // The robust way in three.js:
+        gameState.scene.remove(this.mesh);
+        goose.beak.add(this.mesh);
+        this.mesh.position.set(0, 0, 0.5); // Tip of beak
+        this.mesh.rotation.set(0, 0, 0);
+    }
+
+    drop() {
+        this.isHeld = false;
+        
+        // Convert local position to world
+        const worldPos = new THREE.Vector3();
+        this.mesh.getWorldPosition(worldPos);
+        const worldRot = new THREE.Quaternion();
+        this.mesh.getWorldQuaternion(worldRot);
+
+        // Remove from beak
+        this.mesh.parent.remove(this.mesh);
+        
+        // Add back to scene
+        gameState.scene.add(this.mesh);
+        this.mesh.position.copy(worldPos);
+        this.mesh.quaternion.copy(worldRot);
+        this.mesh.rotation.setFromQuaternion(worldRot); // Reset euler
+    }
+
+    update(dt) {
+        if (!this.isHeld) {
+            super.update(dt);
+        }
+    }
+}
+
+// The Gardener NPC
+export class Gardener extends Entity {
+    constructor(x, z) {
+        super(x, 0, z);
+        this.moveSpeed = 4.5; // Slower than goose run, faster than walk
+        this.state = "IDLE"; // IDLE, PATROL, CHASE, STARTLED, RETURNING
+        this.radius = 0.8;
+        
+        this.waypoints = [
+            new THREE.Vector3(5, 0, 5),
+            new THREE.Vector3(5, 0, -5),
+            new THREE.Vector3(-5, 0, -5),
+            new THREE.Vector3(-5, 0, 5)
+        ];
+        this.currentWaypoint = 0;
+        this.target = null;
+        this.startledTimer = 0;
+        
+        this.buildModel();
+    }
+
+    buildModel() {
+        // Simple human shape
+        const mat = new THREE.MeshStandardMaterial({ color: COLORS.GARDENER_SHIRT });
+        const pantsMat = new THREE.MeshStandardMaterial({ color: COLORS.DIRT });
+        
+        // Body
+        this.body = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 1.5), mat);
+        this.body.position.y = 1.5;
+        this.body.castShadow = true;
+        this.mesh.add(this.body);
+        
+        // Head
+        this.head = new THREE.Mesh(new THREE.SphereGeometry(0.4), new THREE.MeshStandardMaterial({ color: 0xFFDBAC })); // Skin
+        this.head.position.y = 1.0;
+        this.body.add(this.head);
+        
+        // Hat
+        const hat = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 0.1), new THREE.MeshStandardMaterial({ color: COLORS.GARDENER_HAT }));
+        hat.position.y = 0.3;
+        this.head.add(hat);
+        const hatTop = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.4), new THREE.MeshStandardMaterial({ color: COLORS.GARDENER_HAT }));
+        hatTop.position.y = 0.2;
+        hat.add(hatTop);
+
+        // Arms (simple)
+        this.armL = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1, 0.2), mat);
+        this.armL.position.set(-0.6, 0, 0);
+        this.body.add(this.armL);
+        
+        this.armR = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1, 0.2), mat);
+        this.armR.position.set(0.6, 0, 0);
+        this.body.add(this.armR);
+    }
+
+    update(dt) {
+        super.update(dt);
+        this.updateAI(dt);
+        this.animate(dt);
+    }
+
+    updateAI(dt) {
+        const playerPos = gameState.player.mesh.position;
+        const distToPlayer = dist(this.mesh.position, playerPos);
+        
+        // Vision check
+        let canSeePlayer = false;
+        if (distToPlayer < 12) {
+            // Check angle
+            const toPlayer = playerPos.clone().sub(this.mesh.position).normalize();
+            const facing = new THREE.Vector3(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.mesh.rotation.y);
+            if (facing.dot(toPlayer) > 0.5) { // 60 deg cone
+                canSeePlayer = true;
+            }
+        }
+
+        // State Machine
+        switch (this.state) {
+            case "IDLE":
+                if (canSeePlayer && gameState.player.holdingItem) {
+                    this.state = "CHASE";
+                } else {
+                    this.state = "PATROL";
+                }
+                break;
+                
+            case "PATROL":
+                if (canSeePlayer && gameState.player.holdingItem) {
+                    this.state = "CHASE";
+                    break;
+                }
+                
+                // Move to waypoint
+                const wp = this.waypoints[this.currentWaypoint];
+                this.moveTo(wp, dt);
+                if (dist(this.mesh.position, wp) < 1) {
+                    this.currentWaypoint = (this.currentWaypoint + 1) % this.waypoints.length;
+                    this.state = "IDLE"; // Brief pause?
+                }
+                break;
+                
+            case "CHASE":
+                this.moveTo(playerPos, dt, 1.2); // Faster
+                
+                // Catch Logic
+                if (distToPlayer < 1.5) {
+                    // Caught!
+                    // Force drop
+                    if (gameState.player.holdingItem) {
+                        gameState.player.interact(); // Drop
+                    }
+                    this.state = "IDLE"; // Reset
+                }
+                
+                // Lose sight
+                if (distToPlayer > 15) {
+                    this.state = "IDLE";
+                }
+                break;
+                
+            case "STARTLED":
+                this.startledTimer -= dt;
+                this.velocity.set(0, 0, 0); // Stop
+                // Jitter
+                this.mesh.rotation.y += Math.sin(gameState.frameCount * 0.5) * 0.1;
+                
+                if (this.startledTimer <= 0) {
+                    this.state = "CHASE"; // Get angry
+                }
+                break;
+        }
+    }
+
+    moveTo(target, dt, speedMult = 1.0) {
+        const dir = target.clone().sub(this.mesh.position);
+        dir.y = 0;
+        if (dir.lengthSq() > 0.1) {
+            dir.normalize();
+            this.velocity.x = dir.x * this.moveSpeed * speedMult * dt;
+            this.velocity.z = dir.z * this.moveSpeed * speedMult * dt;
+            
+            // Rotate towards
+            const targetAngle = Math.atan2(dir.x, dir.z);
+            let angleDiff = targetAngle - this.mesh.rotation.y;
+            while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+            while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+            this.mesh.rotation.y += angleDiff * 5 * dt;
+        } else {
+            this.velocity.set(0, 0, 0);
+        }
+    }
+
+    hearHonk(sourcePos) {
+        if (dist(this.mesh.position, sourcePos) < 10) {
+            this.state = "STARTLED";
+            this.startledTimer = 2.0;
+            // Look at sound
+            const dx = sourcePos.x - this.mesh.position.x;
+            const dz = sourcePos.z - this.mesh.position.z;
+            this.mesh.rotation.y = Math.atan2(dx, dz);
+        }
+    }
+    
+    animate(dt) {
+        if (this.velocity.lengthSq() > 0.1) {
+            // Swing arms
+            const t = gameState.frameCount * 0.2;
+            this.armL.rotation.x = Math.sin(t);
+            this.armR.rotation.x = -Math.sin(t);
+        }
+    }
+}
+
+// Static Prop (Tree, Fence)
+export class StaticProp {
+    constructor(x, z, type) {
+        this.position = new THREE.Vector3(x, 0, z);
+        this.type = type;
+        this.radius = 0.5;
+        this.mesh = new THREE.Group();
+        this.mesh.position.copy(this.position);
+        gameState.scene.add(this.mesh);
+        
+        if (type === "tree") {
+            this.radius = 1.0;
+            const trunk = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.5, 0.7, 3),
+                new THREE.MeshStandardMaterial({ color: 0x8B4513 })
+            );
+            trunk.position.y = 1.5;
+            trunk.castShadow = true;
+            this.mesh.add(trunk);
+            
+            const leaves = new THREE.Mesh(
+                new THREE.DodecahedronGeometry(2),
+                new THREE.MeshStandardMaterial({ color: 0x228B22 })
+            );
+            leaves.position.y = 4;
+            leaves.castShadow = true;
+            this.mesh.add(leaves);
+        } else if (type === "fence") {
+            const post = new THREE.Mesh(
+                new THREE.BoxGeometry(0.2, 1.5, 0.2),
+                new THREE.MeshStandardMaterial({ color: COLORS.FENCE })
+            );
+            post.position.y = 0.75;
+            post.castShadow = true;
+            this.mesh.add(post);
+            // Crossbars implied by placement in rows
+        }
+    }
+}
+</file>
+
+<file name="utils.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+export function clamp(val, min, max) {
+    return Math.max(min, Math.min(max, val));
+}
+
+export function randomRange(min, max) {
+    return Math.random() * (max - min) + min;
+}
+
+export function dist(v1, v2) {
+    return v1.distanceTo(v2);
+}
+
+// Check if a point is within a circular zone
+export function isInZone(position, zone) {
+    const d = Math.sqrt(Math.pow(position.x - zone.x, 2) + Math.pow(position.z - zone.z, 2));
+    return d <= zone.radius;
+}
+
+// A simple box-box collision check (AABB)
+export function checkAABB(box1, box2) {
+    return (
+        box1.min.x <= box2.max.x &&
+        box1.max.x >= box2.min.x &&
+        box1.min.y <= box2.max.y &&
+        box1.max.y >= box2.min.y &&
+        box1.min.z <= box2.max.z &&
+        box1.max.z >= box2.min.z
+    );
+}
+
+// Helper to create simple mesh
+export function createMesh(geometry, color, x, y, z, shadow = true) {
+    const material = new THREE.MeshStandardMaterial({ 
+        color: color, 
+        flatShading: true,
+        roughness: 0.8,
+        metalness: 0.1
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.set(x, y, z);
+    if (shadow) {
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+    }
+    return mesh;
+}
+</file>
+
+<file name="camera.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+
+export function setupCamera() {
+    // Isometric-ish view
+    const aspect = gameState.gameContainer.offsetWidth / gameState.gameContainer.offsetHeight;
+    const d = 25; // View size
+    
+    gameState.camera = new THREE.OrthographicCamera(
+        -d * aspect, d * aspect, d, -d, 1, 1000
+    );
+    
+    gameState.camera.position.set(20, 30, 20); // Iso angle
+    gameState.camera.lookAt(gameState.scene.position);
+    gameState.cameraOffset = new THREE.Vector3(20, 30, 20);
+}
+
+export function updateCamera() {
+    if (!gameState.player) return;
+    
+    // Smooth follow
+    const targetPos = gameState.player.mesh.position.clone().add(gameState.cameraOffset);
+    gameState.camera.position.lerp(targetPos, 0.1);
+    gameState.camera.lookAt(gameState.player.mesh.position);
+}
+</file>
+
+<file name="physics.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+
+// Simple Spatial Hashing or just naive loop for this scale
+export function checkCollisions(entity) {
+    // Wall/Fence collisions
+    // Define world bounds (The garden is enclosed)
+    const worldSize = 40;
+    
+    if (entity.mesh.position.x > worldSize) entity.mesh.position.x = worldSize;
+    if (entity.mesh.position.x < -worldSize) entity.mesh.position.x = -worldSize;
+    if (entity.mesh.position.z > worldSize) entity.mesh.position.z = worldSize;
+    if (entity.mesh.position.z < -worldSize) entity.mesh.position.z = -worldSize;
+
+    // Static Prop Collisions (Trees, Fences, Shed)
+    // Using simple distance check for cylindrical collision
+    for (const prop of gameState.staticProps) {
+        const dx = entity.mesh.position.x - prop.position.x;
+        const dz = entity.mesh.position.z - prop.position.z;
+        const dist = Math.sqrt(dx*dx + dz*dz);
+        const minDistance = entity.radius + prop.radius;
+
+        if (dist < minDistance) {
+            // Push back
+            const angle = Math.atan2(dz, dx);
+            const pushX = Math.cos(angle) * minDistance;
+            const pushZ = Math.sin(angle) * minDistance;
+            
+            entity.mesh.position.x = prop.position.x + pushX;
+            entity.mesh.position.z = prop.position.z + pushZ;
+        }
+    }
+}
+
+export function updatePhysics(entity, deltaTime) {
+    // Apply Gravity
+    if (entity.mesh.position.y > gameState.groundLevel) {
+        entity.velocity.add(gameState.gravity.clone().multiplyScalar(deltaTime));
+    }
+
+    // Move
+    entity.mesh.position.add(entity.velocity.clone().multiplyScalar(deltaTime));
+
+    // Ground Collision
+    if (entity.mesh.position.y <= gameState.groundLevel) {
+        entity.mesh.position.y = gameState.groundLevel;
+        entity.velocity.y = 0;
+        entity.onGround = true;
+        
+        // Ground Friction
+        entity.velocity.x *= 0.8;
+        entity.velocity.z *= 0.8;
+    } else {
+        entity.onGround = false;
+    }
+    
+    checkCollisions(entity);
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

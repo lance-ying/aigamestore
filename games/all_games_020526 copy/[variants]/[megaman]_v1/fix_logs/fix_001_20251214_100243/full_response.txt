@@ -1,0 +1,500 @@
+<analysis>
+- Issue identified:
+    1.  `Uncaught ReferenceError: drawStartScreen is not defined` in `game.js`. This occurs because the `drawStartScreen` function, which is defined and exported from `rendering.js`, is not imported into `game.js` where it is being called. The same applies to `drawGame` and `drawGameOver` which are used but not imported.
+    2.  Automatic game restart after "Game Over" or "Victory" incorrectly returns the player to the "Start" screen instead of immediately beginning a new game. The current auto-restart logic calls `resetGame`, which is designed to return to the title screen.
+
+- Files affected:
+    - `game.js`
+    - `input.js`
+    - `globals.js` (minor update to remove `autoRestartTimer` from reset logic in `globals.js` if it's moved to `input.js`, but it's fine as a state variable, just the setting of it needs to be managed)
+
+- Changes needed:
+    1.  **`game.js`**:
+        *   Import `drawStartScreen`, `drawGame`, and `drawGameOver` from `rendering.js`.
+        *   Import the new `autoRestartGame` function from `input.js`.
+        *   Change the auto-restart call from `resetGame(p)` to `autoRestartGame(p)`.
+    2.  **`input.js`**:
+        *   Refactor `resetGame` into a private helper `_softResetGameState(p)` that handles all state variable resets *except* setting the `gamePhase` and `currentLevel`. This function will also clear `gameState.autoRestartTimer`.
+        *   Modify the existing `resetGame(p)` to call `_softResetGameState(p)`, then explicitly set `gameState.gamePhase` to `GAME_PHASES.START` and `gameState.currentLevel` to `0`.
+        *   Create a new `export function autoRestartGame(p)` that calls `_softResetGameState(p)` and then `startGame(p)` to immediately begin a new game.
+        *   Export `startGame(p)` so it can be called by `autoRestartGame`.
+    3.  **`globals.js`**: (No changes needed here. `autoRestartTimer` is a state variable and its reset logic will be handled in `input.js`.)
+</analysis>
+<code filename="globals.js">
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const CONTROL_MODES = {
+  HUMAN: "HUMAN",
+};
+
+export const gameState = {
+  player: null,
+  entities: [],
+  gamePhase: GAME_PHASES.START,
+  controlMode: CONTROL_MODES.HUMAN,
+  camera: { x: 0, y: 0 },
+  currentStage: null,
+  currentLevel: 0,
+  totalLevels: 9,
+  robotMastersDefeated: {},
+  unlockedWeapons: [],
+  currentWeapon: 0,
+  weaponEnergy: {},
+  bossGauntletIndex: 0,
+  wilyStagePhase: 0,
+  score: 0,
+  lives: 5,
+  maxLives: 5,
+  playerHealth: 28,
+  maxPlayerHealth: 28,
+  bossHealth: 0,
+  maxBossHealth: 28,
+  particles: [],
+  projectiles: [],
+  platformBlocks: [],
+  hazards: [],
+  enemySpawners: [],
+  drops: [],
+  showBossHealthBar: false,
+  stageComplete: false,
+  transitionTimer: 0,
+  invincibilityFrames: 0,
+  yokublockTimer: 0,
+  yokublockPattern: [],
+  healingAvailable: false,
+  autoRestartTimer: null, // Added for automatic restart countdown
+};
+
+export const ROBOT_MASTERS = [
+  { name: "CUT", color: [200, 50, 50], weakness: "BOMB", weapon: "METAL_BLADE" },
+  { name: "ELEC", color: [255, 255, 100], weakness: "METAL_BLADE", weapon: "THUNDER_BEAM" },
+  { name: "ICE", color: [100, 200, 255], weakness: "THUNDER_BEAM", weapon: "ICE_SLASHER" },
+  { name: "BOMB", color: [150, 150, 150], weakness: "ICE_SLASHER", weapon: "HYPER_BOMB" },
+  { name: "FIRE", color: [255, 100, 50], weakness: "ICE_SLASHER", weapon: "FIRE_STORM" },
+  { name: "TIME", color: [150, 100, 255], weakness: "FIRE_STORM", weapon: "TIME_STOPPER" }
+];
+
+export const WEAPONS = {
+  BUSTER: { 
+    name: "MEGA BUSTER", 
+    energy: Infinity, 
+    damage: 1, 
+    color: [100, 200, 255],
+    cooldown: 15,
+    speed: 5,
+    count: 1,
+    spread: 0 
+  },
+  METAL_BLADE: { 
+    name: "METAL BLADE", 
+    energy: 28, 
+    damage: 2, 
+    color: [200, 200, 200],
+    cooldown: 25,
+    speed: 6,
+    count: 2,
+    spread: 0.4 // Shoots 2 blades at slight angles
+  },
+  THUNDER_BEAM: { 
+    name: "THUNDER BEAM", 
+    energy: 28, 
+    damage: 3, 
+    color: [255, 255, 100],
+    cooldown: 45,
+    speed: 7,
+    count: 3,
+    spread: 0.8 // Shotgun style spread
+  },
+  ICE_SLASHER: { 
+    name: "ICE SLASHER", 
+    energy: 28, 
+    damage: 1, 
+    color: [100, 200, 255],
+    cooldown: 6, // Very fast "machine gun"
+    speed: 9,
+    count: 1,
+    spread: 0.1 // Slight jitter
+  },
+  HYPER_BOMB: { 
+    name: "HYPER BOMB", 
+    energy: 28, 
+    damage: 6, 
+    color: [80, 80, 80],
+    cooldown: 60, // Slow but powerful
+    speed: 3,
+    count: 1,
+    spread: 0
+  },
+  FIRE_STORM: { 
+    name: "FIRE STORM", 
+    energy: 28, 
+    damage: 2, 
+    color: [255, 100, 50],
+    cooldown: 50,
+    speed: 4,
+    count: 8,
+    spread: Math.PI * 2 // All directions
+  },
+  TIME_STOPPER: { 
+    name: "TIME STOPPER", 
+    energy: 28, 
+    damage: 3, 
+    color: [200, 150, 255],
+    cooldown: 30,
+    speed: 12, // Very fast sniper shot
+    count: 1,
+    spread: 0
+  },
+  MAGNET_BEAM: { 
+    name: "MAGNET BEAM", 
+    energy: 28, 
+    damage: 0, 
+    color: [255, 50, 150],
+    cooldown: 20,
+    speed: 0,
+    count: 0,
+    spread: 0
+  }
+};
+
+export function getGameState() {
+  return gameState;
+}
+
+// Attach to window
+if (typeof window !== 'undefined') {
+  window.getGameState = getGameState;
+}
+</code>
+<code filename="game.js">
+import { gameState, GAME_PHASES, CONTROL_MODES, CANVAS_WIDTH, CANVAS_HEIGHT, getGameState } from './globals.js';
+import { Player } from './player.js';
+import { handleKeyPressed, getKeys, resetGame, autoRestartGame } from './input.js'; // Import resetGame and autoRestartGame
+import { drawStartScreen, drawGame, drawGameOver } from './rendering.js'; // Import rendering functions
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Game state is imported from globals
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Initialize logs
+    p.logs = {
+      game_info: [],
+      inputs: [],
+      player_info: []
+    };
+
+    // Initialize game state
+    gameState.player = new Player(100, 100);
+    gameState.entities = [gameState.player];
+    gameState.unlockedWeapons = ['BUSTER'];
+    gameState.currentWeapon = 0;
+    
+    p.logs.game_info.push({
+      data: { phase: GAME_PHASES.START, message: "Game initialized" },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+
+  p.draw = function() {
+    // Single background call
+    p.background(20, 20, 40);
+
+    if (gameState.gamePhase === GAME_PHASES.START) {
+      drawStartScreen(p);
+      // Ensure auto-restart timer is cleared if we manually navigate back to start
+      if (gameState.autoRestartTimer !== null) {
+        gameState.autoRestartTimer = null;
+      }
+    } else if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      updateGame(p);
+      drawGame(p);
+      // Ensure auto-restart timer is cleared if we manually navigate back to playing
+      if (gameState.autoRestartTimer !== null) {
+        gameState.autoRestartTimer = null;
+      }
+    } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+      drawGame(p);
+      // Ensure auto-restart timer is cleared if we manually navigate back to paused
+      if (gameState.autoRestartTimer !== null) {
+        gameState.autoRestartTimer = null;
+      }
+    } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+      drawGameOver(p, gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN);
+
+      // Auto-restart logic
+      if (gameState.autoRestartTimer === null) {
+        // Start the timer when game over state is first entered
+        gameState.autoRestartTimer = p.frameCount;
+      }
+
+      // Auto-restart after 1 second (60 frames at 60fps)
+      const framesToWait = p.frameRate(); // This should be 60 for 1 second
+      if (p.frameCount - gameState.autoRestartTimer > framesToWait) {
+        autoRestartGame(p); // Call the new auto-restart function
+        // autoRestartGame will also clear gameState.autoRestartTimer
+      }
+    }
+  };
+
+  function updateGame(p) {
+    if (!gameState.currentStage) return;
+
+    const keys = getKeys(p);
+
+    // Update player
+    if (gameState.player) {
+      gameState.player.update(p, keys);
+      
+      // Log player info periodically
+      if (p.frameCount % 30 === 0) {
+        p.logs.player_info.push({
+          screen_x: gameState.player.x - gameState.camera.x,
+          screen_y: gameState.player.y - gameState.camera.y,
+          game_x: gameState.player.x,
+          game_y: gameState.player.y,
+          framecount: p.frameCount
+        });
+      }
+
+      // Update camera
+      const targetCameraX = gameState.player.x - CANVAS_WIDTH / 2;
+      gameState.camera.x = p.constrain(targetCameraX, 0, 
+        Math.max(0, gameState.currentStage.width - CANVAS_WIDTH));
+    }
+
+    // Update entities
+    for (let entity of gameState.entities) {
+      if (entity !== gameState.player) {
+        entity.update(p);
+      }
+    }
+
+    // Update stage
+    gameState.currentStage.update(p);
+
+    // Update physics
+    updatePhysics(p);
+    updateParticles(p);
+  }
+
+  p.keyPressed = function() {
+    handleKeyPressed(p);
+  };
+}, document.body);
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame(gameInstance); // Pass p5 instance
+    }
+    if (typeof startGame === 'function') { // startGame is now exported from input.js
+      startGame(gameInstance); // Pass p5 instance
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Control mode setter
+window.setControlMode = function(mode) {
+  // Only allow setting to HUMAN mode
+  if (mode === CONTROL_MODES.HUMAN) {
+    gameState.controlMode = mode;
+    
+    // Update button styles
+    const buttons = document.querySelectorAll('.control-button');
+    buttons.forEach(btn => btn.classList.remove('active'));
+    
+    document.getElementById('humanModeBtn').classList.add('active');
+  }
+};
+</code>
+<code filename="input.js">
+import { gameState, GAME_PHASES, ROBOT_MASTERS } from './globals.js';
+import { Stage } from './stage.js';
+
+export function handleKeyPressed(p) {
+  const key = p.key.toLowerCase();
+  const keyCode = p.keyCode;
+
+  // Log input
+  p.logs.inputs.push({
+    input_type: 'keyPressed',
+    data: { key: key, keyCode: keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+
+  // Phase controls
+  if (keyCode === 13) { // ENTER
+    if (gameState.gamePhase === GAME_PHASES.START) {
+      startGame(p);
+    }
+  } else if (keyCode === 27) { // ESC
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      gameState.gamePhase = GAME_PHASES.PAUSED;
+      p.logs.game_info.push({
+        data: { phase: GAME_PHASES.PAUSED },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+      gameState.gamePhase = GAME_PHASES.PLAYING;
+      p.logs.game_info.push({
+        data: { phase: GAME_PHASES.PLAYING },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  } else if (keyCode === 82) { // R
+    // Manual restart takes priority and clears any pending auto-restart
+    if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || 
+        gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE ||
+        gameState.gamePhase === GAME_PHASES.START || // Allow R from start screen as well
+        gameState.gamePhase === GAME_PHASES.PLAYING || // Allow R from playing/paused
+        gameState.gamePhase === GAME_PHASES.PAUSED) {
+      resetGame(p);
+    }
+  }
+
+  // Weapon switch
+  if (keyCode === 16 && gameState.gamePhase === GAME_PHASES.PLAYING) { // SHIFT
+    gameState.currentWeapon = (gameState.currentWeapon + 1) % gameState.unlockedWeapons.length;
+  }
+}
+
+export function getKeys(p) {
+  // Always return human controls as it's the only mode
+  return {
+    left: p.keyIsDown(37),   // Arrow Left - HOLD to move continuously
+    right: p.keyIsDown(39),  // Arrow Right - HOLD to move continuously
+    up: p.keyIsDown(38),     // Arrow Up - HOLD to aim continuously
+    down: p.keyIsDown(40),   // Arrow Down - HOLD to aim continuously
+    jump: p.keyIsDown(90),   // Z key - HOLD to jump (player.js handles single-jump-per-press)
+    shoot: p.keyIsDown(32)   // Space key - HOLD to shoot continuously (with cooldown)
+  };
+}
+
+// Helper function to reset most game state variables without changing phase or level
+function _softResetGameState(p) {
+  gameState.currentStage = null;
+  gameState.entities = gameState.entities.filter(e => e === gameState.player); // Keep player entity
+  if (gameState.player) {
+    gameState.player.x = 100; // Reset player position
+    gameState.player.y = 100;
+    gameState.player.vx = 0;
+    gameState.player.vy = 0;
+  }
+  gameState.robotMastersDefeated = {};
+  gameState.unlockedWeapons = ['BUSTER'];
+  gameState.currentWeapon = 0;
+  gameState.weaponEnergy = {};
+  gameState.bossGauntletIndex = 0;
+  gameState.wilyStagePhase = 0;
+  gameState.score = 0;
+  gameState.lives = 5;
+  gameState.playerHealth = 28;
+  gameState.projectiles = [];
+  gameState.particles = [];
+  gameState.drops = [];
+  gameState.showBossHealthBar = false;
+  gameState.stageComplete = false;
+  gameState.invincibilityFrames = 0;
+  gameState.yokublockTimer = 0;
+  gameState.yokublockPattern = [];
+  gameState.autoRestartTimer = null; // Reset auto-restart timer
+  gameState.camera.x = 0; // Reset camera
+}
+
+export function startGame(p) { // Made exportable for autoRestartGame to call
+  gameState.gamePhase = GAME_PHASES.PLAYING;
+  gameState.currentLevel = 1;
+  loadLevel(p, 1);
+  
+  p.logs.game_info.push({
+    data: { phase: GAME_PHASES.PLAYING, level: 1 },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function loadLevel(p, levelNum) {
+  gameState.currentLevel = levelNum;
+  
+  // Levels 1-6: Robot Masters (increasing difficulty)
+  if (levelNum >= 1 && levelNum <= 6) {
+    const bossIndex = levelNum - 1;
+    const bossData = ROBOT_MASTERS[bossIndex];
+    gameState.currentStage = new Stage('boss', bossData, levelNum);
+  } 
+  // Level 7: Wily Fortress
+  else if (levelNum === 7) {
+    gameState.currentStage = new Stage('wily_fortress', null, levelNum);
+  }
+  // Level 8: Boss Gauntlet
+  else if (levelNum === 8) {
+    gameState.bossGauntletIndex = 0;
+    gameState.currentStage = new Stage('boss_gauntlet', null, levelNum);
+  }
+  // Level 9+: Victory
+  else {
+    gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
+    return;
+  }
+  
+  if (gameState.player) {
+    gameState.player.x = 50;
+    gameState.player.y = 100;
+    gameState.player.vx = 0;
+    gameState.player.vy = 0;
+  }
+  
+  gameState.camera.x = 0;
+  gameState.invincibilityFrames = 60;
+}
+
+export function resetGame(p) { // Used for manual 'R' key restart
+  _softResetGameState(p); // Reset all common state variables
+  gameState.gamePhase = GAME_PHASES.START; // Explicitly set to START phase
+  gameState.currentLevel = 0; // Reset level to 0 for a fresh start from title
+  
+  p.logs.game_info.push({
+    data: { phase: GAME_PHASES.START },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function autoRestartGame(p) { // Used for automatic restart after game over
+  _softResetGameState(p); // Reset all common state variables
+  startGame(p); // Immediately start a new game from level 1
+  
+  p.logs.game_info.push({
+    data: { phase: GAME_PHASES.PLAYING, message: "Auto-restarted game from Game Over" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+</code>

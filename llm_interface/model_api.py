@@ -81,7 +81,8 @@ class ModelAPI:
                 "claude-3-5-sonnet-20241022": 8192,
                 "claude-3-7-sonnet-20250219": 128000,
                 "claude-sonnet-4-20250514": 128000,
-                "claude-4.5-sonnet": 128000,  # Add common alias
+                "claude-sonnet-4-5-20250929": 64000,  # Actual model ID with correct limit
+                "claude-4.5-sonnet": 64000,  # Common alias - updated to correct limit
             },
             "google": {
                 "gemini-2.0-flash": 8192,
@@ -101,8 +102,17 @@ class ModelAPI:
                 model_limit = provider_models[self.model]
             else:
                 # Try partial match (e.g., "claude-4.5-sonnet" might match "claude-sonnet-4-20250514")
+                # Also check if model contains key parts (e.g., "claude-sonnet-4-5-20250929" contains "4-5")
                 for model_key, limit in provider_models.items():
                     if self.model in model_key or model_key in self.model:
+                        model_limit = limit
+                        break
+                    # Special case: check for version numbers in model IDs
+                    # e.g., "claude-sonnet-4-5-20250929" should match "claude-4.5-sonnet"
+                    if "4-5" in self.model and "4.5" in model_key:
+                        model_limit = limit
+                        break
+                    if "4.5" in self.model and "4-5" in model_key:
                         model_limit = limit
                         break
 
@@ -113,11 +123,16 @@ class ModelAPI:
         else:
             # If config specifies max_tokens, respect it but cap at model's limit
             if model_limit:
+                original_max = max_tokens
                 max_tokens = min(model_limit, max_tokens)
+                if original_max > model_limit and verbose:
+                    print(f"⚠️  Capped max_tokens from {original_max} to {max_tokens} (model limit: {model_limit})")
             # If no model limit found, allow config value (but warn if very high)
             elif max_tokens > 100000:
                 # Very high values without known model limit - cap at 131k for safety
                 max_tokens = min(131072, max_tokens)
+                if verbose:
+                    print(f"⚠️  Capped max_tokens to 131072 for safety (no model limit found)")
 
         if thinking and thinking_budget:
             max_tokens = max(1, max_tokens - thinking_budget)

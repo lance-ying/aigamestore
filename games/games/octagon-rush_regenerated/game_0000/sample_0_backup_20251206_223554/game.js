@@ -1,0 +1,219 @@
+/**
+ * Main game loop and p5 instance setup.
+ */
+import { 
+    CANVAS_WIDTH, 
+    CANVAS_HEIGHT, 
+    gameState, 
+    FPS, 
+    SEGMENT_DEPTH, 
+    VIEW_DISTANCE, 
+    INITIAL_SPEED,
+    logGameEvent
+} from './globals.js';
+import { Player, TunnelSegment } from './entities.js';
+import { checkCollisions } from './physics.js';
+import { handleInput, keyPressed } from './input.js';
+import { renderUI, renderStartScreen, renderGameOver, renderPaused } from './ui.js';
+import { ParticleSystem } from './particles.js';
+import { get_automated_testing_action } from './automated_test.js';
+
+const p5 = window.p5;
+
+const gameInstance = new p5(p => {
+    
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+    
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(FPS);
+        p.randomSeed(42);
+        
+        // Initialize systems
+        gameState.particleSystem = new ParticleSystem();
+        
+        // Log start
+        logGameEvent(p, 'info', { msg: "Game Initialized" });
+    };
+    
+    p.draw = function() {
+        // Time management
+        const now = p.millis();
+        gameState.deltaTime = (now - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = now;
+        gameState.frameCount = p.frameCount;
+        
+        // Camera Shake decay
+        let shakeX = 0;
+        let shakeY = 0;
+        if (gameState.cameraShake > 0) {
+            shakeX = p.random(-gameState.cameraShake, gameState.cameraShake);
+            shakeY = p.random(-gameState.cameraShake, gameState.cameraShake);
+            gameState.cameraShake *= 0.9;
+            if (gameState.cameraShake < 0.5) gameState.cameraShake = 0;
+        }
+        
+        // Background with Shake
+        p.push();
+        p.translate(shakeX, shakeY);
+        p.background(10, 10, 15); // Dark BG
+        
+        switch (gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                break;
+                
+            case "PLAYING":
+                updateGame(p);
+                renderGame(p);
+                renderUI(p);
+                break;
+                
+            case "PAUSED":
+                renderGame(p);
+                renderPaused(p);
+                renderUI(p);
+                break;
+                
+            case "GAME_OVER_WIN":
+            case "GAME_OVER_LOSE":
+                renderGame(p);
+                renderGameOver(p);
+                break;
+        }
+        p.pop();
+        
+        // Handle Automated Testing Inputs
+        if (gameState.controlMode.startsWith("TEST") && gameState.gamePhase === "PLAYING") {
+            const action = get_automated_testing_action(gameState);
+            if (action) {
+                // Simulate key press
+                p.keyCode = action.keyCode;
+                keyPressed(p);
+                // Also simulate key down for rotation which relies on keyIsDown check
+                // For p5.js keyIsDown, we can't easily fake it without mocking the internal state.
+                // Instead, we can inject into input.js or set a flag in gameState.keys
+                // For simplicity in this structure, we'll manually trigger the logic in updateGame if needed
+                // OR better: Assume get_automated_testing_action returns momentary presses
+                // For rotation (continuous), we might need to modify handleInput.
+                // Let's hack the rotation directly here for testing.
+                if (action.keyCode === 37) gameState.tunnelRotation -= 0.1;
+                if (action.keyCode === 39) gameState.tunnelRotation += 0.1;
+            }
+        }
+    };
+    
+    p.keyPressed = function() {
+        // Check for phase controls first
+        keyPressed(p);
+    };
+    
+    // Helper to init game
+    window.setControlMode = function(mode) {
+        gameState.controlMode = mode;
+        console.log("Control Mode set to: " + mode);
+        // Force restart
+        p.keyCode = 82; // R
+        keyPressed(p);
+    };
+});
+
+function updateGame(p) {
+    // 1. Inputs
+    handleInput(p);
+    
+    // 2. Game Logic
+    
+    // Speed scaling
+    gameState.currentSpeed = Math.min(
+        gameState.currentSpeed + 0.005, 
+        25
+    );
+    
+    // Timer
+    gameState.timeRemaining -= gameState.deltaTime;
+    if (gameState.timeRemaining <= 0) {
+        gameState.gamePhase = "GAME_OVER_WIN";
+        logGameEvent(p, 'info', { msg: "Time Up - Win", score: gameState.score });
+    }
+    
+    // Score
+    gameState.score += gameState.currentSpeed * 0.1;
+    
+    // Player Update
+    if (!gameState.player) {
+        gameState.player = new Player();
+    }
+    gameState.player.update();
+    
+    // Tunnel Management
+    manageTunnel(p);
+    
+    // Particles
+    if (gameState.particleSystem) gameState.particleSystem.update();
+    
+    // Spawn Speed Lines
+    if (p.frameCount % 5 === 0) {
+        gameState.particleSystem.spawn(0, 0, 1000, 1, 'speed_line');
+    }
+    
+    // Physics
+    checkCollisions(p);
+}
+
+function manageTunnel(p) {
+    const segments = gameState.tunnelSegments;
+    const speed = gameState.currentSpeed;
+    
+    // Move segments
+    segments.forEach(seg => seg.update(speed));
+    
+    // Remove old
+    // Use -500 to allow segments to pass well behind the camera before disappearing
+    if (segments.length > 0 && segments[0].z < -500) {
+        segments.shift();
+    }
+    
+    // Add new
+    const lastZ = segments.length > 0 ? segments[segments.length - 1].z : 0;
+    if (lastZ < VIEW_DISTANCE) {
+        // Need more segments
+        let nextZ = lastZ + SEGMENT_DEPTH;
+        // If empty (start), fill up to view distance
+        if (segments.length === 0) {
+            for (let z = 0; z < VIEW_DISTANCE; z += SEGMENT_DEPTH) {
+                segments.push(new TunnelSegment(z, segments.length));
+            }
+        } else {
+            segments.push(new TunnelSegment(nextZ, segments[segments.length - 1].index + 1));
+        }
+    }
+}
+
+function renderGame(p) {
+    // Render Tunnel (Back to Front)
+    // Actually, Painter's algorithm suggests Back to Front for solid polys.
+    // Our segments array is usually sorted by Z (closest at 0, furthest at end).
+    // So we should iterate BACKWARDS.
+    
+    const segments = gameState.tunnelSegments;
+    for (let i = segments.length - 2; i >= 0; i--) {
+        const seg = segments[i];
+        const nextSeg = segments[i + 1];
+        seg.render(p, nextSeg);
+    }
+    
+    // Render Particles
+    gameState.particleSystem.render(p);
+    
+    // Render Player
+    if (gameState.player) {
+        gameState.player.render(p);
+    }
+}
+
+window.gameInstance = gameInstance;

@@ -1,0 +1,1578 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+this game doesn't load, can you fix that? 
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Mini Golf Madness</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Mini Golf Madness</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic testing)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Mini Golf Madness! Navigate your ball through a challenging course filled with obstacles, ramps, and hazards. Your goal is to sink the ball into the hole in as few strokes as possible while avoiding water hazards and out-of-bounds areas. Complete all 3 holes to win the game!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Keys: Aim your shot (rotate the power indicator) | Space: Hold to charge power, release to shoot | Shift: Toggle camera zoom (when ball is moving) | Z: Quick restart current hole</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="automated_testing_controller.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+// automated_testing_controller.js - Automated testing logic
+
+function getTestBasicAction(gameState) {
+  if (!gameState.ball || !gameState.canShoot) return null;
+  
+  const currentHole = gameState.holes[gameState.currentHole];
+  if (!currentHole) return null;
+  
+  // Calculate angle to hole
+  const dx = currentHole.x - gameState.ball.x;
+  const dy = currentHole.y - gameState.ball.y;
+  const angleToHole = Math.atan2(dy, dx);
+  
+  // Adjust aim towards hole
+  const angleDiff = angleToHole - gameState.aimAngle;
+  
+  // Normalize angle difference to -PI to PI
+  let normalizedDiff = angleDiff;
+  while (normalizedDiff > Math.PI) normalizedDiff -= Math.PI * 2;
+  while (normalizedDiff < -Math.PI) normalizedDiff += Math.PI * 2;
+  
+  // If aim is close enough, shoot
+  if (Math.abs(normalizedDiff) < 0.1) {
+    return { keyCode: 32 }; // Space to shoot
+  }
+  
+  // Otherwise, adjust aim
+  if (normalizedDiff > 0) {
+    return { keyCode: 39 }; // Right arrow
+  } else {
+    return { keyCode: 37 }; // Left arrow
+  }
+}
+
+function getTestWinAction(gameState) {
+  if (!gameState.ball || !gameState.canShoot) return null;
+  
+  const currentHole = gameState.holes[gameState.currentHole];
+  if (!currentHole) return null;
+  
+  // Calculate optimal angle and power
+  const dx = currentHole.x - gameState.ball.x;
+  const dy = currentHole.y - gameState.ball.y;
+  const distance = Math.sqrt(dx * dx + dy * dy);
+  const angleToHole = Math.atan2(dy, dx);
+  
+  // Check for obstacles in the way
+  let hasObstacle = false;
+  for (const wall of gameState.walls) {
+    // Simple line-rectangle intersection check
+    if (lineIntersectsRect(
+      gameState.ball.x, gameState.ball.y,
+      currentHole.x, currentHole.y,
+      wall.x, wall.y, wall.width, wall.height
+    )) {
+      hasObstacle = true;
+      break;
+    }
+  }
+  
+  // If there's an obstacle, aim around it
+  let targetAngle = angleToHole;
+  if (hasObstacle) {
+    // Try different angles to find clear path
+    for (let offset = 0.2; offset < Math.PI; offset += 0.2) {
+      let clearPath = true;
+      const testAngle1 = angleToHole + offset;
+      const testAngle2 = angleToHole - offset;
+      
+      for (const wall of gameState.walls) {
+        if (!lineIntersectsRect(
+          gameState.ball.x, gameState.ball.y,
+          gameState.ball.x + Math.cos(testAngle1) * 100,
+          gameState.ball.y + Math.sin(testAngle1) * 100,
+          wall.x, wall.y, wall.width, wall.height
+        )) {
+          targetAngle = testAngle1;
+          clearPath = true;
+          break;
+        }
+        if (!lineIntersectsRect(
+          gameState.ball.x, gameState.ball.y,
+          gameState.ball.x + Math.cos(testAngle2) * 100,
+          gameState.ball.y + Math.sin(testAngle2) * 100,
+          wall.x, wall.y, wall.width, wall.height
+        )) {
+          targetAngle = testAngle2;
+          clearPath = true;
+          break;
+        }
+      }
+      
+      if (clearPath) break;
+    }
+  }
+  
+  // Adjust aim towards target angle
+  const angleDiff = targetAngle - gameState.aimAngle;
+  let normalizedDiff = angleDiff;
+  while (normalizedDiff > Math.PI) normalizedDiff -= Math.PI * 2;
+  while (normalizedDiff < -Math.PI) normalizedDiff += Math.PI * 2;
+  
+  // If aim is close enough and power is sufficient, shoot
+  if (Math.abs(normalizedDiff) < 0.05) {
+    // Calculate required power based on distance
+    const requiredPower = Math.min(20, distance * 0.15);
+    
+    if (gameState.isCharging && gameState.power >= requiredPower) {
+      // Power is good, release to shoot
+      return null; // Will auto-release on keyReleased
+    } else if (!gameState.isCharging) {
+      return { keyCode: 32 }; // Start charging
+    }
+    
+    return { keyCode: 32 }; // Continue charging
+  }
+  
+  // Adjust aim
+  if (normalizedDiff > 0) {
+    return { keyCode: 39 }; // Right arrow
+  } else {
+    return { keyCode: 37 }; // Left arrow
+  }
+}
+
+function lineIntersectsRect(x1, y1, x2, y2, rx, ry, rw, rh) {
+  // Check if line segment intersects with rectangle
+  const left = lineIntersectsLine(x1, y1, x2, y2, rx, ry, rx, ry + rh);
+  const right = lineIntersectsLine(x1, y1, x2, y2, rx + rw, ry, rx + rw, ry + rh);
+  const top = lineIntersectsLine(x1, y1, x2, y2, rx, ry, rx + rw, ry);
+  const bottom = lineIntersectsLine(x1, y1, x2, y2, rx, ry + rh, rx + rw, ry + rh);
+  
+  return left || right || top || bottom;
+}
+
+function lineIntersectsLine(x1, y1, x2, y2, x3, y3, x4, y4) {
+  const denominator = ((x2 - x1) * (y4 - y3)) - ((y2 - y1) * (x4 - x3));
+  if (denominator === 0) return false;
+  
+  const ua = (((x4 - x3) * (y1 - y3)) - ((y4 - y3) * (x1 - x3))) / denominator;
+  const ub = (((x2 - x1) * (y1 - y3)) - ((y2 - y1) * (x1 - x3))) / denominator;
+  
+  return (ua >= 0 && ua <= 1 && ub >= 0 && ub <= 1);
+}
+
+export function get_automated_testing_action(gameState) {
+  switch (gameState.controlMode) {
+    case "TEST_1":
+      return getTestBasicAction(gameState);
+    case "TEST_2":
+      return getTestWinAction(gameState);
+    default:
+      return null;
+  }
+}
+
+window.get_automated_testing_action = get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+// globals.js - Game constants and global state
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Game constants
+export const HOLE_RADIUS = 12;
+export const BALL_RADIUS = 6;
+export const MAX_POWER = 20;
+export const POWER_CHARGE_RATE = 0.5;
+export const FRICTION = 0.98;
+export const WALL_BOUNCE = 0.7;
+export const MIN_VELOCITY = 0.1;
+export const HOLE_CAPTURE_RADIUS = 8;
+export const WATER_SLOWDOWN = 0.85;
+
+// Game state object
+export const gameState = {
+  player: null,
+  entities: [],
+  score: 0,
+  gamePhase: "START", // "START", "PLAYING", "PAUSED", "GAME_OVER_WIN", "GAME_OVER_LOSE"
+  controlMode: "HUMAN",
+  
+  // Physics state
+  gravity: 0,
+  friction: FRICTION,
+  
+  // Golf-specific state
+  ball: null,
+  currentHole: 0,
+  totalHoles: 3,
+  strokes: 0,
+  holeStrokes: [],
+  holes: [],
+  obstacles: [],
+  walls: [],
+  waterHazards: [],
+  ramps: [],
+  
+  // Shooting state
+  isAiming: true,
+  aimAngle: 0,
+  power: 0,
+  isCharging: false,
+  canShoot: true,
+  
+  // Camera state
+  cameraX: 0,
+  cameraY: 0,
+  cameraZoom: 1,
+  cameraFollowBall: true,
+  
+  // Performance tracking
+  frameCount: 0,
+  lastFrameTime: 0,
+  deltaTime: 0,
+  
+  // Particle effects
+  particles: [],
+  
+  // Course data
+  courseData: null
+};
+
+// Expose getGameState globally
+export function getGameState() {
+  return gameState;
+}
+
+window.getGameState = getGameState;
+</file>
+
+<file name="game.js">
+// game.js - Main game file
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { setupInput, handleGameplayInput } from './input.js';
+import { updatePhysics } from './physics.js';
+import { initializeCourse, renderCourse } from './course.js';
+import { renderStartScreen, renderUI, renderPausedOverlay, renderGameOver } from './ui.js';
+import { updateParticles, renderParticles } from './particles.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Initialize the logs
+  p.logs = {
+    "game_info": [],
+    "inputs": [],
+    "player_info": []
+  };
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Initialize game state
+    gameState.gamePhase = "START";
+    gameState.controlMode = "HUMAN";
+    gameState.lastFrameTime = p.millis();
+    
+    // Setup input handlers
+    setupInput(p);
+    
+    // Initialize course
+    initializeCourse(p);
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: { gamePhase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+
+  p.draw = function() {
+    // Update frame count
+    gameState.frameCount = p.frameCount;
+    
+    // Update delta time
+    const currentTime = p.millis();
+    gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+    gameState.lastFrameTime = currentTime;
+    
+    // Clear background
+    p.background(20, 80, 40);
+    
+    // Update and render based on game phase
+    switch (gameState.gamePhase) {
+      case "START":
+        renderStartScreen(p);
+        break;
+        
+      case "PLAYING":
+        updateGame(p);
+        renderGame(p);
+        renderUI(p);
+        break;
+        
+      case "PAUSED":
+        renderGame(p);
+        renderPausedOverlay(p);
+        break;
+        
+      case "GAME_OVER_WIN":
+      case "GAME_OVER_LOSE":
+        renderGame(p);
+        renderGameOver(p);
+        break;
+    }
+  };
+});
+
+function updateGame(p) {
+  // Handle input
+  handleGameplayInput(p);
+  
+  // Update ball
+  if (gameState.ball) {
+    gameState.ball.update(p);
+  }
+  
+  // Update physics
+  updatePhysics(p);
+  
+  // Update water hazards
+  gameState.waterHazards.forEach(water => water.update(p));
+  
+  // Update particles
+  updateParticles(p);
+}
+
+function renderGame(p) {
+  // Render course
+  renderCourse(p);
+  
+  // Render ball
+  if (gameState.ball) {
+    gameState.ball.render(p);
+  }
+  
+  // Render particles
+  renderParticles(p);
+}
+
+// Expose the game instance globally
+window.gameInstance = gameInstance;
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const activeBtn = document.getElementById(
+    mode === 'HUMAN' ? 'humanModeBtn' : 
+    mode === 'TEST_1' ? 'test_1_ModeBtn' : 
+    'test_2_ModeBtn'
+  );
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+  
+  console.log(`Control mode set to: ${mode}`);
+};
+</file>
+
+<file name="ui.js">
+// ui.js - UI rendering
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, MAX_POWER } from './globals.js';
+
+export function renderStartScreen(p) {
+  // Background
+  p.background(20, 80, 40);
+  
+  // Title with shadow
+  p.fill(0, 0, 0, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(52);
+  p.text('MINI GOLF', CANVAS_WIDTH / 2 + 3, CANVAS_HEIGHT / 2 - 77);
+  
+  p.fill(255, 255, 0);
+  p.textSize(52);
+  p.text('MINI GOLF', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 80);
+  
+  p.fill(255);
+  p.textSize(28);
+  p.text('MADNESS', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 40);
+  
+  // Instructions
+  p.textSize(18);
+  p.fill(255, 255, 255);
+  p.text('Navigate 3 challenging holes!', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 10);
+  
+  p.textSize(16);
+  p.fill(200, 200, 200);
+  p.text('Arrow Keys: Aim', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+  p.text('Hold SPACE: Charge power & Release to shoot', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 75);
+  p.text('Z: Quick restart hole', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 100);
+  
+  // Start prompt
+  p.fill(255, 255, 0);
+  p.textSize(24);
+  const alpha = (Math.sin(p.frameCount * 0.1) + 1) / 2 * 255;
+  p.fill(255, 255, 0, alpha);
+  p.text('PRESS ENTER TO START', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 140);
+}
+
+export function renderUI(p) {
+  // Semi-transparent background for HUD
+  p.fill(0, 0, 0, 150);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, 60);
+  
+  // Hole info
+  p.fill(255);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(20);
+  p.text(`Hole: ${gameState.currentHole + 1}/${gameState.totalHoles}`, 10, 10);
+  
+  // Strokes
+  p.textSize(18);
+  const currentHole = gameState.holes[gameState.currentHole];
+  const par = currentHole ? currentHole.par : 3;
+  p.text(`Strokes: ${gameState.strokes} (Par ${par})`, 10, 35);
+  
+  // Total strokes
+  const totalStrokes = gameState.holeStrokes.reduce((a, b) => a + b, 0) + gameState.strokes;
+  p.textAlign(p.RIGHT, p.TOP);
+  p.text(`Total: ${totalStrokes}`, CANVAS_WIDTH - 10, 10);
+  
+  // Previous holes score
+  if (gameState.holeStrokes.length > 0) {
+    p.textSize(14);
+    p.text(`Previous: ${gameState.holeStrokes.join(', ')}`, CANVAS_WIDTH - 10, 35);
+  }
+  
+  // Aim indicator
+  if (gameState.isAiming && gameState.ball && !gameState.ball.isMoving()) {
+    renderAimIndicator(p);
+  }
+  
+  // Power meter
+  if (gameState.isCharging) {
+    renderPowerMeter(p);
+  }
+  
+  // Status message
+  if (gameState.ball && gameState.ball.inWater) {
+    p.fill(100, 150, 255);
+    p.textAlign(p.CENTER, p.TOP);
+    p.textSize(16);
+    p.text('IN WATER - SLOWER MOVEMENT', CANVAS_WIDTH / 2, 65);
+  }
+}
+
+function renderAimIndicator(p) {
+  const ball = gameState.ball;
+  if (!ball) return;
+  
+  const aimLength = 60;
+  const endX = ball.x + Math.cos(gameState.aimAngle) * aimLength;
+  const endY = ball.y + Math.sin(gameState.aimAngle) * aimLength;
+  
+  // Aim line
+  p.stroke(255, 255, 0);
+  p.strokeWeight(3);
+  p.line(ball.x, ball.y, endX, endY);
+  
+  // Arrow head
+  const arrowSize = 10;
+  const arrowAngle1 = gameState.aimAngle + Math.PI * 0.8;
+  const arrowAngle2 = gameState.aimAngle - Math.PI * 0.8;
+  
+  p.line(endX, endY, 
+         endX + Math.cos(arrowAngle1) * arrowSize,
+         endY + Math.sin(arrowAngle1) * arrowSize);
+  p.line(endX, endY,
+         endX + Math.cos(arrowAngle2) * arrowSize,
+         endY + Math.sin(arrowAngle2) * arrowSize);
+  
+  // Aim angle text
+  p.fill(255, 255, 0);
+  p.noStroke();
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(12);
+  const angleDegrees = Math.round((gameState.aimAngle * 180 / Math.PI + 360) % 360);
+  p.text(`${angleDegrees}°`, ball.x, ball.y - 25);
+}
+
+function renderPowerMeter(p) {
+  const meterX = CANVAS_WIDTH / 2 - 100;
+  const meterY = CANVAS_HEIGHT - 40;
+  const meterWidth = 200;
+  const meterHeight = 20;
+  
+  // Background
+  p.fill(50, 50, 50);
+  p.noStroke();
+  p.rect(meterX, meterY, meterWidth, meterHeight, 5);
+  
+  // Power fill
+  const powerRatio = gameState.power / MAX_POWER;
+  const fillColor = p.lerpColor(
+    p.color(0, 255, 0),
+    p.color(255, 0, 0),
+    powerRatio
+  );
+  p.fill(fillColor);
+  p.rect(meterX, meterY, meterWidth * powerRatio, meterHeight, 5);
+  
+  // Border
+  p.noFill();
+  p.stroke(255);
+  p.strokeWeight(2);
+  p.rect(meterX, meterY, meterWidth, meterHeight, 5);
+  
+  // Text
+  p.fill(255);
+  p.noStroke();
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(14);
+  p.text(`POWER: ${Math.round(powerRatio * 100)}%`, CANVAS_WIDTH / 2, meterY + meterHeight / 2);
+}
+
+export function renderPausedOverlay(p) {
+  // Semi-transparent overlay
+  p.fill(0, 0, 0, 180);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Paused text
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text('PAUSED', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+  
+  p.textSize(20);
+  p.text('Press ESC to Resume', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+  p.text('Press R to Restart', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+}
+
+export function renderGameOver(p) {
+  // Background overlay
+  p.fill(0, 0, 0, 200);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  const isWin = gameState.gamePhase === "GAME_OVER_WIN";
+  
+  // Title
+  p.fill(isWin ? 255 : 255, isWin ? 215 : 100, isWin ? 0 : 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text(isWin ? 'COURSE COMPLETE!' : 'GAME OVER', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 80);
+  
+  if (isWin) {
+    // Final score
+    p.fill(255);
+    p.textSize(24);
+    p.text(`Total Strokes: ${gameState.score}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 30);
+    
+    // Hole breakdown
+    p.textSize(18);
+    for (let i = 0; i < gameState.holeStrokes.length; i++) {
+      const hole = gameState.holes[i];
+      const strokes = gameState.holeStrokes[i];
+      const par = hole ? hole.par : 3;
+      const diff = strokes - par;
+      let scoreText = 'Par';
+      let color = p.color(255, 255, 255);
+      
+      if (diff < 0) {
+        scoreText = diff === -1 ? 'Birdie' : diff === -2 ? 'Eagle' : 'Albatross';
+        color = p.color(0, 255, 0);
+      } else if (diff > 0) {
+        scoreText = diff === 1 ? 'Bogey' : `+${diff}`;
+        color = p.color(255, 100, 100);
+      }
+      
+      p.fill(color);
+      p.text(`Hole ${i + 1}: ${strokes} (${scoreText})`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 10 + i * 25);
+    }
+  }
+  
+  // Restart instruction
+  p.fill(255);
+  p.textSize(20);
+  p.text('Press R to Restart', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 40);
+}
+</file>
+
+<file name="course.js">
+// course.js - Course generation and management
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Ball, Hole, Wall, WaterHazard, Ramp } from './entities.js';
+
+export function initializeCourse(p) {
+  // Clear existing course elements
+  gameState.holes = [];
+  gameState.walls = [];
+  gameState.waterHazards = [];
+  gameState.ramps = [];
+  gameState.entities = [];
+  
+  // Create 3 holes with increasing difficulty
+  createHole1();
+  createHole2();
+  createHole3();
+  
+  // Create ball at first hole's start position
+  const firstHole = gameState.holes[0];
+  gameState.ball = new Ball(firstHole.startPos.x, firstHole.startPos.y);
+  gameState.player = gameState.ball;
+}
+
+function createHole1() {
+  // Hole 1: Simple straight shot with side walls
+  const hole = new Hole(500, 200, 100, 200, 2);
+  
+  // Side walls
+  new Wall(50, 100, 15, 200);
+  new Wall(535, 100, 15, 200);
+  
+  // Top and bottom walls
+  new Wall(50, 100, 500, 15);
+  new Wall(50, 285, 500, 15);
+  
+  // Small obstacles
+  new Wall(250, 150, 20, 100);
+  new Wall(350, 150, 20, 100);
+}
+
+function createHole2() {
+  // Hole 2: Water hazard and curved path
+  const hole = new Hole(500, 100, 100, 300, 3);
+  
+  // Outer walls
+  new Wall(50, 50, 15, 300);
+  new Wall(535, 50, 15, 300);
+  new Wall(50, 50, 500, 15);
+  new Wall(50, 335, 500, 15);
+  
+  // Water hazard in the middle
+  new WaterHazard(200, 150, 200, 150);
+  
+  // Safe path walls
+  new Wall(150, 200, 50, 15);
+  new Wall(400, 200, 50, 15);
+}
+
+function createHole3() {
+  // Hole 3: Ramps and multiple obstacles
+  const hole = new Hole(500, 350, 100, 50, 4);
+  
+  // Course walls
+  new Wall(50, 30, 15, 340);
+  new Wall(535, 30, 15, 340);
+  new Wall(50, 30, 500, 15);
+  new Wall(50, 355, 500, 15);
+  
+  // Central wall maze
+  new Wall(200, 100, 15, 150);
+  new Wall(350, 150, 15, 150);
+  new Wall(200, 100, 150, 15);
+  new Wall(350, 285, 150, 15);
+  
+  // Ramps for style
+  new Ramp(150, 250, 50, 30, 1);
+  new Ramp(400, 100, 50, 30, -1);
+  
+  // Small water hazard
+  new WaterHazard(250, 200, 80, 60);
+}
+
+export function renderCourse(p) {
+  // Render course background
+  renderBackground(p);
+  
+  // Render course elements in order
+  gameState.waterHazards.forEach(water => water.render(p));
+  gameState.ramps.forEach(ramp => ramp.render(p));
+  gameState.walls.forEach(wall => wall.render(p));
+  
+  // Render current hole
+  if (gameState.holes[gameState.currentHole]) {
+    gameState.holes[gameState.currentHole].render(p);
+    
+    // Render start position indicator
+    const startPos = gameState.holes[gameState.currentHole].startPos;
+    p.noFill();
+    p.stroke(255, 255, 255, 100);
+    p.strokeWeight(2);
+    p.circle(startPos.x, startPos.y, 20);
+  }
+}
+
+function renderBackground(p) {
+  // Grass background with gradient
+  for (let y = 0; y < CANVAS_HEIGHT; y += 2) {
+    const greenValue = p.map(y, 0, CANVAS_HEIGHT, 100, 70);
+    p.stroke(50, greenValue, 40);
+    p.strokeWeight(2);
+    p.line(0, y, CANVAS_WIDTH, y);
+  }
+  
+  // Add grass texture
+  p.stroke(60, 110, 50, 50);
+  p.strokeWeight(1);
+  for (let i = 0; i < 200; i++) {
+    const x = Math.random() * CANVAS_WIDTH;
+    const y = Math.random() * CANVAS_HEIGHT;
+    p.line(x, y, x, y + 3);
+  }
+}
+</file>
+
+<file name="entities.js">
+// entities.js - Game entity classes
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, BALL_RADIUS, HOLE_RADIUS, MIN_VELOCITY, HOLE_CAPTURE_RADIUS, WATER_SLOWDOWN } from './globals.js';
+
+export class Ball {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.vx = 0;
+    this.vy = 0;
+    this.radius = BALL_RADIUS;
+    this.mass = 1;
+    this.inHole = false;
+    this.inWater = false;
+    this.lastPosition = { x: x, y: y };
+    this.trail = [];
+    this.maxTrailLength = 15;
+    
+    gameState.ball = this;
+    gameState.entities.push(this);
+  }
+  
+  update(p) {
+    if (this.inHole) return;
+    
+    // Store position for trail
+    if (this.isMoving()) {
+      this.trail.push({ x: this.x, y: this.y });
+      if (this.trail.length > this.maxTrailLength) {
+        this.trail.shift();
+      }
+    }
+    
+    // Apply velocity
+    this.x += this.vx;
+    this.y += this.vy;
+    
+    // Apply friction
+    this.vx *= gameState.friction;
+    this.vy *= gameState.friction;
+    
+    // Check if ball is in water
+    this.inWater = false;
+    for (const water of gameState.waterHazards) {
+      if (this.x > water.x && this.x < water.x + water.width &&
+          this.y > water.y && this.y < water.y + water.height) {
+        this.inWater = true;
+        this.vx *= WATER_SLOWDOWN;
+        this.vy *= WATER_SLOWDOWN;
+        break;
+      }
+    }
+    
+    // Stop if moving too slowly
+    if (Math.abs(this.vx) < MIN_VELOCITY) this.vx = 0;
+    if (Math.abs(this.vy) < MIN_VELOCITY) this.vy = 0;
+    
+    // Update aiming state
+    if (!this.isMoving() && !this.inHole) {
+      gameState.isAiming = true;
+      gameState.canShoot = true;
+    } else {
+      gameState.isAiming = false;
+      gameState.canShoot = false;
+    }
+    
+    // Check hole collision
+    const currentHole = gameState.holes[gameState.currentHole];
+    if (currentHole) {
+      const dx = currentHole.x - this.x;
+      const dy = currentHole.y - this.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      // Check if ball is close enough and moving slow enough
+      if (distance < HOLE_CAPTURE_RADIUS && this.getSpeed() < 2) {
+        this.enterHole(currentHole);
+      }
+    }
+    
+    // Log position changes
+    if (Math.abs(this.x - this.lastPosition.x) > 1 || 
+        Math.abs(this.y - this.lastPosition.y) > 1) {
+      this.logPosition(p);
+      this.lastPosition.x = this.x;
+      this.lastPosition.y = this.y;
+    }
+  }
+  
+  isMoving() {
+    return Math.abs(this.vx) > MIN_VELOCITY || Math.abs(this.vy) > MIN_VELOCITY;
+  }
+  
+  getSpeed() {
+    return Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+  }
+  
+  shoot(angle, power) {
+    if (!gameState.canShoot) return;
+    
+    this.vx = Math.cos(angle) * power;
+    this.vy = Math.sin(angle) * power;
+    this.trail = [];
+    
+    gameState.strokes++;
+    gameState.canShoot = false;
+    gameState.isAiming = false;
+    
+    // Create shot particles
+    for (let i = 0; i < 8; i++) {
+      const particleAngle = angle + (Math.random() - 0.5) * Math.PI / 4;
+      const particleSpeed = Math.random() * 2 + 1;
+      gameState.particles.push(new Particle(
+        this.x,
+        this.y,
+        Math.cos(particleAngle) * particleSpeed,
+        Math.sin(particleAngle) * particleSpeed,
+        [255, 255, 255]
+      ));
+    }
+  }
+  
+  enterHole(hole) {
+    this.inHole = true;
+    this.vx = 0;
+    this.vy = 0;
+    this.x = hole.x;
+    this.y = hole.y;
+    
+    // Record strokes for this hole
+    gameState.holeStrokes.push(gameState.strokes);
+    
+    // Create celebration particles
+    for (let i = 0; i < 20; i++) {
+      const angle = (Math.PI * 2 * i) / 20;
+      const speed = Math.random() * 3 + 2;
+      gameState.particles.push(new Particle(
+        hole.x,
+        hole.y,
+        Math.cos(angle) * speed,
+        Math.sin(angle) * speed,
+        [255, 215, 0]
+      ));
+    }
+    
+    // Check if all holes completed
+    if (gameState.currentHole >= gameState.totalHoles - 1) {
+      gameState.score = gameState.holeStrokes.reduce((a, b) => a + b, 0);
+      setTimeout(() => {
+        gameState.gamePhase = "GAME_OVER_WIN";
+      }, 1000);
+    } else {
+      // Next hole
+      setTimeout(() => {
+        gameState.currentHole++;
+        gameState.strokes = 0;
+        this.resetToStart();
+      }, 1000);
+    }
+  }
+  
+  resetToStart() {
+    const startPos = gameState.holes[gameState.currentHole].startPos;
+    this.x = startPos.x;
+    this.y = startPos.y;
+    this.vx = 0;
+    this.vy = 0;
+    this.inHole = false;
+    this.inWater = false;
+    this.trail = [];
+    gameState.isAiming = true;
+    gameState.canShoot = true;
+  }
+  
+  logPosition(p) {
+    if (p.logs && p.logs.player_info) {
+      p.logs.player_info.push({
+        screen_x: this.x,
+        screen_y: this.y,
+        game_x: this.x,
+        game_y: this.y,
+        velocity_x: this.vx,
+        velocity_y: this.vy,
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+  
+  render(p) {
+    // Render trail
+    if (this.trail.length > 1) {
+      p.noFill();
+      p.strokeWeight(2);
+      for (let i = 0; i < this.trail.length - 1; i++) {
+        const alpha = (i / this.trail.length) * 150;
+        p.stroke(255, 255, 255, alpha);
+        p.line(this.trail[i].x, this.trail[i].y, this.trail[i + 1].x, this.trail[i + 1].y);
+      }
+    }
+    
+    // Render ball
+    p.push();
+    p.translate(this.x, this.y);
+    
+    // Ball shadow
+    p.fill(0, 0, 0, 50);
+    p.noStroke();
+    p.ellipse(2, 2, this.radius * 2, this.radius * 2);
+    
+    // Ball body
+    if (this.inWater) {
+      p.fill(100, 150, 255);
+    } else {
+      p.fill(255, 255, 255);
+    }
+    p.stroke(200, 200, 200);
+    p.strokeWeight(1);
+    p.circle(0, 0, this.radius * 2);
+    
+    // Ball detail (dimples)
+    p.noStroke();
+    p.fill(240, 240, 240);
+    p.circle(-2, -2, 2);
+    p.circle(2, -1, 2);
+    p.circle(-1, 2, 2);
+    
+    p.pop();
+  }
+}
+
+export class Hole {
+  constructor(x, y, startX, startY, par = 3) {
+    this.x = x;
+    this.y = y;
+    this.radius = HOLE_RADIUS;
+    this.startPos = { x: startX, y: startY };
+    this.par = par;
+    
+    gameState.holes.push(this);
+  }
+  
+  render(p) {
+    // Hole shadow/depth
+    p.fill(20, 30, 20);
+    p.noStroke();
+    p.circle(this.x, this.y, this.radius * 2.2);
+    
+    // Hole opening
+    p.fill(10, 15, 10);
+    p.circle(this.x, this.y, this.radius * 2);
+    
+    // Flag pole
+    p.stroke(150, 100, 50);
+    p.strokeWeight(2);
+    p.line(this.x, this.y - this.radius, this.x, this.y - this.radius - 30);
+    
+    // Flag
+    p.fill(255, 0, 0);
+    p.noStroke();
+    p.triangle(
+      this.x, this.y - this.radius - 30,
+      this.x + 15, this.y - this.radius - 25,
+      this.x, this.y - this.radius - 20
+    );
+  }
+}
+
+export class Wall {
+  constructor(x, y, width, height) {
+    this.x = x;
+    this.y = y;
+    this.width = width;
+    this.height = height;
+    
+    gameState.walls.push(this);
+  }
+  
+  render(p) {
+    // Wall shadow
+    p.fill(60, 40, 20);
+    p.noStroke();
+    p.rect(this.x + 2, this.y + 2, this.width, this.height);
+    
+    // Wall body
+    p.fill(139, 90, 43);
+    p.stroke(100, 60, 30);
+    p.strokeWeight(2);
+    p.rect(this.x, this.y, this.width, this.height);
+    
+    // Wood texture
+    p.stroke(120, 70, 35, 100);
+    p.strokeWeight(1);
+    for (let i = 0; i < this.width; i += 10) {
+      p.line(this.x + i, this.y, this.x + i, this.y + this.height);
+    }
+  }
+}
+
+export class WaterHazard {
+  constructor(x, y, width, height) {
+    this.x = x;
+    this.y = y;
+    this.width = width;
+    this.height = height;
+    this.waveOffset = Math.random() * 100;
+    
+    gameState.waterHazards.push(this);
+  }
+  
+  update(p) {
+    this.waveOffset += 0.02;
+  }
+  
+  render(p) {
+    // Water base
+    p.fill(50, 100, 200);
+    p.noStroke();
+    p.rect(this.x, this.y, this.width, this.height);
+    
+    // Water waves
+    p.noFill();
+    p.stroke(70, 120, 220, 150);
+    p.strokeWeight(2);
+    for (let y = this.y; y < this.y + this.height; y += 15) {
+      p.beginShape();
+      for (let x = this.x; x < this.x + this.width; x += 10) {
+        const waveY = y + Math.sin(x * 0.1 + this.waveOffset) * 3;
+        p.vertex(x, waveY);
+      }
+      p.endShape();
+    }
+    
+    // Water reflection
+    p.fill(100, 150, 255, 50);
+    p.noStroke();
+    p.rect(this.x, this.y, this.width, this.height / 3);
+  }
+}
+
+export class Ramp {
+  constructor(x, y, width, height, slopeDirection = 1) {
+    this.x = x;
+    this.y = y;
+    this.width = width;
+    this.height = height;
+    this.slopeDirection = slopeDirection; // 1 = up-right, -1 = up-left
+    
+    gameState.ramps.push(this);
+  }
+  
+  render(p) {
+    p.push();
+    p.fill(100, 150, 100);
+    p.stroke(80, 130, 80);
+    p.strokeWeight(2);
+    
+    if (this.slopeDirection === 1) {
+      // Ramp going up to the right
+      p.triangle(
+        this.x, this.y + this.height,
+        this.x + this.width, this.y + this.height,
+        this.x + this.width, this.y
+      );
+    } else {
+      // Ramp going up to the left
+      p.triangle(
+        this.x, this.y,
+        this.x, this.y + this.height,
+        this.x + this.width, this.y + this.height
+      );
+    }
+    
+    // Grass texture
+    p.stroke(90, 140, 90, 100);
+    p.strokeWeight(1);
+    for (let i = 0; i < 10; i++) {
+      const rx = this.x + Math.random() * this.width;
+      const ry = this.y + Math.random() * this.height;
+      p.line(rx, ry, rx, ry + 3);
+    }
+    
+    p.pop();
+  }
+}
+
+export class Particle {
+  constructor(x, y, vx, vy, color = [255, 255, 255], lifetime = 30) {
+    this.x = x;
+    this.y = y;
+    this.vx = vx;
+    this.vy = vy;
+    this.lifetime = lifetime;
+    this.age = 0;
+    this.size = Math.random() * 3 + 2;
+    this.color = color;
+    
+    gameState.particles.push(this);
+  }
+  
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.vx *= 0.95;
+    this.vy *= 0.95;
+    this.age++;
+  }
+  
+  isDead() {
+    return this.age >= this.lifetime;
+  }
+  
+  render(p) {
+    const alpha = (1 - this.age / this.lifetime) * 255;
+    p.fill(this.color[0], this.color[1], this.color[2], alpha);
+    p.noStroke();
+    p.circle(this.x, this.y, this.size);
+  }
+}
+</file>
+
+<file name="physics.js">
+// physics.js - Physics and collision detection
+
+import { gameState, WALL_BOUNCE, BALL_RADIUS } from './globals.js';
+import { collideCircleCircle, collideRectCircle } from 'https://cdn.jsdelivr.net/npm/p5.collide2d@1.0.0/+esm';
+
+export function updatePhysics(p) {
+  if (!gameState.ball) return;
+  
+  const ball = gameState.ball;
+  
+  // Wall collisions
+  for (const wall of gameState.walls) {
+    if (checkWallCollision(ball, wall)) {
+      handleWallCollision(ball, wall);
+    }
+  }
+  
+  // Bounds checking
+  checkBoundsCollision(ball);
+}
+
+function checkWallCollision(ball, wall) {
+  return collideRectCircle(
+    wall.x,
+    wall.y,
+    wall.width,
+    wall.height,
+    ball.x,
+    ball.y,
+    ball.radius * 2
+  );
+}
+
+function handleWallCollision(ball, wall) {
+  // Find which side of the wall the ball hit
+  const ballLeft = ball.x - ball.radius;
+  const ballRight = ball.x + ball.radius;
+  const ballTop = ball.y - ball.radius;
+  const ballBottom = ball.y + ball.radius;
+  
+  const wallLeft = wall.x;
+  const wallRight = wall.x + wall.width;
+  const wallTop = wall.y;
+  const wallBottom = wall.y + wall.height;
+  
+  // Calculate overlap on each side
+  const overlapLeft = ballRight - wallLeft;
+  const overlapRight = wallRight - ballLeft;
+  const overlapTop = ballBottom - wallTop;
+  const overlapBottom = wallBottom - ballTop;
+  
+  // Find minimum overlap
+  const minOverlap = Math.min(overlapLeft, overlapRight, overlapTop, overlapBottom);
+  
+  // Resolve collision based on minimum overlap
+  if (minOverlap === overlapLeft) {
+    ball.x = wallLeft - ball.radius - 1;
+    ball.vx = -Math.abs(ball.vx) * WALL_BOUNCE;
+  } else if (minOverlap === overlapRight) {
+    ball.x = wallRight + ball.radius + 1;
+    ball.vx = Math.abs(ball.vx) * WALL_BOUNCE;
+  } else if (minOverlap === overlapTop) {
+    ball.y = wallTop - ball.radius - 1;
+    ball.vy = -Math.abs(ball.vy) * WALL_BOUNCE;
+  } else if (minOverlap === overlapBottom) {
+    ball.y = wallBottom + ball.radius + 1;
+    ball.vy = Math.abs(ball.vy) * WALL_BOUNCE;
+  }
+  
+  // Create bounce particles
+  for (let i = 0; i < 3; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 2 + 1;
+    const Particle = await import('./entities.js').then(m => m.Particle);
+    gameState.particles.push(new Particle(
+      ball.x,
+      ball.y,
+      Math.cos(angle) * speed,
+      Math.sin(angle) * speed,
+      [200, 150, 100]
+    ));
+  }
+}
+
+function checkBoundsCollision(ball) {
+  const margin = ball.radius;
+  
+  // Left bound
+  if (ball.x - margin < 0) {
+    ball.x = margin;
+    ball.vx = Math.abs(ball.vx) * WALL_BOUNCE;
+  }
+  
+  // Right bound
+  if (ball.x + margin > 600) {
+    ball.x = 600 - margin;
+    ball.vx = -Math.abs(ball.vx) * WALL_BOUNCE;
+  }
+  
+  // Top bound
+  if (ball.y - margin < 0) {
+    ball.y = margin;
+    ball.vy = Math.abs(ball.vy) * WALL_BOUNCE;
+  }
+  
+  // Bottom bound
+  if (ball.y + margin > 400) {
+    ball.y = 400 - margin;
+    ball.vy = -Math.abs(ball.vy) * WALL_BOUNCE;
+  }
+}
+
+export function checkRampInteraction(ball, ramp) {
+  // Simple point-in-triangle check
+  const inRamp = pointInTriangle(
+    ball.x, ball.y,
+    ramp.x, ramp.y + ramp.height,
+    ramp.x + ramp.width, ramp.y + ramp.height,
+    ramp.slopeDirection === 1 ? ramp.x + ramp.width : ramp.x,
+    ramp.y
+  );
+  
+  if (inRamp) {
+    // Add slight upward velocity to simulate ramp effect
+    ball.vy -= 0.2;
+  }
+}
+
+function pointInTriangle(px, py, ax, ay, bx, by, cx, cy) {
+  const v0x = cx - ax;
+  const v0y = cy - ay;
+  const v1x = bx - ax;
+  const v1y = by - ay;
+  const v2x = px - ax;
+  const v2y = py - ay;
+  
+  const dot00 = v0x * v0x + v0y * v0y;
+  const dot01 = v0x * v1x + v0y * v1y;
+  const dot02 = v0x * v2x + v0y * v2y;
+  const dot11 = v1x * v1x + v1y * v1y;
+  const dot12 = v1x * v2x + v1y * v2y;
+  
+  const invDenom = 1 / (dot00 * dot11 - dot01 * dot01);
+  const u = (dot11 * dot02 - dot01 * dot12) * invDenom;
+  const v = (dot00 * dot12 - dot01 * dot02) * invDenom;
+  
+  return (u >= 0) && (v >= 0) && (u + v < 1);
+}
+</file>
+
+<file name="particles.js">
+// particles.js - Particle system updates
+
+import { gameState } from './globals.js';
+
+export function updateParticles(p) {
+  // Update all particles
+  for (let i = gameState.particles.length - 1; i >= 0; i--) {
+    const particle = gameState.particles[i];
+    particle.update();
+    
+    if (particle.isDead()) {
+      gameState.particles.splice(i, 1);
+    }
+  }
+}
+
+export function renderParticles(p) {
+  gameState.particles.forEach(particle => particle.render(p));
+}
+</file>
+
+<file name="input.js">
+// input.js - Input handling
+
+import { gameState, MAX_POWER, POWER_CHARGE_RATE } from './globals.js';
+
+const keys = {};
+
+export function setupInput(p) {
+  p.keyPressed = function() {
+    keys[p.keyCode] = true;
+    
+    // Log input
+    if (p.logs && p.logs.inputs) {
+      p.logs.inputs.push({
+        input_type: 'keyPressed',
+        data: { key: p.key, keyCode: p.keyCode },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+    
+    // Handle phase controls
+    handlePhaseControls(p);
+  };
+  
+  p.keyReleased = function() {
+    keys[p.keyCode] = false;
+    
+    // Log input
+    if (p.logs && p.logs.inputs) {
+      p.logs.inputs.push({
+        input_type: 'keyReleased',
+        data: { key: p.key, keyCode: p.keyCode },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+    
+    // Handle shooting on space release
+    if (p.keyCode === 32 && gameState.gamePhase === "PLAYING") {
+      if (gameState.isCharging && gameState.ball && gameState.canShoot) {
+        gameState.ball.shoot(gameState.aimAngle, gameState.power);
+        gameState.isCharging = false;
+        gameState.power = 0;
+      }
+    }
+  };
+}
+
+function handlePhaseControls(p) {
+  if (p.keyCode === 13) { // ENTER
+    if (gameState.gamePhase === "START") {
+      gameState.gamePhase = "PLAYING";
+      if (p.logs && p.logs.game_info) {
+        p.logs.game_info.push({
+          data: { gamePhase: "PLAYING" },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+  }
+  
+  if (p.keyCode === 27) { // ESC
+    if (gameState.gamePhase === "PLAYING") {
+      gameState.gamePhase = "PAUSED";
+    } else if (gameState.gamePhase === "PAUSED") {
+      gameState.gamePhase = "PLAYING";
+    }
+  }
+  
+  if (p.keyCode === 82) { // R - Restart
+    if (gameState.gamePhase === "GAME_OVER_WIN" || 
+        gameState.gamePhase === "GAME_OVER_LOSE" ||
+        gameState.gamePhase === "PLAYING") {
+      resetGame(p);
+    }
+  }
+  
+  if (p.keyCode === 90) { // Z - Quick restart hole
+    if (gameState.gamePhase === "PLAYING" && gameState.ball) {
+      gameState.ball.resetToStart();
+      gameState.strokes = 0;
+    }
+  }
+}
+
+export function handleGameplayInput(p) {
+  if (gameState.gamePhase !== "PLAYING") return;
+  
+  // Handle automated testing
+  if (gameState.controlMode !== "HUMAN") {
+    handleAutomatedInput(p);
+    return;
+  }
+  
+  // Human controls
+  if (gameState.isAiming && gameState.ball && !gameState.ball.isMoving()) {
+    // Arrow keys for aiming
+    if (isKeyPressed(37)) { // Left
+      gameState.aimAngle -= 0.05;
+    }
+    if (isKeyPressed(39)) { // Right
+      gameState.aimAngle += 0.05;
+    }
+    
+    // Space for power charging
+    if (isKeyPressed(32)) { // Space
+      if (!gameState.isCharging) {
+        gameState.isCharging = true;
+        gameState.power = 0;
+      }
+      
+      gameState.power += POWER_CHARGE_RATE;
+      if (gameState.power > MAX_POWER) {
+        gameState.power = MAX_POWER;
+      }
+    }
+  }
+}
+
+function handleAutomatedInput(p) {
+  if (typeof window.get_automated_testing_action === 'function') {
+    const action = window.get_automated_testing_action(gameState);
+    if (action && action.keyCode) {
+      // Simulate key press
+      keys[action.keyCode] = true;
+      
+      // Handle the action
+      if (action.keyCode === 32 && !gameState.isCharging && gameState.canShoot) {
+        gameState.isCharging = true;
+        gameState.power = 0;
+      }
+      
+      // Release after a frame
+      setTimeout(() => {
+        keys[action.keyCode] = false;
+        if (action.keyCode === 32 && gameState.isCharging && gameState.ball && gameState.canShoot) {
+          gameState.ball.shoot(gameState.aimAngle, gameState.power);
+          gameState.isCharging = false;
+          gameState.power = 0;
+        }
+      }, 100);
+    }
+  }
+}
+
+export function isKeyPressed(keyCode) {
+  return keys[keyCode] === true;
+}
+
+export function resetGame(p) {
+  // Clear entities
+  gameState.entities = [];
+  gameState.walls = [];
+  gameState.holes = [];
+  gameState.waterHazards = [];
+  gameState.ramps = [];
+  gameState.particles = [];
+  
+  // Reset game state
+  gameState.currentHole = 0;
+  gameState.strokes = 0;
+  gameState.holeStrokes = [];
+  gameState.score = 0;
+  gameState.isAiming = true;
+  gameState.canShoot = true;
+  gameState.isCharging = false;
+  gameState.power = 0;
+  gameState.aimAngle = 0;
+  
+  // Reinitialize course
+  const { initializeCourse } = await import('./course.js');
+  initializeCourse(p);
+  
+  // Change to start screen
+  gameState.gamePhase = "START";
+  
+  if (p.logs && p.logs.game_info) {
+    p.logs.game_info.push({
+      data: { gamePhase: "START", action: "restart" },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

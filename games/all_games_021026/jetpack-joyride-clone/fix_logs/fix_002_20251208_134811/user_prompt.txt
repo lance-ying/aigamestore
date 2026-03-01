@@ -1,0 +1,1638 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+I should get a bonus on my score based off the coins collected, like ehac coin should correspond to 10 points to the score, and as well, can you make it so that bullets are animated from my jetpack
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Jetpack Joyride Clone</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 4px solid #444; width: 600px !important; height: 400px !important; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; font-family: sans-serif; transition: background 0.2s; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: 'Arial Black', sans-serif; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 2px;">Jetpack Joyride Clone</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN', this)">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="setMode('TEST_1', this)">TEST (Survival)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="setMode('TEST_2', this)">TEST (Collector)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 10px auto; line-height: 1.4; font-size: 14px;">
+        Fly Barry's jetpack! Press ENTER to Start. Hold SPACE to Fly. Escape the lab!
+      </p>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    
+    <!-- Load Game Modules -->
+    <script type="module" src="game.js"></script>
+
+    <script>
+      function setMode(mode, btn) {
+        if(window.setControlMode) {
+          window.setControlMode(mode);
+          
+          // Update UI
+          document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          
+          // Force focus back to body so keys work immediately
+          document.body.focus();
+        }
+      }
+    </script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+/**
+ * Automated testing logic.
+ * Decides player actions based on test scenarios.
+ */
+
+import { gameState, CANVAS_HEIGHT, CANVAS_WIDTH, GROUND_HEIGHT, ROOF_HEIGHT } from './globals.js';
+
+export function get_automated_testing_action(currentGameState) {
+    if (!currentGameState.player) return false;
+
+    if (currentGameState.controlMode === 'TEST_1') {
+        return runSurvivalBot(currentGameState);
+    } else if (currentGameState.controlMode === 'TEST_2') {
+        return runCoinCollectorBot(currentGameState);
+    }
+    return false;
+}
+
+function runSurvivalBot(state) {
+    const player = state.player;
+    // Look ahead for obstacles
+    // Find nearest obstacle with x > player.x
+    
+    let nearestObstacle = null;
+    let minDist = Infinity;
+    
+    // Combine zappers and missiles
+    const dangers = [...state.obstacles];
+    
+    for (const obs of dangers) {
+        if (!obs.active) continue;
+        if (obs.x > player.x && obs.x < player.x + 400) { // Look ahead 400px
+            const dist = obs.x - player.x;
+            if (dist < minDist) {
+                minDist = dist;
+                nearestObstacle = obs;
+            }
+        }
+    }
+    
+    if (nearestObstacle) {
+        // Simple logic: If obstacle center is above player, go down (release).
+        // If below player, go up (press).
+        // Be careful with height.
+        
+        let obsCenterY = nearestObstacle.y;
+        // Adjust for obstacle type
+        if (nearestObstacle.constructor.name === 'Zapper') {
+             // Zapper Y is center
+        } else if (nearestObstacle.constructor.name === 'Missile') {
+             // Missile Y is center
+        }
+
+        // Target Y: go to opposite side of screen relative to obstacle
+        const targetY = (obsCenterY > CANVAS_HEIGHT / 2) ? 100 : CANVAS_HEIGHT - 100;
+        
+        // PID-like control
+        if (player.y > targetY) {
+            return true; // Fly up
+        } else {
+            return false; // Fall
+        }
+    }
+    
+    // Default: Stay in middle
+    const defaultTarget = CANVAS_HEIGHT / 2;
+    return player.y > defaultTarget;
+}
+
+function runCoinCollectorBot(state) {
+    const player = state.player;
+    
+    // Find nearest coin
+    let nearestCoin = null;
+    let minDist = Infinity;
+    
+    for (const coin of state.collectibles) {
+        if (!coin.active) continue;
+        if (coin.x > player.x) {
+            const dist = coin.x - player.x;
+            if (dist < minDist) {
+                minDist = dist;
+                nearestCoin = coin;
+            }
+        }
+    }
+    
+    if (nearestCoin) {
+        // Try to match Y
+        if (player.y > nearestCoin.y) {
+            return true; // Fly up
+        } else {
+            return false; // Fall
+        }
+    }
+    
+    // Fallback to survival if no coins
+    return runSurvivalBot(state);
+}
+
+// Attach to window for game loop access
+if (typeof window !== 'undefined') {
+    window.get_automated_testing_action = get_automated_testing_action;
+}
+</file>
+
+<file name="globals.js">
+/**
+ * Global constants and game state management.
+ * Defines the core configuration for the physics engine, game loop, and state containers.
+ */
+
+// Canvas Dimensions
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Physics Constants
+export const GRAVITY = 0.6;
+export const JETPACK_THRUST = -1.5;
+export const TERMINAL_VELOCITY = 10;
+export const GAME_INITIAL_SPEED = 5;
+export const SPEED_INCREMENT = 0.001; // Speed increase per frame
+
+// Game Configuration
+export const GROUND_HEIGHT = 50;
+export const ROOF_HEIGHT = 50;
+export const SPAWN_BUFFER = 100; // Distance beyond screen to spawn entities
+
+// Scoring
+export const COIN_VALUE = 1;
+export const DISTANCE_MULTIPLIER = 0.1; // Points per pixel traveled
+
+// Game State Object
+// Centralized state container for the entire game lifecycle
+export const gameState = {
+    // Core Phase State
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2
+
+    // Performance & Time
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    gameSpeed: GAME_INITIAL_SPEED,
+    distanceTraveled: 0,
+
+    // Entities containers
+    player: null,
+    entities: [],       // General list for physics/updates
+    obstacles: [],      // Specific list for zappers/missiles
+    collectibles: [],   // Coins/Tokens
+    particles: [],      // Visual effects
+    projectiles: [],    // Bullets (visual only mostly, or interactive)
+    backgroundElements: [], // Decorations
+
+    // Player State Snapshot
+    score: 0,
+    coinsCollected: 0,
+    highScore: 0,
+
+    // Camera/View
+    cameraShake: 0,
+
+    // Debug/Logging
+    debugMode: false
+};
+
+/**
+ * Resets the game state to initial values for a new run.
+ * Called when starting or restarting the game.
+ */
+export function resetGameState() {
+    gameState.gameSpeed = GAME_INITIAL_SPEED;
+    gameState.distanceTraveled = 0;
+    gameState.score = 0;
+    gameState.coinsCollected = 0;
+    gameState.cameraShake = 0;
+    
+    // Clear entity arrays
+    gameState.entities = [];
+    gameState.obstacles = [];
+    gameState.collectibles = [];
+    gameState.particles = [];
+    gameState.projectiles = [];
+    gameState.backgroundElements = [];
+    
+    // Player is re-initialized externally
+    gameState.player = null;
+}
+
+/**
+ * Expose gameState globally for debugging and external access
+ */
+export function getGameState() {
+    return gameState;
+}
+
+// Attach to window object
+if (typeof window !== 'undefined') {
+    window.getGameState = getGameState;
+}
+</file>
+
+<file name="game.js">
+/**
+ * Main Game Controller.
+ * Initializes p5 instance, runs the game loop, and manages level generation.
+ */
+
+import { gameState, resetGameState, getGameState, CANVAS_WIDTH, CANVAS_HEIGHT, SPEED_INCREMENT, SPAWN_BUFFER } from './globals.js';
+import { Player, Zapper, Missile, Coin, VehicleToken } from './entities.js';
+import { BackgroundManager } from './background.js';
+import { setupInput, handleInput } from './input.js';
+import { updatePhysics, checkRectCollision, checkCircleCollision, checkCircleRectCollision } from './physics.js';
+import { renderStartScreen, renderHUD, renderPausedScreen, renderGameOverScreen } from './ui.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+import { spawnExplosion, spawnCoinSparkle } from './particles.js';
+
+// Access p5 from global scope
+const p5 = window.p5;
+
+// Global Reset Function for easy access
+window.resetGameInstance = function() {
+    resetGameState();
+    // Re-init player
+    // gameState.player = new Player(); // Done in setup/restart logic within p5
+};
+
+const gameInstance = new p5(p => {
+    
+    let backgroundManager;
+    
+    // Spawning Timers
+    let zapperTimer = 0;
+    let missileTimer = 0;
+    let coinTimer = 0;
+    
+    p.logs = {
+        game_info: [],
+        inputs: [],
+        player_info: []
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        resetGameState();
+        
+        backgroundManager = new BackgroundManager();
+        setupInput(p);
+        
+        gameState.gamePhase = 'START';
+        
+        // Log Initial State
+        p.logs.game_info.push({
+            event: 'INITIALIZED',
+            timestamp: Date.now()
+        });
+    };
+
+    p.draw = function() {
+        // --- Logic Update ---
+        const currentTime = p.millis();
+        gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = currentTime;
+        gameState.frameCount = p.frameCount;
+
+        // Camera Shake decay
+        if (gameState.cameraShake > 0) {
+            p.translate(p.random(-gameState.cameraShake, gameState.cameraShake), p.random(-gameState.cameraShake, gameState.cameraShake));
+            gameState.cameraShake *= 0.9;
+        }
+
+        // Phase Handling
+        switch(gameState.gamePhase) {
+            case 'START':
+                backgroundManager.render(p); // Render BG for ambiance
+                renderStartScreen(p);
+                break;
+                
+            case 'PLAYING':
+                updateGameLogic(p);
+                renderGame(p);
+                renderHUD(p);
+                break;
+                
+            case 'PAUSED':
+                renderGame(p);
+                renderPausedScreen(p);
+                break;
+                
+            case 'GAME_OVER_WIN':
+            case 'GAME_OVER_LOSE':
+                renderGame(p);
+                renderGameOverScreen(p);
+                break;
+        }
+    };
+    
+    function startPlaying() {
+        resetGameState();
+        gameState.player = new Player();
+        gameState.entities.push(gameState.player);
+        gameState.gamePhase = 'PLAYING';
+    }
+    
+    // Check if phase changed from START to PLAYING via Input (ENTER)
+    // We need to initialize player once when entering PLAYING
+    // The input handler sets the string 'PLAYING'. We detect the transition here?
+    // Actually input handler sets the variable directly. 
+    // We should check if player is null in PLAYING to init.
+    
+    function updateGameLogic(p) {
+        // 1. Init Player if needed
+        if (!gameState.player) {
+            gameState.player = new Player();
+            gameState.entities.push(gameState.player);
+        }
+
+        // 2. Input Handling
+        let inputActive = false;
+        if (gameState.controlMode === 'HUMAN') {
+            inputActive = handleInput(p);
+        } else {
+            inputActive = get_automated_testing_action(gameState);
+        }
+
+        // 3. Update Player
+        gameState.player.update(p, inputActive);
+
+        // 4. Update Physics & Entities
+        gameState.gameSpeed += SPEED_INCREMENT;
+        gameState.distanceTraveled += gameState.gameSpeed * 0.1;
+
+        // Background
+        backgroundManager.update();
+
+        // Update Obstacles
+        gameState.obstacles.forEach((obs, index) => {
+            obs.update();
+            if (!obs.active) gameState.obstacles.splice(index, 1);
+        });
+
+        // Update Collectibles
+        gameState.collectibles.forEach((col, index) => {
+            col.update();
+            if (!col.active) gameState.collectibles.splice(index, 1);
+        });
+
+        // Update Particles
+        for (let i = gameState.particles.length - 1; i >= 0; i--) {
+            gameState.particles[i].update();
+            if (gameState.particles[i].markedForDeletion) {
+                gameState.particles.splice(i, 1);
+            }
+        }
+
+        // 5. Spawning Logic (Procedural Generation)
+        handleSpawning(p);
+
+        // 6. Collision Detection
+        handleCollisions(p);
+        
+        // 7. Logging (Player Position)
+        if (gameState.frameCount % 10 === 0) {
+            p.logs.player_info.push({
+                x: gameState.player.x,
+                y: gameState.player.y,
+                score: gameState.score,
+                frame: gameState.frameCount
+            });
+        }
+        
+        // Check Death
+        if (gameState.player.isDead) {
+            gameState.gamePhase = 'GAME_OVER_LOSE';
+            gameState.cameraShake = 20;
+        }
+    }
+
+    function handleSpawning(p) {
+        // Zappers
+        zapperTimer++;
+        if (zapperTimer > 200 - Math.min(100, gameState.gameSpeed * 10)) {
+            const y = p.random(100, CANVAS_HEIGHT - 100);
+            const type = p.random() > 0.7 ? 'ROTATING' : 'STATIC';
+            const len = p.random(100, 150);
+            const zapper = new Zapper(CANVAS_WIDTH + SPAWN_BUFFER, y, len, p.random(p.TWO_PI), type);
+            gameState.obstacles.push(zapper);
+            zapperTimer = 0;
+        }
+
+        // Missiles
+        missileTimer++;
+        if (missileTimer > 300) {
+            const y = p.random(50, CANVAS_HEIGHT - 50);
+            gameState.obstacles.push(new Missile(y));
+            missileTimer = 0;
+        }
+
+        // Coins (Pattern spawning)
+        coinTimer++;
+        if (coinTimer > 150) {
+            spawnCoinPattern(p);
+            coinTimer = 0;
+        }
+        
+        // Vehicle Tokens (Rare)
+        if (p.frameCount % 1200 === 0 && !gameState.player.vehicle) {
+            gameState.collectibles.push(new VehicleToken(CANVAS_WIDTH + SPAWN_BUFFER, p.random(100, 300)));
+        }
+    }
+
+    function spawnCoinPattern(p) {
+        const pattern = Math.floor(p.random(3));
+        const startX = CANVAS_WIDTH + SPAWN_BUFFER;
+        const startY = p.random(100, CANVAS_HEIGHT - 100);
+
+        if (pattern === 0) { // Line
+            for (let i = 0; i < 5; i++) {
+                gameState.collectibles.push(new Coin(startX + i * 30, startY));
+            }
+        } else if (pattern === 1) { // Sine wave
+            for (let i = 0; i < 10; i++) {
+                gameState.collectibles.push(new Coin(startX + i * 30, startY + Math.sin(i * 0.5) * 50));
+            }
+        } else if (pattern === 2) { // Block
+            for (let x = 0; x < 3; x++) {
+                for (let y = 0; y < 3; y++) {
+                    gameState.collectibles.push(new Coin(startX + x * 30, startY + y * 30));
+                }
+            }
+        }
+    }
+
+    function handleCollisions(p) {
+        const player = gameState.player;
+        if (!player) return;
+
+        // Player Bounds (Approximated as rect)
+        const playerRect = {
+            x: player.x,
+            y: player.y,
+            width: player.width,
+            height: player.height
+        };
+
+        // Obstacles
+        for (let obs of gameState.obstacles) {
+            if (player.invincibilityTimer > 0) continue;
+
+            let collision = false;
+            
+            if (obs instanceof Zapper) {
+                // Simplified Circle-Line or Circle-Rect collision
+                // For simplicity in this constraints, treat zapper as a rect rotated
+                // OR just use multiple circles along the line
+                
+                // Using a simplified rect check for center
+                const obsRect = {
+                    x: obs.x - obs.width/2,
+                    y: obs.y - obs.length/2,
+                    width: obs.width,
+                    height: obs.length
+                };
+                
+                // If rotating, bounds are larger.
+                // Simple AABB first
+                if (Math.abs(player.x - obs.x) < 100 && Math.abs(player.y - obs.y) < 100) {
+                     // Check collision based on type
+                     // For high fidelity, use p5.collide2d logic manually
+                     // Check player center distance to line segment of zapper
+                     // Zapper line: (obs.x + sin(a)*len/2, obs.y + cos(a)*len/2) to (obs.x - ..., ...)
+                     
+                     // Better: checkRectCollision with the unrotated AABB is bad.
+                     // Use point to line distance?
+                     if (p.collideLineRect) {
+                         const x1 = obs.x - Math.sin(obs.angle) * obs.length/2;
+                         const y1 = obs.y + Math.cos(obs.angle) * obs.length/2;
+                         const x2 = obs.x + Math.sin(obs.angle) * obs.length/2;
+                         const y2 = obs.y - Math.cos(obs.angle) * obs.length/2;
+                         collision = p.collideLineRect(x1, y1, x2, y2, player.x, player.y, player.width, player.height);
+                     }
+                }
+            } else if (obs instanceof Missile) {
+                if (obs.state === 'LAUNCHED') {
+                    const missileRect = {x: obs.x - 20, y: obs.y - 7, width: 40, height: 15};
+                    collision = checkRectCollision(playerRect, missileRect);
+                }
+            }
+
+            if (collision && !gameState.debugMode) {
+                if (player.vehicle) {
+                    player.vehicle = null;
+                    player.invincibilityTimer = 60; // 1 second invincibility
+                    spawnExplosion(player.x, player.y, 20);
+                    gameState.cameraShake = 10;
+                } else {
+                    player.isDead = true;
+                    spawnExplosion(player.x, player.y);
+                }
+            }
+        }
+
+        // Collectibles
+        for (let col of gameState.collectibles) {
+            if (!col.active) continue;
+            
+            let collected = false;
+            if (col instanceof Coin) {
+                collected = checkCircleRectCollision({x: col.x, y: col.y, radius: col.hitRadius}, playerRect);
+                if (collected) {
+                    col.active = false;
+                    gameState.score += 10;
+                    gameState.coinsCollected++;
+                    spawnCoinSparkle(col.x, col.y);
+                }
+            } else if (col instanceof VehicleToken) {
+                // Rect Rect
+                collected = checkRectCollision(
+                    {x: col.x - 20, y: col.y - 20, width: 40, height: 40}, 
+                    playerRect
+                );
+                if (collected) {
+                    col.active = false;
+                    player.vehicle = 'DRAGON';
+                    gameState.cameraShake = 10;
+                    spawnExplosion(player.x, player.y, 50); // Transform effect
+                }
+            }
+        }
+    }
+
+    function renderGame(p) {
+        p.background(50); // Fallback
+        
+        // 1. Background
+        backgroundManager.render(p);
+        
+        // 2. Game World Entities
+        // Collectibles (behind player)
+        gameState.collectibles.forEach(col => col.render(p));
+        
+        // Obstacles
+        gameState.obstacles.forEach(obs => obs.render(p));
+        
+        // Particles (behind player mostly)
+        gameState.particles.forEach(part => part.render(p));
+        
+        // Player
+        if (gameState.player && !gameState.player.isDead) {
+            gameState.player.render(p);
+        }
+    }
+});
+
+// Expose instance
+window.gameInstance = gameInstance;
+window.setControlMode = (mode) => {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+};
+</file>
+
+<file name="ui.js">
+/**
+ * User Interface rendering.
+ * Start Screen, HUD, Game Over, Paused.
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderStartScreen(p) {
+    p.background(20, 30, 40);
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    // Title
+    p.fill(255, 215, 0);
+    p.textSize(48);
+    p.text("JETPACK", CANVAS_WIDTH/2, CANVAS_HEIGHT/3 - 20);
+    p.fill(255);
+    p.text("JOYRIDE CLONE", CANVAS_WIDTH/2, CANVAS_HEIGHT/3 + 30);
+    
+    // Instructions
+    p.fill(200);
+    p.textSize(18);
+    p.text("PRESS ENTER TO START", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 20);
+    
+    p.textSize(14);
+    p.text("SPACE / UP ARROW to Fly", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60);
+    p.text("Avoid Zappers & Missiles!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 80);
+}
+
+export function renderHUD(p) {
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(20);
+    
+    // Distance as Score
+    p.fill(255);
+    p.text(`Score: ${Math.floor(gameState.distanceTraveled)}m`, 20, 20);
+    
+    // Coins
+    p.fill(255, 215, 0);
+    p.text(`Coins: ${gameState.coinsCollected}`, 20, 50);
+    
+    // Debug info if needed
+    if (gameState.controlMode !== 'HUMAN') {
+        p.fill(255, 100, 100);
+        p.textSize(12);
+        // p.text(`AUTO: ${gameState.controlMode}`, 20, 80); // Do not display as per instructions? 
+        // Instructions said: "Never display controlMode" -> "Do not show HUMAN/TESTING mode on canvas"
+        // So we skip this.
+    }
+}
+
+export function renderPausedScreen(p) {
+    p.push();
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    p.textSize(16);
+    p.text("Press ESC to Resume", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+    p.pop();
+}
+
+export function renderGameOverScreen(p) {
+    p.push();
+    p.fill(0, 0, 0, 200);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    if (gameState.gamePhase === 'GAME_OVER_LOSE') {
+        p.fill(255, 50, 50);
+        p.textSize(40);
+        p.text("YOU DIED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+    } else {
+        p.fill(50, 255, 50);
+        p.textSize(40);
+        p.text("MISSION COMPLETE", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+    }
+    
+    p.fill(255);
+    p.textSize(24);
+    p.text(`Final Score: ${Math.floor(gameState.distanceTraveled)}m`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 10);
+    p.text(`Coins Collected: ${gameState.coinsCollected}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+    
+    p.fill(200);
+    p.textSize(16);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 80);
+    p.pop();
+}
+</file>
+
+<file name="background.js">
+/**
+ * Handles the background rendering and parallax scrolling effects.
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+class BackgroundLayer {
+    constructor(speedMult, renderFn) {
+        this.speedMult = speedMult;
+        this.renderFn = renderFn;
+        this.offsetX = 0;
+    }
+
+    update() {
+        this.offsetX -= gameState.gameSpeed * this.speedMult;
+        if (this.offsetX <= -CANVAS_WIDTH) {
+            this.offsetX += CANVAS_WIDTH;
+        }
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.offsetX, 0);
+        // Render twice for seamless looping
+        this.renderFn(p, 0);
+        this.renderFn(p, CANVAS_WIDTH);
+        p.pop();
+    }
+}
+
+export class BackgroundManager {
+    constructor() {
+        this.layers = [];
+        this.initLayers();
+    }
+
+    initLayers() {
+        // Wall Layer (Slowest)
+        this.layers.push(new BackgroundLayer(0.2, (p, xOffset) => {
+            p.fill(40, 40, 50);
+            p.rect(xOffset, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            
+            // Wall panels
+            p.stroke(60, 60, 70);
+            p.strokeWeight(2);
+            for(let i=0; i<CANVAS_WIDTH; i+=100) {
+                p.line(xOffset + i, 50, xOffset + i, CANVAS_HEIGHT - 50);
+            }
+        }));
+
+        // Decor Layer (Pipes, Lights)
+        this.layers.push(new BackgroundLayer(0.5, (p, xOffset) => {
+            // Pipes
+            p.noStroke();
+            p.fill(30, 30, 40);
+            p.rect(xOffset, 100, CANVAS_WIDTH, 20);
+            p.rect(xOffset, 300, CANVAS_WIDTH, 20);
+            
+            // Lights
+            for(let i=50; i<CANVAS_WIDTH; i+=200) {
+                p.fill(200, 255, 200, 100);
+                p.circle(xOffset + i, 110, 10);
+                p.circle(xOffset + i, 310, 10);
+            }
+        }));
+    }
+
+    update() {
+        this.layers.forEach(layer => layer.update());
+    }
+
+    render(p) {
+        this.layers.forEach(layer => layer.render(p));
+        
+        // Draw Floor and Roof fixed relative to screen Y but scrolling texture?
+        // Just static gray bars for floor/roof
+        p.fill(20);
+        p.rect(0, 0, CANVAS_WIDTH, 50); // Roof
+        p.rect(0, CANVAS_HEIGHT - 50, CANVAS_WIDTH, 50); // Floor
+        
+        // Floor details (stripes to show speed)
+        p.fill(255, 255, 0);
+        const stripeOffset = (gameState.distanceTraveled * 1.5) % 100;
+        for (let i = -100; i < CANVAS_WIDTH + 100; i += 100) {
+            p.rect(i - stripeOffset, CANVAS_HEIGHT - 45, 50, 10);
+        }
+    }
+}
+</file>
+
+<file name="entities.js">
+/**
+ * Game Entities.
+ * Contains the Player, Enemies (Zappers, Missiles), and Collectibles.
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, GRAVITY, JETPACK_THRUST, TERMINAL_VELOCITY, GROUND_HEIGHT, ROOF_HEIGHT } from './globals.js';
+import { Particle } from './particles.js';
+
+/* ================= PLAYER CLASS ================= */
+export class Player {
+    constructor() {
+        this.x = 100;
+        this.y = CANVAS_HEIGHT - 100;
+        this.width = 30;
+        this.height = 40;
+        
+        // Physics
+        this.vx = 0;
+        this.vy = 0;
+        this.ax = 0;
+        this.ay = 0;
+        
+        this.onGround = false;
+        this.isDead = false;
+        
+        // Jetpack / Mechanics
+        this.isThrusting = false;
+        this.vehicle = null; // 'DRAGON', 'STOMPER' or null
+        this.invincibilityTimer = 0;
+        
+        // Animation
+        this.frameTimer = 0;
+        this.runFrame = 0;
+        this.rotation = 0;
+    }
+
+    update(p, inputActive) {
+        this.isThrusting = inputActive;
+
+        // Invincibility Timer
+        if (this.invincibilityTimer > 0) {
+            this.invincibilityTimer--;
+        }
+
+        // --- Physics Logic based on Vehicle ---
+        if (this.vehicle === 'DRAGON') {
+            // Flappy bird style physics
+            // If input is pressed THIS FRAME (needs logic in input to detect discrete press, 
+            // but for smooth gameplay we might use hold for flap strength or repeated press)
+            // Let's implement: Holding space makes dragon fly up against gravity
+            if (this.isThrusting) {
+                this.vy += JETPACK_THRUST * 0.8; // Dragon heavy
+            }
+        } else {
+            // Normal Jetpack Physics
+            if (this.isThrusting) {
+                this.vy += JETPACK_THRUST;
+                
+                // Spawn particles
+                if (gameState.frameCount % 2 === 0) {
+                    gameState.particles.push(new Particle(this.x - 5, this.y + this.height - 10, 'FIRE'));
+                    gameState.particles.push(new Particle(this.x - 5, this.y + this.height - 10, 'SMOKE'));
+                }
+                // Spawn bullet casings (machine gun jetpack)
+                if (gameState.frameCount % 5 === 0) {
+                     gameState.particles.push(new Particle(this.x, this.y + 20, 'BULLET_CASING'));
+                }
+            }
+        }
+
+        // Apply Gravity
+        this.vy += GRAVITY;
+
+        // Terminal Velocity
+        this.vy = Math.max(Math.min(this.vy, TERMINAL_VELOCITY), -TERMINAL_VELOCITY);
+
+        // Update Position
+        this.y += this.vy;
+
+        // Floor/Roof Collision
+        const floorY = CANVAS_HEIGHT - GROUND_HEIGHT;
+        const roofY = ROOF_HEIGHT;
+
+        if (this.y < roofY) {
+            this.y = roofY;
+            this.vy = 0;
+        }
+
+        if (this.y + this.height > floorY) {
+            this.y = floorY - this.height;
+            this.vy = 0;
+            this.onGround = true;
+            this.rotation = 0; // Reset rotation on ground
+        } else {
+            this.onGround = false;
+            // Calculate rotation based on velocity for visual flair
+            this.rotation = p.map(this.vy, -10, 10, -0.2, 0.2);
+        }
+
+        // Animation update
+        if (this.onGround) {
+            this.frameTimer++;
+            if (this.frameTimer > 5) {
+                this.runFrame = (this.runFrame + 1) % 4;
+                this.frameTimer = 0;
+            }
+        } else {
+            this.runFrame = 1; // Jumping pose
+        }
+    }
+
+    render(p) {
+        // Flash if invincible
+        if (this.invincibilityTimer > 0 && Math.floor(this.invincibilityTimer / 4) % 2 === 0) {
+            return;
+        }
+
+        p.push();
+        p.translate(this.x + this.width / 2, this.y + this.height / 2);
+        p.rotate(this.rotation);
+
+        if (this.vehicle === 'DRAGON') {
+            this.renderDragon(p);
+        } else {
+            this.renderBarry(p);
+        }
+
+        p.pop();
+    }
+
+    renderBarry(p) {
+        // --- Draw Barry Steakfries ---
+        p.rectMode(p.CENTER);
+
+        // Legs (animated)
+        p.fill(50, 50, 150); // Blue pants
+        if (this.onGround) {
+            const legOffset = (this.runFrame % 2 === 0) ? 5 : -5;
+            p.rect(-5 + legOffset, 15, 6, 10);
+            p.rect(5 - legOffset, 15, 6, 10);
+        } else {
+            // Flying legs
+            p.rect(-5, 18, 6, 10); // Back leg hanging
+            p.rect(5, 15, 6, 8);   // Front leg bent
+        }
+
+        // Body
+        p.fill(200, 200, 200); // Suit
+        p.rect(0, 0, 20, 25);
+        
+        // Head
+        p.fill(255, 200, 180); // Skin
+        p.rect(0, -18, 16, 16);
+        p.fill(100, 50, 0); // Hair
+        p.rect(0, -24, 18, 6);
+
+        // Arm
+        p.fill(200, 200, 200); // Sleeve
+        p.rect(5, 0, 8, 20); // Holding controls
+
+        // Jetpack
+        p.fill(100);
+        p.rect(-12, -2, 10, 20); // Backpack
+        p.fill(50);
+        p.rect(-12, 10, 4, 10); // Nozzle
+        p.rect(-16, 10, 4, 10); // Nozzle
+    }
+
+    renderDragon(p) {
+        // --- Mechanical Dragon Visual ---
+        p.rectMode(p.CENTER);
+        
+        // Body segments
+        p.fill(200, 0, 0); // Red metal
+        p.stroke(100, 0, 0);
+        p.strokeWeight(2);
+        
+        // Tail
+        p.rect(-30, 0, 20, 10);
+        
+        // Main Body
+        p.rect(0, 0, 40, 25);
+        
+        // Head
+        p.rect(30, -10, 25, 20);
+        
+        // Jaw
+        p.rect(30, 5, 20, 8);
+        
+        // Eye
+        p.fill(255, 255, 0);
+        p.noStroke();
+        p.circle(35, -12, 8);
+        
+        // Wing
+        p.fill(150, 150, 150);
+        p.stroke(0);
+        p.triangle(-10, -10, 10, -10, 0, -40);
+        
+        // Rider (Barry visible on top)
+        p.fill(255, 200, 180);
+        p.circle(0, -15, 10);
+    }
+}
+
+/* ================= OBSTACLE CLASSES ================= */
+
+export class Zapper {
+    constructor(x, y, length, angle, type) {
+        this.x = x;
+        this.y = y;
+        this.length = length;
+        this.angle = angle;
+        this.type = type; // 'STATIC', 'ROTATING'
+        this.rotationSpeed = type === 'ROTATING' ? 0.02 : 0;
+        
+        // For collision
+        this.width = 10; // Thickness
+        this.height = length; // Treated as height when upright
+        
+        this.active = true;
+        this.oscillation = 0;
+    }
+
+    update() {
+        if (this.type === 'ROTATING') {
+            this.angle += this.rotationSpeed;
+        }
+        this.oscillation += 0.5;
+        
+        // Move with world
+        this.x -= gameState.gameSpeed;
+        
+        // Remove if off screen
+        if (this.x < -200) {
+            this.active = false;
+        }
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        p.rotate(this.angle);
+        
+        // Draw End Caps
+        p.fill(50);
+        p.stroke(0);
+        p.circle(0, -this.length/2, 15);
+        p.circle(0, this.length/2, 15);
+        
+        // Draw Electric Field
+        p.stroke(100, 200, 255);
+        p.strokeWeight(3 + Math.sin(this.oscillation) * 2);
+        p.line(0, -this.length/2, 0, this.length/2);
+        
+        // Inner white core
+        p.stroke(255);
+        p.strokeWeight(1);
+        p.line(0, -this.length/2, 0, this.length/2);
+        
+        p.pop();
+    }
+    
+    // Get Collision Polygon (approximated as a rotated rectangle)
+    getPolygon(p) {
+        // Calculate corner points based on center x,y, length, and angle
+        const halfL = this.length / 2;
+        const halfW = 5; // half thickness
+        
+        // We need 4 points relative to center, then rotated and translated
+        const points = [
+            p.createVector(-halfW, -halfL),
+            p.createVector(halfW, -halfL),
+            p.createVector(halfW, halfL),
+            p.createVector(-halfW, halfL)
+        ];
+        
+        const poly = [];
+        for(let pt of points) {
+            // Rotate
+            const x = pt.x * Math.cos(this.angle) - pt.y * Math.sin(this.angle);
+            const y = pt.x * Math.sin(this.angle) + pt.y * Math.cos(this.angle);
+            // Translate
+            poly.push(p.createVector(x + this.x, y + this.y));
+        }
+        return poly;
+    }
+}
+
+export class Missile {
+    constructor(y) {
+        this.x = CANVAS_WIDTH + 50;
+        this.y = y;
+        this.width = 40;
+        this.height = 15;
+        this.state = 'WARNING'; // WARNING -> LAUNCHED
+        this.timer = 0;
+        this.warningTime = 60; // 1 second warning
+        this.active = true;
+        this.speed = 0;
+    }
+
+    update() {
+        this.timer++;
+        
+        if (this.state === 'WARNING') {
+            // Keep position relative to screen right edge for warning
+            this.x = CANVAS_WIDTH - 50;
+            
+            // Track player Y slightly (homing warning)
+            if (gameState.player) {
+                const dy = gameState.player.y - this.y;
+                this.y += dy * 0.05;
+            }
+            
+            if (this.timer > this.warningTime) {
+                this.state = 'LAUNCHED';
+                this.x = CANVAS_WIDTH + 50; // Reset to offscreen right to fly in
+                this.speed = gameState.gameSpeed * 2 + 5;
+            }
+        } else {
+            // Fly left
+            this.x -= this.speed;
+            
+            // Smoke trail
+            if (this.timer % 3 === 0) {
+                gameState.particles.push(new Particle(this.x + 40, this.y, 'SMOKE'));
+            }
+            
+            if (this.x < -100) {
+                this.active = false;
+            }
+        }
+    }
+
+    render(p) {
+        if (this.state === 'WARNING') {
+            // Draw Warning Sign
+            if (this.timer % 10 < 5) { // Flash
+                p.fill(255, 0, 0);
+                p.noStroke();
+                p.triangle(this.x, this.y - 20, this.x + 20, this.y, this.x, this.y + 20);
+                p.fill(255);
+                p.textSize(20);
+                p.textAlign(p.CENTER, p.CENTER);
+                p.text('!', this.x + 5, this.y);
+            }
+        } else {
+            // Draw Missile
+            p.push();
+            p.translate(this.x, this.y);
+            
+            p.fill(200, 50, 50); // Red Body
+            p.rectMode(p.CENTER);
+            p.rect(0, 0, 40, 15, 5);
+            
+            p.fill(50); // Fins
+            p.rect(15, 0, 5, 25);
+            
+            p.fill(255); // Tip
+            p.arc(-20, 0, 15, 15, p.HALF_PI, p.PI + p.HALF_PI);
+            
+            p.pop();
+        }
+    }
+}
+
+/* ================= COLLECTIBLES ================= */
+
+export class Coin {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.radius = 12; // visual size
+        this.hitRadius = 15; // collision tolerance
+        this.active = true;
+        this.oscillationOffset = Math.random() * Math.PI * 2;
+    }
+
+    update() {
+        this.x -= gameState.gameSpeed;
+        
+        // Remove if off screen
+        if (this.x < -50) this.active = false;
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        
+        // Spin effect using scale
+        const scaleX = Math.sin(gameState.frameCount * 0.1 + this.oscillationOffset);
+        
+        p.fill(255, 215, 0); // Gold
+        p.stroke(200, 150, 0);
+        p.strokeWeight(2);
+        p.ellipse(0, 0, this.radius * 2 * scaleX, this.radius * 2);
+        
+        // Inner detail
+        p.fill(255, 255, 200);
+        p.noStroke();
+        p.ellipse(0, 0, this.radius * 1.5 * scaleX, this.radius * 1.5);
+        
+        p.pop();
+    }
+}
+
+export class VehicleToken {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.width = 40;
+        this.height = 40;
+        this.active = true;
+        this.floatY = 0;
+    }
+    
+    update() {
+        this.x -= gameState.gameSpeed;
+        this.floatY = Math.sin(gameState.frameCount * 0.1) * 5;
+        
+        if (this.x < -50) this.active = false;
+    }
+    
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y + this.floatY);
+        
+        // Box
+        p.fill(0, 255, 255, 150);
+        p.stroke(255);
+        p.rectMode(p.CENTER);
+        p.rect(0, 0, 40, 40, 5);
+        
+        // Icon (Gear)
+        p.fill(255);
+        p.circle(0, 0, 15);
+        p.stroke(255);
+        p.strokeWeight(4);
+        p.line(-10, 0, 10, 0);
+        p.line(0, -10, 0, 10);
+        
+        p.pop();
+    }
+}
+</file>
+
+<file name="physics.js">
+/**
+ * Physics engine and collision detection system.
+ * Handles AABB collisions, simple physics updates, and spatial calculations.
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+// Import p5.collide2D from CDN if environment requires, but we assume it's loaded globally via script tag
+// For module safety, we will define wrapper functions that use the global p5 object's context or manual math.
+
+/**
+ * Checks for collision between two rectangular entities (AABB).
+ * @param {Object} a - Entity A {x, y, width, height}
+ * @param {Object} b - Entity B {x, y, width, height}
+ * @returns {boolean} True if colliding
+ */
+export function checkRectCollision(a, b) {
+    return (
+        a.x < b.x + b.width &&
+        a.x + a.width > b.x &&
+        a.y < b.y + b.height &&
+        a.y + a.height > b.y
+    );
+}
+
+/**
+ * Checks for collision between a circle and a rectangle.
+ * Useful for Player (Rect) vs Coin (Circle) or Zapper (Rect/Circle approximation).
+ * @param {Object} circle - {x, y, radius} (Note: radius is often half-width)
+ * @param {Object} rect - {x, y, width, height}
+ * @returns {boolean} True if colliding
+ */
+export function checkCircleRectCollision(circle, rect) {
+    // Find the closest point on the rectangle to the circle center
+    let testX = circle.x;
+    let testY = circle.y;
+
+    if (circle.x < rect.x) testX = rect.x;
+    else if (circle.x > rect.x + rect.width) testX = rect.x + rect.width;
+
+    if (circle.y < rect.y) testY = rect.y;
+    else if (circle.y > rect.y + rect.height) testY = rect.y + rect.height;
+
+    // Calculate distance
+    let distX = circle.x - testX;
+    let distY = circle.y - testY;
+    let distance = Math.sqrt((distX * distX) + (distY * distY));
+
+    return distance <= circle.radius;
+}
+
+/**
+ * Checks overlap between two circles.
+ * @param {Object} c1 - {x, y, radius}
+ * @param {Object} c2 - {x, y, radius}
+ * @returns {boolean}
+ */
+export function checkCircleCollision(c1, c2) {
+    let dx = c1.x - c2.x;
+    let dy = c1.y - c2.y;
+    let distance = Math.sqrt(dx * dx + dy * dy);
+    return distance < c1.radius + c2.radius;
+}
+
+/**
+ * Rotated Rectangle Collision Check using Separating Axis Theorem (SAT) logic simplified.
+ * Used for rotating zappers.
+ * This is a wrapper around p5.collide2D's collidePolyPoly if available, or manual implementation.
+ * For this game, we'll approximate rotating zappers as multiple circles or use p5.collide2d logic.
+ */
+export function checkPolyCollision(p, poly1, poly2) {
+    // Assuming poly1 and poly2 are arrays of vectors created by p.createVector
+    // Using global p5.collide2D if available
+    if (window.collidePolyPoly) {
+        return window.collidePolyPoly(poly1, poly2, true);
+    }
+    
+    // Fallback: simplified bounding box check (not accurate for rotation)
+    // Real implementation of SAT would be too verbose here, relying on p5.collide2D
+    return false; 
+}
+
+/**
+ * Updates an entity's position based on velocity and global game speed.
+ * @param {Object} entity - The entity to update
+ * @param {boolean} applyGameSpeed - Whether the entity moves with the world (scrolls left)
+ */
+export function updatePhysics(entity, applyGameSpeed = true) {
+    // Apply velocity
+    entity.x += entity.vx;
+    entity.y += entity.vy;
+
+    // Apply acceleration
+    entity.vx += entity.ax;
+    entity.vy += entity.ay;
+
+    // Apply world scrolling speed (relative movement)
+    if (applyGameSpeed) {
+        entity.x -= gameState.gameSpeed;
+    }
+}
+
+/**
+ * Constraints an entity within the playable area (Roof and Floor).
+ * @param {Object} entity 
+ * @param {number} roofY 
+ * @param {number} floorY 
+ */
+export function constrainToScreen(entity, roofY, floorY) {
+    if (entity.y < roofY) {
+        entity.y = roofY;
+        entity.vy = 0;
+    }
+    
+    // Check floor collision
+    // entity.y represents top-left usually, so we check y + height
+    const entityBottom = entity.y + (entity.height || entity.radius * 2);
+    if (entityBottom > floorY) {
+        entity.y = floorY - (entity.height || entity.radius * 2);
+        entity.vy = 0;
+        entity.onGround = true;
+    } else {
+        entity.onGround = false;
+    }
+}
+</file>
+
+<file name="particles.js">
+/**
+ * Particle systems for visual effects.
+ * Includes Jetpack smoke, Coin sparkles, Explosions, and Bullet casings.
+ */
+
+import { gameState, CANVAS_HEIGHT } from './globals.js';
+
+export class Particle {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.type = type;
+        this.age = 0;
+        this.markedForDeletion = false;
+        
+        // Default properties, overridden by type
+        this.vx = (Math.random() - 0.5) * 2;
+        this.vy = (Math.random() - 0.5) * 2;
+        this.size = 5;
+        this.lifetime = 60;
+        this.color = [255, 255, 255];
+        this.alpha = 255;
+        this.gravity = 0;
+        this.drag = 0.98;
+
+        this.initType(type);
+    }
+
+    initType(type) {
+        switch (type) {
+            case 'SMOKE':
+                this.vx = -gameState.gameSpeed * 0.5 + (Math.random() - 0.5);
+                this.vy = 2 + Math.random() * 2; // Move down
+                this.lifetime = 40;
+                this.size = Math.random() * 10 + 5;
+                this.color = [100, 100, 100];
+                this.startAlpha = 150;
+                break;
+            case 'FIRE':
+                this.vx = -gameState.gameSpeed + (Math.random() - 0.5) * 2;
+                this.vy = 3 + Math.random() * 3; // Blast down
+                this.lifetime = 20;
+                this.size = Math.random() * 8 + 4;
+                this.color = [255, 100, 0]; // Orange
+                this.startAlpha = 255;
+                break;
+            case 'BULLET_CASING':
+                this.vx = (Math.random() * -3) - 1; // Eject left/back
+                this.vy = (Math.random() * -4) - 2; // Up and out
+                this.gravity = 0.5;
+                this.lifetime = 100;
+                this.size = 3;
+                this.color = [255, 215, 0]; // Gold
+                this.startAlpha = 255;
+                break;
+            case 'SPARKLE':
+                this.vx = (Math.random() - 0.5) * 4;
+                this.vy = (Math.random() - 0.5) * 4;
+                this.lifetime = 30;
+                this.size = Math.random() * 4 + 2;
+                this.color = [255, 255, 0];
+                this.startAlpha = 200;
+                break;
+            case 'EXPLOSION':
+                this.vx = (Math.random() - 0.5) * 10;
+                this.vy = (Math.random() - 0.5) * 10;
+                this.lifetime = 45;
+                this.size = Math.random() * 15 + 5;
+                this.color = Math.random() > 0.5 ? [255, 50, 0] : [255, 200, 0];
+                this.startAlpha = 255;
+                this.drag = 0.9;
+                break;
+            case 'WARNING_GLOW':
+                this.vx = 0;
+                this.vy = 0;
+                this.lifetime = 10;
+                this.size = 40;
+                this.color = [255, 0, 0];
+                this.startAlpha = 100;
+                break;
+        }
+        this.alpha = this.startAlpha;
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.vy += this.gravity;
+        
+        // Apply drag
+        this.vx *= this.drag;
+        this.vy *= this.drag;
+
+        // Apply game speed relative motion for world objects (except casings which fall relative to world?)
+        // Actually, smoke should drift back with the world
+        if (this.type === 'SMOKE' || this.type === 'FIRE' || this.type === 'EXPLOSION') {
+            this.x -= gameState.gameSpeed * 0.2; // Parallax effect on smoke
+        }
+
+        // Floor collision for casings
+        if (this.type === 'BULLET_CASING' && this.y > CANVAS_HEIGHT - 50) {
+            this.y = CANVAS_HEIGHT - 50;
+            this.vy *= -0.5; // Bounce
+            this.vx *= 0.8;  // Friction
+        }
+
+        this.age++;
+        
+        // Fade out
+        this.alpha = this.startAlpha * (1 - this.age / this.lifetime);
+
+        if (this.age >= this.lifetime) {
+            this.markedForDeletion = true;
+        }
+    }
+
+    render(p) {
+        p.push();
+        p.noStroke();
+        p.fill(this.color[0], this.color[1], this.color[2], this.alpha);
+        
+        if (this.type === 'BULLET_CASING') {
+            p.translate(this.x, this.y);
+            p.rotate(this.age * 0.2);
+            p.rectMode(p.CENTER);
+            p.rect(0, 0, this.size, this.size * 2);
+        } else {
+            p.circle(this.x, this.y, this.size);
+        }
+        p.pop();
+    }
+}
+
+export function spawnExplosion(x, y, count = 20) {
+    for (let i = 0; i < count; i++) {
+        gameState.particles.push(new Particle(x, y, 'EXPLOSION'));
+    }
+}
+
+export function spawnCoinSparkle(x, y) {
+    for (let i = 0; i < 5; i++) {
+        gameState.particles.push(new Particle(x, y, 'SPARKLE'));
+    }
+}
+</file>
+
+<file name="input.js">
+/**
+ * Input handling for Keyboard.
+ */
+
+import { gameState } from './globals.js';
+
+const keys = {};
+
+export function handleInput(p) {
+    // Check for control keys
+    const up = isKeyDown(p.UP_ARROW) || isKeyDown(32); // 32 is SPACE
+    
+    return up; // Return active state of 'thrust'
+}
+
+export function setupInput(p) {
+    p.keyPressed = function() {
+        keys[p.keyCode] = true;
+        
+        // Log input
+        p.logs.inputs.push({
+            type: 'PRESS',
+            key: p.key,
+            keyCode: p.keyCode,
+            frame: p.frameCount
+        });
+
+        // Phase transitions
+        if (p.keyCode === 13) { // ENTER
+            if (gameState.gamePhase === 'START') {
+                gameState.gamePhase = 'PLAYING';
+            }
+        }
+        
+        if (p.keyCode === 27) { // ESC
+            if (gameState.gamePhase === 'PLAYING') {
+                gameState.gamePhase = 'PAUSED';
+            } else if (gameState.gamePhase === 'PAUSED') {
+                gameState.gamePhase = 'PLAYING';
+            }
+        }
+        
+        if (p.keyCode === 82) { // R
+            if (gameState.gamePhase === 'GAME_OVER_WIN' || gameState.gamePhase === 'GAME_OVER_LOSE') {
+                // Restart handled in game.js loop check or via reload, 
+                // but better to signal a reset.
+                // We'll set a flag or call reset directly if imported (circular dependency risk).
+                // Let's rely on game loop to check this key or update phase to START
+                gameState.gamePhase = 'START';
+                // Reset logic needs to be called. We can do it here if we expose resetGameState globally.
+                if (window.resetGameInstance) window.resetGameInstance();
+            }
+        }
+        
+        // Vehicle Special ability
+        if (p.keyCode === 90) { // Z
+            // Trigger special
+        }
+    };
+
+    p.keyReleased = function() {
+        keys[p.keyCode] = false;
+        p.logs.inputs.push({
+            type: 'RELEASE',
+            key: p.key,
+            keyCode: p.keyCode,
+            frame: p.frameCount
+        });
+    };
+}
+
+function isKeyDown(code) {
+    return !!keys[code];
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

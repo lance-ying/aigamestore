@@ -1,0 +1,535 @@
+<analysis>
+- Issue identified: 
+    1. The "Start Wave" prompt is located at the top of the screen, which the user wants moved to the bottom of the UI window.
+    2. The Level Selector allows arbitrary map selection, but the user wants a sequential progression (Map 1 -> Map 2 -> Map 3).
+- Files affected: `ui.js`, `input.js`, `game.js`
+- Changes needed:
+    - **ui.js**: Move the "PRESS ENTER TO START WAVE" text to the center of the bottom HUD panel. Remove map selection text from the start screen.
+    - **input.js**: Remove key listeners for '1', '2', '3' during the START phase to enforce sequential play.
+    - **game.js**: 
+        - Refactor `resetGame` to always start at the first map ('EASY').
+        - Implement `initLevelState` to reset level-specific variables (towers, money, etc.) without resetting the whole game.
+        - Update `updateGameLogic` to detect when all waves are cleared. Instead of immediately winning, check if there is a next map in the sequence ('EASY' -> 'MEDIUM' -> 'HARD'). If so, load the next map; otherwise, trigger the win state.
+</analysis>
+
+<code filename="ui.js">
+import { gameState, TOWER_TYPES, MAPS, CANVAS_WIDTH, CANVAS_HEIGHT, PATH_WIDTH } from './globals.js';
+import { isPointOnPath, isOverlappingTower } from './physics.js';
+
+export function renderBackground(p) {
+    const map = MAPS[gameState.mapDifficulty];
+    p.background(map.bgColor); 
+    
+    // Draw Path
+    const path = gameState.levelPath;
+    if (path && path.length > 0) {
+        p.noFill();
+        p.stroke(map.pathColor);
+        p.strokeWeight(PATH_WIDTH);
+        p.strokeCap(p.ROUND);
+        p.strokeJoin(p.ROUND);
+        
+        p.beginShape();
+        path.forEach(pt => p.vertex(pt.x, pt.y));
+        p.endShape();
+        
+        // Path Border
+        p.stroke(0, 0, 0, 50);
+        p.strokeWeight(PATH_WIDTH + 4);
+        p.beginShape();
+        path.forEach(pt => p.vertex(pt.x, pt.y));
+        p.endShape();
+        
+        // Redraw inner path to cover border inner
+        p.stroke(map.pathColor);
+        p.strokeWeight(PATH_WIDTH);
+        p.beginShape();
+        path.forEach(pt => p.vertex(pt.x, pt.y));
+        p.endShape();
+    }
+    
+    // Reset stroke
+    p.strokeWeight(1);
+    p.noStroke();
+}
+
+export function renderUI(p) {
+    // Top HUD
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, 40);
+    
+    p.fill(255);
+    p.textSize(16);
+    p.textAlign(p.LEFT, p.CENTER);
+    p.text(`$${gameState.money}`, 10, 20);
+    p.text(`Lives: ${gameState.lives}`, 100, 20);
+    p.text(`Wave: ${gameState.currentWave + 1}`, 200, 20);
+    p.text(`Map: ${MAPS[gameState.mapDifficulty].name}`, 300, 20);
+    
+    // Wave status (Top Right)
+    p.textAlign(p.RIGHT, p.CENTER);
+    if (gameState.waveActive) {
+        p.fill(200);
+        p.text("WAVE IN PROGRESS", CANVAS_WIDTH - 10, 20);
+    }
+    
+    // Bottom Control HUD
+    p.fill(0, 0, 0, 150);
+    p.rect(0, CANVAS_HEIGHT - 60, CANVAS_WIDTH, 60);
+    
+    // "PRESS ENTER" Prompt at Bottom Center
+    if (!gameState.waveActive) {
+        p.textAlign(p.CENTER, p.CENTER);
+        p.fill(0, 255, 0);
+        p.text("PRESS ENTER TO START WAVE", CANVAS_WIDTH / 2, CANVAS_HEIGHT - 30);
+    }
+    
+    // Selected Tower Info for Placement
+    const currentType = TOWER_TYPES[gameState.selectedTowerType];
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(14);
+    p.fill(200);
+    p.text("BUILD [Space]:", 10, CANVAS_HEIGHT - 55);
+    
+    p.fill(currentType.color);
+    p.text(`${currentType.name} ($${currentType.cost})`, 10, CANVAS_HEIGHT - 35);
+    p.fill(150);
+    p.text("[Z] to Switch", 10, CANVAS_HEIGHT - 20);
+
+    // Selected Existing Tower Info
+    if (gameState.selectedTower) {
+        const t = gameState.selectedTower;
+        const meta = TOWER_TYPES[t.typeKey];
+        const nextUpgradeCost = meta.upgradeCost;
+        
+        p.textAlign(p.RIGHT, p.TOP);
+        p.fill(255, 215, 0);
+        p.text("SELECTED TOWER", CANVAS_WIDTH - 10, CANVAS_HEIGHT - 55);
+        p.fill(255);
+        p.text(`Lvl ${t.level} ${meta.name}`, CANVAS_WIDTH - 10, CANVAS_HEIGHT - 35);
+        
+        if (gameState.money >= nextUpgradeCost) p.fill(0, 255, 0);
+        else p.fill(255, 100, 100);
+        
+        p.text(`[Shift] Upgrade ($${nextUpgradeCost})`, CANVAS_WIDTH - 10, CANVAS_HEIGHT - 20);
+    }
+
+    // Draw Cursor
+    renderCursor(p, currentType);
+}
+
+function renderCursor(p, towerType) {
+    const cx = gameState.cursor.x;
+    const cy = gameState.cursor.y;
+    
+    // Visualise range of tower to build
+    p.noFill();
+    p.stroke(255, 255, 255, 100);
+    p.circle(cx, cy, towerType.range * 2);
+    
+    // Validation Color
+    const invalid = gameState.money < towerType.cost || isPointOnPath(cx, cy, 15) || isOverlappingTower(cx, cy, 15);
+    
+    p.stroke(invalid ? [255, 0, 0] : [0, 255, 0]);
+    p.strokeWeight(2);
+    
+    // Crosshair
+    const s = 10;
+    p.line(cx - s, cy, cx + s, cy);
+    p.line(cx, cy - s, cx, cy + s);
+    
+    // Ghost of tower
+    p.noStroke();
+    p.fill(towerType.color[0], towerType.color[1], towerType.color[2], 100);
+    p.circle(cx, cy, 30);
+}
+
+export function renderStartScreen(p) {
+    p.background(20);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(255);
+    p.textSize(40);
+    p.text("PRIMATE PATROL", CANVAS_WIDTH/2, CANVAS_HEIGHT/4);
+    
+    p.textSize(16);
+    p.fill(200);
+    // Removed Map Selection UI text
+    p.text("Campaign Mode", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 20);
+
+    p.fill(200);
+    p.text("Arrow Keys to Move Cursor | SPACE to Build", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+    p.text("ENTER to Start Game", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 70);
+}
+
+export function renderPaused(p) {
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+}
+
+export function renderGameOver(p, win) {
+    p.fill(0, 0, 0, 200);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(50);
+    
+    if (win) {
+        p.fill(0, 255, 0);
+        p.text("CAMPAIGN COMPLETE!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 50);
+    } else {
+        p.fill(255, 0, 0);
+        p.text("GAME OVER", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 50);
+    }
+    
+    p.fill(255);
+    p.textSize(20);
+    p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 20);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60);
+}
+</code>
+
+<code filename="input.js">
+import { gameState, TOWER_TYPES, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Tower } from './entities.js';
+import { isPointOnPath, isOverlappingTower } from './physics.js';
+
+const CURSOR_SPEED = 5;
+
+// Keys
+const KEYS = {
+    LEFT: 37,
+    UP: 38,
+    RIGHT: 39,
+    DOWN: 40,
+    Z: 90, // Switch Tower
+    SPACE: 32, // Place / Select
+    SHIFT: 16, // Upgrade
+    ENTER: 13, // Start Wave
+    ESC: 27, // Pause
+    R: 82, // Restart
+    ONE: 49,
+    TWO: 50,
+    THREE: 51
+};
+
+const keysState = {};
+
+export function handleKeyDown(p) {
+    const code = p.keyCode;
+    keysState[code] = true;
+    
+    // Log input
+    if (p.logs && p.logs.inputs) {
+        p.logs.inputs.push({
+            type: 'keydown',
+            key: p.key,
+            keyCode: code,
+            frame: p.frameCount
+        });
+    }
+
+    // Phase Transitions
+    if (code === KEYS.ENTER) {
+        if (gameState.gamePhase === "START") {
+            gameState.gamePhase = "PLAYING";
+        } else if (gameState.gamePhase === "PLAYING" && !gameState.waveActive) {
+            startNextWave();
+        }
+    }
+    
+    if (code === KEYS.R) {
+        if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+            window.resetGame();
+        }
+    }
+    
+    if (code === KEYS.ESC) {
+        if (gameState.gamePhase === "PLAYING") gameState.gamePhase = "PAUSED";
+        else if (gameState.gamePhase === "PAUSED") gameState.gamePhase = "PLAYING";
+    }
+
+    // Map Selection Removed to enforce sequential progression
+    
+    // Gameplay Actions
+    if (gameState.gamePhase === "PLAYING") {
+        if (code === KEYS.Z) {
+            cycleTowerType();
+        }
+        
+        if (code === KEYS.SPACE) {
+            handleSpaceAction();
+        }
+        
+        if (code === KEYS.SHIFT) {
+            if (gameState.selectedTower) {
+                gameState.selectedTower.upgrade();
+            }
+        }
+    }
+}
+
+export function handleKeyUp(p) {
+    keysState[p.keyCode] = false;
+}
+
+export function processInput() {
+    if (gameState.gamePhase !== "PLAYING") return;
+    
+    // Cursor Movement
+    if (keysState[KEYS.LEFT]) gameState.cursor.x = Math.max(0, gameState.cursor.x - CURSOR_SPEED);
+    if (keysState[KEYS.RIGHT]) gameState.cursor.x = Math.min(CANVAS_WIDTH, gameState.cursor.x + CURSOR_SPEED);
+    if (keysState[KEYS.UP]) gameState.cursor.y = Math.max(0, gameState.cursor.y - CURSOR_SPEED);
+    if (keysState[KEYS.DOWN]) gameState.cursor.y = Math.min(CANVAS_HEIGHT, gameState.cursor.y + CURSOR_SPEED);
+}
+
+function cycleTowerType() {
+    const types = Object.keys(TOWER_TYPES);
+    let idx = types.indexOf(gameState.selectedTowerType);
+    idx = (idx + 1) % types.length;
+    gameState.selectedTowerType = types[idx];
+}
+
+function handleSpaceAction() {
+    // 1. Check if selecting a tower
+    let clickedTower = null;
+    for (const tower of gameState.towers) {
+        const dx = gameState.cursor.x - tower.x;
+        const dy = gameState.cursor.y - tower.y;
+        if (Math.sqrt(dx*dx + dy*dy) < tower.radius + 10) {
+            clickedTower = tower;
+            break;
+        }
+    }
+    
+    if (clickedTower) {
+        gameState.selectedTower = (gameState.selectedTower === clickedTower) ? null : clickedTower;
+        return;
+    }
+    
+    // 2. Try to place tower
+    // Deselect if clicking empty space
+    if (gameState.selectedTower) {
+        gameState.selectedTower = null;
+    }
+    
+    attemptBuildTower();
+}
+
+function attemptBuildTower() {
+    const type = TOWER_TYPES[gameState.selectedTowerType];
+    const x = gameState.cursor.x;
+    const y = gameState.cursor.y;
+    
+    // Checks
+    if (gameState.money < type.cost) return; // Not enough money
+    if (isPointOnPath(x, y, 15)) return; // On path
+    if (isOverlappingTower(x, y, 15)) return; // On other tower
+    
+    // Build
+    gameState.money -= type.cost;
+    new Tower(x, y, gameState.selectedTowerType);
+}
+
+function startNextWave() {
+    gameState.waveActive = true;
+    gameState.waveFrame = 0;
+    gameState.enemiesSpawnedInWave = 0;
+    gameState.waveComplete = false;
+}
+</code>
+
+<code filename="game.js">
+import { gameState, WAVES, MAPS, CANVAS_WIDTH, CANVAS_HEIGHT, getGameState } from './globals.js';
+import { handleKeyDown, handleKeyUp, processInput } from './input.js';
+import { renderBackground, renderUI, renderStartScreen, renderPaused, renderGameOver } from './ui.js';
+import { Bloon } from './entities.js';
+import { checkCollisions } from './physics.js';
+import { updateParticles, renderParticles } from './particles.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    p.logs = {
+        game_info: [],
+        inputs: [],
+        player_info: []
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        resetGame();
+        
+        // Initial Log
+        p.logs.game_info.push({
+            event: "Game Initialized",
+            timestamp: Date.now()
+        });
+    };
+
+    p.draw = function() {
+        const currentTime = p.millis();
+        gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = currentTime;
+        gameState.frameCount = p.frameCount;
+
+        // Automated Testing Handling
+        if (gameState.controlMode !== "HUMAN") {
+            const action = get_automated_testing_action();
+            if (action) {
+                p.keyCode = action.keyCode;
+                p.keyPressed();
+                p.keyCode = action.keyCode;
+                p.keyReleased(); // Simulate tap
+            }
+        }
+
+        switch (gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                break;
+            case "PLAYING":
+                updateGameLogic(p);
+                drawGame(p);
+                break;
+            case "PAUSED":
+                drawGame(p);
+                renderPaused(p);
+                break;
+            case "GAME_OVER_WIN":
+                drawGame(p);
+                renderGameOver(p, true);
+                break;
+            case "GAME_OVER_LOSE":
+                drawGame(p);
+                renderGameOver(p, false);
+                break;
+        }
+    };
+
+    p.keyPressed = function() {
+        handleKeyDown(p);
+    };
+
+    p.keyReleased = function() {
+        handleKeyUp(p);
+    };
+});
+
+window.gameInstance = gameInstance;
+
+window.resetGame = function() {
+    gameState.gamePhase = "START";
+    
+    // Always start campaign from first map
+    gameState.mapDifficulty = "EASY";
+    
+    // Reset level specific state
+    initLevelState();
+    
+    gameState.score = 0;
+};
+
+function initLevelState() {
+    gameState.levelPath = MAPS[gameState.mapDifficulty].path;
+    gameState.money = 650; // Starting cash
+    gameState.lives = 50;
+    gameState.currentWave = 0;
+    gameState.towers = [];
+    gameState.enemies = [];
+    gameState.projectiles = [];
+    gameState.particles = [];
+    gameState.waveActive = false;
+    gameState.selectedTower = null;
+    gameState.cursor = { x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT / 2 };
+}
+
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+};
+
+function updateGameLogic(p) {
+    processInput();
+    
+    // Wave Spawning
+    if (gameState.waveActive && gameState.currentWave < WAVES.length) {
+        const waveData = WAVES[gameState.currentWave];
+        gameState.waveFrame++;
+        
+        // Check if we need to spawn next enemy
+        if (gameState.enemiesSpawnedInWave < waveData.length) {
+            const nextEnemy = waveData[gameState.enemiesSpawnedInWave];
+            
+            // We use a property on gameState to track delay counter
+            if (!gameState.spawnTimer) gameState.spawnTimer = 0;
+            gameState.spawnTimer++;
+            
+            if (gameState.spawnTimer >= nextEnemy.delay) {
+                new Bloon(nextEnemy.type);
+                gameState.enemiesSpawnedInWave++;
+                gameState.spawnTimer = 0;
+            }
+        } else if (gameState.enemies.length === 0) {
+            // Wave Cleared
+            gameState.waveActive = false;
+            gameState.currentWave++;
+            gameState.money += 100 + (gameState.currentWave * 50); // Wave clear bonus
+            
+            if (gameState.currentWave >= WAVES.length) {
+                // Map Complete - Check for next map in sequence
+                const mapOrder = ['EASY', 'MEDIUM', 'HARD'];
+                const currentIdx = mapOrder.indexOf(gameState.mapDifficulty);
+                
+                if (currentIdx < mapOrder.length - 1) {
+                    // Next Level
+                    gameState.mapDifficulty = mapOrder[currentIdx + 1];
+                    initLevelState();
+                    // Game continues in PLAYING phase
+                } else {
+                    // All Maps Complete
+                    gameState.gamePhase = "GAME_OVER_WIN";
+                }
+            }
+        }
+    }
+    
+    // Update Entities
+    gameState.towers.forEach(t => t.update());
+    gameState.enemies.forEach(e => e.update());
+    gameState.projectiles.forEach(p => p.update());
+    updateParticles();
+    
+    // Physics
+    checkCollisions();
+    
+    // Logging (throttled)
+    if (p.frameCount % 60 === 0) {
+        p.logs.game_info.push({
+            phase: gameState.gamePhase,
+            entities: gameState.enemies.length + gameState.towers.length,
+            fps: p.frameRate().toFixed(1)
+        });
+    }
+}
+
+function drawGame(p) {
+    renderBackground(p);
+    
+    // Draw Entities (Order matters)
+    gameState.towers.forEach(t => t.render(p));
+    gameState.enemies.forEach(e => e.render(p));
+    gameState.projectiles.forEach(pr => pr.render(p));
+    renderParticles(p);
+    
+    renderUI(p);
+}
+</code>

@@ -1,0 +1,576 @@
+<analysis>
+- Issue identified: 
+    1. Snake trail was static in the Y-axis relative to the world, creating a horizontal "pile" effect instead of a vertical snake body trailing behind the player.
+    2. Visibility of numbers on Blocks and Food was poor (small text, lack of contrast).
+    3. Lack of engaging feedback animations when collecting food items.
+- Files affected: `entities.js`, `physics.js`, `particles.js`.
+- Changes needed:
+    1. `entities.js`: Update `Snake.update` to scroll trail points downwards by `scrollSpeed` every frame to simulate forward movement. Improve `Block.render` and `Food.render` with larger, bold, stroked text and center alignment. Increase `Food` radius slightly.
+    2. `particles.js`: Add `RingParticle` class and `createCollectEffect` function to generate expanding rings.
+    3. `physics.js`: Trigger `createCollectEffect` in `handleFoodCollision` to provide visual feedback for collecting items.
+</analysis>
+
+<code filename="entities.js">
+/**
+ * entities.js
+ * Game entity classes.
+ */
+
+import { gameState, CONFIG, COLORS, CANVAS_HEIGHT, CANVAS_WIDTH } from './globals.js';
+import { createTextPopup } from './particles.js';
+
+export class Entity {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.toRemove = false;
+    }
+    
+    update(p) {
+        // Base update logic (e.g., scrolling)
+        if (!gameState.isFrozen) {
+            this.y += gameState.scrollSpeed;
+        }
+        
+        // Remove if off screen bottom
+        if (this.y > CANVAS_HEIGHT + 100) {
+            this.toRemove = true;
+        }
+    }
+
+    render(p) {}
+}
+
+/**
+ * The Snake (Player)
+ */
+export class Snake {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y; // Typically fixed, but can wobble
+        this.radius = CONFIG.PLAYER_RADIUS;
+        this.length = CONFIG.INITIAL_SNAKE_LENGTH;
+        this.trail = []; // Stores previous positions for the body
+        this.vx = 0;
+        this.maxTrailLength = 500; // Cap to prevent memory issues
+    }
+
+    handleInput(action) {
+        const speed = action.speedMod ? CONFIG.LATERAL_SPEED_FAST : CONFIG.LATERAL_SPEED;
+        this.vx = 0;
+        if (action.left) this.vx = -speed;
+        if (action.right) this.vx = speed;
+        
+        if (action.activateFever) {
+            this.tryActivateFever();
+        }
+    }
+
+    tryActivateFever() {
+        if (gameState.feverValue >= CONFIG.FEVER_MAX && !gameState.isFeverActive) {
+            gameState.isFeverActive = true;
+            gameState.feverTimer = CONFIG.FEVER_DURATION;
+            gameState.feverValue = 0;
+        }
+    }
+
+    update(p) {
+        // Update physics
+        this.x += this.vx;
+
+        // Constrain to screen
+        this.x = p.constrain(this.x, this.radius, CANVAS_WIDTH - this.radius);
+
+        // Move trail points down to simulate forward movement (vertical snake)
+        if (!gameState.isFrozen) {
+            for (let point of this.trail) {
+                point.y += gameState.scrollSpeed;
+            }
+        }
+
+        // Update trail for body rendering
+        // We push the current head position to the front
+        this.trail.unshift({x: this.x, y: this.y});
+        
+        // We only keep as many trail points as we need for visual length
+        if (this.trail.length > this.length * 4 + 20) {
+            this.trail.pop();
+        }
+
+        // Fever Logic
+        if (gameState.isFeverActive) {
+            gameState.feverTimer--;
+            // Auto-move forward fast (simulated by faster scroll speed in game.js)
+            if (gameState.feverTimer <= 0) {
+                gameState.isFeverActive = false;
+            }
+        }
+        
+        // Log player info periodically
+        if (p.frameCount % 10 === 0) {
+            p.logs.player_info.push({
+                x: this.x,
+                y: this.y,
+                length: this.length,
+                score: gameState.score,
+                timestamp: Date.now()
+            });
+        }
+    }
+
+    render(p) {
+        // Draw body
+        p.noStroke();
+        const bodySpacing = 2; // Reduced from 3 to prevent gaps at high speed
+        
+        for (let i = 1; i < this.length; i++) {
+            let idx = i * bodySpacing;
+            if (idx >= this.trail.length) break;
+            
+            let pos = this.trail[idx];
+            // Visual size slightly decreases towards tail
+            let size = (this.radius * 2) * (1 - (i / (this.length + 10)) * 0.3);
+            
+            if (gameState.isFeverActive) {
+                p.fill(p.random(200, 255), p.random(50, 150), p.random(100, 255));
+            } else {
+                p.fill(...COLORS.PLAYER);
+            }
+            p.circle(pos.x, pos.y, size);
+        }
+
+        // Draw Head
+        if (gameState.isFeverActive) {
+            p.fill(255, 255, 255);
+            p.drawingContext.shadowBlur = 20;
+            p.drawingContext.shadowColor = p.color(...COLORS.FEVER);
+        } else {
+            p.fill(...COLORS.PLAYER);
+            p.drawingContext.shadowBlur = 0;
+        }
+        
+        p.circle(this.x, this.y, this.radius * 2);
+        p.drawingContext.shadowBlur = 0; // Reset
+
+        // Draw Length Text
+        p.fill(0);
+        p.textSize(10);
+        p.textAlign(p.CENTER, p.CENTER);
+        p.text(this.length, this.x, this.y - 15);
+    }
+}
+
+/**
+ * Block Obstacle
+ */
+export class Block extends Entity {
+    constructor(x, y, value) {
+        super(x, y);
+        this.size = CONFIG.BLOCK_SIZE;
+        this.value = value;
+        this.maxValue = value; // Store original for color mapping
+        this.color = this.getColor();
+    }
+
+    getColor() {
+        // Map value to color gradient
+        // Simple thresholding for now
+        if (this.value <= 5) return COLORS.BLOCK_LOW;
+        if (this.value <= 20) return COLORS.BLOCK_MED;
+        return COLORS.BLOCK_HIGH;
+    }
+
+    render(p) {
+        // Update color based on current value (damage feedback)
+        this.color = this.getColor();
+        
+        p.push();
+        p.translate(this.x, this.y);
+        
+        p.fill(...this.color);
+        p.stroke(255, 50);
+        p.strokeWeight(2);
+        
+        // Rounded rect
+        p.rect(0, 0, this.size, this.size, 5);
+        
+        // Text
+        p.textAlign(p.CENTER, p.CENTER);
+        p.fill(255);
+        p.stroke(0);
+        p.strokeWeight(3);
+        p.textSize(28);
+        p.textStyle(p.BOLD);
+        p.text(this.value, this.size/2, this.size/2);
+        
+        p.pop();
+    }
+}
+
+/**
+ * Food (Ball)
+ */
+export class Food extends Entity {
+    constructor(x, y, value) {
+        super(x, y);
+        this.radius = 12; // Slightly larger for better visibility
+        this.value = value;
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        
+        p.fill(...COLORS.FOOD);
+        p.noStroke();
+        p.circle(0, 0, this.radius * 2);
+        
+        // Pulse animation
+        const pulse = 1 + p.sin(p.frameCount * 0.1) * 0.1;
+        p.stroke(...COLORS.FOOD);
+        p.noFill();
+        p.circle(0, 0, this.radius * 2 * pulse);
+
+        // Text
+        p.textAlign(p.CENTER, p.CENTER);
+        p.fill(0);
+        p.noStroke();
+        p.textSize(14);
+        p.textStyle(p.BOLD);
+        p.text(this.value, 0, 0);
+        
+        p.pop();
+    }
+}
+
+/**
+ * Vertical Wall
+ */
+export class Wall extends Entity {
+    constructor(x, y, height) {
+        super(x, y);
+        this.height = height;
+        this.width = CONFIG.WALL_WIDTH;
+    }
+
+    render(p) {
+        p.push();
+        p.stroke(...COLORS.WALL);
+        p.strokeWeight(this.width);
+        p.line(this.x, this.y, this.x, this.y + this.height);
+        p.pop();
+    }
+}
+</code>
+
+<code filename="physics.js">
+/**
+ * physics.js
+ * Collision detection and spatial logic.
+ */
+
+import { gameState, CONFIG, COLORS } from './globals.js';
+import { createExplosion, createTextPopup, createCollectEffect } from './particles.js';
+
+// Import p5.collide2D from global scope (loaded via script tag in HTML)
+// Since we are in instance mode, we can use p5 methods passed or the global library functions if available.
+// p5.collide2D attaches to p5.prototype. 
+
+/**
+ * Check collision between Circle (Snake Head) and Rectangle (Block)
+ */
+export function checkCircleRect(circleX, circleY, radius, rectX, rectY, rectW, rectH) {
+    // Closest point on rect to circle center
+    let testX = circleX;
+    let testY = circleY;
+
+    if (circleX < rectX) testX = rectX;
+    else if (circleX > rectX + rectW) testX = rectX + rectW;
+
+    if (circleY < rectY) testY = rectY;
+    else if (circleY > rectY + rectH) testY = rectY + rectH;
+
+    let distX = circleX - testX;
+    let distY = circleY - testY;
+    let distance = Math.sqrt((distX * distX) + (distY * distY));
+
+    return distance <= radius;
+}
+
+/**
+ * Check collision between Circle and Circle
+ */
+export function checkCircleCircle(c1x, c1y, c1r, c2x, c2y, c2r) {
+    let dx = c1x - c2x;
+    let dy = c1y - c2y;
+    let distance = Math.sqrt(dx*dx + dy*dy);
+    return distance <= c1r + c2r;
+}
+
+/**
+ * Resolve collisions for the player
+ * @param {object} p - p5 instance
+ * @param {object} player - Snake entity
+ */
+export function resolveCollisions(p, player) {
+    // Reset frozen state, we will re-determine it
+    let currentlyHittingBlock = false;
+
+    // 1. Check Blocks
+    for (let i = gameState.blocks.length - 1; i >= 0; i--) {
+        const block = gameState.blocks[i];
+        
+        // Simple AABB broadphase optimization
+        if (player.y - player.radius > block.y + block.size + 10 || 
+            player.y + player.radius < block.y - 10) continue;
+
+        if (checkCircleRect(player.x, player.y, player.radius, block.x, block.y, block.size, block.size)) {
+            handleBlockCollision(p, player, block);
+            // If we hit a block frontally, we might freeze
+            // Determine if it's a frontal hit (Head is below block)
+            // In this game, player is at bottom, blocks come from top.
+            // So frontal hit is: Player Y > Block Y.
+            if (player.y >= block.y && Math.abs(player.x - (block.x + block.size/2)) < block.size/2 + player.radius) {
+                currentlyHittingBlock = true;
+            }
+        }
+    }
+
+    gameState.isFrozen = currentlyHittingBlock;
+
+    // 2. Check Food
+    for (let i = gameState.foods.length - 1; i >= 0; i--) {
+        const food = gameState.foods[i];
+        if (checkCircleCircle(player.x, player.y, player.radius + 5, food.x, food.y, food.radius)) {
+            handleFoodCollision(p, player, food, i);
+        }
+    }
+
+    // 3. Check Walls
+    // Walls are thin vertical lines.
+    for (const wall of gameState.walls) {
+        // Broadphase Y
+        if (player.y < wall.y || player.y > wall.y + wall.height) continue;
+        
+        // Check X distance
+        // Treat wall as a thin rect
+        if (Math.abs(player.x - wall.x) < player.radius + CONFIG.WALL_WIDTH/2) {
+            handleWallCollision(player, wall);
+        }
+    }
+}
+
+function handleBlockCollision(p, player, block) {
+    // If in Fever mode, destroy instantly
+    if (gameState.isFeverActive) {
+        block.value = 0;
+        player.score += block.maxValue; // Bonus score
+        gameState.score += block.maxValue;
+        createExplosion(p, block.x + block.size/2, block.y + block.size/2, COLORS.FEVER, 20);
+        
+        // Remove block
+        const index = gameState.blocks.indexOf(block);
+        if (index > -1) {
+            gameState.blocks.splice(index, 1);
+            const entIdx = gameState.entities.indexOf(block);
+            if (entIdx > -1) gameState.entities.splice(entIdx, 1);
+        }
+        gameState.screenShake = 5;
+        return;
+    }
+
+    // Normal collision
+    // "Snap" player to the bottom of the block to prevent clipping through
+    if (player.y > block.y + block.size) {
+        // Hitting from bottom
+        player.y = block.y + block.size + player.radius;
+    }
+
+    // Apply damage tick
+    if (p.frameCount % CONFIG.DAMAGE_TICK_RATE === 0) {
+        player.length--;
+        block.value--;
+        gameState.score++;
+        gameState.feverValue = Math.min(gameState.feverValue + 2, CONFIG.FEVER_MAX);
+        
+        // Visuals
+        createExplosion(p, player.x, player.y - player.radius, COLORS.PLAYER, 3);
+        gameState.screenShake = 2;
+
+        if (player.length <= 0) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+            createExplosion(p, player.x, player.y, COLORS.PLAYER, 50);
+        }
+
+        if (block.value <= 0) {
+            // Destroy block
+            const index = gameState.blocks.indexOf(block);
+            if (index > -1) {
+                gameState.blocks.splice(index, 1);
+                const entIdx = gameState.entities.indexOf(block);
+                if (entIdx > -1) gameState.entities.splice(entIdx, 1);
+            }
+            createExplosion(p, block.x + block.size/2, block.y + block.size/2, COLORS.BLOCK_LOW, 15);
+            gameState.screenShake = 4;
+        }
+    }
+}
+
+function handleFoodCollision(p, player, food, index) {
+    player.length += food.value;
+    createTextPopup(p, food.x, food.y, `+${food.value}`, COLORS.FOOD);
+    createCollectEffect(p, food.x, food.y, COLORS.FOOD);
+    
+    // Remove food
+    gameState.foods.splice(index, 1);
+    const entIdx = gameState.entities.indexOf(food);
+    if (entIdx > -1) gameState.entities.splice(entIdx, 1);
+}
+
+function handleWallCollision(player, wall) {
+    // Push player out of wall
+    if (player.x < wall.x) {
+        player.x = wall.x - CONFIG.WALL_WIDTH/2 - player.radius;
+    } else {
+        player.x = wall.x + CONFIG.WALL_WIDTH/2 + player.radius;
+    }
+}
+</code>
+
+<code filename="particles.js">
+/**
+ * particles.js
+ * Particle system for visual effects.
+ */
+
+import { gameState } from './globals.js';
+
+class Particle {
+    constructor(x, y, color, size, speed) {
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        this.size = size;
+        const angle = Math.random() * Math.PI * 2;
+        this.vx = Math.cos(angle) * speed;
+        this.vy = Math.sin(angle) * speed;
+        this.life = 1.0;
+        this.decay = 0.05 + Math.random() * 0.05;
+    }
+
+    update() {
+        if (!gameState.isFrozen) {
+            this.y += gameState.scrollSpeed;
+        }
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life -= this.decay;
+        this.size *= 0.95;
+    }
+
+    render(p) {
+        p.push();
+        // Handle color array or string
+        if (Array.isArray(this.color)) {
+            p.fill(this.color[0], this.color[1], this.color[2], this.life * 255);
+        } else {
+            let c = p.color(this.color);
+            c.setAlpha(this.life * 255);
+            p.fill(c);
+        }
+        p.noStroke();
+        p.circle(this.x, this.y, this.size);
+        p.pop();
+    }
+}
+
+class RingParticle {
+    constructor(x, y, color) {
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        this.size = 10;
+        this.life = 1.0;
+    }
+
+    update() {
+        if (!gameState.isFrozen) {
+            this.y += gameState.scrollSpeed;
+        }
+        this.size += 3;
+        this.life -= 0.04;
+    }
+
+    render(p) {
+        p.push();
+        p.noFill();
+        p.strokeWeight(3);
+        if (Array.isArray(this.color)) {
+             p.stroke(this.color[0], this.color[1], this.color[2], this.life * 255);
+        } else {
+             let c = p.color(this.color);
+             c.setAlpha(this.life * 255);
+             p.stroke(c);
+        }
+        p.circle(this.x, this.y, this.size);
+        p.pop();
+    }
+}
+
+class TextParticle {
+    constructor(x, y, text, color) {
+        this.x = x;
+        this.y = y;
+        this.text = text;
+        this.color = color;
+        this.life = 1.0;
+        this.vy = -1;
+    }
+
+    update() {
+        this.y += this.vy;
+        this.life -= 0.02;
+    }
+
+    render(p) {
+        p.push();
+        p.fill(this.color[0], this.color[1], this.color[2], this.life * 255);
+        p.textSize(16);
+        p.textStyle(p.BOLD);
+        p.text(this.text, this.x, this.y);
+        p.pop();
+    }
+}
+
+export function createExplosion(p, x, y, color, count = 10) {
+    for (let i = 0; i < count; i++) {
+        gameState.particles.push(new Particle(x, y, color, p.random(3, 8), p.random(2, 5)));
+    }
+}
+
+export function createCollectEffect(p, x, y, color) {
+    gameState.particles.push(new RingParticle(x, y, color));
+    // Also add a few small particles
+    for (let i = 0; i < 5; i++) {
+        gameState.particles.push(new Particle(x, y, color, p.random(2, 4), p.random(1, 3)));
+    }
+}
+
+export function createTextPopup(p, x, y, text, color) {
+    gameState.particles.push(new TextParticle(x, y, text, color));
+}
+
+export function updateParticles(p) {
+    for (let i = gameState.particles.length - 1; i >= 0; i--) {
+        const part = gameState.particles[i];
+        part.update();
+        if (part.life <= 0) {
+            gameState.particles.splice(i, 1);
+        }
+    }
+}
+
+export function renderParticles(p) {
+    gameState.particles.forEach(part => part.render(p));
+}
+</code>

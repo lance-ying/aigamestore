@@ -1,0 +1,865 @@
+<analysis>
+- Issue identified:
+    1. Platforms close too fast (speed/timing).
+    2. Missing a platform results in a long fall before death (need faster game over).
+    3. Player cannot move in Z-axis (Up/Down arrows) which is requested.
+    4. Jump is bound to ArrowUp, conflicting with requested Z-axis movement.
+- Files affected: `globals.js`, `index.html`, `ui.js`, `input.js`, `entities.js`, `physics.js`.
+- Changes needed:
+    1. `globals.js`: Reduce `PLATFORM_CLOSE_SPEED` from 0.15 to 0.05.
+    2. `input.js`: Remove `ArrowUp` as a jump key.
+    3. `entities.js`: Add Z-axis movement to `Jelly` using ArrowUp/Down and W/S.
+    4. `physics.js`: Add a kill threshold relative to the highest platform to trigger Game Over instantly when falling off-screen.
+    5. `ui.js` & `index.html`: Update instructions to reflect new controls.
+</analysis>
+
+<code filename="globals.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// Global Game Configuration
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const GAME_CONFIG = {
+    GRAVITY: -0.05,
+    JUMP_FORCE: 0.65,
+    MOVE_SPEED: 0.15,
+    LIQUID_RISE_SPEED_BASE: 0.006,      // Reduced from 0.015
+    LIQUID_RISE_ACCELERATION: 0.0001,   // Reduced from 0.0005
+    PLATFORM_SPAWN_INTERVAL: 120,       // Frames
+    PLATFORM_CLOSE_SPEED: 0.05,         // Reduced from 0.15 to be less aggressive
+    CAMERA_OFFSET_Y: 8,
+    CAMERA_OFFSET_Z: 12,
+    CAMERA_LOOK_Y_OFFSET: 2
+};
+
+// Global State Object
+export const gameState = {
+    // Core Status
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    frameCount: 0,
+    deltaTime: 0,
+    score: 0,
+    highScore: 0,
+    controlMode: "HUMAN",
+    
+    // Core Three.js Objects
+    scene: null,
+    camera: null,
+    renderer: null,
+    gameContainer: null,
+    
+    // Entities
+    player: null,
+    liquid: null,
+    platforms: [],
+    collectibles: [],
+    particles: [],
+    
+    // State Tracking
+    lastPlatformHeight: 0,
+    liquidSpeed: GAME_CONFIG.LIQUID_RISE_SPEED_BASE,
+    timeSinceLastSpawn: 0,
+    level: 1,
+    
+    // Lighting
+    lights: [],
+    
+    // Input State
+    keys: {
+        ArrowUp: false,
+        ArrowDown: false,
+        ArrowLeft: false,
+        ArrowRight: false,
+        Space: false,
+        Shift: false,
+        KeyW: false,
+        KeyS: false,
+        KeyA: false,
+        KeyD: false,
+        KeyZ: false
+    }
+};
+
+// Initialize Logging
+export const logs = {
+    game_info: [],
+    player_info: [],
+    inputs: []
+};
+
+// Expose logs and gameState globally
+window.logs = logs;
+
+export function getGameState() {
+    return gameState;
+}
+window.getGameState = getGameState;
+
+export function resetGameState() {
+    gameState.score = 0;
+    gameState.frameCount = 0;
+    gameState.lastPlatformHeight = 0;
+    gameState.liquidSpeed = GAME_CONFIG.LIQUID_RISE_SPEED_BASE;
+    gameState.timeSinceLastSpawn = 0;
+    gameState.level = 1;
+    gameState.platforms = [];
+    gameState.collectibles = [];
+    gameState.particles = [];
+}
+</code>
+
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Jelly Jump 3D</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #ffffff; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      /* Ensure canvas is exactly 600x400 and no border interference */
+      #game-container { 
+        width: 600px !important; 
+        height: 400px !important; 
+        box-shadow: 0 0 20px rgba(0,0,0,0.2);
+      }
+      canvas { display: block; }
+      
+      .control-buttons { 
+          display: flex; 
+          gap: 10px; 
+          margin-bottom: 15px; 
+          flex-wrap: wrap; 
+          justify-content: center;
+          position: relative;
+          z-index: 1001;
+      }
+      .control-button { 
+          padding: 8px 16px; 
+          cursor: pointer; 
+          background: #444; 
+          color: #fff; 
+          border: none; 
+          border-radius: 4px; 
+          font-family: Arial, sans-serif;
+          font-weight: bold;
+          transition: background 0.2s;
+      }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #00ffff; color: #000; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 10px; color: #333; font-family: Arial, sans-serif;">
+        <h2>Jelly Jump 3D</h2>
+        <div class="control-buttons">
+            <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN', this)">Human Mode</button>
+            <button id="test1Btn" class="control-button" onclick="setMode('TEST_1', this)">Test Jump</button>
+            <button id="test2Btn" class="control-button" onclick="setMode('TEST_2', this)">Test Play</button>
+        </div>
+        <p style="font-size: 12px; color: #666;">Space to Jump | Arrows/WASD to Move | R to Restart</p>
+    </div>
+
+    <!-- Script to load libraries and game -->
+    <script src="https://cdn.jsdelivr.net/npm/seedrandom@3.0.5/seedrandom.min.js"></script>
+    <script>
+        function setMode(mode, btn) {
+            if (window.setControlMode) {
+                window.setControlMode(mode);
+                // Update UI
+                document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                // Focus game container so keyboard works immediately
+                document.getElementById('game-container')?.focus();
+            }
+        }
+    </script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</code>
+
+<code filename="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+let uiCanvas, uiContext;
+
+export function setupUI() {
+    uiCanvas = document.createElement('canvas');
+    uiCanvas.width = CANVAS_WIDTH;
+    uiCanvas.height = CANVAS_HEIGHT;
+    uiCanvas.style.position = 'absolute';
+    uiCanvas.style.top = '0';
+    uiCanvas.style.left = '0';
+    uiCanvas.style.pointerEvents = 'none';
+    uiCanvas.style.zIndex = '1000';
+    
+    if (gameState.gameContainer) {
+        gameState.gameContainer.appendChild(uiCanvas);
+    } else {
+        document.body.appendChild(uiCanvas);
+    }
+    
+    uiContext = uiCanvas.getContext('2d');
+}
+
+export function renderUI() {
+    if (!uiContext) return;
+    
+    uiContext.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    // Common styles
+    uiContext.shadowColor = 'black';
+    uiContext.shadowBlur = 4;
+    
+    if (gameState.gamePhase === "START") {
+        renderStartScreen();
+    } else if (gameState.gamePhase === "PLAYING") {
+        renderHUD();
+    } else if (gameState.gamePhase === "PAUSED") {
+        renderHUD(); // Draw HUD behind overlay
+        renderPauseScreen();
+    } else if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+        renderHUD();
+        renderGameOverScreen();
+    }
+}
+
+function renderStartScreen() {
+    uiContext.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    uiContext.fillStyle = '#00ffff';
+    uiContext.font = 'bold 40px Arial';
+    uiContext.textAlign = 'center';
+    uiContext.fillText('JELLY JUMP 3D', CANVAS_WIDTH / 2, 140);
+    
+    uiContext.fillStyle = '#ffffff';
+    uiContext.font = '20px Arial';
+    uiContext.fillText('Press ENTER to Start', CANVAS_WIDTH / 2, 200);
+    
+    uiContext.font = '14px Arial';
+    uiContext.fillText('Space to Jump | Arrows to Move', CANVAS_WIDTH / 2, 240);
+    uiContext.fillText('Avoid the rising dark liquid!', CANVAS_WIDTH / 2, 260);
+}
+
+function renderHUD() {
+    uiContext.fillStyle = '#333'; // Dark text for white background
+    uiContext.font = 'bold 24px Arial';
+    uiContext.textAlign = 'left';
+    uiContext.fillText(`Score: ${Math.floor(gameState.score)}`, 20, 40);
+    
+    uiContext.textAlign = 'right';
+    uiContext.font = '18px Arial';
+    uiContext.fillText(`Level: ${gameState.level}`, CANVAS_WIDTH - 20, 40);
+}
+
+function renderPauseScreen() {
+    uiContext.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    uiContext.fillStyle = 'white';
+    uiContext.font = 'bold 30px Arial';
+    uiContext.textAlign = 'center';
+    uiContext.fillText('PAUSED', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+    uiContext.font = '16px Arial';
+    uiContext.fillText('Press ESC to Resume', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 40);
+}
+
+function renderGameOverScreen() {
+    uiContext.fillStyle = 'rgba(50, 0, 0, 0.7)';
+    uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    uiContext.fillStyle = '#ff4444';
+    uiContext.font = 'bold 40px Arial';
+    uiContext.textAlign = 'center';
+    uiContext.fillText('GAME OVER', CANVAS_WIDTH / 2, 140);
+    
+    uiContext.fillStyle = 'white';
+    uiContext.font = '24px Arial';
+    uiContext.fillText(`Final Score: ${Math.floor(gameState.score)}`, CANVAS_WIDTH / 2, 200);
+    
+    uiContext.font = '18px Arial';
+    uiContext.fillText('Press R to Restart', CANVAS_WIDTH / 2, 250);
+}
+</code>
+
+<code filename="input.js">
+import { gameState, logs } from './globals.js';
+
+export function setupInput() {
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+}
+
+function logInput(type, key, keyCode) {
+    logs.inputs.push({
+        type: type,
+        key: key,
+        keyCode: keyCode,
+        frame: gameState.frameCount,
+        time: Date.now()
+    });
+}
+
+function handleKeyDown(event) {
+    const code = event.code;
+    const keyCode = event.keyCode;
+    logInput('keydown', code, keyCode);
+    
+    // Map keys
+    if (code === 'Space') gameState.keys.Space = true;
+    if (code === 'ArrowUp') gameState.keys.ArrowUp = true;
+    if (code === 'ArrowDown') gameState.keys.ArrowDown = true;
+    if (code === 'ArrowLeft') gameState.keys.ArrowLeft = true;
+    if (code === 'ArrowRight') gameState.keys.ArrowRight = true;
+    if (code === 'ShiftLeft' || code === 'ShiftRight') gameState.keys.Shift = true;
+    if (code === 'KeyW') gameState.keys.KeyW = true;
+    if (code === 'KeyS') gameState.keys.KeyS = true;
+    if (code === 'KeyA') gameState.keys.KeyA = true;
+    if (code === 'KeyD') gameState.keys.KeyD = true;
+    if (code === 'KeyZ') gameState.keys.KeyZ = true;
+    if (code === 'KeyR') gameState.keys.KeyR = true;
+
+    // Game Phase Controls
+    if (code === 'Enter') {
+        if (gameState.gamePhase === "START") {
+            gameState.gamePhase = "PLAYING";
+        }
+    }
+    
+    if (code === 'Escape') {
+        if (gameState.gamePhase === "PLAYING") {
+            gameState.gamePhase = "PAUSED";
+        } else if (gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = "PLAYING";
+        }
+    }
+    
+    // Gameplay Actions
+    if (gameState.gamePhase === "PLAYING") {
+        // Jump only on Space
+        if (code === 'Space') {
+            if (gameState.player) gameState.player.jump();
+        }
+    }
+}
+
+function handleKeyUp(event) {
+    const code = event.code;
+    logInput('keyup', code, event.keyCode);
+    
+    if (code === 'Space') gameState.keys.Space = false;
+    if (code === 'ArrowUp') gameState.keys.ArrowUp = false;
+    if (code === 'ArrowDown') gameState.keys.ArrowDown = false;
+    if (code === 'ArrowLeft') gameState.keys.ArrowLeft = false;
+    if (code === 'ArrowRight') gameState.keys.ArrowRight = false;
+    if (code === 'ShiftLeft' || code === 'ShiftRight') gameState.keys.Shift = false;
+    if (code === 'KeyW') gameState.keys.KeyW = false;
+    if (code === 'KeyS') gameState.keys.KeyS = false;
+    if (code === 'KeyA') gameState.keys.KeyA = false;
+    if (code === 'KeyD') gameState.keys.KeyD = false;
+    if (code === 'KeyZ') gameState.keys.KeyZ = false;
+    if (code === 'KeyR') gameState.keys.KeyR = false;
+}
+</code>
+
+<code filename="entities.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, GAME_CONFIG } from './globals.js';
+import { easeOutElastic } from './utils.js';
+
+// ==========================================
+// PLAYER (JELLY)
+// ==========================================
+export class Jelly {
+    constructor(x, y, z) {
+        // Jelly Geometry
+        const geometry = new THREE.BoxGeometry(1, 1, 1, 4, 4, 4);
+        
+        // Jelly Material - Translucent and shiny
+        const material = new THREE.MeshPhysicalMaterial({
+            color: 0x00ffff,
+            metalness: 0.1,
+            roughness: 0.2,
+            transmission: 0.6, // Glass-like
+            thickness: 1.0,
+            clearcoat: 1.0,
+            transparent: true,
+            opacity: 0.8
+        });
+        
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.set(x, y, z);
+        this.mesh.castShadow = true;
+        this.mesh.receiveShadow = true;
+        
+        // Add internal glow (simulated with smaller mesh)
+        const coreGeo = new THREE.BoxGeometry(0.6, 0.6, 0.6);
+        const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 });
+        this.core = new THREE.Mesh(coreGeo, coreMat);
+        this.mesh.add(this.core);
+
+        gameState.scene.add(this.mesh);
+
+        // Physics State
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        this.onGround = false;
+        this.isDead = false;
+        
+        // Animation State
+        this.scaleAnim = { x: 1, y: 1, z: 1 };
+        this.jumpTimer = 0;
+        this.landTimer = 0;
+    }
+
+    update(timeScale) {
+        // Handle Death
+        if (this.isDead) return;
+
+        // Apply scale animation (Squash and Stretch)
+        this.updateAnimation(timeScale);
+        
+        // Horizontal Movement (Air control)
+        if (gameState.controlMode === "HUMAN") {
+            // Scale movement speed by timeScale
+            const speed = GAME_CONFIG.MOVE_SPEED * timeScale;
+            
+            // X Axis
+            if (gameState.keys.ArrowLeft || gameState.keys.KeyA) {
+                this.mesh.position.x -= speed;
+            }
+            if (gameState.keys.ArrowRight || gameState.keys.KeyD) {
+                this.mesh.position.x += speed;
+            }
+            
+            // Z Axis (Up/Down)
+            if (gameState.keys.ArrowUp || gameState.keys.KeyW) {
+                this.mesh.position.z -= speed;
+            }
+            if (gameState.keys.ArrowDown || gameState.keys.KeyS) {
+                this.mesh.position.z += speed;
+            }
+            
+            // Limit range
+            this.mesh.position.x = Math.max(-4, Math.min(4, this.mesh.position.x));
+            this.mesh.position.z = Math.max(-4, Math.min(4, this.mesh.position.z));
+        }
+
+        // Apply scale to mesh
+        this.mesh.scale.set(this.scaleAnim.x, this.scaleAnim.y, this.scaleAnim.z);
+    }
+    
+    jump() {
+        if (this.onGround) {
+            this.velocity.y = GAME_CONFIG.JUMP_FORCE;
+            this.onGround = false;
+            
+            // Stretch Animation
+            this.triggerSquashStretch(0.7, 1.4, 0.7);
+            
+            // Particle effect
+            createParticles(this.mesh.position, 5, 0x00ffff);
+        }
+    }
+    
+    land() {
+        if (this.velocity.y < -0.1) { // Only squash if falling fast enough
+             // Squash Animation
+            this.triggerSquashStretch(1.3, 0.7, 1.3);
+        }
+    }
+    
+    triggerSquashStretch(x, y, z) {
+        this.scaleAnim.x = x;
+        this.scaleAnim.y = y;
+        this.scaleAnim.z = z;
+    }
+    
+    updateAnimation(timeScale) {
+        // Return to normal scale (1,1,1) using lerp
+        // Scale restoration speed by timeScale
+        const restorationSpeed = 0.15 * timeScale;
+        this.scaleAnim.x += (1 - this.scaleAnim.x) * restorationSpeed;
+        this.scaleAnim.y += (1 - this.scaleAnim.y) * restorationSpeed;
+        this.scaleAnim.z += (1 - this.scaleAnim.z) * restorationSpeed;
+    }
+
+    takeDamage(amount) {
+        this.isDead = true;
+        gameState.gamePhase = "GAME_OVER_LOSE";
+        
+        // Explode particles
+        createParticles(this.mesh.position, 20, 0x00ffff, 0.5);
+    }
+}
+
+// ==========================================
+// PLATFORM PAIR
+// ==========================================
+export class PlatformPair {
+    constructor(y, isRotated) {
+        this.state = 'OPEN'; // OPEN, CLOSING, CLOSED
+        this.y = y;
+        this.gapSize = 3;
+        this.moveSpeed = GAME_CONFIG.PLATFORM_CLOSE_SPEED;
+        this.targetGap = 0; // Blocks touch
+        this.isRotated = isRotated; // If true, moves along Z, else along X
+
+        const width = 10;
+        const height = 1;
+        const depth = 5;
+        
+        const geometry = new THREE.BoxGeometry(width, height, depth);
+        const material = new THREE.MeshStandardMaterial({ 
+            color: 0x666666,
+            roughness: 0.5 
+        });
+
+        // Create two blocks
+        this.leftBlock = new THREE.Mesh(geometry, material);
+        this.rightBlock = new THREE.Mesh(geometry, material);
+        
+        this.leftBlock.castShadow = true;
+        this.leftBlock.receiveShadow = true;
+        this.rightBlock.castShadow = true;
+        this.rightBlock.receiveShadow = true;
+
+        // Position them based on rotation
+        const offset = 8; // Start far apart
+        if (this.isRotated) {
+            // Move along Z
+            this.leftBlock.rotation.y = Math.PI / 2;
+            this.rightBlock.rotation.y = Math.PI / 2;
+            
+            this.leftBlock.position.set(0, y, -offset);
+            this.rightBlock.position.set(0, y, offset);
+        } else {
+            // Move along X
+            this.leftBlock.position.set(-offset, y, 0);
+            this.rightBlock.position.set(offset, y, 0);
+        }
+
+        gameState.scene.add(this.leftBlock);
+        gameState.scene.add(this.rightBlock);
+        gameState.platforms.push(this);
+    }
+
+    update(timeScale) {
+        if (this.state === 'CLOSING') {
+            // Scale closing speed
+            const speed = this.moveSpeed * timeScale;
+            
+            if (this.isRotated) {
+                // Move Z towards 0
+                if (this.leftBlock.position.z < -2.5) this.leftBlock.position.z += speed;
+                if (this.rightBlock.position.z > 2.5) this.rightBlock.position.z -= speed;
+                
+                if (this.leftBlock.position.z >= -5) {
+                     this.leftBlock.position.z = -5;
+                     this.state = 'CLOSED';
+                }
+                if (this.rightBlock.position.z <= 5) {
+                    this.rightBlock.position.z = 5;
+                }
+
+            } else {
+                // Move X towards 0
+                if (this.leftBlock.position.x < -5) this.leftBlock.position.x += speed;
+                if (this.rightBlock.position.x > 5) this.rightBlock.position.x -= speed;
+                
+                if (this.leftBlock.position.x >= -5) {
+                    this.leftBlock.position.x = -5;
+                    this.state = 'CLOSED';
+                }
+                if (this.rightBlock.position.x <= 5) {
+                    this.rightBlock.position.x = 5;
+                }
+            }
+        }
+    }
+    
+    close() {
+        if (this.state === 'OPEN') {
+            this.state = 'CLOSING';
+        }
+    }
+}
+
+// ==========================================
+// LIQUID
+// ==========================================
+export class Liquid {
+    constructor() {
+        // Large plane or box
+        const geometry = new THREE.BoxGeometry(50, 50, 50);
+        const material = new THREE.MeshStandardMaterial({
+            color: 0x220033, // Dark purple
+            roughness: 0.1,
+            metalness: 0.3,
+            transparent: true,
+            opacity: 0.9
+        });
+        
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.set(0, -26, 0); // Start way below
+        this.mesh.receiveShadow = true;
+        
+        gameState.scene.add(this.mesh);
+        
+        this.baseSpeed = GAME_CONFIG.LIQUID_RISE_SPEED_BASE;
+        this.currentSpeed = this.baseSpeed;
+    }
+    
+    update(timeScale) {
+        // Accelerate slowly based on game progression
+        // Scale acceleration and movement
+        this.currentSpeed += GAME_CONFIG.LIQUID_RISE_ACCELERATION * 0.01 * timeScale;
+        this.mesh.position.y += this.currentSpeed * timeScale;
+        
+        // Visual wave effect (rotation)
+        this.mesh.rotation.x = Math.sin(gameState.frameCount * 0.01) * 0.05;
+        this.mesh.rotation.z = Math.cos(gameState.frameCount * 0.013) * 0.05;
+    }
+}
+
+// ==========================================
+// COLLECTIBLE
+// ==========================================
+export class Collectible {
+    constructor(x, y, z) {
+        const geometry = new THREE.OctahedronGeometry(0.3, 0);
+        const material = new THREE.MeshStandardMaterial({
+            color: 0xffff00,
+            emissive: 0xffaa00,
+            emissiveIntensity: 0.5,
+            roughness: 0.2
+        });
+        
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.set(x, y, z);
+        this.mesh.castShadow = true;
+        
+        this.initialY = y;
+        
+        gameState.scene.add(this.mesh);
+        gameState.collectibles.push(this);
+    }
+    
+    update(timeScale) {
+        // Rotate
+        this.mesh.rotation.y += 0.05 * timeScale;
+        this.mesh.rotation.z += 0.02 * timeScale;
+        
+        // Bob
+        this.mesh.position.y = this.initialY + Math.sin(gameState.frameCount * 0.05) * 0.2;
+        
+        // Collision check
+        if (gameState.player) {
+            if (this.mesh.position.distanceTo(gameState.player.mesh.position) < 1.0) {
+                this.collect();
+            }
+        }
+        
+        // Check if below liquid
+        if (gameState.liquid && this.mesh.position.y < gameState.liquid.mesh.position.y) {
+            this.remove();
+        }
+    }
+    
+    collect() {
+        gameState.score += 50;
+        createParticles(this.mesh.position, 10, 0xffff00, 0.5);
+        this.remove();
+    }
+    
+    remove() {
+        gameState.scene.remove(this.mesh);
+        const index = gameState.collectibles.indexOf(this);
+        if (index > -1) gameState.collectibles.splice(index, 1);
+    }
+}
+
+// ==========================================
+// PARTICLES
+// ==========================================
+export function createParticles(pos, count, color, scale = 1.0) {
+    const geometry = new THREE.BoxGeometry(0.1 * scale, 0.1 * scale, 0.1 * scale);
+    const material = new THREE.MeshBasicMaterial({ color: color });
+    
+    for (let i = 0; i < count; i++) {
+        const particle = new THREE.Mesh(geometry, material);
+        particle.position.copy(pos);
+        
+        // Random velocity
+        particle.velocity = new THREE.Vector3(
+            (Math.random() - 0.5) * 0.3,
+            (Math.random() - 0.5) * 0.3 + 0.2, // Upward bias
+            (Math.random() - 0.5) * 0.3
+        );
+        
+        particle.life = 1.0; // Seconds (approx)
+        
+        gameState.scene.add(particle);
+        gameState.particles.push(particle);
+    }
+}
+
+export function updateParticles(timeScale) {
+    for (let i = gameState.particles.length - 1; i >= 0; i--) {
+        const p = gameState.particles[i];
+        
+        // Scale particle movement
+        p.position.add(p.velocity.clone().multiplyScalar(timeScale));
+        p.velocity.y += GAME_CONFIG.GRAVITY * 0.5 * timeScale; // lighter gravity
+        
+        // Decay
+        p.life -= 0.02 * timeScale;
+        
+        // Visual rotation
+        p.rotation.x += 0.1 * timeScale;
+        p.rotation.y += 0.1 * timeScale;
+        
+        if (p.life <= 0) {
+            gameState.scene.remove(p);
+            gameState.particles.splice(i, 1);
+        }
+    }
+}
+</code>
+
+<code filename="physics.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, GAME_CONFIG } from './globals.js';
+import { checkAABB } from './utils.js';
+
+export function updatePhysics(timeScale) {
+    if (!gameState.player) return;
+
+    const player = gameState.player;
+
+    // Apply Gravity
+    if (!player.onGround) {
+        // Scale gravity by timeScale
+        player.velocity.y += GAME_CONFIG.GRAVITY * timeScale;
+    }
+
+    // Apply Velocity
+    // Scale position change by timeScale
+    player.mesh.position.add(player.velocity.clone().multiplyScalar(timeScale));
+
+    // Ground Check reset
+    player.onGround = false;
+
+    // Check collisions with Platforms
+    handlePlatformCollisions(player);
+
+    // Check Liquid Collision
+    if (gameState.liquid) {
+        // Liquid is 50 units high, so top is position.y + 25
+        const liquidTop = gameState.liquid.mesh.position.y + 25; 
+        const playerBottom = player.mesh.position.y - 0.5;
+        
+        if (playerBottom < liquidTop) {
+            // Drowning logic
+            player.takeDamage(100); // Instakill
+        }
+    }
+
+    // Instant Game Over if falling off map (missed platform)
+    // If player falls significantly below the latest spawned platform, they are dead.
+    // 15 units is roughly 5 platforms height.
+    if (player.mesh.position.y < gameState.lastPlatformHeight - 15) {
+        player.takeDamage(100);
+    }
+}
+
+function handlePlatformCollisions(player) {
+    const playerBox = new THREE.Box3().setFromObject(player.mesh);
+    
+    // Shrink horizontal bounds to avoid snagging on walls, but keep Y accurate for landing
+    // We only shrink X and Z so walls don't "grab" the player too easily
+    const shrinkXZ = 0.1;
+    playerBox.min.x += shrinkXZ; playerBox.max.x -= shrinkXZ;
+    playerBox.min.z += shrinkXZ; playerBox.max.z -= shrinkXZ;
+    // We do NOT shrink Y. Shrinking Y causes jitter on the floor and missed landings.
+
+    let landed = false;
+
+    for (const platformPair of gameState.platforms) {
+        // PlatformPair consists of leftBlock and rightBlock
+        const blocks = [platformPair.leftBlock, platformPair.rightBlock];
+
+        for (const block of blocks) {
+            const blockBox = new THREE.Box3().setFromObject(block);
+            
+            if (checkAABB(playerBox, blockBox)) {
+                handleSingleBlockCollision(player, block, blockBox, playerBox);
+                // Check if we landed (collision from top)
+                if (player.velocity.y === 0 && player.onGround) {
+                    landed = true;
+                }
+            }
+        }
+    }
+    
+    // Safety floor (invisible ground at start)
+    if (player.mesh.position.y <= 1.0 && !landed) {
+         if (player.velocity.y < 0) {
+             player.mesh.position.y = 1.0;
+             player.velocity.y = 0;
+             player.onGround = true;
+             player.land();
+         }
+    }
+}
+
+function handleSingleBlockCollision(player, block, blockBox, playerBox) {
+    // Determine collision normal
+    const playerBottom = playerBox.min.y;
+    const playerTop = playerBox.max.y;
+    const blockTop = blockBox.max.y;
+    const blockBottom = blockBox.min.y;
+    
+    // Top collision (Landing)
+    // Increased tolerance to catch fast falling players or edge cases.
+    // If feet are within the top 90% of the block while falling, we snap to top.
+    const landingTolerance = 0.9; 
+    
+    if (player.velocity.y <= 0 && 
+        playerBottom >= blockTop - landingTolerance) {
+        
+        player.mesh.position.y = blockTop + 0.5; // Half player height
+        player.velocity.y = 0;
+        player.onGround = true;
+        player.land();
+        return;
+    }
+    
+    // Bottom collision (Bonk head)
+    if (player.velocity.y > 0 && playerTop <= blockBottom + 0.5) {
+        player.mesh.position.y = blockBottom - 0.5;
+        player.velocity.y = 0;
+        return;
+    }
+    
+    // Side collision (Push or Squish)
+    // If blocks are moving (closing), they push the player
+    // If player moves into static block, stop player
+    
+    const overlapX = Math.min(playerBox.max.x, blockBox.max.x) - Math.max(playerBox.min.x, blockBox.min.x);
+    const overlapZ = Math.min(playerBox.max.z, blockBox.max.z) - Math.max(playerBox.min.z, blockBox.min.z);
+    
+    // Resolve smallest overlap (X or Z)
+    if (overlapX < overlapZ) {
+        const sign = player.mesh.position.x > block.position.x ? 1 : -1;
+        player.mesh.position.x += overlapX * sign;
+        player.velocity.x = 0;
+    } else {
+        const sign = player.mesh.position.z > block.position.z ? 1 : -1;
+        player.mesh.position.z += overlapZ * sign;
+        player.velocity.z = 0;
+    }
+}
+</code>

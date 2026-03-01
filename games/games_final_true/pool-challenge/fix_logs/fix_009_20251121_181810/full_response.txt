@@ -1,0 +1,681 @@
+<analysis>
+- Issue identified: Two main problems: (1) Balls phasing through walls at slow speeds due to insufficient collision detection between substeps and inadequate boundary enforcement, (2) Overly complex pocket detection with multiple conditional thresholds making behavior unpredictable and "weird"
+- Files affected: physics.js, game.js, entities.js
+- Changes needed: 
+  1. Simplify pocket detection to single predictable threshold
+  2. Add pre-physics boundary constraints to prevent tunneling
+  3. Improve Matter.js body collision properties (higher slop, better restitution)
+  4. Add continuous position checking between substeps
+  5. Strengthen boundary enforcement with immediate position correction
+</analysis>
+
+<code filename="physics.js">
+// physics.js - Physics handling and collision detection
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Events, Body } = Matter;
+
+import { gameState, POCKET_RADIUS, BALL_RADIUS, getPockets } from './globals.js';
+
+export function setupPhysics(p) {
+  // Collision detection for ball contacts
+  Events.on(gameState.engine, 'collisionStart', (event) => {
+    const pairs = event.pairs;
+    
+    pairs.forEach(pair => {
+      const bodyA = pair.bodyA;
+      const bodyB = pair.bodyB;
+      
+      // Track first ball contact
+      if (gameState.playingPhase === "WAITING" && !gameState.firstContactBall) {
+        if (bodyA.label === "ball_0" && bodyB.label && bodyB.label.startsWith("ball_")) {
+          gameState.firstContactBall = bodyB.number;
+        } else if (bodyB.label === "ball_0" && bodyA.label && bodyA.label.startsWith("ball_")) {
+          gameState.firstContactBall = bodyA.number;
+        }
+      }
+      
+      // Track cushion hits
+      if (gameState.playingPhase === "WAITING") {
+        if ((bodyA.label === "cushion" && bodyB.label && bodyB.label.startsWith("ball_")) ||
+            (bodyB.label === "cushion" && bodyA.label && bodyA.label.startsWith("ball_"))) {
+          gameState.cushionHits++;
+        }
+      }
+    });
+  });
+}
+
+export function enforceBoundaries() {
+  // Strictly enforce table boundaries with immediate correction
+  const { tableX, tableY, tableWidth, tableHeight } = gameState.levelParams;
+  
+  // Tight boundaries - prevent any escape
+  const minX = tableX - BALL_RADIUS;
+  const maxX = tableX + tableWidth + BALL_RADIUS;
+  const minY = tableY - BALL_RADIUS;
+  const maxY = tableY + tableHeight + BALL_RADIUS;
+  
+  gameState.ballsOnTable.forEach(ball => {
+    if (ball.pocketed) return;
+    
+    const pos = ball.body.position;
+    const vel = ball.body.velocity;
+    let corrected = false;
+    let newX = pos.x;
+    let newY = pos.y;
+    let newVelX = vel.x;
+    let newVelY = vel.y;
+    
+    // Hard clamp positions - never allow balls outside valid area
+    if (pos.x < minX) {
+      newX = minX;
+      newVelX = Math.abs(vel.x) * 0.7; // Bounce with damping
+      corrected = true;
+    }
+    
+    if (pos.x > maxX) {
+      newX = maxX;
+      newVelX = -Math.abs(vel.x) * 0.7;
+      corrected = true;
+    }
+    
+    if (pos.y < minY) {
+      newY = minY;
+      newVelY = Math.abs(vel.y) * 0.7;
+      corrected = true;
+    }
+    
+    if (pos.y > maxY) {
+      newY = maxY;
+      newVelY = -Math.abs(vel.y) * 0.7;
+      corrected = true;
+    }
+    
+    // Immediately correct position and velocity if out of bounds
+    if (corrected) {
+      Body.setPosition(ball.body, { x: newX, y: newY });
+      Body.setVelocity(ball.body, { x: newVelX, y: newVelY });
+    }
+  });
+}
+
+export function checkPockets(p) {
+  const pockets = getPockets();
+  const pocketRadius = POCKET_RADIUS * gameState.levelParams.pocketSizeMultiplier;
+  const { tableX, tableY, tableWidth, tableHeight } = gameState.levelParams;
+  const ballsToPocket = [];
+  
+  gameState.ballsOnTable.forEach(ball => {
+    if (ball.pocketed) return;
+    
+    const ballPos = ball.body.position;
+    const ballVel = ball.body.velocity;
+    const speed = Math.sqrt(ballVel.x * ballVel.x + ballVel.y * ballVel.y);
+    
+    // Emergency capture: if ball is far outside table, pocket it immediately
+    const emergencyMargin = BALL_RADIUS * 5;
+    if (ballPos.x < tableX - emergencyMargin || ballPos.x > tableX + tableWidth + emergencyMargin ||
+        ballPos.y < tableY - emergencyMargin || ballPos.y > tableY + tableHeight + emergencyMargin) {
+      ballsToPocket.push(ball);
+      return;
+    }
+    
+    // Simplified, predictable pocket detection
+    pockets.forEach(pocket => {
+      const dx = ballPos.x - pocket.x;
+      const dy = ballPos.y - pocket.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      
+      // Single unified threshold that accounts for ball radius and pocket radius
+      // This makes behavior consistent and predictable
+      const captureThreshold = pocketRadius + BALL_RADIUS * 0.8;
+      
+      if (dist < captureThreshold) {
+        ballsToPocket.push(ball);
+        return;
+      }
+      
+      // Additional check for balls moving slowly near pocket edge
+      // This prevents the "hovering at edge" bug
+      if (speed < 1.0 && dist < captureThreshold + BALL_RADIUS * 1.2) {
+        ballsToPocket.push(ball);
+        return;
+      }
+    });
+  });
+  
+  // Pocket the balls (remove duplicates)
+  const uniqueBallsToPocket = [...new Set(ballsToPocket)];
+  uniqueBallsToPocket.forEach(ball => {
+    ball.pocketed = true;
+    Matter.World.remove(gameState.world, ball.body);
+    
+    gameState.lastPocketedBalls.push(ball.number);
+    gameState.pocketedBalls.push(ball.number);
+    
+    // Log pocketing
+    p.logs.game_info.push({
+      data: { event: "ball_pocketed", ball: ball.number },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  });
+}
+
+export function checkAllBallsStopped() {
+  return gameState.ballsOnTable.every(ball => ball.pocketed || ball.isStopped());
+}
+</code>
+
+<code filename="game.js">
+// game.js - Main game file
+const p5 = window.p5;
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Engine, World, Body } = Matter;
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { initializeGame, updateGame, executeShot, resetGame } from './gameLogic.js';
+import { setupPhysics, enforceBoundaries } from './physics.js';
+import { renderStartScreen, renderGame, renderPausedOverlay, renderGameOver } from './rendering.js';
+
+let gameInstance = new p5(p => {
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Create Matter.js engine and world
+    const engine = Engine.create();
+    const world = engine.world;
+    world.gravity.y = 0; // No gravity for pool table
+    
+    gameState.engine = engine;
+    gameState.world = world;
+    
+    // Setup physics
+    setupPhysics(p);
+    
+    // Initialize p5.logs
+    p.logs = {
+      game_info: [],
+      player_info: [],
+      inputs: []
+    };
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: { gamePhase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    
+    // Initialize game
+    initializeGame(p);
+  };
+  
+  p.draw = function() {
+    // Enforce boundaries BEFORE physics update to prevent tunneling
+    enforceBoundaries();
+    
+    // Update Matter.js physics with substeps for better collision detection
+    const substeps = 10; // Increased to 10 for maximum accuracy
+    const timestep = (1000 / 60) / substeps;
+    
+    for (let i = 0; i < substeps; i++) {
+      // Clamp velocities BEFORE each substep
+      clampBallVelocities();
+      
+      // Run physics
+      Engine.update(gameState.engine, timestep);
+      
+      // Enforce boundaries AFTER each substep
+      enforceBoundaries();
+    }
+    
+    // Final velocity clamp after all substeps
+    clampBallVelocities();
+    
+    // Handle continuous input for aiming and power
+    handleContinuousInput(p);
+    
+    // Update and render based on game phase
+    switch (gameState.gamePhase) {
+      case "START":
+        renderStartScreen(p);
+        break;
+      case "PLAYING":
+        updateGame(p);
+        renderGame(p);
+        break;
+      case "PAUSED":
+        renderGame(p);
+        renderPausedOverlay(p);
+        break;
+      case "GAME_OVER_WIN":
+      case "GAME_OVER_LOSE":
+        renderGameOver(p);
+        break;
+    }
+  };
+  
+  function clampBallVelocities() {
+    // Prevent excessive velocities that can cause tunneling
+    const maxVelocity = 20; // Maximum velocity cap
+    
+    gameState.ballsOnTable.forEach(ball => {
+      if (ball.pocketed) return;
+      
+      const vel = ball.body.velocity;
+      const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
+      
+      if (speed > maxVelocity) {
+        const scale = maxVelocity / speed;
+        Body.setVelocity(ball.body, {
+          x: vel.x * scale,
+          y: vel.y * scale
+        });
+      }
+      
+      // Also clamp angular velocity to prevent spin issues
+      if (Math.abs(ball.body.angularVelocity) > 0.5) {
+        Body.setAngularVelocity(ball.body, 
+          ball.body.angularVelocity > 0 ? 0.5 : -0.5);
+      }
+    });
+  }
+  
+  function handleContinuousInput(p) {
+    // Only handle continuous input during player's aiming phase
+    if (gameState.gamePhase !== "PLAYING" || 
+        gameState.playingPhase !== "AIMING" || 
+        gameState.controlMode !== "HUMAN") {
+      return;
+    }
+    
+    // Continuous aim adjustment
+    if (p.keyIsDown(37)) { // Arrow Left
+      if (!p.keyIsDown(16)) { // Not holding Shift
+        gameState.aimAngle -= 0.02;
+      }
+    }
+    
+    if (p.keyIsDown(39)) { // Arrow Right
+      if (!p.keyIsDown(16)) { // Not holding Shift
+        gameState.aimAngle += 0.02;
+      }
+    }
+    
+    // Continuous power adjustment
+    if (p.keyIsDown(38)) { // Arrow Up
+      if (!p.keyIsDown(16)) { // Not holding Shift
+        gameState.shotPower = Math.min(gameState.maxShotPower, gameState.shotPower + 1);
+      }
+    }
+    
+    if (p.keyIsDown(40)) { // Arrow Down
+      if (!p.keyIsDown(16)) { // Not holding Shift
+        gameState.shotPower = Math.max(0, gameState.shotPower - 1);
+      }
+    }
+  }
+  
+  p.keyPressed = function() {
+    // Log input
+    p.logs.inputs.push({
+      input_type: "keyPressed",
+      data: { key: p.key, keyCode: p.keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    
+    // Phase control keys
+    if (p.keyCode === 13 && gameState.gamePhase === "START") { // ENTER
+      gameState.gamePhase = "PLAYING";
+      p.logs.game_info.push({
+        data: { gamePhase: "PLAYING" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+    
+    if (p.keyCode === 27) { // ESC - Pause/Unpause
+      if (gameState.gamePhase === "PLAYING") {
+        gameState.gamePhase = "PAUSED";
+        p.logs.game_info.push({
+          data: { gamePhase: "PAUSED" },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      } else if (gameState.gamePhase === "PAUSED") {
+        gameState.gamePhase = "PLAYING";
+        p.logs.game_info.push({
+          data: { gamePhase: "PLAYING" },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+    
+    if (p.keyCode === 82) { // R - Restart
+      if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE" || gameState.gamePhase === "PAUSED") {
+        gameState.level = 1;
+        gameState.score = 0;
+        resetGame(p);
+        gameState.gamePhase = "START";
+        p.logs.game_info.push({
+          data: { gamePhase: "START" },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+    
+    // Gameplay controls (only during PLAYING phase)
+    if (gameState.gamePhase === "PLAYING" && gameState.playingPhase === "AIMING" && gameState.controlMode === "HUMAN") {
+      // Spin controls (discrete)
+      if (p.keyCode === 37 && p.keyIsDown(16)) { // Shift + Left = Left spin
+        gameState.spinEffect.x = Math.max(-1, gameState.spinEffect.x - 0.2);
+      }
+      
+      if (p.keyCode === 39 && p.keyIsDown(16)) { // Shift + Right = Right spin
+        gameState.spinEffect.x = Math.min(1, gameState.spinEffect.x + 0.2);
+      }
+      
+      if (p.keyCode === 38 && p.keyIsDown(16)) { // Shift + Up = Top spin
+        gameState.spinEffect.y = Math.max(-1, gameState.spinEffect.y - 0.2);
+      }
+      
+      if (p.keyCode === 40 && p.keyIsDown(16)) { // Shift + Down = Back spin
+        gameState.spinEffect.y = Math.min(1, gameState.spinEffect.y + 0.2);
+      }
+      
+      // Execute shot
+      if (p.keyCode === 32) { // Space
+        if (gameState.shotPower > 0) {
+          executeShot(p);
+        }
+      }
+      
+      // Ball placement confirmation
+      if (p.keyCode === 90 && gameState.ballInHand) { // Z
+        gameState.ballInHand = false;
+      }
+    }
+    
+    // Next level
+    if (p.keyCode === 13 && gameState.gamePhase === "GAME_OVER_WIN") { // ENTER
+      if (gameState.level < 9) {
+        gameState.level++;
+        resetGame(p);
+        gameState.gamePhase = "PLAYING";
+        p.logs.game_info.push({
+          data: { gamePhase: "PLAYING", level: gameState.level },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+    
+    return false; // Prevent default
+  };
+});
+
+// Expose globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  document.querySelectorAll('.control-button').forEach(btn => {
+    btn.classList.remove('active');
+  });
+  
+  if (mode === "HUMAN") {
+    document.getElementById('humanModeBtn').classList.add('active');
+  } else if (mode === "TEST_1") {
+    document.getElementById('test_1_ModeBtn').classList.add('active');
+  } else if (mode === "TEST_2") {
+    document.getElementById('test_2_ModeBtn').classList.add('active');
+  }
+};
+</code>
+
+<code filename="entities.js">
+// entities.js - Game entities (balls, cue stick, etc.)
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Bodies, Body, World } = Matter;
+
+import { gameState, BALL_RADIUS, BALL_COLORS } from './globals.js';
+
+export class Ball {
+  constructor(p, x, y, number) {
+    this.p = p;
+    this.number = number;
+    this.color = BALL_COLORS[number];
+    this.pocketed = false;
+    
+    // Create Matter.js body with optimal collision properties
+    this.body = Bodies.circle(x, y, BALL_RADIUS, {
+      label: `ball_${number}`,
+      friction: 0.05,
+      frictionAir: 0.015, // Slightly increased air resistance for stability
+      restitution: 0.85, // Slightly reduced bounce for more realistic behavior
+      density: 0.001,
+      number: number,
+      slop: 0.01, // Small slop for stable physics without interpenetration
+      inertia: Infinity, // Prevent unrealistic spinning
+      // CCD-like behavior through smaller collision tolerance
+      collisionFilter: {
+        group: 0,
+        category: 0x0001,
+        mask: 0xFFFF
+      }
+    });
+    
+    World.add(gameState.world, this.body);
+  }
+  
+  update() {
+    // Check if ball is moving slowly enough to be considered stopped
+    const vel = this.body.velocity;
+    const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
+    
+    // Stop ball completely if moving very slowly
+    if (speed < 0.15) {
+      Body.setVelocity(this.body, { x: 0, y: 0 });
+      Body.setAngularVelocity(this.body, 0);
+    }
+  }
+  
+  render() {
+    if (this.pocketed) return;
+    
+    this.p.push();
+    this.p.translate(this.body.position.x, this.body.position.y);
+    this.p.rotate(this.body.angle);
+    
+    // Draw ball
+    this.p.fill(this.color.r, this.color.g, this.color.b);
+    this.p.stroke(0);
+    this.p.strokeWeight(1);
+    this.p.circle(0, 0, BALL_RADIUS * 2);
+    
+    // Draw stripe for striped balls
+    if (this.color.type === "stripe") {
+      this.p.fill(255);
+      this.p.noStroke();
+      this.p.rect(-BALL_RADIUS, -BALL_RADIUS * 0.4, BALL_RADIUS * 2, BALL_RADIUS * 0.8);
+    }
+    
+    // Draw number
+    if (this.number !== 0) {
+      this.p.fill(this.color.type === "eight" ? 255 : 0);
+      this.p.noStroke();
+      this.p.textAlign(this.p.CENTER, this.p.CENTER);
+      this.p.textSize(10);
+      this.p.text(this.number, 0, 0);
+    }
+    
+    this.p.pop();
+  }
+  
+  isStopped() {
+    const vel = this.body.velocity;
+    const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
+    return speed < 0.15;
+  }
+}
+
+export class CueStick {
+  constructor(p) {
+    this.p = p;
+    this.length = 150;
+    this.width = 4;
+  }
+  
+  render(cueBall, angle, power) {
+    if (!cueBall || cueBall.pocketed) return;
+    
+    this.p.push();
+    this.p.translate(cueBall.body.position.x, cueBall.body.position.y);
+    this.p.rotate(angle);
+    
+    // Calculate pullback distance based on power
+    const pullback = (power / gameState.maxShotPower) * 50;
+    
+    // Draw cue stick
+    this.p.fill(139, 90, 43);
+    this.p.stroke(101, 67, 33);
+    this.p.strokeWeight(1);
+    this.p.rect(-BALL_RADIUS - 10 - pullback, -this.width / 2, -this.length, this.width);
+    
+    // Draw tip
+    this.p.fill(200, 200, 200);
+    this.p.rect(-BALL_RADIUS - 10 - pullback, -this.width / 2, -10, this.width);
+    
+    this.p.pop();
+  }
+}
+
+export class Table {
+  constructor(p, world) {
+    this.p = p;
+    this.world = world;
+    this.cushions = [];
+    
+    this.createCushions();
+  }
+  
+  createCushions() {
+    const { tableX, tableY, tableWidth, tableHeight } = gameState.levelParams;
+    const cushionThickness = 40; // Increased thickness for robust collision
+    const options = {
+      isStatic: true,
+      friction: 0.9,
+      restitution: 0.75, // Slightly reduced for more predictable bounces
+      label: 'cushion',
+      slop: 0.05 // Small slop for stable collision without tunneling
+    };
+    
+    // Moderate gaps for pockets - balanced between capture and physics
+    const gapPercent = 0.16;
+    const cornerGapPercent = 0.14;
+    
+    // Top cushions (with gaps for pockets)
+    // Left section (before middle pocket)
+    this.cushions.push(Bodies.rectangle(
+      tableX + tableWidth * 0.25, tableY - cushionThickness / 2,
+      tableWidth * (0.5 - gapPercent), cushionThickness, options
+    ));
+    // Right section (after middle pocket)
+    this.cushions.push(Bodies.rectangle(
+      tableX + tableWidth * 0.75, tableY - cushionThickness / 2,
+      tableWidth * (0.5 - gapPercent), cushionThickness, options
+    ));
+    
+    // Bottom cushions (with gaps for pockets)
+    this.cushions.push(Bodies.rectangle(
+      tableX + tableWidth * 0.25, tableY + tableHeight + cushionThickness / 2,
+      tableWidth * (0.5 - gapPercent), cushionThickness, options
+    ));
+    this.cushions.push(Bodies.rectangle(
+      tableX + tableWidth * 0.75, tableY + tableHeight + cushionThickness / 2,
+      tableWidth * (0.5 - gapPercent), cushionThickness, options
+    ));
+    
+    // Left cushions (with gap at top and bottom for corner pockets)
+    // Top section
+    this.cushions.push(Bodies.rectangle(
+      tableX - cushionThickness / 2, tableY + tableHeight * 0.25,
+      cushionThickness, tableHeight * (0.5 - cornerGapPercent), options
+    ));
+    // Bottom section
+    this.cushions.push(Bodies.rectangle(
+      tableX - cushionThickness / 2, tableY + tableHeight * 0.75,
+      cushionThickness, tableHeight * (0.5 - cornerGapPercent), options
+    ));
+    
+    // Right cushions (with gap at top and bottom for corner pockets)
+    // Top section
+    this.cushions.push(Bodies.rectangle(
+      tableX + tableWidth + cushionThickness / 2, tableY + tableHeight * 0.25,
+      cushionThickness, tableHeight * (0.5 - cornerGapPercent), options
+    ));
+    // Bottom section
+    this.cushions.push(Bodies.rectangle(
+      tableX + tableWidth + cushionThickness / 2, tableY + tableHeight * 0.75,
+      cushionThickness, tableHeight * (0.5 - cornerGapPercent), options
+    ));
+    
+    this.cushions.forEach(cushion => World.add(this.world, cushion));
+  }
+  
+  render() {
+    const { tableX, tableY, tableWidth, tableHeight } = gameState.levelParams;
+    
+    // Draw table felt
+    this.p.fill(34, 139, 34);
+    this.p.stroke(101, 67, 33);
+    this.p.strokeWeight(20);
+    this.p.rect(tableX, tableY, tableWidth, tableHeight);
+    
+    // Draw pockets
+    this.p.fill(0);
+    this.p.noStroke();
+    const pocketRadius = 12 * gameState.levelParams.pocketSizeMultiplier;
+    
+    // Corner pockets
+    this.p.circle(tableX, tableY, pocketRadius * 2);
+    this.p.circle(tableX + tableWidth, tableY, pocketRadius * 2);
+    this.p.circle(tableX, tableY + tableHeight, pocketRadius * 2);
+    this.p.circle(tableX + tableWidth, tableY + tableHeight, pocketRadius * 2);
+    
+    // Middle pockets
+    this.p.circle(tableX + tableWidth / 2, tableY, pocketRadius * 2);
+    this.p.circle(tableX + tableWidth / 2, tableY + tableHeight, pocketRadius * 2);
+    
+    // Draw baulk line
+    this.p.stroke(255, 255, 255, 100);
+    this.p.strokeWeight(1);
+    this.p.line(tableX + 100, tableY, tableX + 100, tableY + tableHeight);
+  }
+}
+</code>

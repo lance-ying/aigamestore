@@ -1,0 +1,389 @@
+<analysis>
+- Issue identified: Levels 3 and 4 are too difficult because cats are placed directly on top of cheese, making collection nearly impossible without taking damage. The difficulty curve is also uneven, and the user requested a specific progression (2 Easy, 2 Medium, 2 Hard) which implies extending the game to 6 levels (currently 5).
+- Files affected: `index.html`, `collision.js`, `levelData.js`.
+- Changes needed:
+    - `index.html`: Update description to reflect 6 levels.
+    - `collision.js`: Update win condition to trigger after completing level 6 instead of 5.
+    - `levelData.js`:
+        - Keep Levels 1 & 2 mostly as is (Easy).
+        - Redesign Level 3 (Medium): Improve platform layout for better traversability, ensure cats patrol areas *between* cheese or separate from cheese to create safe zones.
+        - Redesign Level 4 (Medium): Simplify geometry slightly, ensure clear safe spots for cheese collection.
+        - Level 5 (Hard): Keep existing complex layout (formerly the final level).
+        - Add Level 6 (Hard): Create a new challenging vertical level to fulfill the "next two levels are hard" requirement.
+</analysis>
+
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Cheese Chase: Mouse Escape</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic Movement)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Smart AI)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">You are a clever mouse on a mission to collect all the delicious cheese scattered throughout increasingly dangerous environments! Navigate through 6 challenging levels filled with patrolling cats. Collect every piece of cheese to activate the mouse hole exit, then make your escape. But beware - one touch from a cat and you'll lose a life! Master the art of timing, precision jumping, and careful planning to complete all levels and claim victory.</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Left: Move left | Arrow Right: Move right | Arrow Up: Jump (when on ground) | ENTER: Start game | ESC: Pause/Unpause game | R: Return to start screen</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</code>
+
+<code filename="collision.js">
+import { gameState, GAME_PHASES } from './globals.js';
+import { Particle } from './entities.js';
+
+export function checkCollisions(p) {
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) return;
+  if (!gameState.player) return;
+
+  const player = gameState.player;
+  
+  // Check cheese collection
+  const cheeses = gameState.entities.filter(e => e.type === 'cheese' && !e.collected);
+  for (const cheese of cheeses) {
+    const dist = Math.sqrt(
+      Math.pow(player.x - cheese.x, 2) + 
+      Math.pow(player.y - cheese.y, 2)
+    );
+    if (dist < (player.w / 2 + cheese.w / 2)) {
+      cheese.collected = true;
+      gameState.cheeseCollected++;
+      gameState.score += 50;
+      
+      // Create particles
+      for (let i = 0; i < 10; i++) {
+        const angle = (Math.PI * 2 * i) / 10;
+        const speed = 2 + Math.random() * 2;
+        gameState.entities.push(
+          new Particle(
+            p,
+            cheese.x,
+            cheese.y,
+            Math.cos(angle) * speed,
+            Math.sin(angle) * speed,
+            [255, 220, 60],
+            30
+          )
+        );
+      }
+      
+      // Check if all cheese collected
+      if (gameState.cheeseCollected >= gameState.totalCheese) {
+        gameState.mouseHoleActive = true;
+      }
+    }
+  }
+  
+  // Check cat collision
+  if (!gameState.invulnerable) {
+    const cats = gameState.entities.filter(e => e.type === 'cat');
+    for (const cat of cats) {
+      const dist = Math.sqrt(
+        Math.pow(player.x - cat.x, 2) + 
+        Math.pow(player.y - cat.y, 2)
+      );
+      if (dist < (player.w / 2 + cat.w / 2)) {
+        handlePlayerHit(p);
+        break;
+      }
+    }
+  }
+  
+  // Check mouse hole collision
+  if (gameState.mouseHoleActive) {
+    const mouseHole = gameState.entities.find(e => e.type === 'mousehole');
+    if (mouseHole) {
+      const dist = Math.sqrt(
+        Math.pow(player.x - mouseHole.x, 2) + 
+        Math.pow(player.y - mouseHole.y, 2)
+      );
+      if (dist < (player.w / 2 + mouseHole.w / 2)) {
+        handleLevelComplete(p);
+      }
+    }
+  }
+}
+
+export function handlePlayerHit(p) {
+  gameState.lives--;
+  
+  // Log player death
+  p.logs.player_info.push({
+    event: 'player_died',
+    screen_x: gameState.player.x,
+    screen_y: gameState.player.y,
+    game_x: gameState.player.x,
+    game_y: gameState.player.y,
+    lives_remaining: gameState.lives,
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  
+  if (gameState.lives <= 0) {
+    gameState.gamePhase = GAME_PHASES.GAME_OVER_LOSE;
+    p.logs.game_info.push({
+      event: 'game_over_lose',
+      data: { final_score: gameState.score, level: gameState.level },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  } else {
+    // Respawn player
+    respawnPlayer(p);
+    gameState.invulnerable = true;
+    gameState.invulnerableTimer = 120; // 2 seconds at 60 FPS
+  }
+}
+
+function respawnPlayer(p) {
+  const levelConfig = gameState.currentLevelConfig;
+  if (levelConfig && gameState.player) {
+    gameState.player.x = levelConfig.playerStart.x;
+    gameState.player.y = levelConfig.playerStart.y;
+    gameState.player.vx = 0;
+    gameState.player.vy = 0;
+    gameState.player.onGround = false;
+  }
+}
+
+function handleLevelComplete(p) {
+  // Calculate level completion bonus
+  const levelBonus = 1000;
+  const livesBonus = gameState.lives * 500;
+  gameState.score += levelBonus + livesBonus;
+  
+  p.logs.game_info.push({
+    event: 'level_complete',
+    data: { 
+      level: gameState.level, 
+      score: gameState.score,
+      level_bonus: levelBonus,
+      lives_bonus: livesBonus
+    },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  
+  if (gameState.level >= 6) {
+    // Game complete!
+    gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
+    
+    // Update high score
+    if (gameState.score > gameState.highScore) {
+      gameState.highScore = gameState.score;
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem('cheeseChaseHighScore', gameState.highScore.toString());
+      }
+    }
+    
+    p.logs.game_info.push({
+      event: 'game_complete',
+      data: { final_score: gameState.score },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  } else {
+    // Next level
+    gameState.level++;
+    gameState.levelTransitionTimer = 180; // 3 seconds
+  }
+}
+</code>
+
+<code filename="levelData.js">
+export const levelConfigs = [
+  {
+    // Level 1: The Pantry Maze (Easy)
+    level: 1,
+    playerStart: { x: 60, y: 340 },
+    platforms: [
+      { x: 0, y: 380, w: 600, h: 20 }, // floor
+      { x: 150, y: 300, w: 150, h: 15 },
+      { x: 350, y: 250, w: 150, h: 15 }
+    ],
+    cheese: [
+      { x: 100, y: 350 },
+      { x: 220, y: 270 },
+      { x: 420, y: 220 }
+    ],
+    cats: [
+      { x: 400, y: 340, patrolPath: [{ x: 350, y: 340 }, { x: 500, y: 340 }], speed: 0.8 }
+    ],
+    mouseHole: { x: 550, y: 350 }
+  },
+  {
+    // Level 2: Kitchen Climb (Easy)
+    level: 2,
+    playerStart: { x: 60, y: 340 },
+    platforms: [
+      { x: 0, y: 380, w: 200, h: 20 },
+      { x: 150, y: 320, w: 100, h: 15 },
+      { x: 300, y: 260, w: 120, h: 15 },
+      { x: 450, y: 200, w: 150, h: 15 },
+      { x: 350, y: 140, w: 100, h: 15 }
+    ],
+    cheese: [
+      { x: 120, y: 350 },
+      { x: 200, y: 290 },
+      { x: 360, y: 230 },
+      { x: 520, y: 170 },
+      { x: 400, y: 110 }
+    ],
+    cats: [
+      { x: 200, y: 310, patrolPath: [{ x: 150, y: 310 }, { x: 250, y: 310 }], speed: 1.2 }
+    ],
+    mouseHole: { x: 550, y: 170 }
+  },
+  {
+    // Level 3: Dining Room (Medium)
+    // Redesigned: Clearer platforms, cats guard areas but don't sit on cheese
+    level: 3,
+    playerStart: { x: 50, y: 340 },
+    platforms: [
+      { x: 0, y: 380, w: 600, h: 20 }, // Floor
+      { x: 150, y: 250, w: 300, h: 15 }, // Main Table
+      { x: 50, y: 310, w: 80, h: 15 }, // Left Chair
+      { x: 470, y: 310, w: 80, h: 15 }, // Right Chair
+      { x: 200, y: 150, w: 200, h: 15 }  // High Shelf
+    ],
+    cheese: [
+      { x: 90, y: 290 }, // On Left Chair
+      { x: 510, y: 290 }, // On Right Chair
+      { x: 160, y: 230 }, // Table Left Edge (Safe from cat patrol)
+      { x: 440, y: 230 }, // Table Right Edge (Safe from cat patrol)
+      { x: 300, y: 130 }, // Top Shelf
+      { x: 300, y: 350 }  // Floor Center (Timed jump required)
+    ],
+    cats: [
+      // Table Cat: Patrols middle of table, leaving edges safe
+      { x: 300, y: 235, patrolPath: [{ x: 220, y: 235 }, { x: 380, y: 235 }], speed: 1.0 },
+      // Floor Cat: Patrols wide area
+      { x: 300, y: 340, patrolPath: [{ x: 150, y: 340 }, { x: 450, y: 340 }], speed: 1.1 }
+    ],
+    mouseHole: { x: 300, y: 110 }
+  },
+  {
+    // Level 4: The Staircase (Medium)
+    // Redesigned: Logical climb, cats on specific beats
+    level: 4,
+    playerStart: { x: 50, y: 340 },
+    platforms: [
+      { x: 0, y: 380, w: 600, h: 20 }, // Floor
+      { x: 100, y: 320, w: 100, h: 15 }, // Step 1
+      { x: 250, y: 260, w: 100, h: 15 }, // Step 2
+      { x: 400, y: 200, w: 100, h: 15 }, // Step 3
+      { x: 150, y: 140, w: 300, h: 15 }  // Top Beam
+    ],
+    cheese: [
+      { x: 50, y: 350 }, // Floor Start
+      { x: 550, y: 350 }, // Floor End
+      { x: 150, y: 300 }, // Step 1
+      { x: 300, y: 240 }, // Step 2
+      { x: 450, y: 180 }, // Step 3
+      { x: 170, y: 120 }, // Top Left (Safe zone)
+      { x: 430, y: 120 }  // Top Right (Safe zone)
+    ],
+    cats: [
+      // Floor Cat: Fast but predictable
+      { x: 300, y: 340, patrolPath: [{ x: 200, y: 340 }, { x: 500, y: 340 }], speed: 1.3 },
+      // Top Beam Cat: Patrols center of beam
+      { x: 300, y: 125, patrolPath: [{ x: 220, y: 125 }, { x: 380, y: 125 }], speed: 1.2 }
+    ],
+    mouseHole: { x: 300, y: 100 }
+  },
+  {
+    // Level 5: Grand Feast (Hard)
+    // Dense platforming, multiple threats
+    level: 5,
+    playerStart: { x: 300, y: 340 },
+    platforms: [
+      { x: 0, y: 380, w: 100, h: 20 },
+      { x: 150, y: 380, w: 100, h: 20 },
+      { x: 300, y: 380, w: 100, h: 20 },
+      { x: 450, y: 380, w: 150, h: 20 },
+      { x: 50, y: 330, w: 80, h: 15 },
+      { x: 180, y: 310, w: 90, h: 15 },
+      { x: 320, y: 330, w: 80, h: 15 },
+      { x: 450, y: 310, w: 90, h: 15 },
+      { x: 100, y: 270, w: 80, h: 15 },
+      { x: 230, y: 250, w: 90, h: 15 },
+      { x: 370, y: 270, w: 80, h: 15 },
+      { x: 480, y: 240, w: 100, h: 15 },
+      { x: 50, y: 210, w: 100, h: 15 },
+      { x: 200, y: 190, w: 80, h: 15 },
+      { x: 330, y: 210, w: 90, h: 15 },
+      { x: 470, y: 170, w: 100, h: 15 },
+      { x: 150, y: 130, w: 100, h: 15 },
+      { x: 300, y: 150, w: 80, h: 15 },
+      { x: 430, y: 100, w: 120, h: 15 }
+    ],
+    cheese: [
+      { x: 50, y: 350 },
+      { x: 200, y: 350 },
+      { x: 350, y: 350 },
+      { x: 90, y: 300 },
+      { x: 225, y: 280 },
+      { x: 360, y: 300 },
+      { x: 490, y: 280 },
+      { x: 140, y: 240 },
+      { x: 275, y: 220 },
+      { x: 410, y: 240 },
+      { x: 100, y: 180 },
+      { x: 490, y: 70 }
+    ],
+    cats: [
+      { x: 90, y: 320, patrolPath: [{ x: 50, y: 320 }, { x: 130, y: 320 }], speed: 1.5 },
+      { x: 360, y: 320, patrolPath: [{ x: 320, y: 320 }, { x: 400, y: 320 }], speed: 1.6 },
+      { x: 140, y: 260, patrolPath: [{ x: 100, y: 260 }, { x: 180, y: 260 }], speed: 1.7 },
+      { x: 410, y: 260, patrolPath: [{ x: 370, y: 260 }, { x: 450, y: 260 }], speed: 1.8 }
+    ],
+    mouseHole: { x: 520, y: 140 }
+  },
+  {
+    // Level 6: The Clock Tower (Hard)
+    // Vertical challenge, tight jumps
+    level: 6,
+    playerStart: { x: 300, y: 350 },
+    platforms: [
+      { x: 200, y: 380, w: 200, h: 20 }, // Start Base
+      { x: 50, y: 300, w: 120, h: 15 },
+      { x: 430, y: 300, w: 120, h: 15 },
+      { x: 250, y: 230, w: 100, h: 15 }, // Center small
+      { x: 80, y: 160, w: 150, h: 15 },
+      { x: 370, y: 160, w: 150, h: 15 },
+      { x: 250, y: 90, w: 100, h: 15 }   // Top peak
+    ],
+    cheese: [
+      { x: 60, y: 270 },
+      { x: 540, y: 270 },
+      { x: 300, y: 200 },
+      { x: 90, y: 130 },
+      { x: 510, y: 130 },
+      { x: 300, y: 60 }
+    ],
+    cats: [
+      { x: 110, y: 285, patrolPath: [{ x: 60, y: 285 }, { x: 160, y: 285 }], speed: 1.6 },
+      { x: 490, y: 285, patrolPath: [{ x: 440, y: 285 }, { x: 540, y: 285 }], speed: 1.6 },
+      { x: 300, y: 145, patrolPath: [{ x: 100, y: 145 }, { x: 500, y: 145 }], speed: 2.0 } // Fast sweeper on top
+    ],
+    mouseHole: { x: 300, y: 330 }
+  }
+];
+</code>

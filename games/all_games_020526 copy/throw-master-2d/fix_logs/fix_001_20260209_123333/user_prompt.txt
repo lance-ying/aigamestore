@@ -1,0 +1,1735 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you get rid of the "paused" text when the game is paused
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">press enter to begin</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Eliminate hostile enemies and protect innocent hostages across 5 levels. Use knives, exploding barrels, and stun boxes strategically.</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Left/Right: HOLD to smoothly rotate aiming direction | Space: Throw knife in aimed direction | Enter: Start game from menu | Esc: Pause/Unpause game | R: Restart and return to start screen</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+// globals.js - Global state and constants
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const gameState = {
+  player: null,
+  entities: [],
+  knives: [],
+  enemies: [],
+  barrels: [],
+  boxes: [],
+  hostages: [],
+  gamePhase: GAME_PHASES.START,
+  controlMode: "HUMAN",
+  score: 0,
+  currentLevel: 1,
+  maxLevel: 5,
+  playerAngle: -Math.PI / 2, // Start aiming upward
+  knifeCooldown: 0,
+  knifeCooldownTime: 250, // Reduced from 500 for faster action
+  lastKnifeTime: 0,
+  enemiesRemaining: 0,
+  hostagesAlive: 0,
+  levelTransitionTimer: 0,
+  levelTransitionDuration: 180, // 3 seconds at 60 FPS
+  showLevelComplete: false
+};
+
+// Expose getGameState globally
+if (typeof window !== 'undefined') {
+  window.getGameState = function() {
+    return gameState;
+  };
+}
+</file>
+
+<file name="game.js">
+// game.js - Main game file
+
+import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT, TARGET_FPS } from './globals.js';
+import { setupInputHandlers, updateContinuousInput } from './input.js';
+import { updateGame, handleTestingControls, setParticleSystem } from './gameLogic.js';
+import { renderGame } from './render.js';
+import { ParticleSystem } from './particles.js';
+
+const p5 = window.p5;
+
+export let particleSystem = null;
+
+let gameInstance = new p5(p => {
+  // Initialize logs (write-only)
+  p.logs = {
+    "game_info": [],
+    "inputs": [],
+    "player_info": []
+  };
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(TARGET_FPS);
+    p.randomSeed(42);
+    
+    // Initialize particle system
+    particleSystem = new ParticleSystem();
+    setParticleSystem(particleSystem);
+    
+    // Setup input handlers
+    setupInputHandlers(p);
+    
+    // Log initial game state
+    p.logs.game_info.push({
+      data: { gamePhase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+
+  p.draw = function() {
+    // Handle continuous input (smooth rotation)
+    updateContinuousInput(p);
+    
+    // Handle automated testing controls
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      handleTestingControls(p);
+    }
+    
+    // Update game logic
+    updateGame(p);
+    
+    // Render
+    renderGame(p);
+  };
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const activeBtn = document.getElementById(`${mode === 'HUMAN' ? 'human' : mode.toLowerCase()}ModeBtn`);
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+};
+
+// Export for use in other modules
+export { gameInstance };
+</file>
+
+<file name="collision.js">
+// collision.js - Collision detection helpers
+
+export function circleCircleCollision(x1, y1, r1, x2, y2, r2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const distance = Math.sqrt(dx * dx + dy * dy);
+  return distance < (r1 + r2);
+}
+
+export function circleRectCollision(cx, cy, cr, rx, ry, rw, rh) {
+  // Find closest point on rectangle to circle center
+  const closestX = Math.max(rx - rw / 2, Math.min(cx, rx + rw / 2));
+  const closestY = Math.max(ry - rh / 2, Math.min(cy, ry + rh / 2));
+  
+  // Calculate distance between circle center and closest point
+  const dx = cx - closestX;
+  const dy = cy - closestY;
+  const distance = Math.sqrt(dx * dx + dy * dy);
+  
+  return distance < cr;
+}
+</file>
+
+<file name="box.js">
+// box.js - Breakable stun box
+
+export class Box {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.size = 20;
+    this.active = true;
+    this.breaking = false;
+    this.breakTimer = 0;
+    this.breakDuration = 15;
+    this.stunRadius = 40;
+  }
+
+  break() {
+    if (!this.active || this.breaking) return false;
+    this.breaking = true;
+    this.breakTimer = this.breakDuration;
+    return true;
+  }
+
+  update() {
+    if (this.breaking) {
+      this.breakTimer--;
+      if (this.breakTimer <= 0) {
+        this.active = false;
+      }
+    }
+  }
+
+  draw(p) {
+    if (!this.active && !this.breaking) return;
+    
+    p.push();
+    
+    if (this.breaking) {
+      // Draw break effect
+      const breakProgress = 1 - (this.breakTimer / this.breakDuration);
+      
+      // Flying splinters
+      for (let i = 0; i < 6; i++) {
+        const angle = (i / 6) * Math.PI * 2;
+        const dist = breakProgress * 30;
+        const px = this.x + Math.cos(angle) * dist;
+        const py = this.y + Math.sin(angle) * dist;
+        const alpha = 255 * (1 - breakProgress);
+        
+        p.fill(139, 90, 43, alpha);
+        p.noStroke();
+        p.rect(px - 2, py - 2, 4, 4);
+      }
+      
+      // Stun wave
+      const waveRadius = this.stunRadius * breakProgress;
+      const waveAlpha = 100 * (1 - breakProgress);
+      p.fill(100, 200, 255, waveAlpha);
+      p.noStroke();
+      p.circle(this.x, this.y, waveRadius * 2);
+    } else {
+      // Draw box
+      p.fill(139, 90, 43);
+      p.stroke(80, 50, 20);
+      p.strokeWeight(2);
+      p.rect(this.x - this.size / 2, this.y - this.size / 2, this.size, this.size);
+      
+      // Wood texture lines
+      p.stroke(100, 65, 30);
+      p.strokeWeight(1);
+      p.line(this.x - this.size / 2 + 5, this.y - this.size / 2, this.x - this.size / 2 + 5, this.y + this.size / 2);
+      p.line(this.x + this.size / 2 - 5, this.y - this.size / 2, this.x + this.size / 2 - 5, this.y + this.size / 2);
+    }
+    
+    p.pop();
+  }
+
+  getBounds() {
+    return {
+      x: this.x,
+      y: this.y,
+      width: this.size,
+      height: this.size
+    };
+  }
+
+  getStunBounds() {
+    return {
+      x: this.x,
+      y: this.y,
+      radius: this.stunRadius
+    };
+  }
+}
+</file>
+
+<file name="knife.js">
+// knife.js - Knife projectile
+
+export class Knife {
+  constructor(x, y, angle) {
+    this.x = x;
+    this.y = y;
+    this.angle = angle;
+    this.speed = 8;
+    this.vx = Math.cos(angle) * this.speed;
+    this.vy = Math.sin(angle) * this.speed;
+    this.width = 2;
+    this.length = 15;
+    this.active = true;
+  }
+
+  update(canvasWidth, canvasHeight) {
+    if (!this.active) return;
+    
+    this.x += this.vx;
+    this.y += this.vy;
+    
+    // Deactivate if out of bounds
+    if (this.x < 0 || this.x > canvasWidth || this.y < 0 || this.y > canvasHeight) {
+      this.active = false;
+    }
+  }
+
+  draw(p) {
+    if (!this.active) return;
+    
+    p.push();
+    p.translate(this.x, this.y);
+    p.rotate(this.angle);
+    
+    // Draw knife body
+    p.fill(180, 180, 180);
+    p.stroke(100);
+    p.strokeWeight(1);
+    p.rect(-this.width / 2, -this.length / 2, this.width, this.length);
+    
+    // Draw knife tip
+    p.noStroke();
+    p.fill(150, 150, 150);
+    p.triangle(-2, -this.length / 2, 2, -this.length / 2, 0, -this.length / 2 - 3);
+    
+    p.pop();
+  }
+
+  getBounds() {
+    return {
+      x: this.x,
+      y: this.y,
+      radius: this.length / 2
+    };
+  }
+}
+</file>
+
+<file name="render.js">
+// render.js - Rendering logic
+
+import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { particleSystem } from './game.js';
+
+export function renderGame(p) {
+  // Clear background
+  p.background(40, 60, 40);
+  
+  if (gameState.gamePhase === GAME_PHASES.START) {
+    renderStartScreen(p);
+  } else if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+    renderPlayingScreen(p);
+  } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+    renderPlayingScreen(p);
+    renderPauseOverlay(p);
+  } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN) {
+    renderGameOverWinScreen(p);
+  } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+    renderGameOverLoseScreen(p);
+  }
+}
+
+function renderStartScreen(p) {
+  // Draw "press enter to begin" message on canvas
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(20);
+  p.text("press enter to begin", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+}
+
+function renderPlayingScreen(p) {
+  // Render game entities
+  if (gameState.player) {
+    gameState.player.draw(p);
+  }
+  
+  for (const barrel of gameState.barrels) {
+    barrel.draw(p);
+  }
+  
+  for (const box of gameState.boxes) {
+    box.draw(p);
+  }
+  
+  for (const hostage of gameState.hostages) {
+    hostage.draw(p);
+  }
+  
+  for (const enemy of gameState.enemies) {
+    if (enemy.active) {
+      enemy.draw(p);
+    }
+  }
+  
+  for (const knife of gameState.knives) {
+    knife.draw(p);
+  }
+  
+  // Render particle effects
+  if (particleSystem) {
+    particleSystem.draw(p);
+  }
+  
+  // Render UI
+  renderUI(p);
+  
+  // Render level complete message
+  if (gameState.showLevelComplete) {
+    renderLevelCompleteOverlay(p);
+  }
+}
+
+function renderUI(p) {
+  // Score
+  p.fill(255);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(20);
+  p.text(`SCORE: ${String(gameState.score).padStart(5, '0')}`, CANVAS_WIDTH - 10, 10);
+  
+  // Level
+  p.textAlign(p.LEFT, p.TOP);
+  p.text(`LEVEL: ${gameState.currentLevel}`, 10, 10);
+  
+  // Enemies remaining
+  p.textSize(14);
+  p.text(`Enemies: ${gameState.enemiesRemaining}`, 10, 35);
+  
+  // Hostages alive (only show if there are hostages in this level)
+  if (gameState.hostages.length > 0) {
+    p.fill(100, 150, 255);
+    p.text(`Hostages Safe: ${gameState.hostagesAlive}`, 10, 55);
+  }
+}
+
+function renderPauseOverlay(p) {
+  p.fill(255);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(16);
+  p.text("PAUSED", CANVAS_WIDTH - 10, 40);
+}
+
+function renderLevelCompleteOverlay(p) {
+  // Semi-transparent overlay
+  p.fill(0, 0, 0, 150);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Level complete message
+  p.fill(100, 255, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(40);
+  p.text(`LEVEL ${gameState.currentLevel} COMPLETE!`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 40);
+  
+  p.fill(255);
+  p.textSize(20);
+  p.text("+100 points", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 10);
+  
+  const remainingTime = Math.ceil((gameState.levelTransitionDuration - gameState.levelTransitionTimer) / 60);
+  p.textSize(16);
+  p.text(`Next level in ${remainingTime}...`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+}
+
+function renderGameOverWinScreen(p) {
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  // Win message
+  p.textSize(48);
+  p.fill(100, 255, 100);
+  p.text("CONGRATULATIONS!", CANVAS_WIDTH / 2, 100);
+  
+  p.textSize(32);
+  p.fill(255, 255, 100);
+  p.text("YOU WIN!", CANVAS_WIDTH / 2, 150);
+  
+  // Final score
+  p.textSize(24);
+  p.fill(255);
+  p.text(`FINAL SCORE: ${gameState.score}`, CANVAS_WIDTH / 2, 220);
+  
+  p.textSize(16);
+  p.fill(200);
+  p.text("+500 Game Completion Bonus", CANVAS_WIDTH / 2, 250);
+  
+  // Instructions
+  p.textSize(20);
+  p.fill(255, 255, 150);
+  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, 340);
+}
+
+function renderGameOverLoseScreen(p) {
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  // Lose message
+  p.textSize(48);
+  p.fill(255, 100, 100);
+  p.text("GAME OVER", CANVAS_WIDTH / 2, 120);
+  
+  p.textSize(20);
+  p.fill(255);
+  p.text("A hostage was killed!", CANVAS_WIDTH / 2, 170);
+  
+  // Final score
+  p.textSize(24);
+  p.fill(255);
+  p.text(`FINAL SCORE: ${gameState.score}`, CANVAS_WIDTH / 2, 230);
+  
+  // Instructions
+  p.textSize(20);
+  p.fill(255, 255, 150);
+  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, 340);
+}
+</file>
+
+<file name="levels.js">
+// levels.js - Level definitions
+
+export const levels = [
+  // Level 1: The Training Grounds (now with a hostage to introduce the mechanic)
+  {
+    number: 1,
+    name: "The Training Grounds",
+    enemies: [
+      { type: 'normal', spawnX: 200, spawnY: 50, path: [{x: 200, y: 350}] },
+      { type: 'normal', spawnX: 300, spawnY: 50, path: [{x: 300, y: 350}] },
+      { type: 'normal', spawnX: 400, spawnY: 50, path: [{x: 400, y: 350}] },
+      { type: 'normal', spawnX: 250, spawnY: 30, path: [{x: 250, y: 350}] },
+      { type: 'normal', spawnX: 350, spawnY: 30, path: [{x: 350, y: 350}] }
+    ],
+    barrels: [],
+    boxes: [],
+    hostages: [
+      { x: 300, y: 370 }
+    ]
+  },
+  
+  // Level 2: Barrel Practice
+  {
+    number: 2,
+    name: "Barrel Practice",
+    enemies: [
+      { type: 'normal', spawnX: 150, spawnY: 50, path: [{x: 200, y: 150}, {x: 250, y: 150}] },
+      { type: 'normal', spawnX: 450, spawnY: 50, path: [{x: 400, y: 150}, {x: 350, y: 150}] },
+      { type: 'normal', spawnX: 200, spawnY: 30, path: [{x: 200, y: 200}, {x: 300, y: 200}] },
+      { type: 'normal', spawnX: 400, spawnY: 30, path: [{x: 400, y: 200}, {x: 300, y: 200}] },
+      { type: 'normal', spawnX: 300, spawnY: 50, path: [{x: 300, y: 250}] },
+      { type: 'normal', spawnX: 250, spawnY: 70, path: [{x: 250, y: 180}] },
+      { type: 'normal', spawnX: 350, spawnY: 70, path: [{x: 350, y: 180}] }
+    ],
+    barrels: [
+      { x: 230, y: 150 },
+      { x: 370, y: 150 }
+    ],
+    boxes: [],
+    hostages: [
+      { x: 500, y: 350 }
+    ]
+  },
+  
+  // Level 3: The Stun Zone
+  {
+    number: 3,
+    name: "The Stun Zone",
+    enemies: [
+      { type: 'normal', spawnX: 150, spawnY: 50, path: [{x: 150, y: 200}, {x: 250, y: 200}] },
+      { type: 'normal', spawnX: 450, spawnY: 50, path: [{x: 450, y: 200}, {x: 350, y: 200}] },
+      { type: 'fast', spawnX: 200, spawnY: 30, path: [{x: 300, y: 150}, {x: 300, y: 300}] },
+      { type: 'fast', spawnX: 400, spawnY: 30, path: [{x: 300, y: 150}, {x: 300, y: 300}] },
+      { type: 'normal', spawnX: 300, spawnY: 50, path: [{x: 300, y: 250}] },
+      { type: 'normal', spawnX: 250, spawnY: 70, path: [{x: 200, y: 250}] },
+      { type: 'normal', spawnX: 350, spawnY: 70, path: [{x: 400, y: 250}] },
+      { type: 'normal', spawnX: 100, spawnY: 100, path: [{x: 150, y: 300}] },
+      { type: 'normal', spawnX: 500, spawnY: 100, path: [{x: 450, y: 300}] },
+      { type: 'normal', spawnX: 300, spawnY: 20, path: [{x: 300, y: 200}] }
+    ],
+    barrels: [],
+    boxes: [
+      { x: 200, y: 180 },
+      { x: 300, y: 180 },
+      { x: 400, y: 180 }
+    ],
+    hostages: [
+      { x: 150, y: 350 },
+      { x: 450, y: 350 }
+    ]
+  },
+  
+  // Level 4: Hostage Rescue
+  {
+    number: 4,
+    name: "Hostage Rescue",
+    enemies: [
+      { type: 'normal', spawnX: 100, spawnY: 50, path: [{x: 100, y: 200}, {x: 200, y: 200}] },
+      { type: 'normal', spawnX: 500, spawnY: 50, path: [{x: 500, y: 200}, {x: 400, y: 200}] },
+      { type: 'fast', spawnX: 150, spawnY: 30, path: [{x: 150, y: 250}] },
+      { type: 'fast', spawnX: 450, spawnY: 30, path: [{x: 450, y: 250}] },
+      { type: 'fast', spawnX: 300, spawnY: 20, path: [{x: 300, y: 150}, {x: 200, y: 250}] },
+      { type: 'normal', spawnX: 200, spawnY: 60, path: [{x: 200, y: 280}] },
+      { type: 'normal', spawnX: 400, spawnY: 60, path: [{x: 400, y: 280}] },
+      { type: 'normal', spawnX: 250, spawnY: 80, path: [{x: 250, y: 200}] },
+      { type: 'normal', spawnX: 350, spawnY: 80, path: [{x: 350, y: 200}] },
+      { type: 'normal', spawnX: 300, spawnY: 40, path: [{x: 300, y: 220}] },
+      { type: 'normal', spawnX: 120, spawnY: 100, path: [{x: 120, y: 300}] },
+      { type: 'tank', spawnX: 300, spawnY: 50, path: [{x: 300, y: 250}] }
+    ],
+    barrels: [
+      { x: 180, y: 180 },
+      { x: 420, y: 180 }
+    ],
+    boxes: [
+      { x: 300, y: 150 }
+    ],
+    hostages: [
+      { x: 120, y: 350 },
+      { x: 300, y: 330 },
+      { x: 480, y: 350 }
+    ]
+  },
+  
+  // Level 5: The Final Gauntlet
+  {
+    number: 5,
+    name: "The Final Gauntlet",
+    enemies: [
+      { type: 'normal', spawnX: 100, spawnY: 50, path: [{x: 100, y: 200}, {x: 150, y: 300}] },
+      { type: 'normal', spawnX: 500, spawnY: 50, path: [{x: 500, y: 200}, {x: 450, y: 300}] },
+      { type: 'fast', spawnX: 150, spawnY: 30, path: [{x: 200, y: 150}, {x: 200, y: 320}] },
+      { type: 'fast', spawnX: 450, spawnY: 30, path: [{x: 400, y: 150}, {x: 400, y: 320}] },
+      { type: 'fast', spawnX: 300, spawnY: 20, path: [{x: 300, y: 150}, {x: 250, y: 280}] },
+      { type: 'fast', spawnX: 350, spawnY: 25, path: [{x: 300, y: 150}, {x: 350, y: 280}] },
+      { type: 'normal', spawnX: 200, spawnY: 60, path: [{x: 200, y: 250}] },
+      { type: 'normal', spawnX: 400, spawnY: 60, path: [{x: 400, y: 250}] },
+      { type: 'normal', spawnX: 250, spawnY: 70, path: [{x: 250, y: 200}, {x: 200, y: 300}] },
+      { type: 'normal', spawnX: 350, spawnY: 70, path: [{x: 350, y: 200}, {x: 400, y: 300}] },
+      { type: 'normal', spawnX: 180, spawnY: 40, path: [{x: 180, y: 280}] },
+      { type: 'normal', spawnX: 420, spawnY: 40, path: [{x: 420, y: 280}] },
+      { type: 'normal', spawnX: 300, spawnY: 35, path: [{x: 300, y: 220}] },
+      { type: 'normal', spawnX: 270, spawnY: 50, path: [{x: 270, y: 180}] },
+      { type: 'tank', spawnX: 300, spawnY: 50, path: [{x: 300, y: 250}] }
+    ],
+    barrels: [
+      { x: 180, y: 150 },
+      { x: 300, y: 140 },
+      { x: 420, y: 150 },
+      { x: 230, y: 220 },
+      { x: 370, y: 220 }
+    ],
+    boxes: [
+      { x: 250, y: 180 },
+      { x: 350, y: 180 }
+    ],
+    hostages: [
+      { x: 100, y: 350 },
+      { x: 250, y: 340 },
+      { x: 350, y: 340 },
+      { x: 500, y: 350 }
+    ]
+  }
+];
+</file>
+
+<file name="enemy.js">
+// enemy.js - Enemy entities
+
+export class Enemy {
+  constructor(x, y, type = 'normal') {
+    this.x = x;
+    this.y = y;
+    this.type = type;
+    this.active = true;
+    this.stunned = false;
+    this.stunTimer = 0;
+    this.flashTimer = 0;
+    this.damageTimer = 0; // Timer for dealing damage to hostages
+    
+    // Type-specific properties (reduced speeds for better gameplay)
+    if (type === 'normal') {
+      this.health = 1;
+      this.maxHealth = 1;
+      this.speed = 0.6; // Reduced from 1
+      this.size = 15;
+      this.color = [255, 50, 50];
+      this.points = 10;
+      this.damage = 2; // Damage dealt to hostages per hit
+      this.attackCooldown = 30; // Frames between attacks (0.5 seconds at 60fps)
+    } else if (type === 'fast') {
+      this.health = 1;
+      this.maxHealth = 1;
+      this.speed = 1.0; // Reduced from 1.5
+      this.size = 15;
+      this.color = [255, 150, 50];
+      this.points = 20;
+      this.damage = 2;
+      this.attackCooldown = 30;
+    } else if (type === 'tank') {
+      this.health = 3;
+      this.maxHealth = 3;
+      this.speed = 0.5; // Reduced from 0.7
+      this.size = 20;
+      this.color = [150, 30, 30];
+      this.points = 30;
+      this.damage = 3;
+      this.attackCooldown = 30;
+    }
+    
+    this.targetX = x;
+    this.targetY = y;
+    this.pathIndex = 0;
+    this.path = [];
+    this.seekingTarget = false; // Flag for when actively seeking hostages/player
+  }
+
+  setPath(path) {
+    this.path = path;
+    if (path.length > 0) {
+      this.targetX = path[0].x;
+      this.targetY = path[0].y;
+    }
+  }
+
+  // Find and move towards nearest hostage (prioritize hostages over player)
+  seekNearestTarget(hostages, player) {
+    let nearestDist = Infinity;
+    let nearestX = this.x;
+    let nearestY = this.y;
+    
+    // First, check all living hostages (always prioritize hostages)
+    let foundHostage = false;
+    for (const hostage of hostages) {
+      if (hostage.alive) {
+        foundHostage = true;
+        const dx = hostage.x - this.x;
+        const dy = hostage.y - this.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        
+        if (dist < nearestDist) {
+          nearestDist = dist;
+          nearestX = hostage.x;
+          nearestY = hostage.y;
+        }
+      }
+    }
+    
+    // Only target player if no living hostages exist
+    if (!foundHostage && player) {
+      nearestX = player.x;
+      nearestY = player.y;
+    }
+    
+    this.targetX = nearestX;
+    this.targetY = nearestY;
+    this.seekingTarget = true;
+  }
+
+  update(hostages, player) {
+    if (!this.active) return;
+    
+    // Update damage timer
+    if (this.damageTimer > 0) {
+      this.damageTimer--;
+    }
+    
+    // Update stun
+    if (this.stunned) {
+      this.stunTimer--;
+      if (this.stunTimer <= 0) {
+        this.stunned = false;
+      }
+      return;
+    }
+    
+    // Update flash
+    if (this.flashTimer > 0) {
+      this.flashTimer--;
+    }
+    
+    // Move towards target
+    const dx = this.targetX - this.x;
+    const dy = this.targetY - this.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    
+    if (dist > 5) {
+      this.x += (dx / dist) * this.speed;
+      this.y += (dy / dist) * this.speed;
+    } else if (this.path.length > 0 && !this.seekingTarget) {
+      // Move to next waypoint in path
+      this.pathIndex++;
+      if (this.pathIndex < this.path.length) {
+        this.targetX = this.path[this.pathIndex].x;
+        this.targetY = this.path[this.pathIndex].y;
+      } else {
+        // Path complete, start seeking hostages/player
+        this.seekNearestTarget(hostages, player);
+      }
+    } else if (!this.seekingTarget) {
+      // No path or path complete, seek targets
+      this.seekNearestTarget(hostages, player);
+    }
+    
+    // If already seeking, periodically update target
+    if (this.seekingTarget && Math.random() < 0.05) { // 5% chance per frame to update target
+      this.seekNearestTarget(hostages, player);
+    }
+  }
+
+  draw(p) {
+    if (!this.active) return;
+    
+    p.push();
+    p.translate(this.x, this.y);
+    
+    // Flash white when hit
+    const fillColor = this.flashTimer > 0 ? [255, 255, 255] : this.color;
+    
+    p.fill(...fillColor);
+    p.stroke(0);
+    p.strokeWeight(2);
+    
+    if (this.type === 'normal' || this.type === 'tank') {
+      p.circle(0, 0, this.size);
+    } else if (this.type === 'fast') {
+      p.triangle(-this.size / 2, this.size / 2, this.size / 2, this.size / 2, 0, -this.size / 2);
+    }
+    
+    // Draw health bar for tank
+    if (this.type === 'tank') {
+      const barWidth = this.size;
+      const barHeight = 3;
+      const healthPercent = this.health / this.maxHealth;
+      
+      p.fill(255, 0, 0);
+      p.noStroke();
+      p.rect(-barWidth / 2, -this.size / 2 - 8, barWidth, barHeight);
+      
+      p.fill(0, 255, 0);
+      p.rect(-barWidth / 2, -this.size / 2 - 8, barWidth * healthPercent, barHeight);
+    }
+    
+    // Draw stun indicator
+    if (this.stunned) {
+      p.fill(255);
+      p.noStroke();
+      p.textAlign(p.CENTER, p.CENTER);
+      p.textSize(12);
+      p.text("Zzz", 0, -this.size - 10);
+    }
+    
+    p.pop();
+  }
+
+  takeDamage(amount) {
+    this.health -= amount;
+    this.flashTimer = 10;
+    
+    if (this.health <= 0) {
+      this.active = false;
+      return true; // Enemy defeated
+    }
+    return false;
+  }
+
+  stun(duration) {
+    this.stunned = true;
+    this.stunTimer = duration;
+  }
+
+  canAttack() {
+    return this.damageTimer <= 0;
+  }
+
+  resetAttackTimer() {
+    this.damageTimer = this.attackCooldown;
+  }
+
+  getBounds() {
+    return {
+      x: this.x,
+      y: this.y,
+      radius: this.size / 2
+    };
+  }
+}
+</file>
+
+<file name="barrel.js">
+// barrel.js - Exploding barrel
+
+export class Barrel {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.radius = 12.5;
+    this.active = true;
+    this.exploding = false;
+    this.explosionTimer = 0;
+    this.explosionDuration = 20;
+    this.explosionRadius = 50;
+  }
+
+  explode() {
+    if (!this.active || this.exploding) return false;
+    this.exploding = true;
+    this.explosionTimer = this.explosionDuration;
+    return true;
+  }
+
+  update() {
+    if (this.exploding) {
+      this.explosionTimer--;
+      if (this.explosionTimer <= 0) {
+        this.active = false;
+      }
+    }
+  }
+
+  draw(p) {
+    if (!this.active && !this.exploding) return;
+    
+    p.push();
+    
+    if (this.exploding) {
+      // Draw explosion effect
+      const explosionProgress = 1 - (this.explosionTimer / this.explosionDuration);
+      const currentRadius = this.explosionRadius * explosionProgress;
+      const alpha = 255 * (1 - explosionProgress);
+      
+      p.fill(255, 100, 0, alpha);
+      p.noStroke();
+      p.circle(this.x, this.y, currentRadius * 2);
+      
+      // Debris particles
+      for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * Math.PI * 2;
+        const dist = currentRadius * 0.8;
+        const px = this.x + Math.cos(angle) * dist;
+        const py = this.y + Math.sin(angle) * dist;
+        p.fill(80, 80, 80, alpha);
+        p.circle(px, py, 4);
+      }
+    } else {
+      // Draw barrel
+      p.fill(200, 50, 50);
+      p.stroke(0);
+      p.strokeWeight(2);
+      p.circle(this.x, this.y, this.radius * 2);
+    }
+    
+    p.pop();
+  }
+
+  getBounds() {
+    return {
+      x: this.x,
+      y: this.y,
+      radius: this.radius
+    };
+  }
+
+  getExplosionBounds() {
+    return {
+      x: this.x,
+      y: this.y,
+      radius: this.explosionRadius
+    };
+  }
+}
+</file>
+
+<file name="gameLogic.js">
+// gameLogic.js - Core game logic
+
+import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Player } from './player.js';
+import { Knife } from './knife.js';
+import { Enemy } from './enemy.js';
+import { Barrel } from './barrel.js';
+import { Box } from './box.js';
+import { Hostage } from './hostage.js';
+import { levels } from './levels.js';
+import { circleCircleCollision, circleRectCollision } from './collision.js';
+
+let particleSystem = null;
+
+export function setParticleSystem(ps) {
+  particleSystem = ps;
+}
+
+export function initializeLevel(p, levelNumber) {
+  // Clear previous level
+  gameState.knives = [];
+  gameState.enemies = [];
+  gameState.barrels = [];
+  gameState.boxes = [];
+  gameState.hostages = [];
+  gameState.entities = [];
+  gameState.showLevelComplete = false;
+  gameState.levelTransitionTimer = 0;
+  
+  if (particleSystem) {
+    particleSystem.clear();
+  }
+  
+  // Get level data
+  const levelData = levels[levelNumber - 1];
+  if (!levelData) {
+    // No more levels - game complete
+    gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
+    gameState.score += 500; // Game completion bonus
+    return;
+  }
+  
+  // Initialize player if not exists
+  if (!gameState.player) {
+    gameState.player = new Player(CANVAS_WIDTH / 2, CANVAS_HEIGHT - 30);
+    gameState.entities.push(gameState.player);
+  }
+  
+  // Spawn enemies
+  for (const enemyData of levelData.enemies) {
+    const enemy = new Enemy(enemyData.spawnX, enemyData.spawnY, enemyData.type);
+    enemy.setPath(enemyData.path);
+    gameState.enemies.push(enemy);
+    gameState.entities.push(enemy);
+  }
+  
+  // Spawn barrels
+  for (const barrelData of levelData.barrels) {
+    const barrel = new Barrel(barrelData.x, barrelData.y);
+    gameState.barrels.push(barrel);
+    gameState.entities.push(barrel);
+  }
+  
+  // Spawn boxes
+  for (const boxData of levelData.boxes) {
+    const box = new Box(boxData.x, boxData.y);
+    gameState.boxes.push(box);
+    gameState.entities.push(box);
+  }
+  
+  // Spawn hostages
+  for (const hostageData of levelData.hostages) {
+    const hostage = new Hostage(hostageData.x, hostageData.y);
+    gameState.hostages.push(hostage);
+    gameState.entities.push(hostage);
+  }
+  
+  gameState.enemiesRemaining = gameState.enemies.length;
+  gameState.hostagesAlive = gameState.hostages.length;
+  
+  // Log player initial position
+  if (gameState.player) {
+    p.logs.player_info.push({
+      screen_x: gameState.player.x,
+      screen_y: gameState.player.y,
+      game_x: gameState.player.x,
+      game_y: gameState.player.y,
+      framecount: p.frameCount
+    });
+  }
+}
+
+export function throwKnife(p) {
+  const currentTime = Date.now();
+  
+  if (currentTime - gameState.lastKnifeTime < gameState.knifeCooldownTime) {
+    return; // Still on cooldown
+  }
+  
+  gameState.lastKnifeTime = currentTime;
+  
+  const knife = new Knife(
+    gameState.player.x,
+    gameState.player.y,
+    gameState.playerAngle
+  );
+  
+  gameState.knives.push(knife);
+}
+
+export function updateGame(p) {
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) return;
+  
+  // Handle level transition
+  if (gameState.showLevelComplete) {
+    gameState.levelTransitionTimer++;
+    if (gameState.levelTransitionTimer >= gameState.levelTransitionDuration) {
+      gameState.currentLevel++;
+      if (gameState.currentLevel > gameState.maxLevel) {
+        gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
+        gameState.score += 500; // Game completion bonus
+        
+        p.logs.game_info.push({
+          data: { gamePhase: gameState.gamePhase, finalScore: gameState.score },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      } else {
+        initializeLevel(p, gameState.currentLevel);
+        gameState.gamePhase = GAME_PHASES.PLAYING;
+      }
+    }
+    return;
+  }
+  
+  // Update player
+  if (gameState.player) {
+    gameState.player.update();
+  }
+  
+  // Update knives
+  for (let i = gameState.knives.length - 1; i >= 0; i--) {
+    const knife = gameState.knives[i];
+    knife.update(CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    if (!knife.active) {
+      gameState.knives.splice(i, 1);
+      continue;
+    }
+    
+    checkKnifeCollisions(p, knife, i);
+  }
+  
+  // Update enemies (now with hostage/player seeking)
+  gameState.enemiesRemaining = 0;
+  for (const enemy of gameState.enemies) {
+    if (enemy.active) {
+      enemy.update(gameState.hostages, gameState.player);
+      gameState.enemiesRemaining++;
+      
+      // Check collision with hostages (deal damage over time)
+      for (const hostage of gameState.hostages) {
+        if (hostage.alive) {
+          const enemyBounds = enemy.getBounds();
+          const hostageBounds = hostage.getBounds();
+          
+          if (circleCircleCollision(
+            enemyBounds.x, enemyBounds.y, enemyBounds.radius,
+            hostageBounds.x, hostageBounds.y, hostageBounds.radius + 5
+          )) {
+            // Deal damage if attack is ready
+            if (enemy.canAttack()) {
+              hostage.takeDamage(enemy.damage);
+              enemy.resetAttackTimer();
+              
+              // Check if hostage died
+              if (!hostage.alive) {
+                gameState.gamePhase = GAME_PHASES.GAME_OVER_LOSE;
+                
+                p.logs.game_info.push({
+                  data: { gamePhase: gameState.gamePhase, reason: "hostage_killed" },
+                  framecount: p.frameCount,
+                  timestamp: Date.now()
+                });
+                return;
+              }
+            }
+          }
+        }
+      }
+      
+      // Check collision with player (optional - enemies can also attack player)
+      if (gameState.player) {
+        const enemyBounds = enemy.getBounds();
+        const playerBounds = {
+          x: gameState.player.x,
+          y: gameState.player.y,
+          radius: gameState.player.radius
+        };
+        
+        if (circleCircleCollision(
+          enemyBounds.x, enemyBounds.y, enemyBounds.radius,
+          playerBounds.x, playerBounds.y, playerBounds.radius
+        )) {
+          // Player takes damage (optional - for now just slow down enemy)
+          // Could add player health system later
+        }
+      }
+    }
+  }
+  
+  // Update barrels
+  for (const barrel of gameState.barrels) {
+    barrel.update();
+  }
+  
+  // Update boxes
+  for (const box of gameState.boxes) {
+    box.update();
+  }
+  
+  // Update particle system
+  if (particleSystem) {
+    particleSystem.update();
+  }
+  
+  // Check win condition
+  gameState.hostagesAlive = 0;
+  for (const hostage of gameState.hostages) {
+    if (hostage.alive) gameState.hostagesAlive++;
+  }
+  
+  if (gameState.enemiesRemaining === 0 && gameState.hostagesAlive === gameState.hostages.length) {
+    gameState.showLevelComplete = true;
+    gameState.levelTransitionTimer = 0;
+    gameState.score += 100; // Level completion bonus
+    
+    p.logs.game_info.push({
+      data: { level: gameState.currentLevel, levelComplete: true },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+
+function checkKnifeCollisions(p, knife, knifeIndex) {
+  const knifeBounds = knife.getBounds();
+  
+  // Check collision with enemies
+  for (const enemy of gameState.enemies) {
+    if (!enemy.active) continue;
+    
+    const enemyBounds = enemy.getBounds();
+    if (circleCircleCollision(
+      knifeBounds.x, knifeBounds.y, knifeBounds.radius,
+      enemyBounds.x, enemyBounds.y, enemyBounds.radius
+    )) {
+      knife.active = false;
+      
+      if (enemy.takeDamage(1)) {
+        // Enemy defeated
+        gameState.score += enemy.points;
+        
+        if (particleSystem) {
+          particleSystem.addEnemyDefeatEffect(enemy.x, enemy.y, enemy.color);
+        }
+      }
+      
+      return;
+    }
+  }
+  
+  // Check collision with barrels
+  for (const barrel of gameState.barrels) {
+    if (!barrel.active || barrel.exploding) continue;
+    
+    const barrelBounds = barrel.getBounds();
+    if (circleCircleCollision(
+      knifeBounds.x, knifeBounds.y, knifeBounds.radius,
+      barrelBounds.x, barrelBounds.y, barrelBounds.radius
+    )) {
+      knife.active = false;
+      
+      if (barrel.explode()) {
+        gameState.score += 50;
+        
+        // Damage enemies in explosion radius
+        const explosionBounds = barrel.getExplosionBounds();
+        for (const enemy of gameState.enemies) {
+          if (!enemy.active) continue;
+          
+          const enemyBounds = enemy.getBounds();
+          if (circleCircleCollision(
+            explosionBounds.x, explosionBounds.y, explosionBounds.radius,
+            enemyBounds.x, enemyBounds.y, enemyBounds.radius
+          )) {
+            if (enemy.takeDamage(1)) {
+              gameState.score += enemy.points;
+              
+              if (particleSystem) {
+                particleSystem.addEnemyDefeatEffect(enemy.x, enemy.y, enemy.color);
+              }
+            }
+          }
+        }
+      }
+      
+      return;
+    }
+  }
+  
+  // Check collision with boxes
+  for (const box of gameState.boxes) {
+    if (!box.active || box.breaking) continue;
+    
+    const boxBounds = box.getBounds();
+    if (circleRectCollision(
+      knifeBounds.x, knifeBounds.y, knifeBounds.radius,
+      boxBounds.x, boxBounds.y, boxBounds.width, boxBounds.height
+    )) {
+      knife.active = false;
+      
+      if (box.break()) {
+        gameState.score += 25;
+        
+        // Stun enemies in radius
+        const stunBounds = box.getStunBounds();
+        for (const enemy of gameState.enemies) {
+          if (!enemy.active) continue;
+          
+          const enemyBounds = enemy.getBounds();
+          if (circleCircleCollision(
+            stunBounds.x, stunBounds.y, stunBounds.radius,
+            enemyBounds.x, enemyBounds.y, enemyBounds.radius
+          )) {
+            enemy.stun(120); // 2 seconds at 60 FPS
+          }
+        }
+      }
+      
+      return;
+    }
+  }
+}
+
+export function handleTestingControls(p) {
+  if (gameState.controlMode === "HUMAN") return;
+  
+  // Implement automated testing logic
+  if (gameState.controlMode === "TEST_1") {
+    // Basic testing - rotate and shoot periodically
+    if (p.frameCount % 30 === 0) {
+      gameState.playerAngle += 10 * (Math.PI / 180);
+    }
+    if (p.frameCount % 60 === 0) {
+      throwKnife(p);
+    }
+  } else if (gameState.controlMode === "TEST_2") {
+    // Win condition testing - aim at enemies and shoot
+    if (gameState.enemies.length > 0) {
+      const activeEnemies = gameState.enemies.filter(e => e.active);
+      if (activeEnemies.length > 0) {
+        const target = activeEnemies[0];
+        const dx = target.x - gameState.player.x;
+        const dy = target.y - gameState.player.y;
+        const targetAngle = Math.atan2(dy, dx);
+        
+        gameState.playerAngle = targetAngle;
+        
+        if (p.frameCount % 30 === 0) {
+          throwKnife(p);
+        }
+      }
+    }
+  }
+}
+</file>
+
+<file name="player.js">
+// player.js - Player entity
+
+import { gameState } from './globals.js';
+
+export class Player {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.radius = 10;
+    this.angle = -Math.PI / 2; // Aiming upward initially
+  }
+
+  update() {
+    this.angle = gameState.playerAngle;
+  }
+
+  draw(p) {
+    p.push();
+    
+    // Draw trajectory line first (so it appears behind the player)
+    this.drawTrajectoryLine(p);
+    
+    p.translate(this.x, this.y);
+    
+    // Draw player body (green circle)
+    p.fill(50, 200, 50);
+    p.stroke(255);
+    p.strokeWeight(2);
+    p.circle(0, 0, this.radius * 2);
+    
+    // Draw aiming indicator (white triangle pointing right in local coords)
+    p.fill(255);
+    p.noStroke();
+    p.rotate(this.angle);
+    // Triangle now points to the right (positive X) before rotation
+    p.triangle(0, -5, 0, 5, 15, 0);
+    
+    p.pop();
+  }
+
+  drawTrajectoryLine(p) {
+    const trajectoryLength = 200; // Length of trajectory line
+    const numDots = 15; // Number of dots along the trajectory
+    
+    // Calculate end point of trajectory
+    const endX = this.x + Math.cos(this.angle) * trajectoryLength;
+    const endY = this.y + Math.sin(this.angle) * trajectoryLength;
+    
+    // Draw dotted line
+    p.stroke(255, 255, 255, 120); // Semi-transparent white
+    p.strokeWeight(2);
+    
+    for (let i = 1; i <= numDots; i++) {
+      const t = i / numDots;
+      const px = this.x + Math.cos(this.angle) * trajectoryLength * t;
+      const py = this.y + Math.sin(this.angle) * trajectoryLength * t;
+      
+      // Draw small circle for each dot
+      p.noStroke();
+      p.fill(255, 255, 255, 150 * (1 - t * 0.5)); // Fade out along trajectory
+      p.circle(px, py, 3);
+    }
+  }
+}
+</file>
+
+<file name="hostage.js">
+// hostage.js - Hostage entity
+
+export class Hostage {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.radius = 5;
+    this.alive = true;
+    this.health = 100;
+    this.maxHealth = 100;
+  }
+
+  takeDamage(amount) {
+    if (!this.alive) return;
+    
+    this.health -= amount;
+    if (this.health <= 0) {
+      this.health = 0;
+      this.alive = false;
+    }
+  }
+
+  draw(p) {
+    if (!this.alive) {
+      // Draw dead hostage (gray X)
+      p.push();
+      p.translate(this.x, this.y);
+      p.stroke(100);
+      p.strokeWeight(3);
+      p.line(-5, -5, 5, 5);
+      p.line(-5, 5, 5, -5);
+      p.pop();
+      return;
+    }
+    
+    p.push();
+    p.translate(this.x, this.y);
+    
+    // Draw hostage (blue circle)
+    p.fill(100, 150, 255);
+    p.stroke(255);
+    p.strokeWeight(2);
+    p.circle(0, 0, this.radius * 2);
+    
+    // Draw simple stick figure
+    p.stroke(255);
+    p.strokeWeight(1.5);
+    p.line(0, 2, 0, 8); // Body
+    p.line(0, 4, -3, 7); // Left arm
+    p.line(0, 4, 3, 7); // Right arm
+    
+    // Draw health bar
+    const barWidth = 30;
+    const barHeight = 4;
+    const healthPercent = this.health / this.maxHealth;
+    
+    // Background (red)
+    p.fill(255, 0, 0);
+    p.noStroke();
+    p.rect(-barWidth / 2, -15, barWidth, barHeight);
+    
+    // Health (green to yellow to red based on health)
+    let healthColor;
+    if (healthPercent > 0.6) {
+      healthColor = [0, 255, 0]; // Green
+    } else if (healthPercent > 0.3) {
+      healthColor = [255, 255, 0]; // Yellow
+    } else {
+      healthColor = [255, 100, 0]; // Orange
+    }
+    
+    p.fill(...healthColor);
+    p.rect(-barWidth / 2, -15, barWidth * healthPercent, barHeight);
+    
+    // Health text
+    p.fill(255);
+    p.noStroke();
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(8);
+    p.text(Math.ceil(this.health), 0, -20);
+    
+    p.pop();
+  }
+
+  getBounds() {
+    return {
+      x: this.x,
+      y: this.y,
+      radius: this.radius
+    };
+  }
+
+  kill() {
+    this.alive = false;
+    this.health = 0;
+  }
+}
+</file>
+
+<file name="particles.js">
+// particles.js - Particle effects
+
+export class ParticleSystem {
+  constructor() {
+    this.particles = [];
+  }
+
+  addEnemyDefeatEffect(x, y, color) {
+    for (let i = 0; i < 10; i++) {
+      const angle = (i / 10) * Math.PI * 2;
+      const speed = 2 + Math.random() * 2;
+      this.particles.push({
+        x: x,
+        y: y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        life: 30,
+        maxLife: 30,
+        color: color,
+        size: 3 + Math.random() * 3
+      });
+    }
+  }
+
+  update() {
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const p = this.particles[i];
+      p.x += p.vx;
+      p.y += p.vy;
+      p.life--;
+      
+      if (p.life <= 0) {
+        this.particles.splice(i, 1);
+      }
+    }
+  }
+
+  draw(p) {
+    for (const particle of this.particles) {
+      const alpha = 255 * (particle.life / particle.maxLife);
+      p.fill(...particle.color, alpha);
+      p.noStroke();
+      p.circle(particle.x, particle.y, particle.size);
+    }
+  }
+
+  clear() {
+    this.particles = [];
+  }
+}
+</file>
+
+<file name="input.js">
+// input.js - Input handling
+
+import { gameState, GAME_PHASES } from './globals.js';
+import { throwKnife, initializeLevel } from './gameLogic.js';
+
+export function setupInputHandlers(p) {
+  p.keyPressed = function() {
+    // Log the input
+    p.logs.inputs.push({
+      input_type: "keyPressed",
+      data: { key: p.key, keyCode: p.keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+
+    // Game phase transitions
+    if (p.keyCode === 13) { // ENTER
+      if (gameState.gamePhase === GAME_PHASES.START) {
+        startGame(p);
+      }
+    } else if (p.keyCode === 27) { // ESC
+      if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+        gameState.gamePhase = GAME_PHASES.PAUSED;
+        p.logs.game_info.push({
+          data: { gamePhase: gameState.gamePhase },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+        gameState.gamePhase = GAME_PHASES.PLAYING;
+        p.logs.game_info.push({
+          data: { gamePhase: gameState.gamePhase },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    } else if (p.keyCode === 82) { // R
+      if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || 
+          gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+        restartGame(p);
+      }
+    }
+
+    // Gameplay controls (only in PLAYING phase) - Space to throw
+    if (gameState.gamePhase === GAME_PHASES.PLAYING && gameState.controlMode === "HUMAN") {
+      if (p.keyCode === 32) { // Space
+        throwKnife(p);
+      }
+    }
+  };
+}
+
+// Continuous input handling for smooth rotation
+export function updateContinuousInput(p) {
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING || gameState.controlMode !== "HUMAN") {
+    return;
+  }
+
+  const rotationSpeed = 3 * (Math.PI / 180); // 3 degrees per frame for smooth rotation
+
+  if (p.keyIsDown(37)) { // Arrow Left - hold to rotate
+    gameState.playerAngle -= rotationSpeed;
+  }
+  if (p.keyIsDown(39)) { // Arrow Right - hold to rotate
+    gameState.playerAngle += rotationSpeed;
+  }
+}
+
+function handleGameplayInput(p) {
+  const rotationStep = 5 * (Math.PI / 180); // 5 degrees in radians
+
+  if (p.keyCode === 37) { // Arrow Left
+    gameState.playerAngle -= rotationStep;
+  } else if (p.keyCode === 39) { // Arrow Right
+    gameState.playerAngle += rotationStep;
+  } else if (p.keyCode === 32) { // Space
+    throwKnife(p);
+  }
+}
+
+function startGame(p) {
+  gameState.gamePhase = GAME_PHASES.PLAYING;
+  gameState.currentLevel = 1;
+  gameState.score = 0;
+  initializeLevel(p, 1);
+  
+  p.logs.game_info.push({
+    data: { gamePhase: gameState.gamePhase, level: gameState.currentLevel },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function restartGame(p) {
+  gameState.gamePhase = GAME_PHASES.START;
+  gameState.currentLevel = 1;
+  gameState.score = 0;
+  gameState.knives = [];
+  gameState.enemies = [];
+  gameState.barrels = [];
+  gameState.boxes = [];
+  gameState.hostages = [];
+  gameState.entities = [];
+  gameState.showLevelComplete = false;
+  
+  p.logs.game_info.push({
+    data: { gamePhase: gameState.gamePhase },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

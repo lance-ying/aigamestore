@@ -1,0 +1,2965 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+the score should be present within the game canvas at all times, not the index.html, can you fix that 
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 900px !important; height: 600px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Sanctuary Quest</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
+      </div>
+      <!-- NEW: Score display, always present -->
+      <div id="scoreDisplay" style="color: #fff; font-family: Arial, sans-serif; font-size: 1.2em; margin-top: 10px; margin-bottom: 10px;">Score: 0</div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 900px; margin: 0 auto 20px auto; line-height: 1.4;">Welcome to Sanctuary Quest, a dungeon exploration and base management RPG. Build your Sanctuary by managing workers to generate food and materials. Recruit heroes from different classes, equip them, and venture into dangerous dungeons filled with monsters, traps, and treasures. Use tactical combat with timed abilities to defeat enemies. Progress through multiple dungeon zones, unlock advanced hero classes, and reach the Arena at Zone 3 to achieve victory!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 900px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Keys: Navigate menus and move in dungeons | Space: Select/Confirm actions | Z: Use hero abilities in combat | Shift: Speed up animations | Enter: Start game | ESC: Pause/Unpause | R: Restart</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+import { gameState, GAME_PHASES, SCREEN_MODES } from './globals.js';
+
+function getTestWinAction(gameState) {
+  const state = gameState.testingState;
+  
+  // State machine for optimal win strategy
+  if (state.waitFrames > 0) {
+    state.waitFrames--;
+    return null;
+  }
+  
+  switch (state.phase) {
+    case "INIT":
+      if (gameState.gamePhase === GAME_PHASES.START) {
+        state.phase = "WAIT_START";
+        state.waitFrames = 30;
+        return null;
+      }
+      break;
+      
+    case "WAIT_START":
+      state.phase = "SETUP_BASE";
+      return null;
+      
+    case "SETUP_BASE":
+      if (gameState.screenMode !== SCREEN_MODES.BASE) {
+        return null;
+      }
+      
+      // Allocate workers efficiently
+      if (gameState.workers.food < 5) {
+        gameState.menuSelection = 0;
+        state.waitFrames = 5;
+        return 32; // Space
+      }
+      
+      // Wait for resources
+      if (gameState.resources.food < 80 || gameState.resources.materials < 40) {
+        state.waitFrames = 120;
+        return null;
+      }
+      
+      // Recruit heroes
+      if (gameState.heroes.length < 4) {
+        gameState.menuSelection = 1;
+        state.waitFrames = 10;
+        return 32; // Space
+      }
+      
+      state.phase = "FORM_PARTY";
+      return null;
+      
+    case "FORM_PARTY":
+      if (gameState.party.length < gameState.heroes.length && gameState.party.length < 4) {
+        gameState.menuSelection = 2;
+        state.waitFrames = 5;
+        return 32; // View heroes
+      }
+      
+      if (gameState.screenMode === SCREEN_MODES.HEROES) {
+        if (gameState.party.length < gameState.heroes.length && gameState.party.length < 4) {
+          state.waitFrames = 5;
+          return 32; // Add to party
+        } else {
+          state.waitFrames = 10;
+          return 27; // ESC back
+        }
+      }
+      
+      if (gameState.party.length >= 2) {
+        state.phase = "ENTER_DUNGEON";
+      }
+      return null;
+      
+    case "ENTER_DUNGEON":
+      if (gameState.screenMode === SCREEN_MODES.BASE) {
+        gameState.menuSelection = 3;
+        state.waitFrames = 10;
+        return 32; // Enter dungeon
+      }
+      
+      if (gameState.screenMode === SCREEN_MODES.DUNGEON) {
+        state.phase = "EXPLORE_DUNGEON";
+      }
+      return null;
+      
+    case "EXPLORE_DUNGEON":
+      if (gameState.inCombat) {
+        state.phase = "COMBAT";
+        return null;
+      }
+      
+      // Smart navigation toward exit/arena
+      const map = gameState.dungeonMap;
+      const targetX = map[0].length - 1;
+      const targetY = map.length - 1;
+      
+      // Try to move toward target
+      if (gameState.playerX < targetX) {
+        const nextCell = map[gameState.playerY][gameState.playerX + 1];
+        if (nextCell.type !== "wall") {
+          state.waitFrames = 8;
+          return 39; // Right
+        }
+      }
+      
+      if (gameState.playerY < targetY) {
+        const nextCell = map[gameState.playerY + 1][gameState.playerX];
+        if (nextCell.type !== "wall") {
+          state.waitFrames = 8;
+          return 40; // Down
+        }
+      }
+      
+      // Alternative paths
+      if (gameState.playerY > 0) {
+        const nextCell = map[gameState.playerY - 1][gameState.playerX];
+        if (nextCell.type !== "wall") {
+          state.waitFrames = 8;
+          return 38; // Up
+        }
+      }
+      
+      if (gameState.playerX > 0) {
+        const nextCell = map[gameState.playerY][gameState.playerX - 1];
+        if (nextCell.type !== "wall") {
+          state.waitFrames = 8;
+          return 37; // Left
+        }
+      }
+      
+      // Check if reached goal
+      if (gameState.screenMode === SCREEN_MODES.BASE) {
+        state.phase = "SETUP_BASE";
+      }
+      
+      if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN) {
+        state.phase = "COMPLETE";
+      }
+      
+      return null;
+      
+    case "COMBAT":
+      if (!gameState.inCombat) {
+        state.phase = "EXPLORE_DUNGEON";
+        state.waitFrames = 10;
+        return null;
+      }
+      
+      // Find hero with ability ready
+      const readyHero = gameState.party.findIndex(h => h.canUseAbility());
+      if (readyHero >= 0 && readyHero !== gameState.selectedPartyMember) {
+        // Switch to hero with ability
+        if (readyHero > gameState.selectedPartyMember) {
+          return 39; // Right
+        } else {
+          return 37; // Left
+        }
+      }
+      
+      // Use ability if ready
+      if (gameState.party[gameState.selectedPartyMember]?.canUseAbility()) {
+        state.waitFrames = 15;
+        return 90; // Z
+      }
+      
+      // Otherwise attack
+      state.waitFrames = 10;
+      return 32; // Space
+      
+    case "COMPLETE":
+      return null;
+  }
+  
+  return null;
+}
+
+function getBasicTestAction(gameState) {
+  const state = gameState.testingState;
+  
+  if (state.waitFrames > 0) {
+    state.waitFrames--;
+    return null;
+  }
+  
+  switch (state.phase) {
+    case "INIT":
+      if (gameState.gamePhase === GAME_PHASES.START) {
+        state.phase = "NAVIGATE_MENUS";
+        state.waitFrames = 30;
+      }
+      return null;
+      
+    case "NAVIGATE_MENUS":
+      if (gameState.screenMode === SCREEN_MODES.BASE) {
+        if (Math.random() < 0.3) {
+          state.waitFrames = 20;
+          return 40; // Down
+        } else if (Math.random() < 0.2) {
+          state.waitFrames = 20;
+          return 32; // Space
+        }
+      }
+      
+      if (gameState.screenMode === SCREEN_MODES.HEROES) {
+        state.waitFrames = 30;
+        return 27; // ESC
+      }
+      
+      if (gameState.screenMode === SCREEN_MODES.DUNGEON && !gameState.inCombat) {
+        const directions = [37, 38, 39, 40];
+        state.waitFrames = 15;
+        return directions[Math.floor(Math.random() * directions.length)];
+      }
+      
+      if (gameState.inCombat) {
+        const actions = [32, 90];
+        state.waitFrames = 20;
+        return actions[Math.floor(Math.random() * actions.length)];
+      }
+      
+      return null;
+  }
+  
+  return null;
+}
+
+export function get_automated_testing_action(gameState) {
+  switch (gameState.controlMode) {
+    case "TEST_1":
+      return getBasicTestAction(gameState);
+    case "TEST_2":
+      return getTestWinAction(gameState);
+    default:
+      return null;
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.get_automated_testing_action = get_automated_testing_action;
+}
+
+export default get_automated_testing_action;
+</file>
+
+<file name="dungeon.js">
+import { gameState, MONSTER_TYPES } from './globals.js';
+
+export function generateDungeon(zone, p) {
+  const width = 8;
+  const height = 6;
+  const map = [];
+  
+  for (let y = 0; y < height; y++) {
+    const row = [];
+    for (let x = 0; x < width; x++) {
+      const rand = p.random();
+      let cell = { type: "empty", explored: false };
+      
+      if (x === 0 && y === 0) {
+        cell.type = "start";
+      } else if (x === width - 1 && y === height - 1) {
+        cell.type = zone === 3 ? "arena" : "exit";
+      } else if (rand < 0.15) {
+        cell.type = "wall";
+      } else if (rand < 0.4) {
+        cell.type = "enemy";
+        const monsterIndex = Math.min(MONSTER_TYPES.length - 1, Math.floor(p.random() * (zone + 2)));
+        cell.monsterType = MONSTER_TYPES[monsterIndex];
+      } else if (rand < 0.5) {
+        cell.type = "treasure";
+        cell.treasure = { gold: Math.floor(p.random(10, 30)) * zone, materials: Math.floor(p.random(5, 15)) };
+      } else if (rand < 0.55) {
+        cell.type = "trap";
+        cell.damage = 10 * zone;
+      }
+      
+      row.push(cell);
+    }
+    map.push(row);
+  }
+  
+  return map;
+}
+
+export function canMoveTo(map, x, y) {
+  if (y < 0 || y >= map.length || x < 0 || x >= map[0].length) {
+    return false;
+  }
+  return map[y][x].type !== "wall";
+}
+
+export function getTotalCells(map) {
+  let total = 0;
+  for (let y = 0; y < map.length; y++) {
+    for (let x = 0; x < map[0].length; x++) {
+      if (map[y][x].type !== "wall") {
+        total++;
+      }
+    }
+  }
+  return total;
+}
+
+export function getExploredCount() {
+  return gameState.exploredCells.length;
+}
+
+export function isCellExplored(x, y) {
+  return gameState.exploredCells.some(cell => cell.x === x && cell.y === y);
+}
+
+export function exploreCell(x, y) {
+  if (!isCellExplored(x, y)) {
+    gameState.exploredCells.push({ x, y });
+    const progress = (gameState.exploredCells.length / getTotalCells(gameState.dungeonMap)) * 100;
+    gameState.dungeonProgress = Math.floor(progress);
+  }
+}
+</file>
+
+<file name="globals.js">
+// Global constants and game state
+export const CANVAS_WIDTH = 900;
+export const CANVAS_HEIGHT = 600;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const SCREEN_MODES = {
+  BASE: "BASE",
+  HEROES: "HEROES",
+  DUNGEON: "DUNGEON",
+  COMBAT: "COMBAT"
+};
+
+export const COMBAT_PHASES = {
+  PLAYER_TURN: "PLAYER_TURN",
+  ENEMY_TURN: "ENEMY_TURN",
+  TURN_TRANSITION: "TURN_TRANSITION"
+};
+
+export const HERO_CLASSES = [
+  { name: "Warrior", health: 100, attack: 15, defense: 10, ability: "Shield Bash", abilityCooldown: 3 },
+  { name: "Mage", health: 60, attack: 25, defense: 3, ability: "Fireball", abilityCooldown: 3 },
+  { name: "Ranger", health: 70, attack: 20, defense: 5, ability: "Multi-Shot", abilityCooldown: 2 },
+  { name: "Cleric", health: 80, attack: 10, defense: 8, ability: "Heal", abilityCooldown: 4 }
+];
+
+export const MONSTER_TYPES = [
+  { name: "Goblin", health: 30, attack: 8, defense: 2, exp: 10, gold: 5 },
+  { name: "Skeleton", health: 40, attack: 12, defense: 4, exp: 15, gold: 8 },
+  { name: "Orc", health: 60, attack: 15, defense: 6, exp: 25, gold: 15 },
+  { name: "Dark Mage", health: 50, attack: 20, defense: 3, exp: 30, gold: 20 },
+  { name: "Troll", health: 100, attack: 18, defense: 10, exp: 40, gold: 25 },
+  { name: "Dragon", health: 150, attack: 25, defense: 15, exp: 100, gold: 50 }
+];
+
+export const gameState = {
+  gamePhase: GAME_PHASES.START,
+  controlMode: "HUMAN",
+  screenMode: SCREEN_MODES.BASE,
+  
+  // Base management
+  population: 10,
+  workers: { food: 0, materials: 0 },
+  resources: { food: 50, materials: 20 },
+  resourceTimer: 0,
+  
+  // Heroes
+  heroes: [],
+  selectedHeroIndex: 0,
+  party: [], // up to 4 heroes
+  
+  // Dungeon
+  currentZone: 1,
+  dungeonMap: [],
+  playerX: 0,
+  playerY: 0,
+  exploredCells: [],
+  dungeonProgress: 0,
+  
+  // Combat - Turn-based system
+  inCombat: false,
+  combatPhase: COMBAT_PHASES.PLAYER_TURN,
+  enemies: [],
+  combatLog: [],
+  selectedPartyMember: 0,
+  turnTimer: 0,
+  turnNumber: 1,
+  heroesActedThisTurn: [], // Track which heroes have acted
+  enemyTurnExecuted: false, // Flag to prevent multiple enemy turn executions
+  enemyActionQueue: [], // Queue of enemy actions to execute
+  currentEnemyAction: null, // Currently executing enemy action
+  
+  // Progression
+  score: 0,
+  experience: 0,
+  gold: 0,
+  arenaUnlocked: false,
+  
+  // UI state
+  menuSelection: 0,
+  menuOptions: [],
+  menuScrollOffset: 0,
+  actionFeedback: { message: "", timer: 0, type: "info" }, // type: "success", "error", "info"
+  
+  // Visual effects
+  floatingTexts: [], // { x, y, text, timer, color, vx, vy }
+  particles: [], // { x, y, vx, vy, size, color, timer }
+  flashEffects: [], // { target: "hero_0" | "enemy_1", timer, color }
+  resourceAnimations: { food: 0, materials: 0 }, // pulse timers
+  shakeEffect: { intensity: 0, timer: 0 }, // Screen shake
+  attackAnimations: [], // { fromX, fromY, toX, toY, progress, type, color }
+  impactEffects: [], // { x, y, timer, size, color }
+  
+  // Testing
+  testingState: {
+    actionQueue: [],
+    waitFrames: 0,
+    phase: "INIT"
+  }
+};
+
+// Function to expose game state
+export function getGameState() {
+  return gameState;
+}
+
+// Visual effect helpers
+export function addFloatingText(x, y, text, color = [255, 255, 255]) {
+  gameState.floatingTexts.push({
+    x: x,
+    y: y,
+    text: text,
+    timer: 60,
+    color: color,
+    vx: (Math.random() - 0.5) * 2,
+    vy: -2
+  });
+}
+
+export function addParticles(x, y, count, color) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 3 + 1;
+    gameState.particles.push({
+      x: x,
+      y: y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      size: Math.random() * 4 + 2,
+      color: color,
+      timer: 30 + Math.random() * 30
+    });
+  }
+}
+
+export function addFlashEffect(target, color = [255, 255, 255]) {
+  gameState.flashEffects.push({
+    target: target,
+    timer: 15,
+    color: color
+  });
+}
+
+export function addScreenShake(intensity = 5) {
+  gameState.shakeEffect = {
+    intensity: intensity,
+    timer: 15
+  };
+}
+
+export function triggerResourceAnimation(type) {
+  gameState.resourceAnimations[type] = 30;
+}
+
+export function addAttackAnimation(fromX, fromY, toX, toY, type = "projectile", color = [255, 255, 100]) {
+  gameState.attackAnimations.push({
+    fromX: fromX,
+    fromY: fromY,
+    toX: toX,
+    toY: toY,
+    progress: 0,
+    type: type,
+    color: color
+  });
+}
+
+export function addImpactEffect(x, y, size = 30, color = [255, 200, 100]) {
+  gameState.impactEffects.push({
+    x: x,
+    y: y,
+    timer: 20,
+    size: size,
+    color: color
+  });
+}
+
+// Attach to window
+if (typeof window !== 'undefined') {
+  window.getGameState = getGameState;
+  window.addFloatingText = addFloatingText;
+  window.addParticles = addParticles;
+  window.addFlashEffect = addFlashEffect;
+  window.addScreenShake = addScreenShake;
+  window.triggerResourceAnimation = triggerResourceAnimation;
+  window.addAttackAnimation = addAttackAnimation;
+  window.addImpactEffect = addImpactEffect;
+}
+</file>
+
+<file name="combat.js">
+import { gameState, SCREEN_MODES, COMBAT_PHASES, addFloatingText, addFlashEffect, addParticles, addScreenShake, addAttackAnimation, addImpactEffect } from './globals.js';
+import { Enemy } from './hero.js';
+
+export function startCombat(monsterType, zone, p) {
+  gameState.inCombat = true;
+  gameState.combatPhase = COMBAT_PHASES.PLAYER_TURN;
+  gameState.enemies = [];
+  gameState.turnNumber = 1;
+  gameState.heroesActedThisTurn = [];
+  gameState.enemyTurnExecuted = false;
+  gameState.enemyActionQueue = [];
+  gameState.currentEnemyAction = null;
+  
+  const numEnemies = Math.min(3, 1 + Math.floor(zone / 2));
+  for (let i = 0; i < numEnemies; i++) {
+    gameState.enemies.push(new Enemy(monsterType, zone * 0.8));
+  }
+  
+  gameState.combatLog = [`Turn ${gameState.turnNumber}: Encountered ${numEnemies} ${monsterType.name}(s)!`];
+  gameState.selectedPartyMember = 0;
+  gameState.turnTimer = 0;
+  
+  // Reset cooldowns for turn-based system
+  gameState.party.forEach(hero => {
+    hero.currentCooldown = 0;
+  });
+  
+  // Log combat start
+  if (p && p.logs) {
+    p.logs.game_info.push({
+      data: { event: "combat_start", enemies: numEnemies, type: monsterType.name },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+
+export function updateCombat(p) {
+  if (!gameState.inCombat) return;
+  
+  gameState.turnTimer++;
+  
+  // Handle turn transitions
+  if (gameState.combatPhase === COMBAT_PHASES.TURN_TRANSITION) {
+    if (gameState.turnTimer >= 60) {
+      // Transition to next phase
+      if (gameState.heroesActedThisTurn.length >= gameState.party.filter(h => h.health > 0).length) {
+        // All heroes acted, now enemy turn
+        gameState.combatPhase = COMBAT_PHASES.ENEMY_TURN;
+        gameState.turnTimer = 0;
+        gameState.enemyTurnExecuted = false; // Reset flag
+        prepareEnemyTurn(p);
+      } else {
+        // Back to player turn
+        gameState.combatPhase = COMBAT_PHASES.PLAYER_TURN;
+        gameState.turnTimer = 0;
+      }
+    }
+  } else if (gameState.combatPhase === COMBAT_PHASES.ENEMY_TURN) {
+    // Execute enemy actions from queue
+    executeEnemyActions(p);
+  }
+  
+  // Check combat end
+  checkCombatEnd(p);
+}
+
+function prepareEnemyTurn(p) {
+  gameState.combatLog.push("=== ENEMY TURN ===");
+  if (gameState.combatLog.length > 8) {
+    gameState.combatLog.shift();
+  }
+  
+  // Build action queue for all enemies
+  gameState.enemyActionQueue = [];
+  gameState.enemies.forEach((enemy, enemyIndex) => {
+    if (enemy.health > 0) {
+      const aliveHeroes = gameState.party.filter(h => h.health > 0);
+      if (aliveHeroes.length > 0) {
+        const target = aliveHeroes[Math.floor(p.random() * aliveHeroes.length)];
+        const targetIndex = gameState.party.indexOf(target);
+        
+        gameState.enemyActionQueue.push({
+          enemyIndex: enemyIndex,
+          targetIndex: targetIndex,
+          startFrame: gameState.turnTimer + (enemyIndex * 45) // Stagger attacks
+        });
+      }
+    }
+  });
+}
+
+function executeEnemyActions(p) {
+  // Process current action if exists
+  if (gameState.currentEnemyAction) {
+    const action = gameState.currentEnemyAction;
+    const elapsed = gameState.turnTimer - action.executionFrame;
+    
+    if (elapsed === 0) {
+      // Just started - create attack animation
+      const enemy = gameState.enemies[action.enemyIndex];
+      const target = gameState.party[action.targetIndex];
+      
+      const enemySpacing = 900 / (gameState.enemies.length + 1);
+      const enemyX = enemySpacing * (action.enemyIndex + 1);
+      const enemyY = 140;
+      
+      const partySpacing = 900 / (gameState.party.length + 1);
+      const heroX = partySpacing * (action.targetIndex + 1);
+      const heroY = 340;
+      
+      addAttackAnimation(enemyX, enemyY, heroX, heroY, "projectile", [255, 100, 100]);
+      addFlashEffect(`enemy_${action.enemyIndex}`, [255, 150, 150]);
+    } else if (elapsed === 20) {
+      // Animation reached target - apply damage
+      const enemy = gameState.enemies[action.enemyIndex];
+      const target = gameState.party[action.targetIndex];
+      
+      if (enemy && enemy.health > 0 && target && target.health > 0) {
+        const damage = target.takeDamage(enemy.attack);
+        
+        gameState.combatLog.push(`${enemy.name} attacks ${target.class} for ${damage} damage!`);
+        
+        const partySpacing = 900 / (gameState.party.length + 1);
+        const heroX = partySpacing * (action.targetIndex + 1);
+        const heroY = 340;
+        
+        addFlashEffect(`hero_${action.targetIndex}`, [255, 100, 100]);
+        addFloatingText(heroX, heroY - 40, `-${damage}`, [255, 100, 100]);
+        addParticles(heroX, heroY, 15, [255, 100, 100]);
+        addImpactEffect(heroX, heroY, 40, [255, 100, 100]);
+        addScreenShake(5);
+        
+        if (gameState.combatLog.length > 8) {
+          gameState.combatLog.shift();
+        }
+      }
+      
+      // Action complete
+      gameState.currentEnemyAction = null;
+    }
+  }
+  
+  // Check if we should start next action
+  if (!gameState.currentEnemyAction && gameState.enemyActionQueue.length > 0) {
+    const nextAction = gameState.enemyActionQueue[0];
+    if (gameState.turnTimer >= nextAction.startFrame) {
+      gameState.enemyActionQueue.shift();
+      gameState.currentEnemyAction = {
+        ...nextAction,
+        executionFrame: gameState.turnTimer
+      };
+    }
+  }
+  
+  // If all actions complete, end enemy turn
+  if (!gameState.currentEnemyAction && gameState.enemyActionQueue.length === 0 && gameState.turnTimer > 30) {
+    startNewTurn(p);
+  }
+}
+
+function startNewTurn(p) {
+  gameState.turnNumber++;
+  gameState.combatPhase = COMBAT_PHASES.PLAYER_TURN;
+  gameState.turnTimer = 0;
+  gameState.heroesActedThisTurn = [];
+  gameState.enemyTurnExecuted = false;
+  
+  // Reduce cooldowns
+  gameState.party.forEach(hero => {
+    if (hero.currentCooldown > 0) {
+      hero.currentCooldown--;
+    }
+  });
+  
+  gameState.combatLog.push(`--- Turn ${gameState.turnNumber} ---`);
+  if (gameState.combatLog.length > 8) {
+    gameState.combatLog.shift();
+  }
+}
+
+export function checkCombatEnd(p) {
+  const allEnemiesDead = gameState.enemies.every(e => e.health <= 0);
+  const allHeroesDead = gameState.party.every(h => h.health <= 0);
+  
+  if (allEnemiesDead) {
+    endCombat(true, p);
+  } else if (allHeroesDead) {
+    endCombat(false, p);
+  }
+}
+
+export function endCombat(victory, p) {
+  if (!gameState.inCombat) return;
+  
+  gameState.inCombat = false;
+  
+  if (victory) {
+    let totalExp = 0;
+    let totalGold = 0;
+    
+    gameState.enemies.forEach(enemy => {
+      totalExp += enemy.exp;
+      totalGold += enemy.gold;
+    });
+    
+    gameState.party.forEach(hero => {
+      if (hero.health > 0) {
+        hero.gainExperience(totalExp);
+      }
+    });
+    
+    gameState.experience += totalExp;
+    gameState.gold += totalGold;
+    gameState.score += totalExp * 10;
+    
+    gameState.combatLog.push(`Victory! Gained ${totalExp} EXP and ${totalGold} gold!`);
+    
+    // Visual feedback for victory
+    addParticles(450, 200, 30, [255, 215, 0]);
+    addScreenShake(5);
+    
+    // Mark cell as cleared
+    const cell = gameState.dungeonMap[gameState.playerY][gameState.playerX];
+    cell.type = "empty";
+    
+    // Return to dungeon view
+    gameState.screenMode = SCREEN_MODES.DUNGEON;
+    
+    if (p && p.logs) {
+      p.logs.game_info.push({
+        data: { event: "combat_end", victory: true, exp: totalExp, gold: totalGold },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  } else {
+    gameState.combatLog.push("Defeat! Retreating to sanctuary...");
+    gameState.screenMode = SCREEN_MODES.BASE;
+    
+    // Heal party partially
+    gameState.party.forEach(hero => {
+      hero.health = Math.floor(hero.maxHealth * 0.3);
+    });
+    
+    if (p && p.logs) {
+      p.logs.game_info.push({
+        data: { event: "combat_end", victory: false },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+  
+  gameState.enemies = [];
+}
+
+export function heroAttack(heroIndex, p) {
+  if (!gameState.inCombat) return;
+  if (gameState.combatPhase !== COMBAT_PHASES.PLAYER_TURN) return;
+  
+  const hero = gameState.party[heroIndex];
+  if (!hero || hero.health <= 0) return;
+  
+  // Check if hero already acted
+  if (gameState.heroesActedThisTurn.includes(heroIndex)) {
+    return;
+  }
+  
+  const aliveEnemies = gameState.enemies.filter(e => e.health > 0);
+  if (aliveEnemies.length === 0) return;
+  
+  const target = aliveEnemies[Math.floor(p.random() * aliveEnemies.length)];
+  const targetIndex = gameState.enemies.indexOf(target);
+  
+  // Create attack animation
+  const partySpacing = 900 / (gameState.party.length + 1);
+  const heroX = partySpacing * (heroIndex + 1);
+  const heroY = 340;
+  
+  const enemySpacing = 900 / (gameState.enemies.length + 1);
+  const enemyX = enemySpacing * (targetIndex + 1);
+  const enemyY = 140;
+  
+  addAttackAnimation(heroX, heroY, enemyX, enemyY, "slash", [255, 255, 150]);
+  
+  const damage = target.takeDamage(hero.attack);
+  
+  gameState.combatLog.push(`${hero.class} attacks ${target.name} for ${damage} damage!`);
+  
+  // Visual feedback
+  addFlashEffect(`hero_${heroIndex}`, [255, 255, 150]);
+  addFlashEffect(`enemy_${targetIndex}`, [255, 100, 100]);
+  addScreenShake(6);
+  
+  setTimeout(() => {
+    addFloatingText(enemyX, enemyY - 40, `-${damage}`, [255, 200, 100]);
+    addParticles(enemyX, enemyY, 20, [255, 200, 100]);
+    addImpactEffect(enemyX, enemyY, 35, [255, 200, 100]);
+  }, 200);
+  
+  if (gameState.combatLog.length > 8) {
+    gameState.combatLog.shift();
+  }
+  
+  if (target.health <= 0) {
+    gameState.combatLog.push(`${target.name} defeated!`);
+    addParticles(enemyX, enemyY, 25, [200, 50, 50]);
+    addScreenShake(8);
+    if (gameState.combatLog.length > 8) {
+      gameState.combatLog.shift();
+    }
+  }
+  
+  // Mark hero as acted
+  gameState.heroesActedThisTurn.push(heroIndex);
+  
+  // Check if all heroes acted
+  const aliveHeroes = gameState.party.filter(h => h.health > 0).length;
+  if (gameState.heroesActedThisTurn.length >= aliveHeroes) {
+    gameState.combatPhase = COMBAT_PHASES.TURN_TRANSITION;
+    gameState.turnTimer = 0;
+  }
+}
+
+export function heroAbility(heroIndex, p) {
+  if (!gameState.inCombat) return;
+  if (gameState.combatPhase !== COMBAT_PHASES.PLAYER_TURN) return;
+  
+  const hero = gameState.party[heroIndex];
+  if (!hero || !hero.canUseAbility()) return;
+  
+  // Check if hero already acted
+  if (gameState.heroesActedThisTurn.includes(heroIndex)) {
+    return;
+  }
+  
+  hero.useAbility();
+  
+  // Visual feedback for ability use
+  addFlashEffect(`hero_${heroIndex}`, [100, 200, 255]);
+  addScreenShake(7);
+  
+  const partySpacing = 900 / (gameState.party.length + 1);
+  const heroX = partySpacing * (heroIndex + 1);
+  const heroY = 340;
+  
+  if (hero.class === "Warrior") {
+    const aliveEnemies = gameState.enemies.filter(e => e.health > 0);
+    if (aliveEnemies.length > 0) {
+      const target = aliveEnemies[0];
+      const targetIndex = gameState.enemies.indexOf(target);
+      
+      const enemySpacing = 900 / (gameState.enemies.length + 1);
+      const enemyX = enemySpacing * (targetIndex + 1);
+      const enemyY = 140;
+      
+      addAttackAnimation(heroX, heroY, enemyX, enemyY, "charge", [255, 200, 50]);
+      
+      const damage = target.takeDamage(hero.attack * 2);
+      gameState.combatLog.push(`${hero.class} uses Shield Bash for ${damage} damage!`);
+      
+      addFlashEffect(`enemy_${targetIndex}`, [255, 150, 50]);
+      addFloatingText(enemyX, enemyY - 40, `-${damage}!`, [255, 150, 50]);
+      addParticles(enemyX, enemyY, 25, [255, 200, 100]);
+      addImpactEffect(enemyX, enemyY, 50, [255, 150, 50]);
+      
+      if (target.health <= 0) {
+        gameState.combatLog.push(`${target.name} defeated!`);
+        addParticles(enemyX, enemyY, 30, [200, 50, 50]);
+        if (gameState.combatLog.length > 8) {
+          gameState.combatLog.shift();
+        }
+      }
+    }
+  } else if (hero.class === "Mage") {
+    gameState.combatLog.push(`${hero.class} casts Fireball!`);
+    
+    gameState.enemies.forEach((enemy, index) => {
+      if (enemy.health > 0) {
+        const enemySpacing = 900 / (gameState.enemies.length + 1);
+        const enemyX = enemySpacing * (index + 1);
+        const enemyY = 140;
+        
+        addAttackAnimation(heroX, heroY, enemyX, enemyY, "fireball", [255, 100, 50]);
+        
+        const damage = enemy.takeDamage(hero.attack * 1.5);
+        
+        addFlashEffect(`enemy_${index}`, [255, 100, 50]);
+        addFloatingText(enemyX, enemyY - 40, `-${damage}`, [255, 150, 50]);
+        addParticles(enemyX, enemyY, 20, [255, 100, 50]);
+        addImpactEffect(enemyX, enemyY, 45, [255, 100, 50]);
+        
+        if (enemy.health <= 0) {
+          gameState.combatLog.push(`${enemy.name} defeated!`);
+          if (gameState.combatLog.length > 8) {
+            gameState.combatLog.shift();
+          }
+        }
+      }
+    });
+  } else if (hero.class === "Ranger") {
+    const aliveEnemies = gameState.enemies.filter(e => e.health > 0);
+    const numTargets = Math.min(2, aliveEnemies.length);
+    gameState.combatLog.push(`${hero.class} uses Multi-Shot!`);
+    
+    for (let i = 0; i < numTargets; i++) {
+      const targetIndex = gameState.enemies.indexOf(aliveEnemies[i]);
+      
+      const enemySpacing = 900 / (gameState.enemies.length + 1);
+      const enemyX = enemySpacing * (targetIndex + 1);
+      const enemyY = 140;
+      
+      addAttackAnimation(heroX, heroY, enemyX, enemyY, "arrow", [150, 255, 150]);
+      
+      const damage = aliveEnemies[i].takeDamage(hero.attack);
+      
+      addFlashEffect(`enemy_${targetIndex}`, [150, 255, 150]);
+      addFloatingText(enemyX, enemyY - 40, `-${damage}`, [150, 255, 150]);
+      addParticles(enemyX, enemyY, 15, [150, 255, 150]);
+      addImpactEffect(enemyX, enemyY, 35, [150, 255, 150]);
+      
+      if (aliveEnemies[i].health <= 0) {
+        gameState.combatLog.push(`${aliveEnemies[i].name} defeated!`);
+        if (gameState.combatLog.length > 8) {
+          gameState.combatLog.shift();
+        }
+      }
+    }
+  } else if (hero.class === "Cleric") {
+    gameState.combatLog.push(`${hero.class} heals the party!`);
+    
+    gameState.party.forEach((h, index) => {
+      if (h.health > 0) {
+        const healAmount = 30;
+        h.heal(healAmount);
+        
+        const partySpacing = 900 / (gameState.party.length + 1);
+        const hX = partySpacing * (index + 1);
+        const hY = 340;
+        
+        addFlashEffect(`hero_${index}`, [100, 255, 100]);
+        addFloatingText(hX, hY - 40, `+${healAmount}`, [100, 255, 100]);
+        addParticles(hX, hY, 15, [100, 255, 100]);
+        addImpactEffect(hX, hY, 35, [100, 255, 100]);
+      }
+    });
+  }
+  
+  if (gameState.combatLog.length > 8) {
+    gameState.combatLog.shift();
+  }
+  
+  // Mark hero as acted
+  gameState.heroesActedThisTurn.push(heroIndex);
+  
+  // Check if all heroes acted
+  const aliveHeroes = gameState.party.filter(h => h.health > 0).length;
+  if (gameState.heroesActedThisTurn.length >= aliveHeroes) {
+    gameState.combatPhase = COMBAT_PHASES.TURN_TRANSITION;
+    gameState.turnTimer = 0;
+  }
+}
+</file>
+
+<file name="game.js">
+import { gameState, GAME_PHASES, SCREEN_MODES, CANVAS_WIDTH, CANVAS_HEIGHT, getGameState } from './globals.js';
+import { initializeGame, startGame, updateGame, handleBaseInput, handleHeroesInput, handleDungeonInput } from './game_logic.js';
+import { drawStartScreen, drawBaseScreen, drawHeroesScreen, drawDungeonScreen, drawCombatScreen, drawPauseOverlay, drawGameOverScreen } from './rendering.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+// NEW: Function to update the score display in HTML
+function updateScoreDisplay() {
+  const scoreElement = document.getElementById('scoreDisplay');
+  if (scoreElement) {
+    scoreElement.innerText = `Score: ${gameState.score}`;
+  }
+}
+
+let gameInstance = new p5(p => {
+  // Initialize logs
+  p.logs = {
+    "game_info": [],
+    "inputs": [],
+    "player_info": []
+  };
+  
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    initializeGame(p);
+    updateScoreDisplay(); // Initial display update
+  };
+  
+  p.draw = function() {
+    // Handle automated testing
+    if (gameState.controlMode !== "HUMAN" && gameState.gamePhase === GAME_PHASES.PLAYING) {
+      const action = get_automated_testing_action(gameState);
+      if (action !== null) {
+        handleKeyPress(action, p);
+      }
+    }
+    
+    // Render based on game phase
+    if (gameState.gamePhase === GAME_PHASES.START) {
+      drawStartScreen(p);
+    } else if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      // Render based on screen mode
+      switch (gameState.screenMode) {
+        case SCREEN_MODES.BASE:
+          drawBaseScreen(p);
+          break;
+        case SCREEN_MODES.HEROES:
+          drawHeroesScreen(p);
+          break;
+        case SCREEN_MODES.DUNGEON:
+          drawDungeonScreen(p);
+          break;
+        case SCREEN_MODES.COMBAT:
+          drawCombatScreen(p);
+          break;
+      }
+      
+      // Update game logic
+      updateGame(p);
+    } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+      // Draw current screen
+      switch (gameState.screenMode) {
+        case SCREEN_MODES.BASE:
+          drawBaseScreen(p);
+          break;
+        case SCREEN_MODES.HEROES:
+          drawHeroesScreen(p);
+          break;
+        case SCREEN_MODES.DUNGEON:
+          drawDungeonScreen(p);
+          break;
+        case SCREEN_MODES.COMBAT:
+          drawCombatScreen(p);
+          break;
+      }
+      drawPauseOverlay(p);
+    } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+      drawGameOverScreen(p, gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN);
+    }
+
+    updateScoreDisplay(); // Update HTML score display every frame
+  };
+  
+  p.keyPressed = function() {
+    const keyCode = p.keyCode;
+    
+    // Log input
+    p.logs.inputs.push({
+      input_type: "keyPressed",
+      data: { key: p.key, keyCode: keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    
+    handleKeyPress(keyCode, p);
+    return false;
+  };
+  
+  function handleKeyPress(keyCode, p) {
+    // Global controls
+    if (keyCode === 13) { // ENTER
+      if (gameState.gamePhase === GAME_PHASES.START) {
+        startGame(p);
+      }
+      return;
+    }
+    
+    if (keyCode === 27) { // ESC
+      // If in a submenu, exit the submenu instead of pausing
+      if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+        if (gameState.screenMode === SCREEN_MODES.HEROES) {
+          gameState.screenMode = SCREEN_MODES.BASE;
+          return;
+        }
+        if (gameState.screenMode === SCREEN_MODES.DUNGEON && !gameState.inCombat) {
+          gameState.screenMode = SCREEN_MODES.BASE;
+          return;
+        }
+        // Otherwise pause
+        gameState.gamePhase = GAME_PHASES.PAUSED;
+        p.logs.game_info.push({
+          data: { event: "game_paused" },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+        gameState.gamePhase = GAME_PHASES.PLAYING;
+        p.logs.game_info.push({
+          data: { event: "game_resumed" },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+      return;
+    }
+    
+    if (keyCode === 82) { // R
+      if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+        initializeGame(p);
+      }
+      return;
+    }
+    
+    // Game-specific controls
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      switch (gameState.screenMode) {
+        case SCREEN_MODES.BASE:
+          handleBaseInput(keyCode, p);
+          break;
+        case SCREEN_MODES.HEROES:
+          handleHeroesInput(keyCode, p);
+          break;
+        case SCREEN_MODES.DUNGEON:
+        case SCREEN_MODES.COMBAT:
+          handleDungeonInput(keyCode, p);
+          break;
+      }
+    }
+  }
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const activeBtn = mode === 'HUMAN' ? 'humanModeBtn' : 
+                    mode === 'TEST_1' ? 'test_1_ModeBtn' : 
+                    mode === 'TEST_2' ? 'test_2_ModeBtn' : null;
+  
+  if (activeBtn) {
+    const btn = document.getElementById(activeBtn);
+    if (btn) {
+      btn.classList.add('active');
+    }
+  }
+  
+  // Reset testing state
+  gameState.testingState = {
+    actionQueue: [],
+    waitFrames: 0,
+    phase: "INIT"
+  };
+};
+</file>
+
+<file name="rendering.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, GAME_PHASES, SCREEN_MODES, COMBAT_PHASES, HERO_CLASSES } from './globals.js';
+
+export function drawStartScreen(p) {
+  p.background(20, 15, 30);
+  
+  // Title with glow effect
+  p.push();
+  p.textAlign(p.CENTER, p.CENTER);
+  p.fill(200, 150, 255, 100);
+  p.textSize(56);
+  p.text("SANCTUARY QUEST", CANVAS_WIDTH / 2 + 2, 100 + 2);
+  p.fill(255, 220, 150);
+  p.textSize(56);
+  p.text("SANCTUARY QUEST", CANVAS_WIDTH / 2, 100);
+  p.pop();
+  
+  // Subtitle
+  p.push();
+  p.textAlign(p.CENTER, p.CENTER);
+  p.fill(180, 160, 200);
+  p.textSize(18);
+  p.text("Dungeon Exploration & Base Management RPG", CANVAS_WIDTH / 2, 150);
+  p.pop();
+  
+  // Description
+  const desc = [
+    "Build your Sanctuary and manage resources.",
+    "Recruit heroes and form a party of up to 4 warriors.",
+    "Explore dangerous dungeons filled with monsters and treasures.",
+    "Progress through 3 zones to unlock the Arena and win!"
+  ];
+  
+  p.push();
+  p.textAlign(p.CENTER, p.CENTER);
+  p.fill(200, 200, 220);
+  p.textSize(14);
+  for (let i = 0; i < desc.length; i++) {
+    p.text(desc[i], CANVAS_WIDTH / 2, 200 + i * 25);
+  }
+  p.pop();
+  
+  // Controls
+  const controls = [
+    "Arrow Keys: Navigate menus and dungeons",
+    "Space: Select/Confirm actions",
+    "Z: Use hero abilities in combat",
+    "Shift: Speed up animations",
+    "ESC: Pause | R: Restart"
+  ];
+  
+  p.push();
+  p.textAlign(p.CENTER, p.CENTER);
+  p.fill(150, 150, 170);
+  p.textSize(13);
+  for (let i = 0; i < controls.length; i++) {
+    p.text(controls[i], CANVAS_WIDTH / 2, 350 + i * 22);
+  }
+  p.pop();
+  
+  // Start prompt with pulse
+  p.push();
+  p.textAlign(p.CENTER, p.CENTER);
+  const pulseAlpha = 150 + Math.sin(p.frameCount * 0.1) * 105;
+  p.fill(255, 220, 100, pulseAlpha);
+  p.textSize(24);
+  p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 520);
+  p.pop();
+}
+
+export function drawBaseScreen(p) {
+  p.background(40, 35, 50);
+  
+  // Header
+  p.push();
+  p.fill(60, 50, 70);
+  p.rect(0, 0, CANVAS_WIDTH, 60);
+  p.fill(255, 220, 150);
+  p.textSize(28);
+  p.textAlign(p.LEFT, p.TOP);
+  p.text("SANCTUARY", 30, 15);
+  p.pop();
+  
+  // Resources display with animated bars
+  p.push();
+  const resourceX = CANVAS_WIDTH - 200;
+  const resourceY = 15;
+  
+  // Food resource with pulse animation
+  const foodPulse = gameState.resourceAnimations.food > 0 ? Math.sin(gameState.resourceAnimations.food * 0.3) * 10 : 0;
+  p.fill(60, 50, 70);
+  p.rect(resourceX, resourceY, 180, 18, 3);
+  p.fill(100 + foodPulse, 180 + foodPulse, 100 + foodPulse);
+  const foodBarWidth = Math.min(170, (gameState.resources.food / 200) * 170);
+  p.rect(resourceX + 5, resourceY + 3, foodBarWidth, 12, 2);
+  p.fill(255, 255, 255);
+  p.textSize(12);
+  p.textAlign(p.LEFT, p.CENTER);
+  p.text(`Food: ${Math.floor(gameState.resources.food)}`, resourceX + 10, resourceY + 9);
+  
+  // Food generation rate with glow
+  if (gameState.workers.food > 0) {
+    const glowAlpha = gameState.resourceAnimations.food > 0 ? 255 : 200;
+    p.fill(150, 255, 150, glowAlpha);
+    p.textSize(10);
+    p.textAlign(p.RIGHT, p.CENTER);
+    p.text(`+${(gameState.workers.food * 0.5).toFixed(1)}/s`, resourceX + 175, resourceY + 9);
+  }
+  
+  // Materials resource with pulse animation
+  const matPulse = gameState.resourceAnimations.materials > 0 ? Math.sin(gameState.resourceAnimations.materials * 0.3) * 10 : 0;
+  p.fill(60, 50, 70);
+  p.rect(resourceX, resourceY + 25, 180, 18, 3);
+  p.fill(180 + matPulse, 140 + matPulse, 100 + matPulse);
+  const materialsBarWidth = Math.min(170, (gameState.resources.materials / 100) * 170);
+  p.rect(resourceX + 5, resourceY + 28, materialsBarWidth, 12, 2);
+  p.fill(255, 255, 255);
+  p.textSize(12);
+  p.textAlign(p.LEFT, p.CENTER);
+  p.text(`Mat: ${Math.floor(gameState.resources.materials)}`, resourceX + 10, resourceY + 34);
+  
+  // Materials generation rate with glow
+  if (gameState.workers.materials > 0) {
+    const glowAlpha = gameState.resourceAnimations.materials > 0 ? 255 : 200;
+    p.fill(255, 200, 150, glowAlpha);
+    p.textSize(10);
+    p.textAlign(p.RIGHT, p.CENTER);
+    p.text(`+${(gameState.workers.materials * 0.3).toFixed(1)}/s`, resourceX + 175, resourceY + 34);
+  }
+  p.pop();
+  
+  // Menu options with enhanced visuals
+  const menuY = 80;
+  const menuOptions = [
+    { 
+      title: "Manage Workers", 
+      desc: "Allocate workers to production",
+      icon: "⚒",
+      canAfford: true
+    },
+    { 
+      title: "Recruit Hero", 
+      desc: "Cost: 20 Food, 10 Materials",
+      icon: "⚔",
+      canAfford: gameState.resources.food >= 20 && gameState.resources.materials >= 10
+    },
+    { 
+      title: "View Heroes", 
+      desc: `${gameState.heroes.length} heroes recruited`,
+      icon: "👥",
+      canAfford: true
+    },
+    { 
+      title: "Enter Dungeon", 
+      desc: `Zone ${gameState.currentZone} - ${gameState.party.length}/4 party`,
+      icon: "🗡",
+      canAfford: gameState.party.length > 0
+    }
+  ];
+  
+  const maxVisibleItems = 4;
+  const scrollOffset = gameState.menuScrollOffset;
+  const visibleOptions = menuOptions.slice(scrollOffset, scrollOffset + maxVisibleItems);
+  
+  // Draw scrollable menu area
+  p.push();
+  p.fill(50, 45, 60);
+  p.rect(30, menuY - 10, 280, 240, 8);
+  p.pop();
+  
+  // Scroll indicators
+  if (scrollOffset > 0) {
+    p.push();
+    p.fill(200, 200, 220);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(16);
+    p.text("▲", 170, menuY - 5);
+    p.pop();
+  }
+  
+  if (scrollOffset + maxVisibleItems < menuOptions.length) {
+    p.push();
+    p.fill(200, 200, 220);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(16);
+    p.text("▼", 170, menuY + 225);
+    p.pop();
+  }
+  
+  // Draw menu items
+  for (let i = 0; i < visibleOptions.length; i++) {
+    const option = visibleOptions[i];
+    const actualIndex = scrollOffset + i;
+    const isSelected = gameState.menuSelection === actualIndex;
+    const yPos = menuY + i * 55;
+    
+    p.push();
+    
+    // Selection highlight with glow animation
+    if (isSelected) {
+      const pulse = Math.sin(p.frameCount * 0.1) * 10 + 10;
+      p.fill(100 + pulse, 80 + pulse, 120 + pulse, 200);
+      p.rect(40, yPos - 2, 260, 48, 6);
+      
+      // Glow effect
+      p.noFill();
+      p.stroke(150 + pulse, 120 + pulse, 180 + pulse, 150);
+      p.strokeWeight(2);
+      p.rect(40, yPos - 2, 260, 48, 6);
+      p.noStroke();
+    } else {
+      p.fill(65, 60, 75);
+      p.rect(40, yPos - 2, 260, 48, 6);
+    }
+    
+    // Icon
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(24);
+    p.text(option.icon, 65, yPos + 20);
+    
+    // Title
+    if (!option.canAfford) {
+      p.fill(150, 100, 100);
+    } else if (isSelected) {
+      p.fill(255, 240, 180);
+    } else {
+      p.fill(200, 200, 220);
+    }
+    p.textSize(16);
+    p.textAlign(p.LEFT, p.TOP);
+    p.text(option.title, 95, yPos + 8);
+    
+    // Description
+    p.fill(isSelected ? 220 : 150, isSelected ? 220 : 150, isSelected ? 180 : 170);
+    p.textSize(11);
+    p.text(option.desc, 95, yPos + 28);
+    
+    p.pop();
+  }
+  
+  // Worker allocation display with visual bars
+  p.push();
+  p.fill(50, 45, 60);
+  p.rect(330, 80, 540, 220, 8);
+  
+  p.fill(255, 220, 150);
+  p.textSize(18);
+  p.textAlign(p.LEFT, p.TOP);
+  p.text("Worker Allocation", 350, 95);
+  
+  const workerY = 125;
+  const idle = gameState.population - gameState.workers.food - gameState.workers.materials;
+  
+  // Population
+  p.fill(200, 200, 220);
+  p.textSize(14);
+  p.text(`Population: ${gameState.population}`, 350, workerY);
+  
+  // Food workers with bar
+  p.fill(180, 180, 200);
+  p.text(`Food Workers:`, 350, workerY + 35);
+  p.fill(70, 60, 80);
+  p.rect(350, workerY + 56, 500, 14, 2);
+  p.fill(100, 180, 100);
+  const foodWorkerBar = (gameState.workers.food / gameState.population) * 500;
+  p.rect(350, workerY + 56, foodWorkerBar, 14, 2);
+  p.fill(255, 255, 255);
+  p.textSize(12);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.text(`${gameState.workers.food}`, 600, workerY + 63);
+  
+  // Material workers with bar
+  p.textAlign(p.LEFT, p.TOP);
+  p.fill(180, 180, 200);
+  p.textSize(14);
+  p.text(`Material Workers:`, 350, workerY + 80);
+  p.fill(70, 60, 80);
+  p.rect(350, workerY + 101, 500, 14, 2);
+  p.fill(180, 140, 100);
+  const matWorkerBar = (gameState.workers.materials / gameState.population) * 500;
+  p.rect(350, workerY + 101, matWorkerBar, 14, 2);
+  p.fill(255, 255, 255);
+  p.textSize(12);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.text(`${gameState.workers.materials}`, 600, workerY + 108);
+  
+  // Idle workers with bar
+  p.textAlign(p.LEFT, p.TOP);
+  p.fill(180, 180, 200);
+  p.textSize(14);
+  p.text(`Idle Workers:`, 350, workerY + 125);
+  p.fill(70, 60, 80);
+  p.rect(350, workerY + 146, 500, 14, 2);
+  p.fill(150, 150, 170);
+  const idleWorkerBar = (idle / gameState.population) * 500;
+  p.rect(350, workerY + 146, idleWorkerBar, 14, 2);
+  p.fill(255, 255, 255);
+  p.textSize(12);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.text(`${idle}`, 600, workerY + 153);
+  
+  p.pop();
+  
+  // Party composition with enhanced visuals
+  p.push();
+  p.fill(50, 45, 60);
+  p.rect(330, 310, 540, 165, 8);
+  
+  p.fill(255, 220, 150);
+  p.textSize(18);
+  p.textAlign(p.LEFT, p.TOP);
+  p.text("Current Party", 350, 325);
+  
+  if (gameState.party.length === 0) {
+    p.fill(150, 150, 170);
+    p.textSize(14);
+    p.text("No heroes in party", 350, 360);
+    p.textSize(12);
+    p.fill(120, 120, 140);
+    p.text("Recruit heroes and add them to your party", 350, 385);
+  } else {
+    for (let i = 0; i < gameState.party.length; i++) {
+      const hero = gameState.party[i];
+      const heroY = 360 + i * 35;
+      
+      // Health bar
+      p.fill(80, 60, 60);
+      p.rect(350, heroY, 150, 16, 2);
+      const healthPercent = hero.health / hero.maxHealth;
+      p.fill(hero.health > hero.maxHealth * 0.5 ? 100 : 180, 
+             hero.health > hero.maxHealth * 0.5 ? 180 : 80, 80);
+      p.rect(350, heroY, 150 * healthPercent, 16, 2);
+      
+      // Hero info
+      p.fill(200, 200, 220);
+      p.textSize(13);
+      p.textAlign(p.LEFT, p.CENTER);
+      p.text(`${hero.class} Lv${hero.level}`, 515, heroY + 8);
+      
+      p.fill(255, 255, 255);
+      p.textSize(11);
+      p.textAlign(p.CENTER, p.CENTER);
+      p.text(`${hero.health}/${hero.maxHealth}`, 425, heroY + 8);
+    }
+  }
+  p.pop();
+  
+  // Draw particles
+  drawParticles(p);
+  
+  // Action feedback overlay
+  if (gameState.actionFeedback.timer > 0) {
+    p.push();
+    const alpha = Math.min(255, gameState.actionFeedback.timer * 4);
+    
+    let bgColor, textColor;
+    if (gameState.actionFeedback.type === "success") {
+      bgColor = [100, 200, 100, alpha * 0.8];
+      textColor = [255, 255, 255, alpha];
+    } else if (gameState.actionFeedback.type === "error") {
+      bgColor = [200, 100, 100, alpha * 0.8];
+      textColor = [255, 255, 255, alpha];
+    } else {
+      bgColor = [100, 150, 200, alpha * 0.8];
+      textColor = [255, 255, 255, alpha];
+    }
+    
+    p.fill(...bgColor);
+    p.rect(250, 490, 400, 45, 5);
+    p.fill(...textColor);
+    p.textSize(16);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text(gameState.actionFeedback.message, 450, 512);
+    p.pop();
+  }
+  
+  // Progress info (bottom bar)
+  p.push();
+  p.fill(60, 50, 70);
+  p.rect(0, CANVAS_HEIGHT - 50, CANVAS_WIDTH, 50);
+  p.fill(200, 200, 220);
+  p.textSize(14);
+  p.textAlign(p.LEFT, p.CENTER);
+  // MODIFIED: Removed Score display from here, now handled by HTML element
+  p.text(`Zone: ${gameState.currentZone} | Gold: ${gameState.gold}`, 30, CANVAS_HEIGHT - 25);
+  
+  // Controls hint
+  p.fill(150, 150, 170);
+  p.textSize(12);
+  p.textAlign(p.RIGHT, p.CENTER);
+  p.text("↑↓: Navigate | Space: Select | ESC: Pause", CANVAS_WIDTH - 30, CANVAS_HEIGHT - 25);
+  p.pop();
+}
+
+export function drawHeroesScreen(p) {
+  p.background(40, 35, 50);
+  
+  // Header
+  p.push();
+  p.fill(60, 50, 70);
+  p.rect(0, 0, CANVAS_WIDTH, 60);
+  p.fill(255, 220, 150);
+  p.textSize(28);
+  p.textAlign(p.LEFT, p.TOP);
+  p.text("HEROES", 30, 15);
+  p.pop();
+  
+  // Instructions
+  p.push();
+  p.fill(150, 150, 170);
+  p.textSize(14);
+  p.textAlign(p.LEFT, p.TOP);
+  p.text("Space: Add/Remove from party | Arrow Keys: Select | ESC: Back", 30, CANVAS_HEIGHT - 35);
+  p.pop();
+  
+  if (gameState.heroes.length === 0) {
+    p.push();
+    p.fill(150, 150, 170);
+    p.textSize(18);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text("No heroes recruited yet. Visit the Sanctuary to recruit heroes.", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+    p.pop();
+    return;
+  }
+  
+  // Hero list
+  const startY = 90;
+  for (let i = 0; i < gameState.heroes.length; i++) {
+    const hero = gameState.heroes[i];
+    const isSelected = gameState.selectedHeroIndex === i;
+    const inParty = gameState.party.includes(hero);
+    
+    p.push();
+    p.fill(isSelected ? 80 : 60, isSelected ? 70 : 60, isSelected ? 100 : 80);
+    p.rect(30, startY + i * 80, 840, 70, 5);
+    
+    // Hero info
+    p.fill(inParty ? 150 : 200, inParty ? 255 : 200, inParty ? 150 : 220);
+    p.textSize(18);
+    p.textAlign(p.LEFT, p.TOP);
+    p.text(`${hero.class} - Level ${hero.level}`, 50, startY + i * 80 + 15);
+    
+    p.fill(180, 180, 200);
+    p.textSize(14);
+    p.text(`HP: ${hero.health}/${hero.maxHealth} | ATK: ${hero.attack} | DEF: ${hero.defense}`, 50, startY + i * 80 + 42);
+    p.text(`Ability: ${hero.ability}`, 500, startY + i * 80 + 42);
+    
+    if (inParty) {
+      p.fill(150, 255, 150);
+      p.textSize(14);
+      p.text("[IN PARTY]", 750, startY + i * 80 + 15);
+    }
+    p.pop();
+  }
+}
+
+export function drawDungeonScreen(p) {
+  p.background(25, 20, 35);
+  
+  // Header
+  p.push();
+  p.fill(50, 40, 60);
+  p.rect(0, 0, CANVAS_WIDTH, 50);
+  p.fill(255, 220, 150);
+  p.textSize(22);
+  p.textAlign(p.LEFT, p.TOP);
+  p.text(`Zone ${gameState.currentZone} Dungeon`, 30, 12);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(18);
+  p.fill(200, 200, 220);
+  p.text(`Progress: ${gameState.dungeonProgress}%`, CANVAS_WIDTH - 30, 14);
+  p.pop();
+  
+  // Draw dungeon map
+  const map = gameState.dungeonMap;
+  const cellSize = 60;
+  const startX = (CANVAS_WIDTH - map[0].length * cellSize) / 2;
+  const startY = 80;
+  
+  for (let y = 0; y < map.length; y++) {
+    for (let x = 0; x < map[0].length; x++) {
+      const cell = map[y][x];
+      const cellX = startX + x * cellSize;
+      const cellY = startY + y * cellSize;
+      const isExplored = cell.explored || (Math.abs(x - gameState.playerX) <= 1 && Math.abs(y - gameState.playerY) <= 1);
+      
+      p.push();
+      
+      if (!isExplored) {
+        p.fill(30, 25, 40);
+      } else {
+        switch (cell.type) {
+          case "wall":
+            p.fill(100, 95, 110);
+            break;
+          case "enemy":
+            p.fill(180, 50, 50);
+            break;
+          case "treasure":
+            p.fill(220, 180, 50);
+            break;
+          case "trap":
+            p.fill(150, 50, 150);
+            break;
+          case "exit":
+            p.fill(50, 180, 50);
+            break;
+          case "arena":
+            p.fill(255, 215, 0);
+            break;
+          case "start":
+            p.fill(50, 120, 180);
+            break;
+          default:
+            p.fill(40, 35, 50);
+        }
+      }
+      
+      p.rect(cellX, cellY, cellSize - 3, cellSize - 3, 4);
+      
+      // Draw player with pulse effect
+      if (x === gameState.playerX && y === gameState.playerY) {
+        const pulse = Math.sin(p.frameCount * 0.15) * 5;
+        p.fill(100, 200, 255);
+        p.ellipse(cellX + cellSize / 2, cellY + cellSize / 2, cellSize * 0.6 + pulse);
+      }
+      
+      // Draw icons for explored cells
+      if (isExplored) {
+        p.textAlign(p.CENTER, p.CENTER);
+        p.textSize(14);
+        switch (cell.type) {
+          case "enemy":
+            p.fill(255, 200, 200);
+            p.text("E", cellX + cellSize / 2, cellY + cellSize / 2);
+            break;
+          case "treasure":
+            const treasurePulse = Math.sin(p.frameCount * 0.1) * 20;
+            p.fill(255, 255, 200 - treasurePulse);
+            p.text("T", cellX + cellSize / 2, cellY + cellSize / 2);
+            break;
+          case "trap":
+            p.fill(255, 200, 255);
+            p.text("!", cellX + cellSize / 2, cellY + cellSize / 2);
+            break;
+          case "exit":
+            p.fill(200, 255, 200);
+            p.text("EXIT", cellX + cellSize / 2, cellY + cellSize / 2);
+            break;
+          case "arena":
+            p.fill(255, 255, 150);
+            p.text("ARENA", cellX + cellSize / 2, cellY + cellSize / 2);
+            break;
+        }
+      }
+      
+      p.pop();
+    }
+  }
+  
+  // Draw particles and floating texts
+  drawParticles(p);
+  drawFloatingTexts(p);
+  
+  // Party status
+  p.push();
+  p.fill(50, 40, 60);
+  p.rect(0, CANVAS_HEIGHT - 100, CANVAS_WIDTH, 100);
+  p.fill(200, 200, 220);
+  p.textSize(14);
+  p.textAlign(p.LEFT, p.TOP);
+  p.text("Party:", 30, CANVAS_HEIGHT - 85);
+  
+  for (let i = 0; i < gameState.party.length; i++) {
+    const hero = gameState.party[i];
+    const barWidth = 180;
+    const barX = 30 + i * 220;
+    const barY = CANVAS_HEIGHT - 60;
+    
+    p.fill(150, 150, 170);
+    p.text(`${hero.class} Lv${hero.level}`, barX, barY - 20);
+    
+    // Health bar
+    p.fill(80, 60, 60);
+    p.rect(barX, barY, barWidth, 16);
+    p.fill(hero.health > hero.maxHealth * 0.5 ? 100 : 180, hero.health > hero.maxHealth * 0.5 ? 180 : 80, 80);
+    const healthPercent = hero.health / hero.maxHealth;
+    p.rect(barX, barY, barWidth * healthPercent, 16);
+    
+    p.fill(255, 255, 255);
+    p.textSize(12);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text(`${hero.health}/${hero.maxHealth}`, barX + barWidth / 2, barY + 8);
+  }
+  p.pop();
+}
+
+export function drawCombatScreen(p) {
+  // Apply screen shake
+  p.push();
+  if (gameState.shakeEffect.timer > 0) {
+    const shakeX = (Math.random() - 0.5) * gameState.shakeEffect.intensity;
+    const shakeY = (Math.random() - 0.5) * gameState.shakeEffect.intensity;
+    p.translate(shakeX, shakeY);
+    gameState.shakeEffect.timer--;
+    if (gameState.shakeEffect.timer <= 0) {
+      gameState.shakeEffect.intensity = 0;
+    }
+  }
+  
+  p.background(30, 20, 25);
+  
+  // Header
+  p.push();
+  p.fill(60, 40, 50);
+  p.rect(0, 0, CANVAS_WIDTH, 50);
+  p.fill(255, 150, 150);
+  p.textSize(24);
+  p.textAlign(p.CENTER, p.TOP);
+  p.text("⚔️ TURN-BASED COMBAT ⚔️", CANVAS_WIDTH / 2, 13);
+  p.pop();
+  
+  // Turn indicator with animated background
+  p.push();
+  const turnBarY = 55;
+  const turnBarHeight = 40;
+  
+  if (gameState.combatPhase === COMBAT_PHASES.PLAYER_TURN) {
+    const pulse = Math.sin(p.frameCount * 0.15) * 15;
+    p.fill(50 + pulse, 100 + pulse, 150 + pulse, 220);
+    p.rect(0, turnBarY, CANVAS_WIDTH, turnBarHeight);
+    p.fill(150 + pulse, 200 + pulse, 255);
+    p.textSize(20);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text(`⚡ TURN ${gameState.turnNumber} - YOUR TURN ⚡`, CANVAS_WIDTH / 2, turnBarY + turnBarHeight / 2 - 8);
+    
+    // Show which heroes have acted
+    const actedText = `Heroes Ready: ${gameState.party.filter(h => h.health > 0).length - gameState.heroesActedThisTurn.length}/${gameState.party.filter(h => h.health > 0).length}`;
+    p.textSize(13);
+    p.fill(180, 220, 255);
+    p.text(actedText, CANVAS_WIDTH / 2, turnBarY + turnBarHeight / 2 + 12);
+  } else if (gameState.combatPhase === COMBAT_PHASES.ENEMY_TURN) {
+    const pulse = Math.sin(p.frameCount * 0.15) * 15;
+    p.fill(150 + pulse, 50 + pulse, 50 + pulse, 220);
+    p.rect(0, turnBarY, CANVAS_WIDTH, turnBarHeight);
+    p.fill(255, 150 + pulse, 150 + pulse);
+    p.textSize(20);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text(`☠️ TURN ${gameState.turnNumber} - ENEMY TURN ☠️`, CANVAS_WIDTH / 2, turnBarY + turnBarHeight / 2);
+  } else {
+    p.fill(100, 100, 100, 220);
+    p.rect(0, turnBarY, CANVAS_WIDTH, turnBarHeight);
+    p.fill(200, 200, 200);
+    p.textSize(18);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text("⏳ Transitioning...", CANVAS_WIDTH / 2, turnBarY + turnBarHeight / 2);
+  }
+  p.pop();
+  
+  // Draw enemies
+  const enemyY = 150;
+  const enemySpacing = CANVAS_WIDTH / (gameState.enemies.length + 1);
+  
+  for (let i = 0; i < gameState.enemies.length; i++) {
+    const enemy = gameState.enemies[i];
+    const x = enemySpacing * (i + 1);
+    
+    // Check for flash effect
+    const flash = gameState.flashEffects.find(f => f.target === `enemy_${i}`);
+    const flashAmount = flash ? (flash.timer / 15) * 120 : 0;
+    
+    if (enemy.health > 0) {
+      // Enemy body with glow effect
+      p.push();
+      
+      // Outer glow layer
+      if (flashAmount > 0) {
+        p.fill(255, 255, 255, flashAmount * 0.8);
+        p.ellipse(x, enemyY, 75 + flashAmount/3, 90 + flashAmount/3);
+      }
+      
+      // Main body with shadow
+      p.fill(0, 0, 0, 50);
+      p.ellipse(x + 3, enemyY + 3, 65, 80);
+      
+      p.fill(180 + flashAmount, 60 + flashAmount, 60 + flashAmount);
+      p.ellipse(x, enemyY, 65, 80);
+      p.fill(200 + flashAmount, 80 + flashAmount, 80 + flashAmount);
+      p.ellipse(x, enemyY - 12, 45);
+      
+      // Eyes with glow
+      p.fill(255, 50, 50);
+      p.ellipse(x - 10, enemyY - 18, 12);
+      p.ellipse(x + 10, enemyY - 18, 12);
+      p.fill(150, 0, 0);
+      p.ellipse(x - 10, enemyY - 18, 6);
+      p.ellipse(x + 10, enemyY - 18, 6);
+      p.pop();
+      
+      // Name and health bar
+      p.push();
+      p.fill(200, 200, 220);
+      p.textSize(15);
+      p.textAlign(p.CENTER, p.TOP);
+      p.text(enemy.name, x, enemyY + 55);
+      
+      const barWidth = 90;
+      // Health bar shadow
+      p.fill(0, 0, 0, 80);
+      p.rect(x - barWidth / 2 + 1, enemyY + 76, barWidth, 14, 2);
+      
+      p.fill(80, 40, 40);
+      p.rect(x - barWidth / 2, enemyY + 75, barWidth, 14, 2);
+      p.fill(180, 80, 80);
+      const healthPercent = enemy.health / enemy.maxHealth;
+      p.rect(x - barWidth / 2, enemyY + 75, barWidth * healthPercent, 14, 2);
+      
+      // Health text with shadow
+      p.fill(0, 0, 0, 150);
+      p.textSize(11);
+      p.text(`${Math.ceil(enemy.health)}/${Math.ceil(enemy.maxHealth)}`, x + 1, enemyY + 91);
+      p.fill(255, 255, 255);
+      p.text(`${Math.ceil(enemy.health)}/${Math.ceil(enemy.maxHealth)}`, x, enemyY + 90);
+      p.pop();
+    } else {
+      // Dead enemy with fade effect
+      p.push();
+      p.fill(100, 60, 60, 150);
+      p.textSize(40);
+      p.textAlign(p.CENTER, p.CENTER);
+      p.text("💀", x, enemyY);
+      p.fill(150, 100, 100);
+      p.textSize(16);
+      p.text("DEFEATED", x, enemyY + 45);
+      p.pop();
+    }
+  }
+  
+  // Draw party
+  const partyY = 360;
+  const partySpacing = CANVAS_WIDTH / (gameState.party.length + 1);
+  
+  for (let i = 0; i < gameState.party.length; i++) {
+    const hero = gameState.party[i];
+    const x = partySpacing * (i + 1);
+    const isSelected = gameState.selectedPartyMember === i;
+    const hasActed = gameState.heroesActedThisTurn.includes(i);
+    
+    // Check for flash effect
+    const flash = gameState.flashEffects.find(f => f.target === `hero_${i}`);
+    const flashAmount = flash ? (flash.timer / 15) * 120 : 0;
+    
+    if (hero.health > 0) {
+      // Hero body
+      p.push();
+      
+      // Glow effect for flash
+      if (flashAmount > 0) {
+        p.fill(255, 255, 255, flashAmount * 0.8);
+        p.ellipse(x, partyY, 65 + flashAmount/3, 77 + flashAmount/3);
+      }
+      
+      const heroColor = isSelected ? [100 + flashAmount, 200 + flashAmount, 255] : [80 + flashAmount, 150 + flashAmount, 200 + flashAmount];
+      
+      // Dimmed if already acted
+      if (hasActed) {
+        heroColor[0] *= 0.4;
+        heroColor[1] *= 0.4;
+        heroColor[2] *= 0.4;
+      }
+      
+      // Shadow
+      p.fill(0, 0, 0, 50);
+      p.ellipse(x + 3, partyY + 3, 55, 67);
+      
+      p.fill(...heroColor);
+      p.ellipse(x, partyY, 55, 67);
+      p.fill(heroColor[0] + 25, heroColor[1] + 25, heroColor[2] + 25);
+      p.ellipse(x, partyY - 10, 38);
+      
+      // Class indicator
+      p.fill(255, 255, 255);
+      p.textSize(14);
+      p.textAlign(p.CENTER, p.CENTER);
+      p.text(hero.class[0], x, partyY - 10);
+      p.pop();
+      
+      // Selection indicator with pulse
+      if (isSelected && !hasActed && gameState.combatPhase === COMBAT_PHASES.PLAYER_TURN) {
+        p.push();
+        p.noFill();
+        const pulse = Math.sin(p.frameCount * 0.25) * 7;
+        p.stroke(255, 220, 100);
+        p.strokeWeight(4);
+        p.ellipse(x, partyY, 73 + pulse, 85 + pulse);
+        
+        // Arrow above selected hero
+        p.fill(255, 220, 100);
+        p.noStroke();
+        p.triangle(x - 8, partyY - 50, x + 8, partyY - 50, x, partyY - 60 + pulse);
+        p.pop();
+      }
+      
+      // "Acted" indicator
+      if (hasActed) {
+        p.push();
+        p.fill(100, 255, 100, 200);
+        p.textSize(12);
+        p.textAlign(p.CENTER, p.TOP);
+        p.text("✓ DONE", x, partyY - 50);
+        p.pop();
+      }
+      
+      // Name and health bar
+      p.push();
+      p.fill(200, 200, 220);
+      p.textSize(14);
+      p.textAlign(p.CENTER, p.TOP);
+      p.text(hero.class, x, partyY + 42);
+      
+      const barWidth = 70;
+      // Shadow
+      p.fill(0, 0, 0, 80);
+      p.rect(x - barWidth / 2 + 1, enemyY + 64, barWidth, 14, 2);
+      
+      p.fill(60, 80, 60);
+      p.rect(x - barWidth / 2, partyY + 63, barWidth, 14, 2);
+      p.fill(100, 180, 100);
+      const healthPercent = hero.health / hero.maxHealth;
+      p.rect(x - barWidth / 2, partyY + 63, barWidth * healthPercent, 14, 2);
+      
+      // Health text with shadow
+      p.fill(0, 0, 0, 150);
+      p.textSize(10);
+      p.text(`${hero.health}/${hero.maxHealth}`, x + 1, partyY + 79);
+      p.fill(255, 255, 255);
+      p.text(`${hero.health}/${hero.maxHealth}`, x, partyY + 78);
+      
+      // Ability cooldown with visual indicator
+      if (hero.currentCooldown > 0) {
+        p.fill(150, 150, 170);
+        p.textSize(10);
+        p.text(`Ability: ${hero.currentCooldown}`, x, partyY + 91);
+      } else {
+        const readyPulse = Math.sin(p.frameCount * 0.2) * 60 + 195;
+        p.fill(150, readyPulse, 150);
+        p.textSize(10);
+        p.text("⚡ READY", x, partyY + 91);
+      }
+      p.pop();
+    } else {
+      // Dead hero
+      p.push();
+      p.fill(100, 100, 120, 150);
+      p.textSize(30);
+      p.textAlign(p.CENTER, p.CENTER);
+      p.text("💀", x, partyY);
+      p.fill(120, 120, 140);
+      p.textSize(14);
+      p.text("K.O.", x, partyY + 35);
+      p.pop();
+    }
+  }
+  
+  // Draw attack animations
+  drawAttackAnimations(p);
+  
+  // Draw impact effects
+  drawImpactEffects(p);
+  
+  // Draw particles and floating texts
+  drawParticles(p);
+  drawFloatingTextsForCombat(p);
+  
+  // Combat log with scrolling effect and better styling
+  p.push();
+  p.fill(40, 30, 40, 250);
+  p.rect(20, CANVAS_HEIGHT - 115, CANVAS_WIDTH - 40, 105, 5);
+  
+  // Log title
+  p.fill(200, 200, 220);
+  p.textSize(12);
+  p.textAlign(p.LEFT, p.TOP);
+  p.text("📜 Combat Log:", 30, CANVAS_HEIGHT - 110);
+  
+  p.textSize(13);
+  const logStart = Math.max(0, gameState.combatLog.length - 5);
+  for (let i = logStart; i < gameState.combatLog.length; i++) {
+    const alpha = i === gameState.combatLog.length - 1 ? 255 : 200;
+    const isImportant = gameState.combatLog[i].includes("Turn") || 
+                        gameState.combatLog[i].includes("Victory") ||
+                        gameState.combatLog[i].includes("defeated") ||
+                        gameState.combatLog[i].includes("ENEMY");
+    
+    if (isImportant) {
+      p.fill(255, 220, 150, alpha);
+    } else {
+      p.fill(200, 200, 220, alpha);
+    }
+    p.text(gameState.combatLog[i], 30, CANVAS_HEIGHT - 93 + (i - logStart) * 18);
+  }
+  p.pop();
+  
+  // Controls hint - enhanced
+  p.push();
+  const hintY = CANVAS_HEIGHT - 15;
+  
+  if (gameState.combatPhase === COMBAT_PHASES.PLAYER_TURN) {
+    const selectedHero = gameState.party[gameState.selectedPartyMember];
+    const hasActed = gameState.heroesActedThisTurn.includes(gameState.selectedPartyMember);
+    
+    // Background for controls
+    p.fill(50, 50, 70, 200);
+    p.rect(150, hintY - 20, 600, 30, 5);
+    
+    if (hasActed) {
+      p.fill(220, 220, 100);
+      p.textSize(12);
+      p.textAlign(p.CENTER, p.CENTER);
+      p.text("This hero acted! ← → Switch to another hero", CANVAS_WIDTH / 2, hintY - 5);
+    } else if (selectedHero && selectedHero.health > 0) {
+      p.fill(255, 255, 255);
+      p.textSize(13);
+      p.textAlign(p.CENTER, p.CENTER);
+      p.text("Space: Attack | Z: Ability", CANVAS_WIDTH / 2 - 150, hintY - 5);
+      p.text("← →: Switch Hero", CANVAS_WIDTH / 2 + 80, hintY - 5);
+    }
+  } else if (gameState.combatPhase === COMBAT_PHASES.ENEMY_TURN) {
+    p.fill(50, 30, 30, 200);
+    p.rect(300, hintY - 20, 300, 30, 5);
+    p.fill(255, 150, 150);
+    p.textSize(13);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text("⚔️ Enemies Attacking!", CANVAS_WIDTH / 2, hintY - 5);
+  }
+  p.pop();
+  
+  p.pop(); // End screen shake transform
+}
+
+function drawAttackAnimations(p) {
+  // Update and draw attack animations
+  for (let i = gameState.attackAnimations.length - 1; i >= 0; i--) {
+    const anim = gameState.attackAnimations[i];
+    
+    anim.progress += 0.1;
+    
+    if (anim.progress >= 1) {
+      gameState.attackAnimations.splice(i, 1);
+      continue;
+    }
+    
+    const x = p.lerp(anim.fromX, anim.toX, anim.progress);
+    const y = p.lerp(anim.fromY, anim.toY, anim.progress);
+    
+    p.push();
+    p.noStroke();
+    
+    if (anim.type === "projectile") {
+      // Draw projectile trail
+      for (let j = 0; j < 5; j++) {
+        const trailProgress = Math.max(0, anim.progress - j * 0.1);
+        const trailX = p.lerp(anim.fromX, anim.toX, trailProgress);
+        const trailY = p.lerp(anim.fromY, anim.toY, trailProgress);
+        const alpha = (1 - j * 0.2) * 200;
+        p.fill(...anim.color, alpha);
+        p.ellipse(trailX, trailY, 12 - j * 2);
+      }
+    } else if (anim.type === "slash") {
+      // Draw slash effect
+      const angle = Math.atan2(anim.toY - anim.fromY, anim.toX - anim.fromX);
+      p.translate(x, y);
+      p.rotate(angle);
+      p.fill(...anim.color, 200 * (1 - anim.progress));
+      p.ellipse(0, 0, 40, 10);
+      p.ellipse(-10, 0, 30, 8);
+    } else if (anim.type === "charge") {
+      // Charging effect
+      p.fill(...anim.color, 220 * (1 - anim.progress));
+      p.ellipse(x, y, 30 * (1 - anim.progress), 30 * (1 - anim.progress));
+    } else if (anim.type === "fireball") {
+      // Fireball with flames
+      p.fill(255, 100, 50, 220);
+      p.ellipse(x, y, 18);
+      p.fill(255, 200, 50, 180);
+      p.ellipse(x, y, 12);
+      // Flame trail
+      for (let j = 0; j < 3; j++) {
+        const trailProgress = Math.max(0, anim.progress - j * 0.15);
+        const trailX = p.lerp(anim.fromX, anim.toX, trailProgress);
+        const trailY = p.lerp(anim.fromY, anim.toY, trailProgress);
+        p.fill(255, 150, 50, 150 * (1 - j * 0.3));
+        p.ellipse(trailX, trailY, 15 - j * 4);
+      }
+    } else if (anim.type === "arrow") {
+      // Arrow projectile
+      const angle = Math.atan2(anim.toY - anim.fromY, anim.toX - anim.fromX);
+      p.translate(x, y);
+      p.rotate(angle);
+      p.fill(...anim.color);
+      p.triangle(-8, 0, 8, 3, 8, -3);
+    }
+    
+    p.pop();
+  }
+}
+
+function drawImpactEffects(p) {
+  for (let i = gameState.impactEffects.length - 1; i >= 0; i--) {
+    const effect = gameState.impactEffects[i];
+    
+    effect.timer--;
+    if (effect.timer <= 0) {
+      gameState.impactEffects.splice(i, 1);
+      continue;
+    }
+    
+    const progress = 1 - (effect.timer / 20);
+    const size = effect.size * (1 + progress * 0.5);
+    const alpha = (effect.timer / 20) * 200;
+    
+    p.push();
+    p.noFill();
+    p.stroke(...effect.color, alpha);
+    p.strokeWeight(3);
+    p.ellipse(effect.x, effect.y, size);
+    p.strokeWeight(2);
+    p.ellipse(effect.x, effect.y, size * 0.6);
+    p.pop();
+  }
+}
+
+function drawParticles(p) {
+  p.push();
+  for (const particle of gameState.particles) {
+    const alpha = (particle.timer / 60) * 255;
+    p.fill(...particle.color, alpha);
+    p.noStroke();
+    p.ellipse(particle.x, particle.y, particle.size);
+  }
+  p.pop();
+}
+
+function drawFloatingTexts(p) {
+  p.push();
+  for (const text of gameState.floatingTexts) {
+    const alpha = (text.timer / 60) * 255;
+    p.fill(...text.color, alpha);
+    p.textSize(16);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text(text.text, text.x, text.y);
+  }
+  p.pop();
+}
+
+function drawFloatingTextsForCombat(p) {
+  p.push();
+  for (const text of gameState.floatingTexts) {
+    const alpha = (text.timer / 60) * 255;
+    
+    // Position text based on game state in combat
+    let displayX = text.x;
+    let displayY = text.y;
+    
+    // If text position is 0,0, calculate position based on last action
+    if (text.x === 0 && text.y === 0) {
+      const partySpacing = CANVAS_WIDTH / (gameState.party.length + 1);
+      const enemySpacing = CANVAS_WIDTH / (gameState.enemies.length + 1);
+      
+      // Position near selected hero/enemy
+      if (text.text.includes('+')) {
+        // Healing text - position near hero
+        displayX = partySpacing * (gameState.selectedPartyMember + 1);
+        displayY = 360 - 40 - (60 - text.timer);
+      } else {
+        // Damage text - position near enemies
+        displayX = enemySpacing * 1.5;
+        displayY = 150 - 30 - (60 - text.timer);
+      }
+    } else {
+      displayX = text.x;
+      displayY = text.y;
+    }
+    
+    // Text with outline
+    p.textSize(22);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.strokeWeight(4);
+    p.stroke(0, 0, 0, alpha);
+    p.fill(...text.color, alpha);
+    p.text(text.text, displayX, displayY);
+    p.noStroke();
+  }
+  p.pop();
+}
+
+export function drawPauseOverlay(p) {
+  p.push();
+  p.fill(0, 0, 0, 150);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  p.fill(255, 255, 255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text("PAUSED", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  p.textSize(18);
+  p.text("Press ESC to resume", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+  p.pop();
+}
+
+export function drawGameOverScreen(p, isWin) {
+  p.push();
+  p.fill(0, 0, 0, 200);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  if (isWin) {
+    p.fill(150, 255, 150);
+    p.textSize(56);
+    p.text("VICTORY!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 100);
+    
+    p.fill(255, 255, 200);
+    p.textSize(28);
+    p.text("Arena Unlocked!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 40);
+  } else {
+    p.fill(255, 150, 150);
+    p.textSize(56);
+    p.text("DEFEAT", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 80);
+  }
+  
+  p.fill(200, 200, 220);
+  p.textSize(24);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 30);
+  p.text(`Zone Reached: ${gameState.currentZone}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 70);
+  
+  p.fill(255, 220, 100);
+  p.textSize(22);
+  const pulseAlpha = 150 + Math.sin(p.frameCount * 0.1) * 105;
+  p.fill(255, 220, 100, pulseAlpha);
+  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 130);
+  p.pop();
+}
+</file>
+
+<file name="hero.js">
+import { HERO_CLASSES } from './globals.js';
+
+export class Hero {
+  constructor(className, level = 1) {
+    const classData = HERO_CLASSES.find(c => c.name === className);
+    this.class = className;
+    this.level = level;
+    this.maxHealth = classData.health + (level - 1) * 10;
+    this.health = this.maxHealth;
+    this.attack = classData.attack + (level - 1) * 2;
+    this.defense = classData.defense + (level - 1) * 1;
+    this.ability = classData.ability;
+    this.abilityCooldown = classData.abilityCooldown;
+    this.currentCooldown = 0;
+    this.experience = 0;
+    this.experienceToLevel = 100 * level;
+    this.equipment = { weapon: null, armor: null };
+  }
+  
+  takeDamage(amount) {
+    const actualDamage = Math.max(1, amount - this.defense);
+    this.health = Math.max(0, this.health - actualDamage);
+    return actualDamage;
+  }
+  
+  heal(amount) {
+    this.health = Math.min(this.maxHealth, this.health + amount);
+  }
+  
+  gainExperience(exp) {
+    this.experience += exp;
+    if (this.experience >= this.experienceToLevel) {
+      this.levelUp();
+    }
+  }
+  
+  levelUp() {
+    this.level++;
+    this.experience = 0;
+    this.experienceToLevel = 100 * this.level;
+    this.maxHealth += 10;
+    this.health = this.maxHealth;
+    this.attack += 2;
+    this.defense += 1;
+  }
+  
+  canUseAbility() {
+    return this.currentCooldown <= 0 && this.health > 0;
+  }
+  
+  useAbility() {
+    if (this.canUseAbility()) {
+      this.currentCooldown = this.abilityCooldown;
+      return true;
+    }
+    return false;
+  }
+  
+  updateCooldown() {
+    if (this.currentCooldown > 0) {
+      this.currentCooldown--;
+    }
+  }
+}
+
+export class Enemy {
+  constructor(type, zoneMultiplier = 1) {
+    this.name = type.name;
+    this.maxHealth = type.health * zoneMultiplier;
+    this.health = this.maxHealth;
+    this.attack = type.attack * zoneMultiplier;
+    this.defense = type.defense * zoneMultiplier;
+    this.exp = type.exp * zoneMultiplier;
+    this.gold = type.gold * zoneMultiplier;
+  }
+  
+  takeDamage(amount) {
+    const actualDamage = Math.max(1, amount - this.defense);
+    this.health = Math.max(0, this.health - actualDamage);
+    return actualDamage;
+  }
+}
+</file>
+
+<file name="game_logic.js">
+import { gameState, GAME_PHASES, SCREEN_MODES, COMBAT_PHASES, HERO_CLASSES, addFloatingText, addParticles, addFlashEffect, triggerResourceAnimation } from './globals.js';
+import { Hero } from './hero.js';
+import { generateDungeon, canMoveTo, exploreCell } from './dungeon.js';
+import { startCombat, updateCombat, heroAttack, heroAbility } from './combat.js';
+
+export function initializeGame(p) {
+  gameState.gamePhase = GAME_PHASES.START;
+  gameState.controlMode = "HUMAN";
+  gameState.screenMode = SCREEN_MODES.BASE;
+  
+  gameState.population = 10;
+  gameState.workers = { food: 0, materials: 0 };
+  gameState.resources = { food: 50, materials: 20 };
+  gameState.resourceTimer = 0;
+  
+  gameState.heroes = [];
+  gameState.selectedHeroIndex = 0;
+  gameState.party = [];
+  
+  gameState.currentZone = 1;
+  gameState.dungeonMap = [];
+  gameState.playerX = 0;
+  gameState.playerY = 0;
+  gameState.exploredCells = [];
+  gameState.dungeonProgress = 0;
+  
+  gameState.inCombat = false;
+  gameState.combatPhase = COMBAT_PHASES.PLAYER_TURN;
+  gameState.enemies = [];
+  gameState.combatLog = [];
+  gameState.selectedPartyMember = 0;
+  gameState.turnTimer = 0;
+  gameState.turnNumber = 1;
+  gameState.heroesActedThisTurn = [];
+  gameState.enemyTurnExecuted = false;
+  gameState.enemyActionQueue = [];
+  gameState.currentEnemyAction = null;
+  
+  gameState.score = 0;
+  gameState.experience = 0;
+  gameState.gold = 0;
+  gameState.arenaUnlocked = false;
+  
+  gameState.menuSelection = 0;
+  gameState.menuOptions = [];
+  gameState.menuScrollOffset = 0;
+  
+  gameState.actionFeedback = {
+    type: null,
+    timer: 0,
+    message: ""
+  };
+  
+  gameState.floatingTexts = [];
+  gameState.particles = [];
+  gameState.flashEffects = [];
+  gameState.resourceAnimations = { food: 0, materials: 0 };
+  gameState.shakeEffect = { intensity: 0, timer: 0 };
+  gameState.attackAnimations = [];
+  gameState.impactEffects = [];
+  
+  gameState.testingState = {
+    actionQueue: [],
+    waitFrames: 0,
+    phase: "INIT"
+  };
+  
+  if (p && p.logs) {
+    p.logs.game_info.push({
+      data: { event: "game_initialized", phase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+
+export function startGame(p) {
+  gameState.gamePhase = GAME_PHASES.PLAYING;
+  gameState.screenMode = SCREEN_MODES.BASE;
+  
+  if (p && p.logs) {
+    p.logs.game_info.push({
+      data: { event: "game_started", phase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+
+export function updateGame(p) {
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) return;
+  
+  // Update resources
+  updateResources(p);
+  
+  // Update combat if active
+  if (gameState.inCombat) {
+    updateCombat(p);
+  }
+  
+  // Update visual effects
+  updateVisualEffects(p);
+  
+  // Update visual feedback timer
+  if (gameState.actionFeedback.timer > 0) {
+    gameState.actionFeedback.timer--;
+    if (gameState.actionFeedback.timer <= 0) {
+      gameState.actionFeedback.type = null;
+      gameState.actionFeedback.message = "";
+    }
+  }
+  
+  // Log player info periodically
+  if (p.frameCount % 60 === 0 && gameState.party.length > 0) {
+    const player = gameState.party[0];
+    p.logs.player_info.push({
+      screen_x: gameState.playerX,
+      screen_y: gameState.playerY,
+      game_x: gameState.playerX,
+      game_y: gameState.playerY,
+      framecount: p.frameCount
+    });
+  }
+}
+
+export function updateVisualEffects(p) {
+  // Update floating texts
+  gameState.floatingTexts = gameState.floatingTexts.filter(text => {
+    text.x += text.vx;
+    text.y += text.vy;
+    text.timer--;
+    return text.timer > 0;
+  });
+  
+  // Update particles
+  gameState.particles = gameState.particles.filter(particle => {
+    particle.x += particle.vx;
+    particle.y += particle.vy;
+    particle.vy += 0.1; // Gravity
+    particle.timer--;
+    return particle.timer > 0;
+  });
+  
+  // Update flash effects
+  gameState.flashEffects = gameState.flashEffects.filter(flash => {
+    flash.timer--;
+    return flash.timer > 0;
+  });
+  
+  // Update resource animations
+  if (gameState.resourceAnimations.food > 0) {
+    gameState.resourceAnimations.food--;
+  }
+  if (gameState.resourceAnimations.materials > 0) {
+    gameState.resourceAnimations.materials--;
+  }
+}
+
+export function updateResources(p) {
+  gameState.resourceTimer++;
+  
+  const speedMultiplier = p.keyIsDown(16) ? 10 : 1; // Shift for speed up
+  
+  if (gameState.resourceTimer >= 60 / speedMultiplier) {
+    gameState.resourceTimer = 0;
+    
+    // Generate resources
+    const foodGain = gameState.workers.food * 0.5;
+    const materialsGain = gameState.workers.materials * 0.3;
+    
+    if (foodGain > 0) {
+      gameState.resources.food += foodGain;
+      triggerResourceAnimation('food');
+    }
+    
+    if (materialsGain > 0) {
+      gameState.resources.materials += materialsGain;
+      triggerResourceAnimation('materials');
+    }
+    
+    // Consume food
+    const foodConsumption = gameState.population * 0.1;
+    gameState.resources.food = Math.max(0, gameState.resources.food - foodConsumption);
+  }
+}
+
+function showActionFeedback(type, message) {
+  gameState.actionFeedback = {
+    type: type,
+    timer: 60,
+    message: message
+  };
+}
+
+export function handleBaseInput(keyCode, p) {
+  const menuOptions = ["Manage Workers", "Recruit Hero", "View Heroes", "Enter Dungeon"];
+  const maxVisibleItems = 4;
+  
+  if (keyCode === 38) { // Up arrow
+    gameState.menuSelection = (gameState.menuSelection - 1 + menuOptions.length) % menuOptions.length;
+    
+    // Update scroll offset for scrolling
+    if (gameState.menuSelection < gameState.menuScrollOffset) {
+      gameState.menuScrollOffset = gameState.menuSelection;
+    }
+  } else if (keyCode === 40) { // Down arrow
+    gameState.menuSelection = (gameState.menuSelection + 1) % menuOptions.length;
+    
+    // Update scroll offset for scrolling
+    if (gameState.menuSelection >= gameState.menuScrollOffset + maxVisibleItems) {
+      gameState.menuScrollOffset = gameState.menuSelection - maxVisibleItems + 1;
+    }
+  } else if (keyCode === 32) { // Space
+    switch (gameState.menuSelection) {
+      case 0: // Manage Workers
+        showWorkerMenu(p);
+        break;
+      case 1: // Recruit Hero
+        recruitHero(p);
+        break;
+      case 2: // View Heroes
+        gameState.screenMode = SCREEN_MODES.HEROES;
+        gameState.selectedHeroIndex = 0;
+        showActionFeedback("info", "Viewing Heroes");
+        break;
+      case 3: // Enter Dungeon
+        if (gameState.party.length > 0) {
+          enterDungeon(p);
+        } else {
+          showActionFeedback("error", "Need at least 1 hero in party!");
+        }
+        break;
+    }
+  }
+}
+
+function showWorkerMenu(p) {
+  // Simple worker allocation - cycle through food/materials
+  if (gameState.menuSelection === 0) {
+    const idle = gameState.population - gameState.workers.food - gameState.workers.materials;
+    if (idle > 0) {
+      gameState.workers.food++;
+      showActionFeedback("success", "Assigned worker to Food production");
+    } else if (gameState.workers.food > 0) {
+      gameState.workers.food--;
+      gameState.workers.materials++;
+      showActionFeedback("success", "Reassigned worker to Materials");
+    } else if (gameState.workers.materials > 0) {
+      gameState.workers.materials = 0;
+      showActionFeedback("success", "Workers now idle");
+    }
+  }
+}
+
+function recruitHero(p) {
+  const cost = { food: 20, materials: 10 };
+  
+  if (gameState.resources.food >= cost.food && gameState.resources.materials >= cost.materials) {
+    gameState.resources.food -= cost.food;
+    gameState.resources.materials -= cost.materials;
+    
+    const classIndex = gameState.heroes.length % HERO_CLASSES.length;
+    const heroClass = HERO_CLASSES[classIndex].name;
+    const newHero = new Hero(heroClass);
+    
+    gameState.heroes.push(newHero);
+    gameState.score += 50;
+    
+    showActionFeedback("success", `Recruited ${heroClass}!`);
+    
+    // Visual feedback
+    addParticles(450, 300, 15, [100, 200, 255]);
+    
+    if (p && p.logs) {
+      p.logs.game_info.push({
+        data: { event: "hero_recruited", class: heroClass },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  } else {
+    showActionFeedback("error", "Not enough resources!");
+  }
+}
+
+export function handleHeroesInput(keyCode, p) {
+  if (keyCode === 27) { // ESC - back to base
+    gameState.screenMode = SCREEN_MODES.BASE;
+    return;
+  }
+  
+  if (gameState.heroes.length === 0) return;
+  
+  if (keyCode === 38) { // Up arrow
+    gameState.selectedHeroIndex = Math.max(0, gameState.selectedHeroIndex - 1);
+  } else if (keyCode === 40) { // Down arrow
+    gameState.selectedHeroIndex = Math.min(gameState.heroes.length - 1, gameState.selectedHeroIndex + 1);
+  } else if (keyCode === 32) { // Space - add/remove from party
+    const hero = gameState.heroes[gameState.selectedHeroIndex];
+    const partyIndex = gameState.party.indexOf(hero);
+    
+    if (partyIndex >= 0) {
+      gameState.party.splice(partyIndex, 1);
+      showActionFeedback("info", `${hero.class} removed from party`);
+    } else if (gameState.party.length < 4) {
+      gameState.party.push(hero);
+      showActionFeedback("success", `${hero.class} added to party!`);
+    }
+  }
+}
+
+function enterDungeon(p) {
+  gameState.screenMode = SCREEN_MODES.DUNGEON;
+  gameState.dungeonMap = generateDungeon(gameState.currentZone, p);
+  gameState.playerX = 0;
+  gameState.playerY = 0;
+  gameState.exploredCells = [];
+  gameState.dungeonProgress = 0;
+  
+  exploreCell(0, 0);
+  gameState.dungeonMap[0][0].explored = true;
+  
+  showActionFeedback("info", `Entering Zone ${gameState.currentZone} Dungeon`);
+  
+  if (p && p.logs) {
+    p.logs.game_info.push({
+      data: { event: "dungeon_entered", zone: gameState.currentZone },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+
+export function handleDungeonInput(keyCode, p) {
+  if (gameState.inCombat) {
+    handleCombatInput(keyCode, p);
+    return;
+  }
+  
+  if (keyCode === 27) { // ESC - back to base
+    gameState.screenMode = SCREEN_MODES.BASE;
+    return;
+  }
+  
+  let newX = gameState.playerX;
+  let newY = gameState.playerY;
+  
+  if (keyCode === 37) newX--; // Left
+  if (keyCode === 39) newX++; // Right
+  if (keyCode === 38) newY--; // Up
+  if (keyCode === 40) newY++; // Down
+  
+  if (canMoveTo(gameState.dungeonMap, newX, newY)) {
+    gameState.playerX = newX;
+    gameState.playerY = newY;
+    
+    const cell = gameState.dungeonMap[newY][newX];
+    cell.explored = true;
+    exploreCell(newX, newY);
+    
+    // Handle cell events
+    handleCellEvent(cell, p);
+  }
+}
+
+function handleCellEvent(cell, p) {
+  const map = gameState.dungeonMap;
+  const cellSize = 60;
+  const startX = (900 - map[0].length * cellSize) / 2;
+  const startY = 80;
+  const cellX = startX + gameState.playerX * cellSize + cellSize / 2;
+  const cellY = startY + gameState.playerY * cellSize + cellSize / 2;
+  
+  if (cell.type === "enemy" && !gameState.inCombat) {
+    gameState.screenMode = SCREEN_MODES.COMBAT;
+    startCombat(cell.monsterType, gameState.currentZone, p);
+  } else if (cell.type === "treasure") {
+    gameState.gold += cell.treasure.gold;
+    gameState.resources.materials += cell.treasure.materials;
+    gameState.score += cell.treasure.gold * 2;
+    
+    // Visual feedback
+    addFloatingText(cellX, cellY, `+${cell.treasure.gold} Gold`, [255, 215, 0]);
+    addFloatingText(cellX, cellY + 20, `+${cell.treasure.materials} Mat`, [180, 140, 100]);
+    addParticles(cellX, cellY, 20, [255, 215, 0]);
+    
+    cell.type = "empty";
+  } else if (cell.type === "trap") {
+    let totalDamage = 0;
+    gameState.party.forEach(hero => {
+      const damage = hero.takeDamage(cell.damage);
+      totalDamage += damage;
+    });
+    
+    // Visual feedback
+    addFloatingText(cellX, cellY, `TRAP! -${Math.floor(totalDamage / gameState.party.length)}`, [255, 100, 255]);
+    addParticles(cellX, cellY, 15, [255, 100, 255]);
+    
+    cell.type = "empty";
+  } else if (cell.type === "exit") {
+    gameState.currentZone++;
+    gameState.score += 500;
+    gameState.screenMode = SCREEN_MODES.BASE;
+    
+    // Heal party
+    gameState.party.forEach(hero => {
+      hero.health = hero.maxHealth;
+    });
+    
+    showActionFeedback("success", `Zone ${gameState.currentZone - 1} Complete!`);
+    addParticles(450, 300, 30, [100, 255, 100]);
+    
+    if (p && p.logs) {
+      p.logs.game_info.push({
+        data: { event: "zone_completed", zone: gameState.currentZone - 1 },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  } else if (cell.type === "arena") {
+    gameState.arenaUnlocked = true;
+    gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
+    
+    if (p && p.logs) {
+      p.logs.game_info.push({
+        data: { event: "arena_unlocked", win: true },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+}
+
+export function handleCombatInput(keyCode, p) {
+  if (!gameState.inCombat) return;
+  
+  // Only allow input during player turn
+  if (gameState.combatPhase !== COMBAT_PHASES.PLAYER_TURN) return;
+  
+  const selectedHero = gameState.party[gameState.selectedPartyMember];
+  const hasActed = gameState.heroesActedThisTurn.includes(gameState.selectedPartyMember);
+  
+  if (keyCode === 32) { // Space - attack
+    if (!hasActed && selectedHero && selectedHero.health > 0) {
+      heroAttack(gameState.selectedPartyMember, p);
+    }
+  } else if (keyCode === 90) { // Z - ability
+    if (!hasActed && selectedHero && selectedHero.health > 0) {
+      heroAbility(gameState.selectedPartyMember, p);
+    }
+  } else if (keyCode === 37 || keyCode === 39) { // Arrow keys - switch hero
+    const aliveHeroes = gameState.party.filter(h => h.health > 0);
+    if (aliveHeroes.length > 0) {
+      do {
+        if (keyCode === 37) {
+          gameState.selectedPartyMember = (gameState.selectedPartyMember - 1 + gameState.party.length) % gameState.party.length;
+        } else {
+          gameState.selectedPartyMember = (gameState.selectedPartyMember + 1) % gameState.party.length;
+        }
+      } while (gameState.party[gameState.selectedPartyMember].health <= 0);
+    }
+  }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

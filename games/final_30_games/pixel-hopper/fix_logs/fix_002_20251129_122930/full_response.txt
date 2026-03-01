@@ -1,0 +1,281 @@
+<analysis>
+- Issue identified: Module imports are at the bottom of `input.js` (after exports), which violates JavaScript module loading order and can cause the entire game to fail loading. Additionally, the game never creates a player on initial setup which could cause issues with game flow.
+- Files affected: `input.js`, `game.js`
+- Changes needed: Move imports to top of `input.js`, ensure proper initialization order in `game.js` setup, and ensure START screen renders correctly on initial load.
+</analysis>
+
+<code filename="input.js">
+import { gameState } from './globals.js';
+import { Player } from './entities.js';
+import { LaneManager } from './lanes.js';
+
+export function handleInput(p) {
+    // Phase transitions
+    if (gameState.gamePhase === "START") {
+        if (isKeyPressed(13)) { // ENTER
+            startGame(p);
+        }
+    } else if (gameState.gamePhase === "PLAYING") {
+        if (isKeyPressed(27)) { // ESC
+            gameState.gamePhase = "PAUSED";
+            logGameInfo(p, "Phase Changed to PAUSED");
+        }
+    } else if (gameState.gamePhase === "PAUSED") {
+        if (isKeyPressed(27)) { // ESC
+            gameState.gamePhase = "PLAYING";
+            logGameInfo(p, "Phase Changed to PLAYING");
+        }
+    } else if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+        if (isKeyPressed(82)) { // R
+            resetGame(p);
+        }
+    }
+}
+
+// Helper to check key press only once per frame if needed, 
+// but for p5 keyPressed handles singular events. 
+// This is for continuous checks or specific logic.
+const keys = {};
+
+export function registerKeyPress(p, keyCode) {
+    keys[keyCode] = true;
+    
+    // Log input
+    if (p.logs) {
+        p.logs.inputs.push({
+            input_type: 'keyPressed',
+            data: { key: p.key, keyCode: keyCode },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+
+    // Direct gameplay input handling
+    if (gameState.gamePhase === "PLAYING" && gameState.player && !gameState.player.isMoving && gameState.controlMode === "HUMAN") {
+        if (keyCode === p.UP_ARROW) gameState.player.queueMove(0, -1);
+        else if (keyCode === p.DOWN_ARROW) gameState.player.queueMove(0, 1);
+        else if (keyCode === p.LEFT_ARROW) gameState.player.queueMove(-1, 0);
+        else if (keyCode === p.RIGHT_ARROW) gameState.player.queueMove(1, 0);
+    }
+    
+    // Global phase keys
+    if (keyCode === 13 && gameState.gamePhase === "START") startGame(p);
+    if (keyCode === 27) togglePause(p);
+    if (keyCode === 82 && (gameState.gamePhase.startsWith("GAME_OVER"))) resetGame(p);
+}
+
+export function registerKeyRelease(p, keyCode) {
+    keys[keyCode] = false;
+    if (p.logs) {
+        p.logs.inputs.push({
+            input_type: 'keyReleased',
+            data: { key: p.key, keyCode: keyCode },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+
+function isKeyPressed(keyCode) {
+    return keys[keyCode] === true;
+}
+
+function startGame(p) {
+    resetGame(p);
+    gameState.gamePhase = "PLAYING";
+    logGameInfo(p, "Game Started");
+}
+
+function togglePause(p) {
+    if (gameState.gamePhase === "PLAYING") {
+        gameState.gamePhase = "PAUSED";
+    } else if (gameState.gamePhase === "PAUSED") {
+        gameState.gamePhase = "PLAYING";
+    }
+}
+
+export function resetGame(p) {
+    gameState.score = 0;
+    gameState.cameraY = 0;
+    gameState.particles = [];
+    
+    // Reset Lanes
+    gameState.laneManager = new LaneManager();
+    gameState.lanes = gameState.laneManager.lanes;
+    
+    // Reset Player
+    // Start player at center X, and a few lanes up from bottom
+    gameState.player = new Player(7, 0); // Grid X, Grid Y (relative to start)
+    
+    // Ensure initial area is safe
+    gameState.laneManager.initSafeZone();
+    
+    gameState.gamePhase = "START";
+    logGameInfo(p, "Game Reset");
+}
+
+function logGameInfo(p, info) {
+    if (p.logs) {
+        p.logs.game_info.push({
+            data: { info: info, phase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+</code>
+
+<code filename="game.js">
+import { 
+    CANVAS_WIDTH, CANVAS_HEIGHT, gameState, initLogs 
+} from './globals.js';
+import { handleInput, registerKeyPress, registerKeyRelease } from './input.js';
+import { Player } from './entities.js';
+import { LaneManager } from './lanes.js';
+import { checkCollisions } from './physics.js';
+import { renderUI, renderStartScreen, renderGameOver, renderPaused } from './ui.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        initLogs(p);
+        
+        // Init Game State
+        gameState.gamePhase = "START";
+        gameState.score = 0;
+        gameState.cameraY = 0;
+        gameState.particles = [];
+        
+        // Initialize Managers
+        gameState.laneManager = new LaneManager();
+        gameState.lanes = gameState.laneManager.lanes;
+        
+        // Initialize Player for START screen (needed for proper state)
+        gameState.player = new Player(7, 0);
+        
+        p.logs.game_info.push({
+            data: { gamePhase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    };
+
+    p.draw = function() {
+        // Update Time
+        gameState.frameCount = p.frameCount;
+        const currentTime = p.millis();
+        gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = currentTime;
+        
+        // Automated Inputs
+        if (gameState.controlMode !== "HUMAN" && gameState.gamePhase === "PLAYING") {
+            const action = get_automated_testing_action(gameState);
+            if (action) {
+                registerKeyPress(p, action.keyCode);
+                // Auto-release next frame logic handled implicitly by not sending keyHeld events
+            }
+        }
+        
+        // Input Handling
+        handleInput(p);
+        
+        // Rendering
+        p.background(30, 30, 40); // Deep background color
+        
+        // UI Layers - Check phase first
+        if (gameState.gamePhase === "START") {
+            renderStartScreen(p);
+        } else if (gameState.gamePhase === "PLAYING") {
+            renderGameWorld(p);
+            updateGame(p);
+            renderUI(p);
+        } else if (gameState.gamePhase === "PAUSED") {
+            renderGameWorld(p);
+            renderUI(p); // Show score behind
+            renderPaused(p);
+        } else if (gameState.gamePhase.startsWith("GAME_OVER")) {
+            renderGameWorld(p);
+            renderUI(p);
+            renderGameOver(p, gameState.gamePhase === "GAME_OVER_WIN");
+        }
+    };
+
+    function renderGameWorld(p) {
+        // Camera Logic
+        if (gameState.player) {
+            // Camera follows player Y smoothly, but mostly moves UP (negative Y)
+            // Center player vertically around 3/4 of screen
+            const targetCamY = gameState.player.visualY - CANVAS_HEIGHT * 0.7;
+            
+            // Only scroll forward (up), never back down?
+            // Usually Crossy Road cam drifts up.
+            // Let's just lerp to player.
+            gameState.cameraY = p.lerp(gameState.cameraY, targetCamY, 0.1);
+        }
+        
+        // Apply Camera
+        p.push();
+        p.translate(0, -gameState.cameraY);
+        
+        // Render World
+        if (gameState.laneManager) {
+            gameState.laneManager.render(p);
+        }
+        
+        // Render Particles (Behind player?)
+        // Particles should be z-sorted. Simple: Render all particles.
+        gameState.particles.forEach(sys => sys.render(p));
+        
+        // Render Player
+        if (gameState.player) {
+            gameState.player.render(p);
+        }
+        
+        p.pop();
+    }
+
+    function updateGame(p) {
+        // Update Managers
+        gameState.laneManager.update(p);
+        
+        // Update Entities
+        if (gameState.player) gameState.player.update(p);
+        
+        // Update Particles
+        for (let i = gameState.particles.length - 1; i >= 0; i--) {
+            gameState.particles[i].update();
+            if (gameState.particles[i].isDead()) {
+                gameState.particles.splice(i, 1);
+            }
+        }
+        
+        // Physics
+        checkCollisions(p);
+    }
+
+    p.keyPressed = function() {
+        registerKeyPress(p, p.keyCode);
+    };
+
+    p.keyReleased = function() {
+        registerKeyRelease(p, p.keyCode);
+    };
+});
+
+window.gameInstance = gameInstance;
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+    // Restart game to ensure clean state for testing
+    if (gameState.gamePhase !== "START") {
+        gameState.gamePhase = "START";
+    }
+};
+</code>

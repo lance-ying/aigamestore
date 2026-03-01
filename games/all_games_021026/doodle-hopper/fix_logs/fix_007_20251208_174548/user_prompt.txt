@@ -1,0 +1,1144 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+make the guy blue 
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Doodle Hopper</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 4px solid #fff; border-radius: 4px; box-shadow: 0 0 20px rgba(0,0,0,0.5); width: 400px !important; height: 500px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; font-family: sans-serif; transition: background 0.2s; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #007bff; }
+      h1 { color: #fff; font-family: 'Comic Sans MS', 'Chalkboard SE', sans-serif; text-shadow: 2px 2px 0 #000; margin-bottom: 10px; }
+      p { color: #ccc; font-family: sans-serif; line-height: 1.4; max-width: 400px; text-align: center; margin: 5px 0; font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 10px;">
+      <h1 id="gameTitle">Doodle Hopper</h1>
+      <p>Jump on platforms to go higher! Avoid monsters and black holes.</p>
+      <p>Controls: Arrows to Move, Space to Shoot, ESC to Pause, R to Restart.</p>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.7.0/lib/p5.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/seedrandom@3.0.5/seedrandom.min.js"></script>
+    
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+/**
+ * Automated testing AI controller
+ */
+import { gameState, CANVAS_WIDTH } from './globals.js';
+
+export function get_automated_testing_action(gameState) {
+    if (!gameState.player) return null;
+    
+    switch(gameState.controlMode) {
+        case "TEST_1": // Win / Survival Strategy
+            return runSurvivalStrategy(gameState);
+        case "TEST_2": // Random / Stress Test
+            return runRandomStrategy();
+        case "TEST_3": // Physics Check (Vertical only)
+            return { keyCode: 0 }; // No input, just jump naturally
+        default:
+            return null;
+    }
+}
+
+function runSurvivalStrategy(gameState) {
+    const player = gameState.player;
+    const targets = gameState.platforms.filter(p => p.y < player.y && p.active);
+    
+    // 1. Find nearest platform above
+    let bestTarget = null;
+    let minDist = 10000;
+    
+    for (const plat of targets) {
+        // Priority to platforms directly above within jump range
+        const dy = player.y - plat.y;
+        if (dy > 0 && dy < 300) { // Only look at reachable ones
+            if (dy < minDist) {
+                minDist = dy;
+                bestTarget = plat;
+            }
+        }
+    }
+    
+    // 2. Check for enemies above to shoot
+    const enemiesAbove = gameState.enemies.filter(e => 
+        e.y < player.y && e.y > player.y - 300 && 
+        Math.abs(e.x - player.x) < 50
+    );
+    
+    if (enemiesAbove.length > 0) {
+        return { keyCode: 32 }; // Space to shoot
+    }
+    
+    // 3. Move towards target
+    if (bestTarget) {
+        const targetX = bestTarget.x + bestTarget.width / 2;
+        const diffX = targetX - player.x;
+        
+        if (diffX > 10) return { keyCode: 39 }; // Right
+        if (diffX < -10) return { keyCode: 37 }; // Left
+    } else {
+        // Fallback: Move towards center if lost
+        if (player.x < CANVAS_WIDTH/2) return { keyCode: 39 };
+        else return { keyCode: 37 };
+    }
+    
+    return null;
+}
+
+function runRandomStrategy() {
+    const r = Math.random();
+    if (r < 0.3) return { keyCode: 37 }; // Left
+    if (r < 0.6) return { keyCode: 39 }; // Right
+    if (r < 0.8) return { keyCode: 32 }; // Shoot
+    return null;
+}
+
+window.get_automated_testing_action = get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+/**
+ * Global constants and state management for Doodle Hopper
+ */
+
+export const CANVAS_WIDTH = 400;
+export const CANVAS_HEIGHT = 500;
+
+// Physics constants
+export const GRAVITY = 0.4;
+export const JUMP_FORCE = -11;
+export const SPRING_FORCE = -18;
+export const MOVE_SPEED = 6;
+export const FRICTION = 0.85; // Air resistance/friction for horizontal movement
+
+// Game Settings
+export const PLATFORM_WIDTH = 60;
+export const PLATFORM_HEIGHT = 15;
+export const GENERATION_THRESHOLD = 50; // Distance above screen to generate content
+
+export const gameState = {
+    // Game Status
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN
+    
+    // Score & Progression
+    score: 0,
+    highScore: 0,
+    worldTheme: "GRASS", // GRASS, JUNGLE, SPACE
+    
+    // Entities
+    player: null,
+    platforms: [],
+    enemies: [],
+    projectiles: [],
+    collectibles: [],
+    particles: [],
+    
+    // Camera / World
+    cameraY: 0,
+    maxHeightReached: 0, // In world coordinates (negative Y)
+    
+    // Generation State
+    lastGenerationY: 0, // Y position of last generated platform
+    
+    // Time
+    frameCount: 0,
+    deltaTime: 0,
+    lastFrameTime: 0
+};
+
+// Initialize logs object (write-only)
+export function initLogs() {
+    return {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+}
+
+// Global accessor
+export function getGameState() {
+    return gameState;
+}
+window.getGameState = getGameState;
+</file>
+
+<file name="game.js">
+/**
+ * Main Game Loop and Setup
+ */
+import { gameState, initLogs, CANVAS_WIDTH, CANVAS_HEIGHT, GENERATION_THRESHOLD, GRAVITY } from './globals.js';
+import { handleInput, setKey, KEY, resetInputs } from './input.js';
+import { updatePhysics } from './physics.js';
+import { renderStartScreen, renderHUD, renderPausedOverlay, renderGameOver } from './ui.js';
+import { Player, Platform, Enemy, Collectible } from './entities.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    p.logs = initLogs();
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        gameState.gamePhase = "START";
+        
+        // Log Initial State
+        p.logs.game_info.push({
+            event: "initialization",
+            data: { phase: gameState.gamePhase },
+            framecount: 0,
+            timestamp: Date.now()
+        });
+    };
+
+    p.draw = function() {
+        gameState.frameCount = p.frameCount;
+        const now = p.millis();
+        gameState.deltaTime = (now - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = now;
+        
+        // Handle Continuous Input (Movement)
+        if (gameState.gamePhase === "PLAYING" && gameState.player) {
+            if (p.keyIsDown(KEY.LEFT)) gameState.player.moveLeft();
+            if (p.keyIsDown(KEY.RIGHT)) gameState.player.moveRight();
+        }
+
+        // --- RENDER & UPDATE CYCLE ---
+        
+        // 1. Background
+        renderBackground(p);
+        
+        // 2. State Machine
+        switch (gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                break;
+            case "PLAYING":
+                updateGameLogic(p);
+                renderGameWorld(p);
+                renderHUD(p);
+                break;
+            case "PAUSED":
+                renderGameWorld(p);
+                renderHUD(p);
+                renderPausedOverlay(p);
+                break;
+            case "GAME_OVER_LOSE":
+                renderGameWorld(p);
+                renderHUD(p);
+                renderGameOver(p);
+                break;
+        }
+        
+        // Log player info periodically
+        if (gameState.player && gameState.frameCount % 60 === 0) {
+            p.logs.player_info.push({
+                x: gameState.player.x,
+                y: gameState.player.y,
+                score: gameState.score,
+                framecount: gameState.frameCount,
+                timestamp: Date.now()
+            });
+        }
+    };
+
+    p.keyPressed = function() {
+        setKey(p.keyCode, true);
+        
+        // Log Input
+        p.logs.inputs.push({
+            type: "keyPressed",
+            key: p.key,
+            keyCode: p.keyCode,
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+        
+        // Global Phase Controls
+        if (p.keyCode === KEY.ENTER && gameState.gamePhase === "START") {
+            startGame();
+        }
+        
+        if ((p.keyCode === KEY.ESC || p.key === 'p') && (gameState.gamePhase === "PLAYING" || gameState.gamePhase === "PAUSED")) {
+            gameState.gamePhase = gameState.gamePhase === "PLAYING" ? "PAUSED" : "PLAYING";
+        }
+        
+        if (p.keyCode === KEY.R && (gameState.gamePhase === "GAME_OVER_LOSE" || gameState.gamePhase === "GAME_OVER_WIN")) {
+            gameState.gamePhase = "START";
+        }
+        
+        if (p.keyCode === KEY.SPACE && gameState.gamePhase === "PLAYING" && gameState.player) {
+            gameState.player.shoot();
+        }
+    };
+
+    p.keyReleased = function() {
+        setKey(p.keyCode, false);
+    };
+});
+
+// --- Game Logic Helpers ---
+
+function startGame() {
+    resetGame();
+    gameState.gamePhase = "PLAYING";
+}
+
+function resetGame() {
+    gameState.score = 0;
+    gameState.cameraY = 0;
+    gameState.maxHeightReached = 0;
+    gameState.lastGenerationY = 380; // Start generating from the initial platform height
+    
+    // Clear entities
+    gameState.entities = []; // General list if needed, but we use specific arrays
+    gameState.platforms = [];
+    gameState.enemies = [];
+    gameState.projectiles = [];
+    gameState.collectibles = [];
+    gameState.particles = [];
+    
+    // Initialize Player
+    gameState.player = new Player(CANVAS_WIDTH / 2, 300);
+    
+    // Initial Platforms
+    gameState.platforms.push(new Platform(CANVAS_WIDTH / 2 - 30, 380, 'NORMAL')); // Starter platform
+    generateContent(-500); // Generate initial chunk above screen
+}
+
+function generateContent(limitY) {
+    // Generate platforms from lastGenerationY up to limitY
+    // Note: limitY is negative (world coordinates go up into negative)
+    
+    while (gameState.lastGenerationY > limitY) {
+        gameState.lastGenerationY -= (40 + Math.random() * 60); // Gap between platforms
+        
+        const y = gameState.lastGenerationY;
+        const x = Math.random() * (CANVAS_WIDTH - 60);
+        
+        // Platform Type Logic
+        let type = 'NORMAL';
+        const rand = Math.random();
+        
+        // Difficulty scaling based on height (abs(y))
+        const height = Math.abs(y);
+        
+        if (height > 1000) {
+            if (rand < 0.2) type = 'MOVING';
+            else if (rand < 0.3) type = 'BROKEN';
+            else if (rand < 0.35) type = 'SPRING';
+        } else {
+             if (rand < 0.1) type = 'MOVING';
+             else if (rand < 0.15) type = 'SPRING';
+        }
+        
+        gameState.platforms.push(new Platform(x, y, type));
+        
+        // Chance for Enemy
+        if (Math.random() < 0.05 && height > 500) {
+            const ex = Math.random() * (CANVAS_WIDTH - 40) + 20;
+            const et = Math.random() < 0.5 ? 'STATIC' : 'HOVER';
+            gameState.enemies.push(new Enemy(ex, y - 40, et));
+        }
+        
+        // Chance for Collectible
+        if (Math.random() < 0.1) {
+            gameState.collectibles.push(new Collectible(x + 30, y - 30));
+        }
+    }
+}
+
+function updateGameLogic(p) {
+    // Physics & movement
+    updatePhysics(p);
+    
+    // Camera Logic
+    // Move camera up if player is above the threshold (middle of screen)
+    // Threshold is e.g. 200px from top
+    const targetY = gameState.player.y - 200;
+    
+    if (targetY < gameState.cameraY) {
+        gameState.cameraY = targetY;
+        gameState.score = Math.max(gameState.score, Math.abs(gameState.cameraY));
+        gameState.maxHeightReached = gameState.cameraY;
+    }
+    
+    // Fallback camera smoothing? No, classic doodle jump is strict on up movement
+    // But if player falls, camera doesn't move down.
+    
+    // Procedural Generation trigger
+    // Generate if the top of the screen (cameraY) is close to last generation point
+    if (gameState.cameraY < gameState.lastGenerationY + CANVAS_HEIGHT) {
+        generateContent(gameState.cameraY - CANVAS_HEIGHT); // Generate one screen height ahead
+    }
+    
+    // Cleanup entities below screen
+    const deleteThreshold = gameState.cameraY + CANVAS_HEIGHT + 100;
+    
+    gameState.platforms = gameState.platforms.filter(e => e.y < deleteThreshold);
+    gameState.enemies = gameState.enemies.filter(e => e.y < deleteThreshold);
+    gameState.collectibles = gameState.collectibles.filter(e => e.y < deleteThreshold);
+    gameState.projectiles = gameState.projectiles.filter(e => e.y > gameState.cameraY - 100); // Remove if too high
+    
+    // Update Entities
+    gameState.platforms.forEach(e => e.update());
+    gameState.enemies.forEach(e => e.update());
+    gameState.collectibles.forEach(e => e.update());
+    gameState.projectiles.forEach(e => e.update());
+    
+    // Particles
+    for (let i = gameState.particles.length - 1; i >= 0; i--) {
+        gameState.particles[i].update();
+        if (gameState.particles[i].life <= 0) {
+            gameState.particles.splice(i, 1);
+        }
+    }
+}
+
+function renderGameWorld(p) {
+    p.push();
+    
+    // Apply Camera Transform
+    // cameraY is negative (world coords). We want to shift world DOWN by -cameraY
+    // So if cameraY is -100, we translate(0, 100).
+    p.translate(0, -gameState.cameraY);
+    
+    // Render Order: Platforms -> Collectibles -> Enemies -> Player -> Projectiles -> Particles
+    gameState.platforms.forEach(e => e.render(p));
+    gameState.collectibles.forEach(e => e.render(p));
+    gameState.enemies.forEach(e => e.render(p));
+    if (gameState.player) gameState.player.render(p);
+    gameState.projectiles.forEach(e => e.render(p));
+    gameState.particles.forEach(e => e.render(p));
+    
+    p.pop();
+}
+
+function renderBackground(p) {
+    // Dynamic background based on height
+    const height = Math.abs(gameState.cameraY);
+    let bgCol;
+    
+    if (height < 2000) {
+        // Paper / Grass
+        bgCol = p.color(245, 245, 240); // Paper
+    } else if (height < 5000) {
+        // Jungle
+        bgCol = p.color(200, 230, 200);
+    } else {
+        // Space
+        bgCol = p.color(20, 20, 40);
+    }
+    
+    p.background(bgCol);
+    
+    // Draw Grid
+    p.stroke(0, 0, 0, 20);
+    p.strokeWeight(1);
+    const gridSize = 30;
+    
+    // Determine grid offset based on camera to make it static relative to background or scrolling
+    // Let's make it scroll with parallax or static? Static grid looks like graph paper
+    if (height < 2000) {
+        for (let x = 0; x < CANVAS_WIDTH; x += gridSize) p.line(x, 0, x, CANVAS_HEIGHT);
+        for (let y = 0; y < CANVAS_HEIGHT; y += gridSize) p.line(0, y, CANVAS_WIDTH, y);
+    } else if (height >= 5000) {
+        // Stars for space
+        p.randomSeed(42); // Consistent stars
+        p.fill(255);
+        p.noStroke();
+        for(let i=0; i<50; i++) {
+            p.circle(p.random(CANVAS_WIDTH), p.random(CANVAS_HEIGHT), p.random(2, 4));
+        }
+    }
+}
+
+// Expose instance
+window.gameInstance = gameInstance;
+</file>
+
+<file name="ui.js">
+/**
+ * UI Rendering
+ */
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderStartScreen(p) {
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    // Background doodle pattern
+    drawBackgroundPattern(p);
+    
+    // Title Box
+    p.fill(255, 255, 255, 220);
+    p.stroke(0);
+    p.strokeWeight(3);
+    p.rect(CANVAS_WIDTH/2 - 200, 80, 400, 100, 10);
+    
+    p.noStroke();
+    p.fill(50, 150, 50);
+    p.textSize(48);
+    p.text("Doodle Hopper", CANVAS_WIDTH/2, 115);
+    p.textSize(24);
+    p.fill(100);
+    p.text("Vertical Odyssey", CANVAS_WIDTH/2, 150);
+    
+    // Instructions
+    p.fill(0);
+    p.textSize(18);
+    p.text("Press ENTER to Start", CANVAS_WIDTH/2, 250);
+    
+    p.textSize(14);
+    p.fill(50);
+    p.text("Arrows to Move | Space to Shoot", CANVAS_WIDTH/2, 300);
+    
+    drawDoodleDecorations(p);
+}
+
+export function renderHUD(p) {
+    // Score Top Left
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(20);
+    p.fill(0);
+    p.noStroke();
+    p.text(`Score: ${Math.floor(gameState.score)}`, 10, 10);
+    
+    // High Score Top Right
+    p.textAlign(p.RIGHT, p.TOP);
+    p.text(`High: ${Math.floor(gameState.highScore)}`, CANVAS_WIDTH - 10, 10);
+}
+
+export function renderPausedOverlay(p) {
+    p.fill(0, 0, 0, 100);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+}
+
+export function renderGameOver(p) {
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(50);
+    p.text("GAME OVER", CANVAS_WIDTH/2, 150);
+    
+    p.textSize(30);
+    p.text(`Score: ${Math.floor(gameState.score)}`, CANVAS_WIDTH/2, 220);
+    
+    p.textSize(20);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, 300);
+}
+
+function drawBackgroundPattern(p) {
+    p.stroke(200, 200, 220);
+    p.strokeWeight(1);
+    
+    // Graph paper lines
+    for (let x = 0; x < CANVAS_WIDTH; x += 20) {
+        p.line(x, 0, x, CANVAS_HEIGHT);
+    }
+    for (let y = 0; y < CANVAS_HEIGHT; y += 20) {
+        p.line(0, y, CANVAS_WIDTH, y);
+    }
+}
+
+function drawDoodleDecorations(p) {
+    // Just some static deco logic for the menu
+    p.push();
+    p.translate(100, 300);
+    p.rotate(-0.2);
+    p.noFill();
+    p.stroke(0);
+    p.strokeWeight(2);
+    // Draw a cloud
+    p.beginShape();
+    p.vertex(0, 0);
+    p.bezierVertex(-20, -20, 20, -40, 40, -20);
+    p.bezierVertex(60, -40, 80, -20, 60, 0);
+    p.endShape();
+    p.pop();
+}
+</file>
+
+<file name="entities.js">
+/**
+ * Game entities: Player, Platforms, Enemies, Items
+ */
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, JUMP_FORCE, SPRING_FORCE, MOVE_SPEED } from './globals.js';
+import { createParticles } from './particles.js';
+
+export class Player {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.width = 30;
+        this.height = 40;
+        this.vx = 0;
+        this.vy = 0;
+        this.facing = 1; // 1 Right, -1 Left
+        this.noseOffset = 0;
+        
+        gameState.player = this;
+    }
+    
+    moveLeft() {
+        this.vx -= 1.5; // Acceleration
+        if (this.vx < -MOVE_SPEED) this.vx = -MOVE_SPEED;
+        this.facing = -1;
+    }
+    
+    moveRight() {
+        this.vx += 1.5;
+        if (this.vx > MOVE_SPEED) this.vx = MOVE_SPEED;
+        this.facing = 1;
+    }
+    
+    jump(type = 'NORMAL') {
+        this.vy = type === 'HIGH' ? SPRING_FORCE : JUMP_FORCE;
+        // Squash and stretch effect could be added here
+        createParticles(this.x, this.y + this.height/2, 'DUST', 5);
+    }
+    
+    shoot() {
+        // Cooldown or limit check could go here
+        new Projectile(this.x, this.y - this.height/2 - 10);
+    }
+    
+    die() {
+        gameState.gamePhase = "GAME_OVER_LOSE";
+        createParticles(this.x, this.y, 'EXPLOSION', 20);
+    }
+    
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        
+        // Face direction
+        p.scale(this.facing, 1);
+        
+        // Draw Body (Doodle style)
+        p.stroke(0);
+        p.strokeWeight(2);
+        p.fill(200, 255, 200); // Light green
+        
+        // Main body - sort of a rounded blob
+        p.beginShape();
+        p.vertex(-15, 20); // Bottom left
+        p.bezierVertex(-15, -20, 15, -20, 15, 20); // Top curve to bottom right
+        p.vertex(-15, 20); // Close
+        p.endShape();
+        
+        // Legs
+        p.line(-10, 20, -10, 25);
+        p.line(10, 20, 10, 25);
+        
+        // Snout
+        p.fill(200, 255, 200);
+        p.ellipse(15, -5, 12, 12);
+        
+        // Eyes
+        p.fill(255);
+        p.ellipse(5, -10, 8, 8);
+        p.ellipse(12, -10, 6, 6); // Further eye
+        
+        p.fill(0);
+        p.circle(6, -10, 2);
+        p.circle(13, -10, 2);
+        
+        // Backpack/Jetpack (cosmetic)
+        p.fill(150, 150, 150);
+        p.rect(-18, -5, 5, 15, 2);
+        
+        p.pop();
+    }
+}
+
+export class Platform {
+    constructor(x, y, type = 'NORMAL') {
+        this.x = x;
+        this.y = y;
+        this.width = 60;
+        this.height = 15;
+        this.type = type; // NORMAL (Green), MOVING (Blue), BROKEN (Brown), SPRING (Green+Spring)
+        this.active = true;
+        this.moveSpeed = 2;
+        this.moveRange = 100;
+        this.startX = x;
+        this.offset = Math.random() * 100;
+    }
+    
+    update() {
+        if (this.type === 'MOVING') {
+            this.x = this.startX + Math.sin((gameState.frameCount + this.offset) * 0.05) * this.moveRange;
+        }
+    }
+    
+    onJump() {
+        if (this.type === 'BROKEN') {
+            this.break();
+        }
+    }
+    
+    break() {
+        this.active = false;
+        createParticles(this.x + this.width/2, this.y, 'BREAK', 8);
+        // Remove from game state immediately or flag for removal
+        const idx = gameState.platforms.indexOf(this);
+        if (idx > -1) gameState.platforms.splice(idx, 1);
+    }
+    
+    render(p) {
+        if (!this.active) return;
+        
+        p.noStroke();
+        
+        // Color based on type
+        if (this.type === 'NORMAL' || this.type === 'SPRING') p.fill(100, 200, 100);
+        else if (this.type === 'MOVING') p.fill(100, 150, 255);
+        else if (this.type === 'BROKEN') p.fill(139, 69, 19);
+        
+        // Draw rounded rect platform
+        p.rect(this.x, this.y, this.width, this.height, 5);
+        
+        // Draw top detail
+        p.fill(255, 255, 255, 50);
+        p.rect(this.x, this.y, this.width, 4, 5, 5, 0, 0);
+        
+        // Draw Spring
+        if (this.type === 'SPRING') {
+            p.fill(200, 50, 50);
+            p.rect(this.x + this.width/2 - 5, this.y - 8, 10, 8);
+        }
+    }
+}
+
+export class Enemy {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.type = type; // 'STATIC', 'HOVER'
+        this.radius = 20;
+        this.angle = 0;
+        this.startY = y;
+        this.isDead = false;
+    }
+    
+    update() {
+        if (this.type === 'HOVER') {
+            this.y = this.startY + Math.sin(gameState.frameCount * 0.05) * 20;
+        }
+        this.angle += 0.05;
+    }
+    
+    die() {
+        this.isDead = true;
+        gameState.score += 100;
+        createParticles(this.x, this.y, 'EXPLOSION', 15);
+        
+        const idx = gameState.enemies.indexOf(this);
+        if (idx > -1) gameState.enemies.splice(idx, 1);
+    }
+    
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        
+        p.stroke(0);
+        p.strokeWeight(1);
+        p.fill(200, 50, 150);
+        
+        // Body
+        p.beginShape();
+        for (let i = 0; i < Math.PI * 2; i += 0.5) {
+            let r = this.radius + Math.sin(i * 5 + this.angle) * 3;
+            let px = Math.cos(i) * r;
+            let py = Math.sin(i) * r;
+            p.vertex(px, py);
+        }
+        p.endShape(p.CLOSE);
+        
+        // Eyes
+        p.fill(255);
+        p.circle(-8, -5, 10);
+        p.circle(8, -5, 10);
+        p.fill(0);
+        p.circle(-8 + Math.sin(gameState.frameCount*0.1)*2, -5, 3);
+        p.circle(8 + Math.sin(gameState.frameCount*0.1)*2, -5, 3);
+        
+        // Mouth
+        p.noFill();
+        p.stroke(0);
+        p.arc(0, 5, 10, 10, 0, Math.PI);
+        
+        p.pop();
+    }
+}
+
+export class Collectible {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.radius = 12;
+        this.wobble = Math.random() * Math.PI;
+    }
+    
+    update() {
+        this.wobble += 0.1;
+    }
+    
+    collect() {
+        gameState.score += 50;
+        createParticles(this.x, this.y, 'STAR', 10);
+        
+        const idx = gameState.collectibles.indexOf(this);
+        if (idx > -1) gameState.collectibles.splice(idx, 1);
+    }
+    
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y + Math.sin(this.wobble) * 3);
+        
+        p.fill(255, 215, 0);
+        p.stroke(200, 180, 0);
+        p.strokeWeight(1);
+        
+        // Draw Star
+        p.beginShape();
+        for (let i = 0; i < 5; i++) {
+            let angle = Math.PI * 2 * i / 5 - Math.PI / 2;
+            let r = this.radius;
+            p.vertex(Math.cos(angle) * r, Math.sin(angle) * r);
+            angle += Math.PI * 2 / 10;
+            r = this.radius * 0.4;
+            p.vertex(Math.cos(angle) * r, Math.sin(angle) * r);
+        }
+        p.endShape(p.CLOSE);
+        
+        p.pop();
+    }
+}
+
+export class Projectile {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.width = 8;
+        this.height = 8;
+        this.speed = 10;
+        
+        gameState.projectiles.push(this);
+    }
+    
+    update() {
+        this.y -= this.speed;
+    }
+    
+    render(p) {
+        p.fill(0);
+        p.circle(this.x, this.y, this.width);
+    }
+}
+</file>
+
+<file name="physics.js">
+/**
+ * Physics engine and collision detection
+ */
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, GRAVITY, PLATFORM_HEIGHT, PLATFORM_WIDTH } from './globals.js';
+import { Platform } from './entities.js';
+
+// Simple collision detection helpers
+function collideRectCircle(rx, ry, rw, rh, cx, cy, diameter) {
+    // Find the closest point on the rectangle to the circle
+    const closestX = Math.max(rx, Math.min(cx, rx + rw));
+    const closestY = Math.max(ry, Math.min(cy, ry + rh));
+    
+    // Calculate distance between circle center and closest point
+    const distX = cx - closestX;
+    const distY = cy - closestY;
+    const distSquared = (distX * distX) + (distY * distY);
+    
+    // Check if distance is less than radius
+    const radius = diameter / 2;
+    return distSquared < (radius * radius);
+}
+
+export function updatePhysics(p) {
+    const player = gameState.player;
+    if (!player) return;
+
+    // Apply Gravity
+    player.vy += GRAVITY;
+    
+    // Apply Friction to Horizontal Movement
+    player.vx *= gameState.friction || 0.85;
+
+    // Update Position
+    player.x += player.vx;
+    player.y += player.vy;
+
+    // Screen Wrap-around
+    if (player.x > CANVAS_WIDTH) {
+        player.x = 0;
+    } else if (player.x < 0) {
+        player.x = CANVAS_WIDTH;
+    }
+
+    // Check Platform Collisions (Only when falling)
+    if (player.vy > 0) {
+        // Simple optimization: check only nearby platforms
+        for (let platform of gameState.platforms) {
+            // Check bounds manually for AABB + slight forgiveness
+            // Player feet must be near platform top
+            const playerBottom = player.y + player.height / 2;
+            const platformTop = platform.y;
+            
+            // Allow a small threshold for collision detection to feel good
+            const withinVerticalThreshold = playerBottom >= platformTop && playerBottom <= platformTop + 20;
+            const withinHorizontalBounds = player.x + player.width/4 > platform.x && player.x - player.width/4 < platform.x + platform.width;
+
+            if (withinVerticalThreshold && withinHorizontalBounds) {
+                // Determine bounce force based on platform type
+                if (platform.type !== 'BROKEN') {
+                    player.jump(platform.type === 'SPRING' ? 'HIGH' : 'NORMAL');
+                    platform.onJump();
+                    
+                    // Spawn landing particles
+                    // Note: In a full system we'd import createParticles here, avoiding circular dep by passing logic or events
+                } else {
+                    // Break the platform
+                    platform.break();
+                }
+            }
+        }
+    }
+    
+    // Check Enemy Collisions
+    for (let enemy of gameState.enemies) {
+        const hit = collideRectCircle(
+            player.x - player.width/2, player.y - player.height/2, player.width, player.height,
+            enemy.x, enemy.y, enemy.radius * 2
+        );
+        
+        if (hit && !enemy.isDead) {
+            // If player falls onto enemy, maybe kill enemy? 
+            // Design choice: Classic doodle jump is instant death on touch unless shooting.
+            // Let's make it instant death for simplicity and challenge.
+            player.die();
+        }
+    }
+
+    // Check Collectible Collisions
+    for (let i = gameState.collectibles.length - 1; i >= 0; i--) {
+        const c = gameState.collectibles[i];
+        const hit = collideRectCircle(
+            player.x - player.width/2, player.y - player.height/2, player.width, player.height,
+            c.x, c.y, c.radius * 2
+        );
+        
+        if (hit) {
+            c.collect();
+        }
+    }
+    
+    // Check Projectile Collisions with Enemies
+    for (let i = gameState.projectiles.length - 1; i >= 0; i--) {
+        const proj = gameState.projectiles[i];
+        let projRemoved = false;
+        
+        // Remove if off screen
+        if (proj.y < gameState.cameraY - 100) {
+            gameState.projectiles.splice(i, 1);
+            continue;
+        }
+
+        for (let e = gameState.enemies.length - 1; e >= 0; e--) {
+            const enemy = gameState.enemies[e];
+            const hit = collideRectCircle(
+                proj.x - proj.width/2, proj.y - proj.height/2, proj.width, proj.height,
+                enemy.x, enemy.y, enemy.radius * 2
+            );
+            
+            if (hit) {
+                enemy.die();
+                gameState.projectiles.splice(i, 1);
+                projRemoved = true;
+                break;
+            }
+        }
+    }
+
+    // Check Death (Falling below screen)
+    // The "bottom" of the screen is cameraY + CANVAS_HEIGHT
+    if (player.y > gameState.cameraY + CANVAS_HEIGHT + 50) {
+        player.die();
+    }
+}
+</file>
+
+<file name="particles.js">
+/**
+ * Particle system for visual effects
+ */
+import { gameState } from './globals.js';
+
+export class Particle {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.type = type; // 'DUST', 'EXPLOSION', 'STAR', 'BREAK'
+        this.life = 1.0;
+        this.decay = 0.05;
+        
+        if (type === 'DUST') {
+            this.vx = (Math.random() - 0.5) * 2;
+            this.vy = (Math.random() - 0.5) * 2;
+            this.size = Math.random() * 5 + 2;
+            this.color = [200, 200, 200];
+            this.decay = 0.08;
+        } else if (type === 'EXPLOSION') {
+            this.vx = (Math.random() - 0.5) * 8;
+            this.vy = (Math.random() - 0.5) * 8;
+            this.size = Math.random() * 8 + 4;
+            this.color = [255, 100, 50];
+            this.decay = 0.05;
+        } else if (type === 'STAR') {
+            this.vx = (Math.random() - 0.5) * 4;
+            this.vy = (Math.random() - 0.5) * 4 - 2;
+            this.size = Math.random() * 6 + 2;
+            this.color = [255, 255, 0];
+            this.decay = 0.03;
+        } else if (type === 'BREAK') {
+            this.vx = (Math.random() - 0.5) * 3;
+            this.vy = Math.random() * 5; // Fall down
+            this.size = Math.random() * 8 + 4;
+            this.color = [139, 69, 19];
+            this.decay = 0.02;
+        }
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life -= this.decay;
+        
+        if (this.type === 'BREAK') {
+            this.vy += 0.2; // Gravity for debris
+        }
+    }
+
+    render(p) {
+        p.noStroke();
+        p.fill(this.color[0], this.color[1], this.color[2], this.life * 255);
+        if (this.type === 'STAR') {
+            p.circle(this.x, this.y, this.size);
+        } else {
+            p.rect(this.x, this.y, this.size, this.size);
+        }
+    }
+}
+
+export function createParticles(x, y, type, count) {
+    for (let i = 0; i < count; i++) {
+        gameState.particles.push(new Particle(x, y, type));
+    }
+}
+</file>
+
+<file name="input.js">
+/**
+ * Input handling module
+ */
+import { gameState } from './globals.js';
+
+const keys = {};
+
+export function handleInput(p) {
+    // Key Logic is handled in p.keyPressed/p.keyReleased events in game.js
+    // This function can be used for continuous checks if needed
+}
+
+export function isKeyDown(keyCode) {
+    return !!keys[keyCode];
+}
+
+export function setKey(keyCode, isPressed) {
+    keys[keyCode] = isPressed;
+}
+
+export function resetInputs() {
+    for (let key in keys) {
+        keys[key] = false;
+    }
+}
+
+// Key Constants
+export const KEY = {
+    ENTER: 13,
+    ESC: 27,
+    SPACE: 32,
+    LEFT: 37,
+    UP: 38,
+    RIGHT: 39,
+    DOWN: 40,
+    SHIFT: 16,
+    Z: 90,
+    R: 82,
+    P: 80
+};
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

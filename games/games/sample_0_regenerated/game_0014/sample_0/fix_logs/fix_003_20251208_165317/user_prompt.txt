@@ -1,0 +1,1630 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+game.js:105 Uncaught TypeError: Cannot read properties of undefined (reading 'jumpPressed')
+    at updateGame (game.js:105:24)
+    at p.draw (game.js:75:13)
+    at _main.default.redraw (p5.js:70809:27)
+    at _draw (p5.js:63046:25)
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Risk of Rain JS</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; font-family: monospace; transition: background 0.2s; }
+      .control-button:hover { background: #555; }
+      .control-button:active { background: #333; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: 'Courier New', sans-serif; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 2px;">Risk of Rain JS</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST 1: Survival</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST 2: Objective</button>
+      </div>
+      <p id="gameDescription" style="color: #aaa; font-family: monospace; max-width: 600px; margin: 0 auto 10px auto; font-size: 12px;">
+        Survive the alien planet. Time increases difficulty. Find the Teleporter.
+      </p>
+      <p id="gameControls" style="color: #888; font-family: monospace; max-width: 600px; margin: 0 auto 20px auto; font-size: 11px;">
+        ARROWS: Move/Interact | SPACE: Jump | Z: Shoot | SHIFT: Dodge
+      </p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+/**
+ * automated_testing_controller.js
+ * Logic for automated testing bots.
+ */
+
+export function get_automated_testing_action(gameState) {
+    if (!gameState.player) return null;
+    
+    const player = gameState.player;
+    const action = {
+        left: false, right: false, up: false, down: false,
+        shoot: false, dodge: false, jump: false, interact: false
+    };
+    
+    if (gameState.controlMode === 'TEST_1') {
+        // TEST 1: Survival & Combat
+        // Strategy: Run towards nearest enemy and shoot. Jump if blocked.
+        
+        let nearestEnemy = null;
+        let minDist = Infinity;
+        
+        gameState.enemies.forEach(e => {
+            const d = Math.sqrt(Math.pow(e.x - player.x, 2) + Math.pow(e.y - player.y, 2));
+            if (d < minDist) {
+                minDist = d;
+                nearestEnemy = e;
+            }
+        });
+        
+        if (nearestEnemy) {
+            // Aiming logic (Left/Right)
+            if (nearestEnemy.x < player.x) action.left = true;
+            else action.right = true;
+            
+            // Shoot constantly
+            action.shoot = true;
+            
+            // Keep distance if too close
+            if (minDist < 100) {
+                 // Retreat
+                 action.left = !action.left;
+                 action.right = !action.right;
+            }
+        } else {
+             // Patrol if no enemies
+             if (Math.floor(gameState.frameCount / 60) % 2 === 0) action.left = true;
+             else action.right = true;
+        }
+        
+        // Jump randomly or if stuck (vx ~ 0)
+        if (player.vx === 0 && player.onGround && Math.random() < 0.1) {
+            action.jump = true;
+        }
+        
+    } else if (gameState.controlMode === 'TEST_2') {
+        // TEST 2: Teleporter Rush
+        // Strategy: Go to teleporter X coordinate. Activate it.
+        
+        const tp = gameState.teleporter;
+        if (!tp) return action; // Should not happen
+        
+        const distToTp = Math.abs(player.x - tp.x);
+        
+        if (distToTp > 20) {
+            if (tp.x < player.x) action.left = true;
+            else action.right = true;
+            
+            // Simple jump over gaps logic (blind)
+            if (player.onGround && Math.random() < 0.05) action.jump = true;
+            
+        } else {
+            // At teleporter
+            if (gameState.teleporterState === 'IDLE') {
+                action.down = true; // Activate
+                action.interact = true;
+            } else {
+                // Defend mode
+                action.shoot = true;
+                // Random strafe
+                if (Math.random() > 0.5) action.left = true;
+                else action.right = true;
+            }
+        }
+    }
+    
+    return action;
+}
+
+window.get_automated_testing_action = get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+/**
+ * globals.js
+ * Contains global constants, game state structure, and shared utilities.
+ */
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const FPS = 60;
+
+// Game Balance Constants
+export const GRAVITY = 0.6;
+export const TERMINAL_VELOCITY = 12;
+export const DIFFICULTY_SCALING_RATE = 0.0005; // Difficulty increase per frame
+export const BASE_ENEMY_CREDIT_RATE = 0.5; // Base credits/frame for enemy spawning
+
+// Entity Constants
+export const TILE_SIZE = 40;
+export const PLAYER_WIDTH = 20;
+export const PLAYER_HEIGHT = 36;
+
+// Colors
+export const COLORS = {
+    background: [25, 20, 30],
+    ground: [60, 50, 70],
+    player: [255, 200, 50],
+    player_secondary: [255, 255, 255],
+    enemy_basic: [200, 60, 60],
+    enemy_flying: [60, 200, 200],
+    enemy_boss: [200, 40, 40],
+    chest: [200, 160, 40],
+    teleporter: [200, 50, 50],
+    teleporter_active: [255, 100, 100],
+    projectile: [255, 255, 150],
+    text: [240, 240, 240],
+    ui_bg: [0, 0, 0, 150]
+};
+
+// Global Game State
+export const gameState = {
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN",
+    
+    // Time & Difficulty
+    frameCount: 0,
+    time: 0, // In seconds
+    difficultyCoeff: 1.0,
+    directorCredits: 0, // Credits for spawning enemies
+    
+    // World
+    camera: { x: 0, y: 0 },
+    worldWidth: 2000,
+    worldHeight: 1000,
+    
+    // Entities
+    player: null,
+    platforms: [],
+    enemies: [],
+    projectiles: [],
+    particles: [],
+    interactables: [], // Chests, Teleporter
+    
+    // Teleporter Event State
+    teleporter: null,
+    teleporterState: "IDLE", // IDLE, CHARGING, CHARGED
+    teleporterCharge: 0, // 0 to 100
+    
+    // Player Stats specific for UI (synced from player entity)
+    money: 0,
+    score: 0,
+    items: {}, // Map of ItemID -> Count
+    
+    // Performance
+    deltaTime: 0,
+    lastFrameTime: 0
+};
+
+// Expose globally
+window.getGameState = () => gameState;
+
+// Logging Helper
+export function logGameEvent(p, type, data) {
+    if (!p.logs) return;
+    
+    const entry = {
+        type: type,
+        data: data,
+        framecount: p.frameCount,
+        timestamp: Date.now()
+    };
+
+    if (type === 'input') p.logs.inputs.push(entry);
+    else if (type === 'player') p.logs.player_info.push(entry);
+    else p.logs.game_info.push(entry);
+}
+</file>
+
+<file name="game.js">
+/**
+ * game.js
+ * Main entry point. Setup and Game Loop.
+ */
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, DIFFICULTY_SCALING_RATE, BASE_ENEMY_CREDIT_RATE, COLORS, logGameEvent } from './globals.js';
+import { Player, Enemy } from './entities.js';
+import { generateLevel } from './level.js';
+import { handleInput, handleKeyPressed, handleKeyReleased } from './input.js';
+import { resolvePlatformCollision, checkCollision, lerp } from './utils.js';
+import { renderHUD, renderStartScreen, renderGameOver } from './ui.js';
+import { spawnParticles } from './particles.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        // Initial Log
+        logGameEvent(p, 'game', { phase: 'SETUP' });
+        
+        // Initialize Game
+        resetGame();
+    };
+    
+    // Exposed for Restart (use 'p' which is the current p5 instance)
+    p.resetGame = resetGame;
+
+    function resetGame() {
+        gameState.gamePhase = "START";
+        gameState.time = 0;
+        gameState.frameCount = 0;
+        gameState.difficultyCoeff = 1.0;
+        gameState.directorCredits = 0;
+        gameState.score = 0;
+        
+        gameState.projectiles = [];
+        gameState.particles = [];
+        gameState.enemies = [];
+        gameState.items = {};
+        
+        // Generate World
+        generateLevel();
+        
+        // Spawn Player
+        gameState.player = new Player(100, 100);
+        
+        // Reset Event
+        gameState.teleporterState = "IDLE";
+        gameState.teleporterCharge = 0;
+        
+        logGameEvent(p, 'game', { msg: "Game Reset" });
+    }
+
+    p.draw = function() {
+        // Delta Time
+        const current = p.millis();
+        gameState.deltaTime = (current - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = current;
+        gameState.frameCount++;
+        
+        p.background(COLORS.background);
+        
+        // State Machine
+        if (gameState.gamePhase === 'PLAYING') {
+            updateGame(p);
+            renderGame(p);
+            renderHUD(p);
+        } else if (gameState.gamePhase === 'START') {
+            renderStartScreen(p);
+        } else if (gameState.gamePhase === 'PAUSED') {
+            renderGame(p);
+            renderHUD(p);
+            // Pause Overlay
+            p.fill(0, 0, 0, 150);
+            p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            p.fill(255);
+            p.textAlign(p.CENTER);
+            p.textSize(30);
+            p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+        } else if (gameState.gamePhase === 'GAME_OVER_WIN' || gameState.gamePhase === 'GAME_OVER_LOSE') {
+            renderGame(p);
+            renderGameOver(p);
+        }
+    };
+    
+    function updateGame(p) {
+        const player = gameState.player;
+        const input = handleInput(p);
+        
+        // Update Time & Difficulty
+        gameState.time += 1/60;
+        gameState.difficultyCoeff = 1.0 + (gameState.time * 0.05); // Scales faster than generic linear
+        
+        // Log Inputs
+        if (input.keys.jumpPressed || input.keys.shoot || input.keys.dodge) {
+             logGameEvent(p, 'input', input.keys);
+        }
+        
+        // Update Player
+        player.update(input);
+        
+        // Handle Interactions (Pressed Down)
+        if (input.keys.interactPressed || (gameState.controlMode !== 'HUMAN' && input.keys.interactPressed)) {
+            // Find nearby interactable
+            for (const item of gameState.interactables) {
+                if (item.active && Math.abs(item.x - player.x) < 50 && Math.abs(item.y - player.y) < 50) {
+                    item.interact(player);
+                    break;
+                }
+            }
+        }
+        
+        // AI Director (Enemy Spawning)
+        updateDirector();
+        
+        // Update Teleporter Event
+        updateTeleporterEvent();
+        
+        // Update Enemies
+        for (let i = gameState.enemies.length - 1; i >= 0; i--) {
+            const e = gameState.enemies[i];
+            e.update();
+            if (e.dead) gameState.enemies.splice(i, 1);
+        }
+        
+        // Update Projectiles
+        for (let i = gameState.projectiles.length - 1; i >= 0; i--) {
+            const proj = gameState.projectiles[i];
+            proj.update();
+            if (proj.dead) gameState.projectiles.splice(i, 1);
+        }
+        
+        // Update Particles
+        for (let i = gameState.particles.length - 1; i >= 0; i--) {
+            const part = gameState.particles[i];
+            part.update();
+            if (part.life <= 0) gameState.particles.splice(i, 1);
+        }
+        
+        // Camera Follow
+        const targetCamX = player.x + player.width/2 - CANVAS_WIDTH/2;
+        const targetCamY = player.y + player.height/2 - CANVAS_HEIGHT/2;
+        
+        gameState.camera.x = lerp(gameState.camera.x, targetCamX, 0.1);
+        gameState.camera.y = lerp(gameState.camera.y, targetCamY, 0.1);
+        
+        // Clamp Camera
+        gameState.camera.x = Math.max(0, Math.min(gameState.camera.x, gameState.worldWidth - CANVAS_WIDTH));
+        gameState.camera.y = Math.max(0, Math.min(gameState.camera.y, gameState.worldHeight - CANVAS_HEIGHT));
+        
+        // Logging Player
+        if (gameState.frameCount % 60 === 0) {
+            logGameEvent(p, 'player', { x: player.x, y: player.y, hp: player.health });
+        }
+    }
+    
+    function updateDirector() {
+        if (gameState.teleporterState === 'CHARGED') return; // Stop spawning after win
+        
+        // Accumulate credits
+        let rate = BASE_ENEMY_CREDIT_RATE * gameState.difficultyCoeff;
+        if (gameState.teleporterState === 'CHARGING') rate *= 3; // Intense during event
+        
+        gameState.directorCredits += rate;
+        
+        // Spawn Logic
+        // Costs: Lemurian: 10, Wisp: 15, Golem: 40
+        const spawnList = [
+            { type: 'LEMURIAN', cost: 15 },
+            { type: 'WISP', cost: 25 },
+            { type: 'GOLEM', cost: 60 }
+        ];
+        
+        // Try to spawn expensive things first if difficulty is high
+        if (gameState.directorCredits > 10) {
+            // Pick random enemy affordable
+            const affordable = spawnList.filter(e => e.cost <= gameState.directorCredits);
+            if (affordable.length > 0) {
+                // 5% chance per frame to actually spawn if can afford, to bunch them up slightly
+                if (Math.random() < 0.05) {
+                    const choice = affordable[Math.floor(Math.random() * affordable.length)];
+                    gameState.directorCredits -= choice.cost;
+                    spawnEnemy(choice.type);
+                }
+            }
+        }
+    }
+    
+    function spawnEnemy(type) {
+        // Find spawn point off-screen but near player
+        const dist = 400; // spawn distance
+        const angle = Math.random() * Math.PI * 2;
+        const x = gameState.player.x + Math.cos(angle) * dist;
+        const y = gameState.player.y + Math.sin(angle) * dist;
+        
+        // Clamp to world
+        const clampedX = Math.max(50, Math.min(x, gameState.worldWidth - 50));
+        let clampedY = Math.max(50, Math.min(y, gameState.worldHeight - 50));
+        
+        // If ground enemy, snap to floor
+        if (type !== 'WISP') {
+             // quick hack: find nearest platform y below
+             // actually, just drop them from sky, they have gravity
+             clampedY -= 100;
+        }
+        
+        gameState.enemies.push(new Enemy(clampedX, clampedY, type));
+    }
+    
+    function updateTeleporterEvent() {
+        if (gameState.teleporterState === 'CHARGING') {
+            gameState.teleporterCharge += 0.05; // 0.05 per frame -> ~33 seconds to charge (at 60fps)
+            
+            // Spawn Boss at 10%
+            if (Math.abs(gameState.teleporterCharge - 10) < 0.1 && !gameState.bossSpawned) {
+                spawnEnemy('BOSS');
+                gameState.bossSpawned = true;
+                spawnParticles(gameState.teleporter.x, gameState.teleporter.y, 'EXPLOSION', 20);
+            }
+            
+            if (gameState.teleporterCharge >= 100) {
+                gameState.teleporterCharge = 100;
+                // Check if boss is dead
+                const bossAlive = gameState.enemies.some(e => e.enemyType === 'BOSS');
+                if (!bossAlive) {
+                    gameState.teleporterState = 'CHARGED';
+                    gameState.gamePhase = 'GAME_OVER_WIN';
+                }
+            }
+        }
+    }
+    
+    function renderGame(p) {
+        const cx = gameState.camera.x;
+        const cy = gameState.camera.y;
+        
+        p.push();
+        
+        // Background Parallax (Stars)
+        p.fill(200);
+        for(let i=0; i<50; i++) {
+            const sx = (i * 137) % CANVAS_WIDTH;
+            const sy = (i * 243) % CANVAS_HEIGHT;
+            p.circle(sx, sy, 1);
+        }
+        
+        // World Objects
+        p.fill(COLORS.ground);
+        p.noStroke();
+        gameState.platforms.forEach(plat => {
+            if (plat.x - cx < CANVAS_WIDTH && plat.x + plat.width - cx > 0) {
+                p.rect(plat.x - cx, plat.y - cy, plat.width, plat.height);
+            }
+        });
+        
+        // Entities
+        gameState.interactables.forEach(i => i.render(p, cx, cy));
+        gameState.enemies.forEach(e => e.render(p, cx, cy));
+        gameState.player.render(p, cx, cy);
+        gameState.projectiles.forEach(pr => pr.render(p, cx, cy));
+        gameState.particles.forEach(pt => pt.render(p, cx, cy));
+        
+        p.pop();
+    }
+
+    p.keyPressed = function() {
+        handleKeyPressed(p, p.keyCode);
+    };
+
+    p.keyReleased = function() {
+        handleKeyReleased(p, p.keyCode);
+    };
+});
+
+window.gameInstance = gameInstance;
+window.setControlMode = (mode) => {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+    // Restart game to apply mode cleanly
+    window.gameInstance.resetGame(); // Access through window.gameInstance
+    gameState.gamePhase = "PLAYING"; // Auto start
+};
+</file>
+
+<file name="ui.js">
+/**
+ * ui.js
+ * Rendering HUD and Screens.
+ */
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './globals.js';
+
+export function renderHUD(p) {
+    // Top Bar
+    p.push();
+    
+    // Health Bar
+    const hpPct = Math.max(0, gameState.player.health / gameState.player.maxHealth);
+    p.fill(50, 0, 0);
+    p.rect(10, 10, 200, 20);
+    p.fill(COLORS.player_active || [0, 255, 0]);
+    p.rect(10, 10, 200 * hpPct, 20);
+    p.noFill();
+    p.stroke(255);
+    p.strokeWeight(2);
+    p.rect(10, 10, 200, 20);
+    p.noStroke();
+    
+    p.fill(255);
+    p.textAlign(p.LEFT, p.CENTER);
+    p.textSize(14);
+    p.text(`${Math.ceil(gameState.player.health)} / ${Math.ceil(gameState.player.maxHealth)}`, 20, 20);
+    
+    // Money
+    p.fill(255, 215, 0);
+    p.text(`$ ${gameState.player.money}`, 10, 50);
+    
+    // Time & Difficulty
+    const mins = Math.floor(gameState.time / 60);
+    const secs = Math.floor(gameState.time % 60);
+    const timeStr = `${mins}:${secs.toString().padStart(2, '0')}`;
+    
+    p.fill(255);
+    p.textAlign(p.RIGHT, p.TOP);
+    p.textSize(20);
+    p.text(timeStr, CANVAS_WIDTH - 10, 10);
+    
+    // Difficulty Bar
+    p.textAlign(p.RIGHT, p.TOP);
+    p.textSize(12);
+    let diffName = "EASY";
+    if (gameState.difficultyCoeff > 1.5) diffName = "MEDIUM";
+    if (gameState.difficultyCoeff > 2.5) diffName = "HARD";
+    if (gameState.difficultyCoeff > 4.0) diffName = "INSANE";
+    p.text(diffName, CANVAS_WIDTH - 10, 35);
+    
+    // Objective / Event
+    if (gameState.teleporterState === 'CHARGING') {
+        p.textAlign(p.CENTER, p.TOP);
+        p.fill(255, 100, 100);
+        p.text(`SURVIVE: ${Math.floor(100 - gameState.teleporterCharge)}%`, CANVAS_WIDTH/2, 50);
+    } else if (gameState.teleporterState === 'CHARGED') {
+        p.textAlign(p.CENTER, p.TOP);
+        p.fill(100, 255, 100);
+        p.text("BOSS DEFEATED! TELEPORTER READY!", CANVAS_WIDTH/2, 50);
+    }
+    
+    p.pop();
+}
+
+export function renderStartScreen(p) {
+    p.background(COLORS.background);
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.text("RISK OF RAIN: JS EDITION", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+    p.textSize(16);
+    p.text("Press ENTER to Start", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 20);
+    p.fill(150);
+    p.text("Arrows to Move/Interact | Z to Shoot | Shift to Dodge", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60);
+}
+
+export function renderGameOver(p) {
+    p.fill(0, 0, 0, 200);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    if (gameState.gamePhase === "GAME_OVER_WIN") {
+        p.textSize(40);
+        p.fill(100, 255, 100);
+        p.text("MISSION ACCOMPLISHED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 50);
+    } else {
+        p.textSize(40);
+        p.fill(255, 50, 50);
+        p.text("GAME OVER", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 50);
+    }
+    
+    p.fill(255);
+    p.textSize(20);
+    p.text(`Score: ${gameState.score}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    p.text(`Time: ${Math.floor(gameState.time)}s`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 30);
+    
+    p.textSize(16);
+    p.fill(150);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 80);
+}
+</file>
+
+<file name="entities.js">
+/**
+ * entities.js
+ * Contains Player, Enemy, Chest, Teleporter, and Projectile classes.
+ */
+import { gameState, GRAVITY, COLORS, PLAYER_WIDTH, PLAYER_HEIGHT, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { resolvePlatformCollision, distSq, checkCollision } from './utils.js';
+import { spawnParticles, spawnFloatingText } from './particles.js';
+import { getRandomItem } from './items.js';
+
+// Base Entity Class
+class Entity {
+    constructor(x, y, width, height) {
+        this.x = x;
+        this.y = y;
+        this.width = width;
+        this.height = height;
+        this.vx = 0;
+        this.vy = 0;
+        this.onGround = false;
+        this.dead = false;
+        this.facing = 1; // 1 Right, -1 Left
+        this.color = [255, 255, 255];
+        this.maxHealth = 100;
+        this.health = 100;
+    }
+
+    update() {
+        // Apply Gravity
+        this.vy += GRAVITY;
+        
+        // Apply Velocity
+        this.x += this.vx;
+        this.y += this.vy;
+        
+        // Bounds Check (World)
+        if (this.x < 0) this.x = 0;
+        if (this.x > gameState.worldWidth - this.width) this.x = gameState.worldWidth - this.width;
+        
+        // Physics
+        this.onGround = resolvePlatformCollision(this);
+        if (this.onGround) {
+            // Friction
+            this.vx *= 0.8; 
+        } else {
+            // Air Resistance
+            this.vx *= 0.95;
+        }
+        
+        if (Math.abs(this.vx) < 0.1) this.vx = 0;
+    }
+    
+    takeDamage(amount) {
+        this.health -= amount;
+        spawnParticles(this.x + this.width/2, this.y + this.height/2, 'BLOOD', 3);
+        spawnFloatingText(this.x + this.width/2, this.y, Math.round(amount), [255, 50, 50]);
+        
+        if (this.health <= 0) {
+            this.die();
+        }
+    }
+    
+    die() {
+        this.dead = true;
+    }
+    
+    render(p, cameraX, cameraY) {
+        // Basic rect render
+        p.fill(this.color);
+        p.noStroke();
+        p.rect(this.x - cameraX, this.y - cameraY, this.width, this.height);
+    }
+}
+
+// ---------------------- PLAYER ----------------------
+
+export class Player extends Entity {
+    constructor(x, y) {
+        super(x, y, PLAYER_WIDTH, PLAYER_HEIGHT);
+        this.type = 'PLAYER';
+        this.color = COLORS.player;
+        
+        // Stats
+        this.maxHealth = 100;
+        this.health = 100;
+        
+        // Modifiable stats (by items)
+        this.stats = {
+            moveSpeed: 4.0,
+            jumpForce: -11,
+            attackSpeed: 1.0, // Multiplier
+            damage: 10,
+            critChance: 0.05,
+            maxJumps: 1,
+            procChainLightning: false,
+            explosiveRounds: false
+        };
+        
+        // State
+        this.jumpsLeft = 0;
+        this.shootCooldown = 0;
+        this.dodgeCooldown = 0;
+        this.isDodging = false;
+        this.invulnerable = 0; // Frames
+    }
+    
+    update(input) {
+        // Handle Cooldowns
+        if (this.shootCooldown > 0) this.shootCooldown--;
+        if (this.dodgeCooldown > 0) this.dodgeCooldown--;
+        if (this.invulnerable > 0) this.invulnerable--;
+        
+        // Input Handling
+        if (!this.isDodging) {
+            if (input.keys.left) {
+                this.vx -= this.stats.moveSpeed * 0.2;
+                if (this.vx < -this.stats.moveSpeed) this.vx = -this.stats.moveSpeed;
+                this.facing = -1;
+            }
+            if (input.keys.right) {
+                this.vx += this.stats.moveSpeed * 0.2;
+                if (this.vx > this.stats.moveSpeed) this.vx = this.stats.moveSpeed;
+                this.facing = 1;
+            }
+            
+            // Jump
+            if (input.keys.jumpPressed) {
+                if (this.onGround) {
+                    this.vy = this.stats.jumpForce;
+                    this.jumpsLeft = this.stats.maxJumps - 1;
+                } else if (this.jumpsLeft > 0) {
+                    this.vy = this.stats.jumpForce;
+                    this.jumpsLeft--;
+                    spawnParticles(this.x + this.width/2, this.y + this.height, 'HEAL', 3); // Dust effect
+                }
+            }
+            
+            // Shoot
+            if (input.keys.shoot && this.shootCooldown <= 0) {
+                this.fire();
+            }
+            
+            // Dodge
+            if (input.keys.dodge && this.dodgeCooldown <= 0) {
+                this.performDodge();
+            }
+        } else {
+            // While dodging
+            this.vx = this.facing * this.stats.moveSpeed * 1.5;
+            this.invulnerable = 2; // Keep invuln while dodging
+            if (this.dodgeCooldown < 45) { // Dodge duration approx 15 frames (60 - 45)
+                this.isDodging = false;
+                this.vx *= 0.5;
+            }
+        }
+        
+        super.update();
+        
+        // Reset jumps on ground
+        if (this.onGround && this.vy >= 0) {
+            this.jumpsLeft = this.stats.maxJumps;
+        }
+    }
+    
+    fire() {
+        this.shootCooldown = Math.max(5, 20 / this.stats.attackSpeed);
+        
+        // Create projectile
+        const projSpeed = 15;
+        const pX = this.facing === 1 ? this.x + this.width : this.x;
+        const pY = this.y + this.height / 3;
+        
+        const isCrit = Math.random() < this.stats.critChance;
+        const damage = this.stats.damage * (isCrit ? 2.0 : 1.0);
+        
+        const proj = new Projectile(pX, pY, this.facing * projSpeed, 0, damage, true, isCrit);
+        gameState.projectiles.push(proj);
+        
+        // Recoil
+        // this.vx -= this.facing * 1;
+    }
+    
+    performDodge() {
+        this.isDodging = true;
+        this.dodgeCooldown = 60; // 1 second cooldown
+        this.vy = -2; // Small hop
+        spawnFloatingText(this.x, this.y - 10, "DODGE", [100, 200, 255]);
+    }
+    
+    takeDamage(amount) {
+        if (this.invulnerable > 0) return;
+        super.takeDamage(amount);
+        this.invulnerable = 30; // 0.5s i-frames
+    }
+    
+    heal(amount) {
+        this.health = Math.min(this.health + amount, this.maxHealth);
+        spawnFloatingText(this.x, this.y - 10, "+" + amount, [50, 255, 50]);
+    }
+    
+    die() {
+        gameState.gamePhase = "GAME_OVER_LOSE";
+    }
+    
+    render(p, cameraX, cameraY) {
+        // Draw character
+        p.push();
+        p.translate(this.x + this.width/2 - cameraX, this.y + this.height/2 - cameraY);
+        p.scale(this.facing, 1);
+        
+        if (this.invulnerable > 0 && Math.floor(gameState.frameCount / 4) % 2 === 0) {
+            // Flash when damaged
+            p.tint(255, 100);
+        }
+        
+        // Body
+        p.fill(this.color);
+        p.rect(-this.width/2, -this.height/2, this.width, this.height);
+        
+        // Visor
+        p.fill(COLORS.player_secondary);
+        p.rect(2, -10, 6, 4);
+        
+        // Weapon
+        p.fill(50);
+        p.rect(0, 0, 15, 6);
+        
+        p.pop();
+        
+        // Dodge indicator
+        if (this.dodgeCooldown <= 0) {
+            p.stroke(0, 255, 255);
+            p.noFill();
+            // p.circle(this.x + this.width/2 - cameraX, this.y - 5 - cameraY, 5);
+        }
+    }
+}
+
+// ---------------------- ENEMIES ----------------------
+
+export class Enemy extends Entity {
+    constructor(x, y, type) {
+        let width = 30, height = 30;
+        let color = COLORS.enemy_basic;
+        let health = 40;
+        let damage = 10;
+        let value = 15;
+        
+        // Scaling
+        const coeff = gameState.difficultyCoeff;
+        
+        if (type === 'WISP') {
+            color = COLORS.enemy_flying;
+            health = 25 * coeff;
+            damage = 8 * coeff;
+            value = 10;
+        } else if (type === 'GOLEM') {
+            width = 50; height = 60;
+            color = [100, 100, 100];
+            health = 200 * coeff;
+            damage = 25 * coeff;
+            value = 50;
+        } else if (type === 'BOSS') {
+            width = 80; height = 80;
+            color = COLORS.enemy_boss;
+            health = 1500 * coeff;
+            damage = 30 * coeff;
+            value = 500;
+        } else {
+            // Basic Lemurian
+            health = 40 * coeff;
+            damage = 12 * coeff;
+        }
+        
+        super(x, y, width, height);
+        this.enemyType = type || 'LEMURIAN';
+        this.color = color;
+        this.maxHealth = health;
+        this.health = health;
+        this.damage = damage;
+        this.value = value;
+        this.attackCooldown = 0;
+        this.state = 'CHASE'; // CHASE, ATTACK, IDLE
+    }
+    
+    update() {
+        const player = gameState.player;
+        if (!player) return;
+        
+        const dist = Math.sqrt(distSq(this.x, this.y, player.x, player.y));
+        const dx = player.x - this.x;
+        const dy = player.y - this.y;
+        
+        // AI Logic
+        if (this.attackCooldown > 0) this.attackCooldown--;
+        
+        if (this.enemyType === 'WISP') {
+            // Flying Logic
+            this.vy = 0; // Override gravity
+            
+            // Hover near player
+            const targetY = player.y - 50;
+            const targetX = player.x + (dx > 0 ? -150 : 150);
+            
+            this.x += (targetX - this.x) * 0.02;
+            this.y += (targetY - this.y) * 0.02;
+            
+            // Shoot
+            if (this.attackCooldown <= 0 && dist < 400) {
+                // Shoot projectile at player
+                const angle = Math.atan2(dy, dx);
+                const speed = 8;
+                gameState.projectiles.push(new Projectile(
+                    this.x + this.width/2, 
+                    this.y + this.height/2, 
+                    Math.cos(angle) * speed, 
+                    Math.sin(angle) * speed, 
+                    this.damage, 
+                    false
+                ));
+                this.attackCooldown = 120;
+            }
+            
+        } else if (this.enemyType === 'GOLEM') {
+            // Tank Logic
+            super.update(); // Gravity
+            
+            if (dist > 300) {
+                 this.vx = Math.sign(dx) * 1;
+            } else {
+                 this.vx = 0;
+                 // Laser charge logic would go here, simplified to instant shot for now
+                 if (this.attackCooldown <= 0) {
+                    const angle = Math.atan2(dy, dx);
+                    gameState.projectiles.push(new Projectile(
+                        this.x + this.width/2,
+                        this.y + 10,
+                        Math.cos(angle) * 10,
+                        Math.sin(angle) * 10,
+                        this.damage,
+                        false
+                    ));
+                    this.attackCooldown = 180;
+                 }
+            }
+            
+        } else {
+            // Basic Ground Logic (Lemurian)
+            super.update();
+            
+            // Move towards player
+            if (dist < 500 && dist > 10) {
+                this.vx = Math.sign(dx) * 2;
+                this.facing = Math.sign(dx);
+            }
+            
+            // Jump if stuck (simple check)
+            if (this.onGround && this.vx === 0 && Math.abs(dx) > 20) {
+                 this.vy = -8;
+            }
+            
+            // Melee Attack
+            if (dist < 40 && this.attackCooldown <= 0) {
+                player.takeDamage(this.damage);
+                this.attackCooldown = 60;
+            }
+        }
+    }
+    
+    die() {
+        super.die();
+        // Give money
+        gameState.player.money += Math.floor(this.value);
+        gameState.player.score += Math.floor(this.value);
+        spawnParticles(this.x + this.width/2, this.y + this.height/2, 'MONEY', 5);
+        spawnFloatingText(this.x, this.y, "+$" + Math.floor(this.value), [255, 215, 0]);
+        
+        // Win condition if boss dies
+        if (this.enemyType === 'BOSS' && gameState.teleporterState === 'CHARGED') {
+             gameState.gamePhase = 'GAME_OVER_WIN';
+        }
+    }
+}
+
+// ---------------------- PROJECTILE ----------------------
+
+export class Projectile {
+    constructor(x, y, vx, vy, damage, isPlayerOwned, isCrit = false) {
+        this.x = x;
+        this.y = y;
+        this.vx = vx;
+        this.vy = vy;
+        this.radius = 4;
+        this.damage = damage;
+        this.isPlayerOwned = isPlayerOwned;
+        this.isCrit = isCrit;
+        this.life = 100;
+        this.dead = false;
+    }
+    
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life--;
+        
+        if (this.life <= 0) this.dead = true;
+        
+        // Check collisions
+        if (this.isPlayerOwned) {
+            // Hit enemies
+            for (const enemy of gameState.enemies) {
+                if (checkCollision({x: this.x-2, y: this.y-2, width: 4, height: 4}, enemy)) {
+                    enemy.takeDamage(this.damage);
+                    this.dead = true;
+                    spawnParticles(this.x, this.y, 'EXPLOSION', 2);
+                    
+                    // On hit effects
+                    if (gameState.player.stats.procChainLightning) {
+                        // Simple visualization of proc
+                         spawnFloatingText(enemy.x, enemy.y - 20, "ZAP!", [255, 255, 0]);
+                         enemy.takeDamage(this.damage * 0.5); // Bonus dmg
+                    }
+                    if (gameState.player.stats.explosiveRounds) {
+                         spawnParticles(this.x, this.y, 'EXPLOSION', 5);
+                         // Area damage logic omitted for brevity, adding bonus direct dmg
+                         enemy.takeDamage(this.damage * 0.6);
+                    }
+                    
+                    break;
+                }
+            }
+        } else {
+            // Hit player
+            const p = gameState.player;
+            if (checkCollision({x: this.x-2, y: this.y-2, width: 4, height: 4}, p)) {
+                p.takeDamage(this.damage);
+                this.dead = true;
+                spawnParticles(this.x, this.y, 'BLOOD', 2);
+            }
+        }
+    }
+    
+    render(p, cameraX, cameraY) {
+        p.push();
+        p.translate(this.x - cameraX, this.y - cameraY);
+        p.fill(this.isCrit ? [255, 0, 0] : COLORS.projectile);
+        p.noStroke();
+        p.circle(0, 0, this.isCrit ? 8 : 5);
+        p.pop();
+    }
+}
+
+// ---------------------- INTERACTABLES ----------------------
+
+export class Interactable {
+    constructor(x, y, width, height, type, cost) {
+        this.x = x;
+        this.y = y;
+        this.width = width;
+        this.height = height;
+        this.type = type; // 'CHEST', 'TELEPORTER'
+        this.cost = cost;
+        this.active = true;
+        this.prompt = "$" + cost;
+        if (type === 'TELEPORTER') this.prompt = "Activate";
+    }
+    
+    interact(player) {
+        if (!this.active) return;
+        
+        if (this.type === 'CHEST') {
+            if (player.money >= this.cost) {
+                player.money -= this.cost;
+                this.active = false;
+                this.open(player);
+            } else {
+                spawnFloatingText(this.x + this.width/2, this.y, "Not enough gold!", [200, 200, 200]);
+            }
+        } else if (this.type === 'TELEPORTER') {
+            if (gameState.teleporterState === 'IDLE') {
+                gameState.teleporterState = 'CHARGING';
+                spawnFloatingText(this.x, this.y - 30, "EVENT STARTED", [255, 50, 50]);
+                // Spawn boss logic handled in game loop
+            }
+        }
+    }
+    
+    open(player) {
+        const item = getRandomItem();
+        spawnFloatingText(this.x, this.y - 20, item.name, item.color);
+        spawnParticles(this.x + this.width/2, this.y, 'MONEY', 10);
+        
+        // Add item to player
+        item.onAcquire(player);
+        if (gameState.items[item.id]) gameState.items[item.id]++;
+        else gameState.items[item.id] = 1;
+    }
+    
+    render(p, cameraX, cameraY) {
+        p.push();
+        p.translate(this.x - cameraX, this.y - cameraY);
+        
+        if (this.type === 'CHEST') {
+            p.fill(this.active ? COLORS.chest : [100, 80, 20]);
+            p.rect(0, 0, this.width, this.height);
+            p.fill(0);
+            p.rect(2, 8, this.width - 4, 2); // Lock
+        } else if (this.type === 'TELEPORTER') {
+            p.fill(gameState.teleporterState === 'IDLE' ? COLORS.teleporter : COLORS.teleporter_active);
+            // Draw arch shape
+            p.rect(0, 0, 10, this.height);
+            p.rect(this.width - 10, 0, 10, this.height);
+            p.rect(0, -10, this.width, 10);
+            
+            // Particles inside if active
+            if (gameState.teleporterState !== 'IDLE') {
+                p.fill(255, 100, 100, 100);
+                p.circle(this.width/2, this.height/2, Math.random() * 30 + 20);
+            }
+        }
+        
+        // Draw Prompt if player is close
+        const player = gameState.player;
+        if (player && this.active && distSq(player.x, player.y, this.x, this.y) < 6400) { // 80px radius
+            p.fill(255);
+            p.textAlign(p.CENTER);
+            p.textSize(12);
+            p.text(this.prompt, this.width/2, -20);
+            p.text("↓", this.width/2, -5);
+        }
+        
+        p.pop();
+    }
+}
+</file>
+
+<file name="items.js">
+/**
+ * items.js
+ * Definitions for items that the player can collect.
+ */
+
+export const ITEM_TIERS = {
+    COMMON: 'COMMON',
+    RARE: 'RARE',
+    LEGENDARY: 'LEGENDARY'
+};
+
+export const ITEMS = [
+    {
+        id: 'soldier_syringe',
+        name: 'Soldier\'s Syringe',
+        tier: ITEM_TIERS.COMMON,
+        desc: 'Increases attack speed by 15%',
+        color: [255, 255, 200],
+        onAcquire: (player) => { player.stats.attackSpeed *= 1.15; }
+    },
+    {
+        id: 'goat_hoof',
+        name: 'Paul\'s Goat Hoof',
+        tier: ITEM_TIERS.COMMON,
+        desc: 'Increases movement speed by 10%',
+        color: [200, 255, 200],
+        onAcquire: (player) => { player.stats.moveSpeed *= 1.1; }
+    },
+    {
+        id: 'lens_makers_glasses',
+        name: 'Lens-Maker\'s Glasses',
+        tier: ITEM_TIERS.COMMON,
+        desc: 'Increases crit chance by 10%',
+        color: [200, 100, 100],
+        onAcquire: (player) => { player.stats.critChance += 0.1; }
+    },
+    {
+        id: 'hopoo_feather',
+        name: 'Hopoo Feather',
+        tier: ITEM_TIERS.RARE,
+        desc: 'Gain +1 maximum jump',
+        color: [100, 200, 255],
+        onAcquire: (player) => { player.stats.maxJumps += 1; }
+    },
+    {
+        id: 'ukulele',
+        name: 'Ukulele',
+        tier: ITEM_TIERS.RARE,
+        desc: '25% chance to fire chain lightning',
+        color: [255, 150, 50],
+        onAcquire: (player) => { player.stats.procChainLightning = true; }
+    },
+    {
+        id: 'behemoth',
+        name: 'Brilliant Behemoth',
+        tier: ITEM_TIERS.LEGENDARY,
+        desc: 'All attacks explode',
+        color: [255, 50, 50],
+        onAcquire: (player) => { player.stats.explosiveRounds = true; }
+    }
+];
+
+export function getRandomItem() {
+    // Simple weighted random
+    const rand = Math.random();
+    let tier = ITEM_TIERS.COMMON;
+    
+    if (rand > 0.95) tier = ITEM_TIERS.LEGENDARY;
+    else if (rand > 0.8) tier = ITEM_TIERS.RARE;
+    
+    const pool = ITEMS.filter(i => i.tier === tier);
+    return pool[Math.floor(Math.random() * pool.length)];
+}
+</file>
+
+<file name="utils.js">
+/**
+ * utils.js
+ * Math helpers and collision detection wrappers.
+ */
+// Removed: import { collideRectRect, collideRectCircle, collideLineRect } from 'https://cdn.jsdelivr.net/npm/p5.collide2d@1.0.0/+esm';
+import { gameState } from './globals.js';
+
+export function checkCollision(entityA, entityB) {
+    // Simple AABB
+    return (
+        entityA.x < entityB.x + entityB.width &&
+        entityA.x + entityA.width > entityB.x &&
+        entityA.y < entityB.y + entityB.height &&
+        entityA.y + entityA.height > entityB.y
+    );
+}
+
+export function distSq(x1, y1, x2, y2) {
+    return (x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1);
+}
+
+// Check if an entity is on a platform
+export function resolvePlatformCollision(entity) {
+    let onGround = false;
+    
+    // Bottom of the world safety net
+    if (entity.y + entity.height >= gameState.worldHeight) {
+        entity.y = gameState.worldHeight - entity.height;
+        entity.vy = 0;
+        onGround = true;
+        
+        // If it's the player falling into the void, teleport to top and take damage
+        if (entity.type === 'PLAYER') {
+            entity.y = 0;
+            entity.x = 100; // Reset to start
+            entity.takeDamage(10); // Penalty
+            onGround = false;
+        }
+    }
+
+    // Check platforms
+    // Optimization: Only check platforms roughly near the entity
+    for (const plat of gameState.platforms) {
+        // Broad phase check
+        if (entity.x + entity.width > plat.x && entity.x < plat.x + plat.width) {
+            
+            // Checking feet against platform top (Landing)
+            // Previous frame entity was above platform, current frame is inside/below
+            const prevBottom = (entity.y - entity.vy) + entity.height;
+            
+            if (prevBottom <= plat.y && entity.y + entity.height >= plat.y) {
+                // Snap to top
+                entity.y = plat.y - entity.height;
+                entity.vy = 0;
+                onGround = true;
+            }
+        }
+    }
+    
+    return onGround;
+}
+
+export function lerp(start, end, amt) {
+    return (1 - amt) * start + amt * end;
+}
+</file>
+
+<file name="particles.js">
+/**
+ * particles.js
+ * Particle system for visual effects.
+ */
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export class Particle {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.type = type;
+        this.vx = (Math.random() - 0.5) * 4;
+        this.vy = (Math.random() - 0.5) * 4;
+        this.life = 1.0;
+        this.decay = Math.random() * 0.03 + 0.02;
+        this.size = Math.random() * 4 + 2;
+        this.color = [255, 255, 255];
+        
+        // Customize based on type
+        switch(type) {
+            case 'EXPLOSION':
+                this.color = [255, Math.random() * 100 + 100, 0];
+                this.vx *= 2;
+                this.vy *= 2;
+                this.decay = 0.05;
+                break;
+            case 'BLOOD':
+                this.color = [200, 0, 0];
+                this.vy = Math.random() * -2 - 1; // Spurt up
+                this.gravity = 0.2;
+                break;
+            case 'MONEY':
+                this.color = [255, 215, 0];
+                this.vy = -3;
+                this.gravity = 0.1;
+                this.decay = 0.01;
+                this.size = 3;
+                break;
+            case 'HEAL':
+                this.color = [100, 255, 100];
+                this.vy = -1;
+                this.gravity = 0;
+                this.vx *= 0.2;
+                break;
+            case 'TELEPORT':
+                this.color = [255, 100, 100];
+                this.vy = -2;
+                this.gravity = 0;
+                break;
+        }
+    }
+    
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life -= this.decay;
+        
+        if (this.gravity) this.vy += this.gravity;
+        
+        // Ground bounce for blood/money
+        if (this.type === 'BLOOD' || this.type === 'MONEY') {
+             // Simple ground check approximation
+             if (this.y > gameState.worldHeight - 10) {
+                 this.vy *= -0.5;
+                 this.y = gameState.worldHeight - 10;
+                 this.vx *= 0.8;
+             }
+        }
+    }
+    
+    render(p, cameraX, cameraY) {
+        if (this.life <= 0) return;
+        
+        p.noStroke();
+        // Fade out alpha
+        const alpha = this.life * 255;
+        p.fill(this.color[0], this.color[1], this.color[2], alpha);
+        
+        p.rect(this.x - cameraX, this.y - cameraY, this.size, this.size);
+    }
+}
+
+export function spawnParticles(x, y, type, count) {
+    for (let i = 0; i < count; i++) {
+        gameState.particles.push(new Particle(x, y, type));
+    }
+}
+
+export class FloatingText {
+    constructor(x, y, text, color) {
+        this.x = x;
+        this.y = y;
+        this.text = text;
+        this.color = color;
+        this.life = 60; // frames
+        this.vy = -1;
+    }
+    
+    update() {
+        this.y += this.vy;
+        this.life--;
+    }
+    
+    render(p, cameraX, cameraY) {
+        p.fill(this.color);
+        p.noStroke();
+        p.textAlign(p.CENTER);
+        p.textSize(12);
+        const alpha = Math.min(255, this.life * 10);
+        p.fill(this.color[0], this.color[1], this.color[2], alpha);
+        p.text(this.text, this.x - cameraX, this.y - cameraY);
+    }
+}
+
+export function spawnFloatingText(x, y, text, color = [255, 255, 255]) {
+    gameState.particles.push(new FloatingText(x, y, text, color));
+}
+</file>
+
+<file name="input.js">
+/**
+ * input.js
+ * Keyboard handling.
+ */
+import { gameState } from './globals.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const keys = {
+    left: false,
+    right: false,
+    up: false,
+    down: false,
+    jumpPressed: false, // flag for single frame press
+    shoot: false,
+    dodge: false,
+    interactPressed: false
+};
+
+const KEY_CODES = {
+    LEFT: 37,
+    UP: 38,
+    RIGHT: 39,
+    DOWN: 40,
+    SPACE: 32,
+    Z: 90,
+    SHIFT: 16,
+    ENTER: 13,
+    ESC: 27,
+    R: 82
+};
+
+export function handleInput(p) {
+    // Reset one-frame flags
+    keys.jumpPressed = false;
+    keys.interactPressed = false;
+    
+    // Check Automated Input first
+    if (gameState.controlMode !== 'HUMAN') {
+        const action = get_automated_testing_action(gameState);
+        if (action) {
+            // Simulate keys based on action
+            // This is a simplified way to map bot output to input state
+            keys.left = action.left || false;
+            keys.right = action.right || false;
+            keys.up = action.up || false; // usually aiming
+            keys.down = action.down || false;
+            keys.shoot = action.shoot || false;
+            keys.dodge = action.dodge || false;
+            if (action.jump) keys.jumpPressed = true;
+            if (action.interact) keys.interactPressed = true;
+        }
+        return keys;
+    }
+
+    // Human Input
+    keys.left = p.keyIsDown(KEY_CODES.LEFT);
+    keys.right = p.keyIsDown(KEY_CODES.RIGHT);
+    keys.up = p.keyIsDown(KEY_CODES.UP);
+    keys.down = p.keyIsDown(KEY_CODES.DOWN);
+    keys.shoot = p.keyIsDown(KEY_CODES.Z);
+    keys.dodge = p.keyIsDown(KEY_CODES.SHIFT);
+    
+    return keys;
+}
+
+export function handleKeyPressed(p, keyCode) {
+    // Phase Controls
+    if (keyCode === KEY_CODES.ENTER) {
+        if (gameState.gamePhase === 'START') {
+            gameState.gamePhase = 'PLAYING';
+        }
+    }
+    if (keyCode === KEY_CODES.ESC) {
+        if (gameState.gamePhase === 'PLAYING') gameState.gamePhase = 'PAUSED';
+        else if (gameState.gamePhase === 'PAUSED') gameState.gamePhase = 'PLAYING';
+    }
+    if (keyCode === KEY_CODES.R) {
+        if (gameState.gamePhase === 'GAME_OVER_WIN' || gameState.gamePhase === 'GAME_OVER_LOSE') {
+            window.gameInstance.resetGame();
+        }
+    }
+
+    // Action Triggers
+    if (keyCode === KEY_CODES.SPACE) keys.jumpPressed = true;
+    if (keyCode === KEY_CODES.DOWN) keys.interactPressed = true;
+}
+
+export function handleKeyReleased(p, keyCode) {
+    // Required by p5, but we use keyIsDown mostly
+}
+</file>
+
+<file name="level.js">
+/**
+ * level.js
+ * Procedural generation for the game world.
+ */
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Interactable } from './entities.js';
+
+class Platform {
+    constructor(x, y, w, h) {
+        this.x = x;
+        this.y = y;
+        this.width = w;
+        this.height = h;
+    }
+}
+
+export function generateLevel() {
+    gameState.platforms = [];
+    gameState.interactables = [];
+    
+    // 1. Ground Floor
+    // Create a long ground with some gaps
+    let x = 0;
+    while (x < gameState.worldWidth) {
+        const gap = Math.random() > 0.8; // 20% chance of gap
+        const width = Math.random() * 400 + 200;
+        
+        if (!gap) {
+            gameState.platforms.push(new Platform(x, gameState.worldHeight - 50, width, 50));
+        }
+        x += width + (gap ? 100 : 0);
+    }
+    
+    // 2. Floating Platforms
+    const numPlatforms = 20;
+    for (let i = 0; i < numPlatforms; i++) {
+        const px = Math.random() * (gameState.worldWidth - 200);
+        const py = Math.random() * (gameState.worldHeight - 200) + 100;
+        const pw = Math.random() * 200 + 100;
+        
+        gameState.platforms.push(new Platform(px, py, pw, 20));
+        
+        // Chance to spawn chest on platform
+        if (Math.random() < 0.3) {
+            // Simple cost scaling with distance
+            const cost = 25 + Math.floor(px / 100); 
+            gameState.interactables.push(new Interactable(px + pw/2 - 15, py - 30, 30, 30, 'CHEST', cost));
+        }
+    }
+    
+    // 3. Place Teleporter (Far right side usually)
+    const tpX = Math.random() * 500 + (gameState.worldWidth - 600);
+    // Find ground y at this X
+    let tpY = gameState.worldHeight - 110; // Default
+    
+    // Check if on a platform
+    for (const p of gameState.platforms) {
+        if (tpX > p.x && tpX < p.x + p.width) {
+             // Adjust Y to sit on platform if it's high enough?
+             // For simplicity, just place it on the ground floor or a specific high platform logic.
+             // We'll place it on the 'Ground' layer mostly to ensure accessibility.
+             if (p.y > gameState.worldHeight - 100) {
+                 tpY = p.y - 60;
+                 break;
+             }
+        }
+    }
+    
+    gameState.teleporter = new Interactable(tpX, tpY, 80, 60, 'TELEPORTER', 0);
+    gameState.interactables.push(gameState.teleporter);
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

@@ -1,0 +1,1983 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you make the ao oni a bit slower, and can you also make the objective thats by the right monster on level 6 closer to the middle wall and a bit farther away from the ao oni mponster, and can you make that pathing for that specific ao oni monster to be a larger path so that it doesn't hoard on the objective
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 640px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Ao Oni: The Mansion's Shadow</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic Movement)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Level Progress)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto 20px auto; line-height: 1.4;">Escape the haunted mansion while evading Ao Oni, a terrifying blue monster that stalks the halls. Navigate through 6 progressively challenging levels, each with unique layouts and puzzles. Find keys, unlock doors, and solve environmental puzzles to progress. Stay hidden in closets and behind furniture when Ao Oni is near. Break line of sight to escape chases. Complete all levels to escape the mansion and win!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Keys: HOLD to move player continuously | Shift (Tap): Toggle sprint mode for faster movement | Space: Interact with doors, items, hiding spots | Z: Toggle flashlight (in dark levels) | Enter: Start game from title screen | Escape: Pause/Unpause game | R: Restart (returns to title screen)</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+// globals.js - Global constants and state management
+
+export const CANVAS_WIDTH = 640;
+export const CANVAS_HEIGHT = 400;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const TILE_SIZE = 32;
+export const PLAYER_SIZE = 20;
+export const AOI_ONI_SIZE = 28;
+
+export const PLAYER_SPEED = 2.5;
+export const PLAYER_SPRINT_SPEED = 4.5;
+export const AOI_ONI_BASE_SPEED = 1.8;
+
+export const gameState = {
+  player: null,
+  entities: [],
+  aoOnis: [],
+  doors: [],
+  items: [],
+  hidingSpots: [],
+  walls: [],
+  score: 0,
+  level: 1,
+  gamePhase: GAME_PHASES.START,
+  controlMode: "HUMAN",
+  discoveredRooms: new Set(),
+  isRunning: false,
+  hasFlashlight: false,
+  flashlightOn: false,
+  inChase: false,
+  lastEvadeTime: 0,
+  levelComplete: false,
+  undetectedBonus: true,
+  currentLevelData: null,
+  keysPressed: {},
+  inventory: [],
+  messages: [],
+  requiredItemIds: [], // Items that must be collected to exit level
+  collectedRequiredItems: new Set() // Track which required items have been collected
+};
+
+// Expose getGameState globally
+if (typeof window !== 'undefined') {
+  window.getGameState = function() {
+    return gameState;
+  };
+}
+</file>
+
+<file name="game.js">
+// game.js - Main game file
+import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { loadLevel } from './levels.js';
+import { initTestController, getTestAction } from './testing.js';
+import { 
+  renderStartScreen, 
+  renderGameOverScreen, 
+  renderPausedIndicator, 
+  renderUI,
+  renderDarkness,
+  renderMessages 
+} from './rendering.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Initialize logs
+  p.logs = {
+    game_info: [],
+    inputs: [],
+    player_info: []
+  };
+
+  let lastPlayerLogFrame = -10;
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: { phase: gameState.gamePhase, level: gameState.level },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+
+  p.draw = function() {
+    p.background(40, 35, 45);
+
+    // Handle automated testing
+    if (gameState.controlMode !== "HUMAN") {
+      const actions = getTestAction();
+      
+      // Process test actions - set key states for continuous movement
+      // Clear all movement keys first
+      gameState.keysPressed[37] = false; // left
+      gameState.keysPressed[38] = false; // up
+      gameState.keysPressed[39] = false; // right
+      gameState.keysPressed[40] = false; // down
+      
+      for (const keyCode of actions) {
+        // Handle movement keys as continuous (set pressed state)
+        if (keyCode === 37 || keyCode === 38 || keyCode === 39 || keyCode === 40) {
+          gameState.keysPressed[keyCode] = true;
+        } else if (keyCode === 16) {
+          gameState.isRunning = !gameState.isRunning;
+        } else if (keyCode === 13 && gameState.gamePhase === GAME_PHASES.START) {
+          gameState.gamePhase = GAME_PHASES.PLAYING;
+          gameState.level = 1;
+          gameState.score = 0;
+          loadLevel(1);
+          
+          p.logs.game_info.push({
+            data: { phase: gameState.gamePhase, level: gameState.level, mode: "AUTO_START" },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+        } else if (keyCode === 32 && gameState.gamePhase === GAME_PHASES.PLAYING) {
+          handleInteraction();
+        }
+      }
+    }
+
+    if (gameState.gamePhase === GAME_PHASES.START) {
+      renderStartScreen(p);
+    } else if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      updateGame(p);
+      renderGame(p);
+      renderUI(p);
+      renderDarkness(p);
+      renderMessages(p);
+    } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+      renderGame(p);
+      renderUI(p);
+      renderDarkness(p);
+      renderPausedIndicator(p);
+      renderMessages(p);
+    } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN) {
+      renderGameOverScreen(p, true);
+    } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+      renderGameOverScreen(p, false);
+    }
+
+    // Log player info periodically
+    if (gameState.player && gameState.gamePhase === GAME_PHASES.PLAYING) {
+      if (p.frameCount - lastPlayerLogFrame >= 10) {
+        p.logs.player_info.push({
+          screen_x: gameState.player.x,
+          screen_y: gameState.player.y,
+          game_x: gameState.player.x,
+          game_y: gameState.player.y,
+          framecount: p.frameCount
+        });
+        lastPlayerLogFrame = p.frameCount;
+      }
+    }
+  };
+
+  function updateGame(p) {
+    // Don't update if game is over
+    if (gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE || 
+        gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN) {
+      return;
+    }
+
+    // Update player
+    if (gameState.player) {
+      gameState.player.update(p);
+    }
+
+    // Update Ao Onis
+    for (const aoOni of gameState.aoOnis) {
+      aoOni.update(p);
+    }
+
+    // Update items
+    for (const item of gameState.items) {
+      item.update();
+    }
+
+    // Update messages
+    updateMessages();
+
+    // Check for level completion
+    if (gameState.exitZone && gameState.exitZone.checkPlayer() && !gameState.levelComplete) {
+      gameState.levelComplete = true;
+      
+      // Award completion bonus
+      gameState.score += 100;
+      addMessage("Level Complete! +100", "success");
+      
+      // Award undetected bonus
+      if (gameState.undetectedBonus) {
+        gameState.score += 50;
+        addMessage("Undetected Bonus! +50", "success");
+      }
+      
+      // Check if final level (now level 6)
+      if (gameState.level >= 6) {
+        setTimeout(() => {
+          gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
+          p.logs.game_info.push({
+            data: { phase: gameState.gamePhase, won: true, finalScore: gameState.score },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+        }, 500);
+      } else {
+        // Load next level immediately
+        gameState.level++;
+        loadLevel(gameState.level);
+        addMessage(`Level ${gameState.level}`, "info");
+        p.logs.game_info.push({
+          data: { phase: "LEVEL_COMPLETE", nextLevel: gameState.level },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+  }
+
+  function renderGame(p) {
+    // Background
+    p.fill(60, 55, 65);
+    p.noStroke();
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+    // Walls
+    p.fill(80, 70, 75);
+    p.stroke(60, 50, 55);
+    p.strokeWeight(2);
+    for (const wall of gameState.walls) {
+      p.rect(wall.x, wall.y, wall.w, wall.h);
+    }
+
+    // Doors
+    for (const door of gameState.doors) {
+      door.render(p);
+    }
+
+    // Hiding spots
+    for (const spot of gameState.hidingSpots) {
+      spot.render(p);
+    }
+
+    // Items
+    for (const item of gameState.items) {
+      item.render(p);
+    }
+
+    // Exit zone
+    if (gameState.exitZone) {
+      gameState.exitZone.render(p);
+    }
+
+    // Ao Onis
+    for (const aoOni of gameState.aoOnis) {
+      aoOni.render(p);
+    }
+
+    // Player
+    if (gameState.player) {
+      gameState.player.render(p);
+    }
+  }
+
+  p.keyPressed = function() {
+    // Log input
+    p.logs.inputs.push({
+      input_type: "keyPressed",
+      data: { key: p.key, keyCode: p.keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+
+    if (gameState.controlMode === "HUMAN") {
+      // Game phase transitions
+      if (p.keyCode === 13) { // ENTER
+        if (gameState.gamePhase === GAME_PHASES.START) {
+          gameState.gamePhase = GAME_PHASES.PLAYING;
+          gameState.level = 1;
+          gameState.score = 0;
+          loadLevel(1);
+          
+          p.logs.game_info.push({
+            data: { phase: gameState.gamePhase, level: gameState.level },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+        }
+      } else if (p.keyCode === 27) { // ESC
+        if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+          gameState.gamePhase = GAME_PHASES.PAUSED;
+          p.logs.game_info.push({
+            data: { phase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+        } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+          gameState.gamePhase = GAME_PHASES.PLAYING;
+          p.logs.game_info.push({
+            data: { phase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+        }
+      } else if (p.keyCode === 82) { // R
+        gameState.gamePhase = GAME_PHASES.START;
+        gameState.level = 1;
+        gameState.score = 0;
+        gameState.inventory = [];
+        gameState.hasFlashlight = false;
+        gameState.flashlightOn = false;
+        gameState.messages = [];
+        gameState.isRunning = false;
+        
+        p.logs.game_info.push({
+          data: { phase: gameState.gamePhase, action: "restart" },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+
+      // Gameplay controls
+      if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+        if (p.keyCode === 16) { // SHIFT - toggle sprint mode
+          gameState.isRunning = !gameState.isRunning;
+          addMessage(gameState.isRunning ? "Sprint Mode ON" : "Sprint Mode OFF", "info");
+        } else if (p.keyCode === 32) { // SPACE
+          handleInteraction();
+        } else if (p.keyCode === 90) { // Z
+          if (gameState.hasFlashlight) {
+            gameState.flashlightOn = !gameState.flashlightOn;
+            addMessage(gameState.flashlightOn ? "Flashlight ON" : "Flashlight OFF", "info");
+          }
+        }
+        
+        // CONTINUOUS MOVEMENT: Track key pressed state
+        if (p.keyCode === 37 || p.keyCode === 38 || p.keyCode === 39 || p.keyCode === 40) {
+          gameState.keysPressed[p.keyCode] = true;
+        }
+      }
+    }
+
+    return false;
+  };
+
+  p.keyReleased = function() {
+    // Log input
+    p.logs.inputs.push({
+      input_type: "keyReleased",
+      data: { key: p.key, keyCode: p.keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+
+    if (gameState.controlMode === "HUMAN") {
+      // CONTINUOUS MOVEMENT: Track key released state
+      if (p.keyCode === 37 || p.keyCode === 38 || p.keyCode === 39 || p.keyCode === 40) {
+        gameState.keysPressed[p.keyCode] = false;
+      }
+    }
+
+    return false;
+  };
+
+  function handleInteraction() {
+    if (!gameState.player) return;
+
+    // Check if hiding
+    if (gameState.player.hiding) {
+      gameState.player.unhide();
+      addMessage("Left hiding spot", "info");
+      return;
+    }
+
+    // Check hiding spots
+    for (const spot of gameState.hidingSpots) {
+      if (spot.canHide()) {
+        gameState.player.hide(spot);
+        spot.occupied = true;
+        addMessage("Hiding...", "info");
+        return;
+      }
+    }
+
+    // Check doors - increased interaction range to 50 pixels
+    for (const door of gameState.doors) {
+      const dist = Math.hypot(
+        door.x + door.w / 2 - gameState.player.x,
+        door.y + door.h / 2 - gameState.player.y
+      );
+      if (dist < 50) {
+        const result = door.interact();
+        if (result === "unlocked") {
+          addMessage("Door unlocked!", "success");
+        } else if (result === "locked") {
+          addMessage("Door is locked. Need key!", "warning");
+        } else if (result === "opened") {
+          addMessage("Door opened", "info");
+        }
+        return;
+      }
+    }
+
+    // Check items
+    for (const item of gameState.items) {
+      if (item.checkPickup()) {
+        item.collect();
+        return;
+      }
+    }
+  }
+});
+
+// Message system
+function addMessage(text, type = "info") {
+  if (!gameState.messages) {
+    gameState.messages = [];
+  }
+  gameState.messages.push({
+    text: text,
+    type: type,
+    time: 120 // frames to display
+  });
+}
+
+function updateMessages() {
+  if (!gameState.messages) {
+    gameState.messages = [];
+    return;
+  }
+  
+  for (let i = gameState.messages.length - 1; i >= 0; i--) {
+    gameState.messages[i].time--;
+    if (gameState.messages[i].time <= 0) {
+      gameState.messages.splice(i, 1);
+    }
+  }
+}
+
+// Expose globally
+window.addMessage = addMessage;
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    if (typeof loadLevel === 'function') {
+      loadLevel(levelNum);
+    } else if (typeof initializeLevel === 'function') {
+      initializeLevel(levelNum);
+    }
+    if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  initTestController(mode);
+  
+  // Update button states
+  const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const activeBtn = document.getElementById(mode === 'HUMAN' ? 'humanModeBtn' : `${mode}_ModeBtn`);
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+};
+</file>
+
+<file name="aooni.js">
+// aooni.js - Ao Oni enemy class
+import { gameState, AOI_ONI_SIZE, AOI_ONI_BASE_SPEED, GAME_PHASES } from './globals.js';
+
+export class AoOni {
+  constructor(x, y, speedMultiplier = 1, patrolPoints = [], sightRange = 120) {
+    this.x = x;
+    this.y = y;
+    this.width = AOI_ONI_SIZE;
+    this.height = AOI_ONI_SIZE;
+    this.baseSpeed = AOI_ONI_BASE_SPEED * speedMultiplier;
+    this.speed = this.baseSpeed;
+    this.sightRange = sightRange;
+    this.state = "PATROL"; // PATROL, CHASE, IDLE
+    this.patrolPoints = patrolPoints.length > 0 ? patrolPoints : [[x, y]];
+    this.currentPatrolIndex = 0;
+    this.idleTimer = 0;
+    this.chaseTimer = 0;
+    this.animFrame = 0;
+    this.lastSeenPlayerX = null;
+    this.lastSeenPlayerY = null;
+  }
+
+  update(p) {
+    this.animFrame += 0.15;
+
+    if (this.state === "IDLE") {
+      this.idleTimer--;
+      if (this.idleTimer <= 0) {
+        this.state = "PATROL";
+      }
+      return;
+    }
+
+    // Check if can see player
+    if (gameState.player && !gameState.player.hiding) {
+      const dist = p.dist(this.x, this.y, gameState.player.x, gameState.player.y);
+      
+      if (dist < this.sightRange && this.hasLineOfSight(p)) {
+        if (this.state !== "CHASE") {
+          this.state = "CHASE";
+          gameState.inChase = true;
+          gameState.undetectedBonus = false;
+        }
+        this.lastSeenPlayerX = gameState.player.x;
+        this.lastSeenPlayerY = gameState.player.y;
+        this.chaseTimer = 180; // 3 seconds at 60fps
+      }
+    }
+
+    if (this.state === "CHASE") {
+      this.speed = this.baseSpeed * 1.8;
+      this.chaseTimer--;
+      
+      if (this.chaseTimer <= 0 || (gameState.player && gameState.player.hiding)) {
+        this.state = "PATROL";
+        this.speed = this.baseSpeed;
+        
+        // Award evasion points
+        if (gameState.inChase && Date.now() - gameState.lastEvadeTime > 5000) {
+          gameState.score += 10;
+          gameState.lastEvadeTime = Date.now();
+          if (typeof window.addMessage === 'function') {
+            window.addMessage("Evaded! +10", "success");
+          }
+        }
+        gameState.inChase = false;
+      } else if (this.lastSeenPlayerX !== null) {
+        this.moveTowards(this.lastSeenPlayerX, this.lastSeenPlayerY);
+      }
+    } else if (this.state === "PATROL") {
+      this.speed = this.baseSpeed;
+      const target = this.patrolPoints[this.currentPatrolIndex];
+      const dist = p.dist(this.x, this.y, target[0], target[1]);
+      
+      if (dist < 5) {
+        this.currentPatrolIndex = (this.currentPatrolIndex + 1) % this.patrolPoints.length;
+        this.state = "IDLE";
+        this.idleTimer = 30;
+      } else {
+        this.moveTowards(target[0], target[1]);
+      }
+    }
+
+    // Check collision with player - trigger game over immediately
+    if (gameState.player && !gameState.player.hiding && gameState.gamePhase === GAME_PHASES.PLAYING) {
+      const dist = p.dist(this.x, this.y, gameState.player.x, gameState.player.y);
+      if (dist < (this.width + gameState.player.width) / 2) {
+        gameState.gamePhase = GAME_PHASES.GAME_OVER_LOSE;
+        
+        // Log game over
+        if (p && p.logs) {
+          p.logs.game_info.push({
+            data: { phase: GAME_PHASES.GAME_OVER_LOSE, reason: "caught", finalScore: gameState.score },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+        }
+      }
+    }
+  }
+
+  moveTowards(targetX, targetY) {
+    const angle = Math.atan2(targetY - this.y, targetX - this.x);
+    let dx = Math.cos(angle) * this.speed;
+    let dy = Math.sin(angle) * this.speed;
+
+    const newX = this.x + dx;
+    const newY = this.y + dy;
+
+    // Check wall collisions
+    let canMoveX = true;
+    let canMoveY = true;
+
+    for (const wall of gameState.walls) {
+      if (this.checkCollision(newX, this.y, wall)) {
+        canMoveX = false;
+      }
+      if (this.checkCollision(this.x, newY, wall)) {
+        canMoveY = false;
+      }
+    }
+
+    if (canMoveX) this.x = newX;
+    if (canMoveY) this.y = newY;
+  }
+
+  checkCollision(x, y, wall) {
+    return x - this.width / 2 < wall.x + wall.w &&
+           x + this.width / 2 > wall.x &&
+           y - this.height / 2 < wall.y + wall.h &&
+           y + this.height / 2 > wall.y;
+  }
+
+  hasLineOfSight(p) {
+    if (!gameState.player) return false;
+    
+    // Line of sight check - check for walls AND closed doors blocking view
+    const steps = 20;
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const checkX = p.lerp(this.x, gameState.player.x, t);
+      const checkY = p.lerp(this.y, gameState.player.y, t);
+      
+      // Check walls
+      for (const wall of gameState.walls) {
+        if (checkX > wall.x && checkX < wall.x + wall.w &&
+            checkY > wall.y && checkY < wall.y + wall.h) {
+          return false;
+        }
+      }
+      
+      // Check closed doors - they should block line of sight too
+      for (const door of gameState.doors) {
+        if (!door.open) {
+          if (checkX > door.x && checkX < door.x + door.w &&
+              checkY > door.y && checkY < door.y + door.h) {
+            return false;
+          }
+        }
+      }
+    }
+    return true;
+  }
+
+  render(p) {
+    p.push();
+    p.translate(this.x, this.y);
+    
+    // Body
+    p.fill(50, 80, 180);
+    p.stroke(30, 50, 120);
+    p.strokeWeight(2);
+    p.rect(-this.width / 2, -this.height / 2, this.width, this.height, 4);
+    
+    // Head bump
+    p.fill(40, 70, 160);
+    p.ellipse(0, -this.height / 3, this.width * 0.6, this.height * 0.4);
+    
+    // Eyes (glowing)
+    const eyeGlow = this.state === "CHASE" ? 255 : 200;
+    p.fill(eyeGlow, 0, 0);
+    p.noStroke();
+    p.ellipse(-6, -5, 7, 8);
+    p.ellipse(6, -5, 7, 8);
+    
+    // Pupils
+    p.fill(0);
+    p.ellipse(-6, -4, 3, 4);
+    p.ellipse(6, -4, 3, 4);
+    
+    // Mouth
+    if (this.state === "CHASE") {
+      p.stroke(0);
+      p.strokeWeight(2);
+      p.noFill();
+      p.arc(0, 3, 12, 8, 0, p.PI);
+    }
+    
+    p.pop();
+  }
+}
+</file>
+
+<file name="rendering.js">
+// rendering.js - Rendering functions
+import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderStartScreen(p) {
+  p.background(20, 15, 30);
+  
+  // Title
+  p.fill(150, 100, 200);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(32);
+  p.text("Ao Oni: The Mansion's Shadow", CANVAS_WIDTH / 2, 60);
+  
+  // Subtitle
+  p.fill(200, 180, 220);
+  p.textSize(12);
+  p.text("A Survival Horror Experience", CANVAS_WIDTH / 2, 90);
+  
+  // Instructions
+  p.fill(220, 220, 240);
+  p.textSize(10);
+  p.textAlign(p.LEFT, p.TOP);
+  const instructions = [
+    "OBJECTIVE: Escape the haunted mansion",
+    "- Navigate through 6 challenging levels",
+    "- Collect required objectives (★) to unlock exit",
+    "- Find keys to unlock doors",
+    "- Avoid Ao Oni, the blue monster",
+    "- Hide when spotted to evade capture",
+    "",
+    "CONTROLS:",
+    "Arrow Keys - Move",
+    "Shift - Sprint",
+    "Space - Interact (doors, items, hide)",
+    "Z - Toggle flashlight (in dark levels)",
+    "ESC - Pause game",
+    "R - Restart to title"
+  ];
+  
+  let y = 110;
+  for (const line of instructions) {
+    p.text(line, 70, y);
+    y += 14;
+  }
+  
+  // Press Enter prompt
+  p.fill(255, 255, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(16);
+  const blink = Math.floor(p.frameCount / 30) % 2;
+  if (blink) {
+    p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 300);
+  }
+}
+
+export function renderGameOverScreen(p, won) {
+  p.background(20, 15, 30);
+  
+  if (won) {
+    p.fill(100, 255, 100);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(32);
+    p.text("YOU ESCAPED!", CANVAS_WIDTH / 2, 100);
+    
+    p.fill(200, 255, 200);
+    p.textSize(16);
+    p.text("Congratulations on escaping the mansion!", CANVAS_WIDTH / 2, 140);
+  } else {
+    p.fill(255, 100, 100);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(32);
+    p.text("GAME OVER", CANVAS_WIDTH / 2, 100);
+    
+    p.fill(255, 200, 200);
+    p.textSize(16);
+    p.text("Ao Oni caught you...", CANVAS_WIDTH / 2, 140);
+    
+    // Add dramatic effect
+    p.fill(255, 0, 0, 50);
+    p.noStroke();
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  }
+  
+  // Final score
+  p.fill(255, 255, 255);
+  p.textSize(20);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 190);
+  
+  // Instructions
+  p.fill(220, 220, 240);
+  p.textSize(14);
+  p.text("Press R to restart", CANVAS_WIDTH / 2, 250);
+  
+  const blink = Math.floor(p.frameCount / 30) % 2;
+  if (blink) {
+    p.text("▼", CANVAS_WIDTH / 2, 280);
+  }
+}
+
+export function renderPausedIndicator(p) {
+  p.push();
+  p.fill(0, 0, 0, 150);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.fill(255, 255, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(28);
+  p.text("PAUSED", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  
+  p.textSize(12);
+  p.fill(220, 220, 240);
+  p.text("Press ESC to resume", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 35);
+  p.pop();
+}
+
+export function renderUI(p) {
+  // Top UI bar - darker background
+  p.push();
+  p.fill(0, 0, 0, 180);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, 28);
+  p.pop();
+  
+  // Score - top right
+  p.push();
+  p.fill(255, 255, 100);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(14);
+  p.text(`Score: ${gameState.score}`, CANVAS_WIDTH - 8, 7);
+  p.pop();
+  
+  // Level - top left
+  p.push();
+  p.fill(100, 200, 255);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(14);
+  p.text(`Level: ${gameState.level} / 6`, 8, 7);
+  p.pop();
+  
+  // Objectives collected indicator - top center
+  if (gameState.requiredItemIds.length > 0) {
+    p.push();
+    const collected = gameState.collectedRequiredItems.size;
+    const total = gameState.requiredItemIds.length;
+    const isComplete = collected >= total;
+    
+    p.fill(isComplete ? 100 : 255, isComplete ? 255 : 150, isComplete ? 100 : 150);
+    p.textAlign(p.CENTER, p.TOP);
+    p.textSize(12);
+    p.text(`Objectives: ${collected}/${total} ${isComplete ? '✓' : ''}`, CANVAS_WIDTH / 2, 8);
+    p.pop();
+  }
+  
+  // Bottom UI bar
+  p.push();
+  p.fill(0, 0, 0, 180);
+  p.noStroke();
+  p.rect(0, CANVAS_HEIGHT - 45, CANVAS_WIDTH, 45);
+  p.pop();
+  
+  // Inventory header
+  p.push();
+  p.fill(255, 255, 255);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(12);
+  p.text("Inventory:", 8, CANVAS_HEIGHT - 38);
+  p.pop();
+  
+  // Inventory items
+  p.push();
+  let x = 8;
+  const y = CANVAS_HEIGHT - 20;
+  
+  if (gameState.inventory && gameState.inventory.length > 0) {
+    for (const item of gameState.inventory) {
+      // Item box
+      p.fill(50, 50, 60);
+      p.stroke(200, 200, 220);
+      p.strokeWeight(2);
+      p.rect(x, y - 16, 20, 20, 2);
+      
+      // Item icon
+      p.fill(255, 215, 0);
+      p.noStroke();
+      p.textAlign(p.CENTER, p.CENTER);
+      p.textSize(12);
+      if (item.type === "key") {
+        p.text("🔑", x + 10, y - 6);
+      } else if (item.type === "flashlight") {
+        p.text("🔦", x + 10, y - 6);
+      } else {
+        p.text("📦", x + 10, y - 6);
+      }
+      
+      x += 26;
+    }
+  } else {
+    p.fill(150, 150, 150);
+    p.noStroke();
+    p.textAlign(p.LEFT, p.CENTER);
+    p.textSize(10);
+    p.text("(empty)", x, y - 6);
+  }
+  p.pop();
+  
+  // Sprint indicator - bottom right
+  if (gameState.isRunning) {
+    p.push();
+    p.fill(100, 255, 100);
+    p.textAlign(p.RIGHT, p.TOP);
+    p.textSize(11);
+    p.text("SPRINTING", CANVAS_WIDTH - 8, CANVAS_HEIGHT - 38);
+    p.pop();
+  }
+  
+  // Chase indicator - flashing border effect
+  if (gameState.inChase) {
+    p.push();
+    const alpha = 50 + Math.sin(p.frameCount * 0.2) * 30;
+    p.fill(255, 0, 0, alpha);
+    p.noStroke();
+    p.rect(0, 28, CANVAS_WIDTH, 8);
+    p.rect(0, 28, 8, CANVAS_HEIGHT - 73);
+    p.rect(CANVAS_WIDTH - 8, 28, 8, CANVAS_HEIGHT - 73);
+    p.rect(0, CANVAS_HEIGHT - 45 - 8, CANVAS_WIDTH, 8);
+    
+    p.fill(255, 100, 100);
+    p.textAlign(p.CENTER, p.TOP);
+    p.textSize(12);
+    p.text("! CHASE !", CANVAS_WIDTH / 2, 32);
+    p.pop();
+  }
+}
+
+export function renderMessages(p) {
+  if (!gameState.messages || gameState.messages.length === 0) return;
+  
+  p.push();
+  let y = 50;
+  
+  for (const msg of gameState.messages) {
+    const alpha = Math.min(255, msg.time * 2);
+    
+    // Message background
+    p.fill(0, 0, 0, alpha * 0.7);
+    p.noStroke();
+    const textW = p.textWidth(msg.text);
+    p.rect(CANVAS_WIDTH / 2 - textW / 2 - 10, y - 10, textW + 20, 22, 5);
+    
+    // Message text
+    let color;
+    if (msg.type === "success") {
+      color = [100, 255, 100, alpha];
+    } else if (msg.type === "warning") {
+      color = [255, 200, 100, alpha];
+    } else if (msg.type === "error") {
+      color = [255, 100, 100, alpha];
+    } else {
+      color = [255, 255, 255, alpha];
+    }
+    
+    p.fill(...color);
+    p.textAlign(p.CENTER, p.TOP);
+    p.textSize(12);
+    p.text(msg.text, CANVAS_WIDTH / 2, y - 5);
+    
+    y += 26;
+  }
+  
+  p.pop();
+}
+
+export function renderDarkness(p) {
+  if (gameState.level >= 7 && gameState.player) {
+    p.push();
+    
+    // Create darkness overlay
+    p.fill(0, 0, 0, 200);
+    p.noStroke();
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    // Player light
+    const lightRadius = gameState.flashlightOn ? 100 : 65;
+    const gradient = p.drawingContext.createRadialGradient(
+      gameState.player.x, gameState.player.y, 0,
+      gameState.player.x, gameState.player.y, lightRadius
+    );
+    gradient.addColorStop(0, 'rgba(255, 255, 200, 0.8)');
+    gradient.addColorStop(0.5, 'rgba(255, 255, 200, 0.3)');
+    gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    
+    p.drawingContext.globalCompositeOperation = 'destination-out';
+    p.drawingContext.fillStyle = gradient;
+    p.drawingContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.drawingContext.globalCompositeOperation = 'source-over';
+    
+    p.pop();
+  }
+}
+</file>
+
+<file name="testing.js">
+// testing.js - Automated testing controllers
+import { gameState, GAME_PHASES } from './globals.js';
+
+export class TestController {
+  constructor(mode) {
+    this.mode = mode;
+    this.actionIndex = 0;
+    this.frameCounter = 0;
+    this.actions = [];
+    this.startDelay = 60; // Wait 1 second before auto-starting
+    this.hasStarted = false;
+    this.setupActions();
+  }
+
+  setupActions() {
+    if (this.mode === "TEST_1") {
+      // Basic movement test - demonstrate all controls
+      this.actions = [
+        { frames: 60, keys: [39] },      // Right
+        { frames: 60, keys: [40] },      // Down
+        { frames: 60, keys: [37] },      // Left
+        { frames: 60, keys: [38] },      // Up
+        { frames: 30, keys: [39, 16] },  // Right + Sprint
+        { frames: 30, keys: [32] },      // Space (interact)
+        { frames: 30, keys: [90] },      // Z (flashlight toggle)
+        { frames: 60, keys: [39] }       // Continue right
+      ];
+    } else if (this.mode === "TEST_2") {
+      // Win test - navigate to objectives
+      this.actions = [
+        { frames: 90, keys: [39] },      // Move right to key
+        { frames: 30, keys: [32] },      // Pick up key
+        { frames: 30, keys: [] },        // Wait
+        { frames: 60, keys: [37] },      // Move left
+        { frames: 60, keys: [40] },      // Move down
+        { frames: 30, keys: [32] },      // Unlock door
+        { frames: 30, keys: [] },        // Wait
+        { frames: 120, keys: [38] },     // Move up to exit
+        { frames: 90, keys: [39] },      // Move right to exit
+        { frames: 60, keys: [] }         // Wait at exit
+      ];
+    }
+  }
+
+  getAction() {
+    // Auto-start game if on start screen
+    if (gameState.gamePhase === GAME_PHASES.START && !this.hasStarted) {
+      this.startDelay--;
+      if (this.startDelay <= 0) {
+        this.hasStarted = true;
+        return [13]; // Enter key
+      }
+      return [];
+    }
+
+    if (gameState.gamePhase !== GAME_PHASES.PLAYING) {
+      return [];
+    }
+
+    if (this.actionIndex >= this.actions.length) {
+      return [];
+    }
+
+    const currentAction = this.actions[this.actionIndex];
+    this.frameCounter++;
+
+    if (this.frameCounter >= currentAction.frames) {
+      this.frameCounter = 0;
+      this.actionIndex++;
+    }
+
+    return currentAction.keys || [];
+  }
+}
+
+let testController = null;
+
+export function initTestController(mode) {
+  if (mode === "HUMAN") {
+    testController = null;
+  } else {
+    testController = new TestController(mode);
+  }
+}
+
+export function getTestAction() {
+  if (!testController) return [];
+  return testController.getAction();
+}
+</file>
+
+<file name="entities.js">
+// entities.js - Game entities (doors, items, hiding spots)
+import { gameState, TILE_SIZE } from './globals.js';
+
+export class Door {
+  constructor(x, y, w, h, locked = false, keyId = null) {
+    this.x = x;
+    this.y = y;
+    this.w = w;
+    this.h = h;
+    this.locked = locked;
+    this.keyId = keyId;
+    this.open = false;
+  }
+
+  interact() {
+    if (this.locked) {
+      // Check if player has key
+      const hasKey = gameState.inventory.some(item => item.id === this.keyId);
+      if (hasKey) {
+        this.locked = false;
+        this.open = true;
+        gameState.score += 50;
+        // Remove key from inventory
+        gameState.inventory = gameState.inventory.filter(item => item.id !== this.keyId);
+        return "unlocked";
+      } else {
+        return "locked";
+      }
+    } else {
+      this.open = !this.open;
+      return this.open ? "opened" : "closed";
+    }
+  }
+
+  // Check if this door blocks movement (acts as wall when closed/locked)
+  blocksMovement() {
+    return !this.open;
+  }
+
+  render(p) {
+    p.push();
+    if (this.locked) {
+      p.fill(139, 69, 19);
+      p.stroke(100, 50, 10);
+    } else if (this.open) {
+      p.fill(101, 67, 33, 100); // Semi-transparent when open
+      p.stroke(80, 50, 20);
+    } else {
+      p.fill(139, 90, 43);
+      p.stroke(100, 70, 30);
+    }
+    p.strokeWeight(2);
+    p.rect(this.x, this.y, this.w, this.h);
+    
+    // Door knob
+    if (!this.open) {
+      p.fill(180, 180, 100);
+      p.noStroke();
+      const knobX = this.w > this.h ? this.x + this.w * 0.8 : this.x + this.w / 2;
+      const knobY = this.h > this.w ? this.y + this.h * 0.8 : this.y + this.h / 2;
+      p.ellipse(knobX, knobY, 4, 4);
+    }
+    
+    // Lock indicator
+    if (this.locked) {
+      p.fill(255, 215, 0);
+      p.textSize(10);
+      p.textAlign(p.CENTER, p.CENTER);
+      p.text("🔒", this.x + this.w / 2, this.y + this.h / 2);
+    }
+    p.pop();
+  }
+}
+
+export class Item {
+  constructor(x, y, type, id, required = false) {
+    this.x = x;
+    this.y = y;
+    this.type = type; // "key", "flashlight", "objective"
+    this.id = id;
+    this.required = required; // Whether this item is required to complete level
+    this.collected = false;
+    this.size = 12;
+    this.glowPhase = 0;
+  }
+
+  update() {
+    this.glowPhase += 0.1;
+  }
+
+  checkPickup() {
+    if (this.collected || !gameState.player) return false;
+    
+    const dist = Math.hypot(this.x - gameState.player.x, this.y - gameState.player.y);
+    return dist < 25;
+  }
+
+  collect() {
+    this.collected = true;
+    gameState.inventory.push({ type: this.type, id: this.id });
+    
+    // Track required items
+    if (this.required && gameState.requiredItemIds.includes(this.id)) {
+      gameState.collectedRequiredItems.add(this.id);
+    }
+    
+    // Add visual feedback
+    if (typeof window.addMessage === 'function') {
+      if (this.type === "key") {
+        gameState.score += 20;
+        window.addMessage("Key collected! +20", "success");
+      } else if (this.type === "flashlight") {
+        gameState.hasFlashlight = true;
+        gameState.score += 20;
+        window.addMessage("Flashlight collected! +20", "success");
+      } else if (this.type === "objective") {
+        gameState.score += 30;
+        const requiredMsg = this.required ? " (Required!)" : "";
+        window.addMessage("Objective collected! +30" + requiredMsg, "success");
+      }
+      
+      // Check if all required items collected
+      if (this.required && gameState.collectedRequiredItems.size === gameState.requiredItemIds.length) {
+        window.addMessage("All objectives collected! Exit unlocked!", "success");
+        gameState.score += 50;
+      }
+    }
+  }
+
+  render(p) {
+    if (this.collected) return;
+    
+    p.push();
+    const glow = 150 + Math.sin(this.glowPhase) * 50;
+    
+    // Extra glow for required items
+    if (this.required) {
+      p.fill(255, 100, 255, glow * 0.5);
+      p.noStroke();
+      p.ellipse(this.x, this.y, this.size + 10, this.size + 10);
+    }
+    
+    if (this.type === "key") {
+      p.fill(255, 215, 0, glow);
+      p.noStroke();
+      p.ellipse(this.x, this.y, this.size + 4, this.size + 4);
+      p.fill(255, 215, 0);
+      p.stroke(200, 170, 0);
+      p.strokeWeight(2);
+      p.rect(this.x - 4, this.y - 2, 8, 4);
+      p.rect(this.x + 2, this.y - 6, 2, 12);
+    } else if (this.type === "flashlight") {
+      p.fill(200, 200, 200, glow);
+      p.noStroke();
+      p.ellipse(this.x, this.y, this.size + 4, this.size + 4);
+      p.fill(150, 150, 150);
+      p.stroke(100);
+      p.strokeWeight(2);
+      p.rect(this.x - 4, this.y - 6, 8, 12);
+      p.fill(255, 255, 200);
+      p.noStroke();
+      p.rect(this.x - 4, this.y - 6, 8, 4);
+    } else {
+      p.fill(100, 200, 255, glow);
+      p.noStroke();
+      p.ellipse(this.x, this.y, this.size + 4, this.size + 4);
+      p.fill(100, 200, 255);
+      p.stroke(50, 150, 200);
+      p.strokeWeight(2);
+      p.ellipse(this.x, this.y, this.size, this.size);
+      
+      // Star indicator for required items
+      if (this.required) {
+        p.fill(255, 255, 100);
+        p.noStroke();
+        p.textSize(10);
+        p.textAlign(p.CENTER, p.CENTER);
+        p.text("★", this.x, this.y - 15);
+      }
+    }
+    p.pop();
+  }
+}
+
+export class HidingSpot {
+  constructor(x, y, w, h, type = "closet") {
+    this.x = x;
+    this.y = y;
+    this.w = w;
+    this.h = h;
+    this.type = type;
+    this.occupied = false;
+  }
+
+  canHide() {
+    if (!gameState.player) return false;
+    const dist = Math.hypot(
+      this.x + this.w / 2 - gameState.player.x,
+      this.y + this.h / 2 - gameState.player.y
+    );
+    return dist < 30;
+  }
+
+  render(p) {
+    p.push();
+    if (this.type === "closet") {
+      p.fill(101, 67, 33);
+      p.stroke(70, 45, 20);
+      p.strokeWeight(2);
+      p.rect(this.x, this.y, this.w, this.h);
+      
+      // Doors
+      p.stroke(60, 40, 15);
+      p.line(this.x + this.w / 2, this.y, this.x + this.w / 2, this.y + this.h);
+    } else if (this.type === "table") {
+      p.fill(139, 90, 43);
+      p.stroke(100, 70, 30);
+      p.strokeWeight(2);
+      p.rect(this.x, this.y, this.w, this.h);
+      
+      // Legs
+      p.stroke(80, 60, 25);
+      p.strokeWeight(3);
+      p.line(this.x + 5, this.y + this.h, this.x + 5, this.y + this.h + 10);
+      p.line(this.x + this.w - 5, this.y + this.h, this.x + this.w - 5, this.y + this.h + 10);
+    }
+    p.pop();
+  }
+}
+
+export class ExitZone {
+  constructor(x, y, w, h) {
+    this.x = x;
+    this.y = y;
+    this.w = w;
+    this.h = h;
+    this.lastLockedMsgTime = 0;
+  }
+
+  isUnlocked() {
+    // Check if all required items have been collected
+    return gameState.collectedRequiredItems.size >= gameState.requiredItemIds.length;
+  }
+
+  checkPlayer() {
+    if (!gameState.player) return false;
+    
+    const inZone = gameState.player.x > this.x &&
+                   gameState.player.x < this.x + this.w &&
+                   gameState.player.y > this.y &&
+                   gameState.player.y < this.y + this.h;
+    
+    // Show message if player tries to exit without required items
+    if (inZone && !this.isUnlocked()) {
+      const now = Date.now();
+      // Only show message every 2 seconds to prevent spam
+      if (typeof window.addMessage === 'function' && (now - this.lastLockedMsgTime > 2000)) {
+        const remaining = gameState.requiredItemIds.length - gameState.collectedRequiredItems.size;
+        window.addMessage(`Exit locked! Collect ${remaining} more objective(s)`, "warning");
+        this.lastLockedMsgTime = now;
+      }
+      return false;
+    }
+    
+    return inZone && this.isUnlocked();
+  }
+
+  render(p) {
+    p.push();
+    
+    const unlocked = this.isUnlocked();
+    
+    if (unlocked) {
+      // Unlocked - green and pulsing
+      const pulse = 100 + Math.sin(p.frameCount * 0.1) * 50;
+      p.fill(100, 255, 100, pulse);
+      p.stroke(50, 200, 50);
+      p.strokeWeight(3);
+      p.rect(this.x, this.y, this.w, this.h);
+      p.fill(255);
+      p.noStroke();
+      p.textAlign(p.CENTER, p.CENTER);
+      p.textSize(14);
+      p.text("EXIT", this.x + this.w / 2, this.y + this.h / 2 - 5);
+      p.textSize(10);
+      p.text("✓ UNLOCKED", this.x + this.w / 2, this.y + this.h / 2 + 8);
+    } else {
+      // Locked - red/gray and darker
+      p.fill(150, 80, 80, 150);
+      p.stroke(120, 60, 60);
+      p.strokeWeight(3);
+      p.rect(this.x, this.y, this.w, this.h);
+      p.fill(200, 100, 100);
+      p.noStroke();
+      p.textAlign(p.CENTER, p.CENTER);
+      p.textSize(14);
+      p.text("EXIT", this.x + this.w / 2, this.y + this.h / 2 - 5);
+      p.textSize(10);
+      const remaining = gameState.requiredItemIds.length - gameState.collectedRequiredItems.size;
+      p.text(`🔒 ${remaining} items needed`, this.x + this.w / 2, this.y + this.h / 2 + 8);
+    }
+    
+    p.pop();
+  }
+}
+</file>
+
+<file name="levels.js">
+// levels.js - Level data and management
+import { gameState, TILE_SIZE, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Door, Item, HidingSpot, ExitZone } from './entities.js';
+import { AoOni } from './aooni.js';
+import { Player } from './player.js';
+
+export function createLevel1() {
+  // Level 1: Tutorial - Super Easy (No enemies!)
+  // Scaled to 640x400 canvas
+  
+  gameState.walls = [
+    // Outer walls
+    { x: 0, y: 0, w: CANVAS_WIDTH, h: 16 },
+    { x: 0, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: CANVAS_WIDTH - 16, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: 0, y: CANVAS_HEIGHT - 16, w: CANVAS_WIDTH, h: 16 },
+    
+    // One simple obstacle in the middle
+    { x: 304, y: 176, w: 32, h: 48 }
+  ];
+
+  gameState.doors = [];
+
+  gameState.items = [
+    new Item(160, 250, "objective", "obj1_1", true)
+  ];
+
+  gameState.requiredItemIds = ["obj1_1"];
+
+  gameState.hidingSpots = [
+    new HidingSpot(80, 70, 32, 24, "closet")
+  ];
+
+  gameState.exitZone = new ExitZone(480, 300, 80, 56);
+
+  gameState.player = new Player(64, 64);
+
+  gameState.aoOnis = [];
+  
+  gameState.entities = [gameState.player];
+}
+
+export function createLevel2() {
+  // Level 2: Introduction to enemies - Easy
+  // Scaled to 640x400 canvas
+  
+  gameState.walls = [
+    // Outer walls
+    { x: 0, y: 0, w: CANVAS_WIDTH, h: 16 },
+    { x: 0, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: CANVAS_WIDTH - 16, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: 0, y: CANVAS_HEIGHT - 16, w: CANVAS_WIDTH, h: 16 },
+    
+    // Vertical divider
+    { x: 304, y: 16, w: 16, h: 160 },
+    { x: 304, y: 240, w: 16, h: 144 }
+  ];
+
+  gameState.doors = [
+    new Door(304, 176, 16, 64, true, "key2_1")
+  ];
+
+  gameState.items = [
+    new Item(80, 64, "key", "key2_1", false),
+    new Item(480, 64, "objective", "obj2_1", true)
+  ];
+
+  gameState.requiredItemIds = ["obj2_1"];
+
+  gameState.hidingSpots = [
+    new HidingSpot(40, 270, 32, 24, "closet"),
+    new HidingSpot(440, 270, 32, 24, "closet")
+  ];
+
+  gameState.exitZone = new ExitZone(520, 32, 64, 48);
+
+  gameState.player = new Player(48, 48);
+
+  gameState.aoOnis = [
+    new AoOni(480, 300, 0.6, [
+      [480, 300],
+      [544, 300],
+      [544, 250],
+      [480, 250]
+    ])
+  ];
+  
+  gameState.entities = [gameState.player, ...gameState.aoOnis];
+}
+
+export function createLevel3() {
+  // Level 3: Basic challenge - Medium-Easy
+  // Scaled to 640x400 canvas
+  
+  gameState.walls = [
+    // Outer walls
+    { x: 0, y: 0, w: CANVAS_WIDTH, h: 16 },
+    { x: 0, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: CANVAS_WIDTH - 16, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: 0, y: CANVAS_HEIGHT - 16, w: CANVAS_WIDTH, h: 16 },
+    
+    // Two vertical dividers
+    { x: 216, y: 16, w: 16, h: 160 },
+    { x: 216, y: 240, w: 16, h: 144 },
+    { x: 432, y: 16, w: 16, h: 160 },
+    { x: 432, y: 240, w: 16, h: 144 }
+  ];
+
+  gameState.doors = [
+    new Door(216, 176, 16, 64, false)
+  ];
+
+  gameState.items = [
+    new Item(104, 300, "objective", "obj3_1", true),
+    new Item(544, 300, "objective", "obj3_2", true)
+  ];
+
+  gameState.requiredItemIds = ["obj3_1", "obj3_2"];
+
+  gameState.hidingSpots = [
+    new HidingSpot(40, 64, 32, 24, "closet"),
+    new HidingSpot(304, 64, 48, 16, "table"),
+    new HidingSpot(520, 64, 32, 24, "closet")
+  ];
+
+  gameState.exitZone = new ExitZone(288, 32, 64, 48);
+
+  gameState.player = new Player(48, 300);
+
+  gameState.aoOnis = [
+    new AoOni(544, 80, 0.6, [
+      [520, 80],
+      [576, 80],
+      [576, 120],
+      [520, 120]
+    ], 80)
+  ];
+  
+  gameState.entities = [gameState.player, ...gameState.aoOnis];
+}
+
+export function createLevel4() {
+  // Level 4: Simple layout with safer item placement
+  // Scaled to 640x400 canvas
+  
+  gameState.walls = [
+    // Outer walls
+    { x: 0, y: 0, w: CANVAS_WIDTH, h: 16 },
+    { x: 0, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: CANVAS_WIDTH - 16, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: 0, y: CANVAS_HEIGHT - 16, w: CANVAS_WIDTH, h: 16 },
+    
+    // Central vertical wall
+    { x: 304, y: 16, w: 16, h: 120 },
+    { x: 304, y: 220, w: 16, h: 164 },
+    
+    // Horizontal walls
+    { x: 16, y: 120, w: 176, h: 16 },
+    { x: 432, y: 120, w: 192, h: 16 },
+    
+    // Small barriers
+    { x: 104, y: 240, w: 16, h: 80 },
+    { x: 488, y: 240, w: 16, h: 80 }
+  ];
+
+  gameState.doors = [
+    new Door(304, 136, 16, 84, true, "key4_1")
+  ];
+
+  gameState.items = [
+    new Item(48, 40, "key", "key4_1", false),
+    new Item(560, 48, "objective", "obj4_1", true)
+  ];
+
+  gameState.requiredItemIds = ["obj4_1"];
+
+  gameState.hidingSpots = [
+    new HidingSpot(40, 280, 32, 24, "closet"),
+    new HidingSpot(384, 40, 32, 24, "closet")
+  ];
+
+  gameState.exitZone = new ExitZone(520, 320, 64, 48);
+
+  gameState.player = new Player(40, 180);
+
+  gameState.aoOnis = [
+    new AoOni(416, 300, 1.0, [
+      [416, 300],
+      [544, 300],
+      [544, 200],
+      [416, 200]
+    ])
+  ];
+  
+  gameState.entities = [gameState.player, ...gameState.aoOnis];
+}
+
+export function createLevel5() {
+  // Level 5: Two-room layout with SAFE spawn positioning
+  // Monster placed FAR from player spawn (top-right vs bottom-left)
+  // Scaled to 640x400 canvas
+  
+  gameState.walls = [
+    // Outer walls
+    { x: 0, y: 0, w: CANVAS_WIDTH, h: 16 },
+    { x: 0, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: CANVAS_WIDTH - 16, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: 0, y: CANVAS_HEIGHT - 16, w: CANVAS_WIDTH, h: 16 },
+    
+    // Central horizontal wall
+    { x: 16, y: 200, w: 272, h: 16 },
+    { x: 368, y: 200, w: 256, h: 16 },
+    
+    // Vertical walls
+    { x: 216, y: 16, w: 16, h: 100 },
+    { x: 408, y: 280, w: 16, h: 104 },
+    
+    // Small barriers
+    { x: 104, y: 80, w: 16, h: 60 },
+    { x: 520, y: 80, w: 16, h: 60 }
+  ];
+
+  gameState.doors = [
+    new Door(288, 200, 80, 16, false)
+  ];
+
+  gameState.items = [
+    new Item(48, 48, "objective", "obj5_1", true),
+    new Item(560, 340, "objective", "obj5_2", true)
+  ];
+
+  gameState.requiredItemIds = ["obj5_1", "obj5_2"];
+
+  gameState.hidingSpots = [
+    new HidingSpot(152, 40, 32, 24, "closet"),
+    new HidingSpot(328, 320, 48, 16, "table"),
+    new HidingSpot(480, 320, 32, 24, "closet")
+  ];
+
+  gameState.exitZone = new ExitZone(520, 32, 64, 48);
+
+  // Player spawns BOTTOM-LEFT
+  gameState.player = new Player(40, 340);
+
+  // Monster spawns and patrols TOP-RIGHT (far from player!)
+  gameState.aoOnis = [
+    new AoOni(560, 60, 0.9, [
+      [560, 60],
+      [560, 120],
+      [480, 120],
+      [480, 60]
+    ])
+  ];
+  
+  gameState.entities = [gameState.player, ...gameState.aoOnis];
+}
+
+export function createLevel6() {
+  // Level 6: Three-room maze with SAFE spawn positioning
+  // Monsters positioned FAR from player spawn
+  // Scaled to 640x400 canvas
+  
+  gameState.walls = [
+    // Outer walls
+    { x: 0, y: 0, w: CANVAS_WIDTH, h: 16 },
+    { x: 0, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: CANVAS_WIDTH - 16, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: 0, y: CANVAS_HEIGHT - 16, w: CANVAS_WIDTH, h: 16 },
+    
+    // Vertical dividers
+    { x: 216, y: 16, w: 16, h: 140 },
+    { x: 216, y: 220, w: 16, h: 164 },
+    { x: 408, y: 16, w: 16, h: 140 },
+    { x: 408, y: 220, w: 16, h: 164 },
+    
+    // Horizontal barriers
+    { x: 16, y: 140, w: 104, h: 16 },
+    { x: 328, y: 140, w: 64, h: 16 },
+    { x: 496, y: 140, w: 112, h: 16 }
+  ];
+
+  gameState.doors = [
+    new Door(216, 156, 16, 64, true, "key6a"),
+    new Door(408, 156, 16, 64, true, "key6b")
+  ];
+
+  gameState.items = [
+    new Item(190, 135, "key", "key6a", false),
+    new Item(328, 280, "key", "key6b", false),
+    new Item(304, 280, "objective", "obj6_1", true),
+    // Moved obj6_2 closer to monster's patrol (was at 496, 48)
+    new Item(520, 100, "objective", "obj6_2", true)
+  ];
+
+  gameState.requiredItemIds = ["obj6_1", "obj6_2"];
+
+  gameState.hidingSpots = [
+    new HidingSpot(40, 280, 32, 24, "closet"),
+    new HidingSpot(272, 40, 48, 16, "table"),
+    new HidingSpot(544, 180, 32, 24, "closet")
+  ];
+
+  gameState.exitZone = new ExitZone(288, 320, 64, 48);
+
+  // Player spawns BOTTOM-LEFT
+  gameState.player = new Player(40, 340);
+
+  // Monsters patrol TOP areas (far from player spawn!)
+  gameState.aoOnis = [
+    new AoOni(104, 80, 1.2, [
+      [64, 60],
+      [180, 60],
+      [180, 100],
+      [64, 100]
+    ]),
+    // Right monster - expanded patrol path
+    new AoOni(550, 60, 1.2, [
+      [550, 60],
+      [550, 340],
+      [480, 340],
+      [480, 60]
+    ])
+  ];
+  
+  gameState.entities = [gameState.player, ...gameState.aoOnis];
+}
+
+export function loadLevel(levelNum) {
+  // Reset level-specific state
+  gameState.walls = [];
+  gameState.doors = [];
+  gameState.items = [];
+  gameState.hidingSpots = [];
+  gameState.aoOnis = [];
+  gameState.entities = [];
+  gameState.exitZone = null;
+  gameState.inventory = [];
+  gameState.inChase = false;
+  gameState.levelComplete = false;
+  gameState.undetectedBonus = true;
+  gameState.requiredItemIds = [];
+  gameState.collectedRequiredItems = new Set();
+
+  switch (levelNum) {
+    case 1:
+      createLevel1();
+      break;
+    case 2:
+      createLevel2();
+      break;
+    case 3:
+      createLevel3();
+      break;
+    case 4:
+      createLevel4();
+      break;
+    case 5:
+      createLevel5();
+      break;
+    case 6:
+      createLevel6();
+      break;
+  }
+}
+</file>
+
+<file name="player.js">
+// player.js - Player class and logic
+import { gameState, PLAYER_SIZE, PLAYER_SPEED, PLAYER_SPRINT_SPEED, TILE_SIZE } from './globals.js';
+
+export class Player {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.width = PLAYER_SIZE;
+    this.height = PLAYER_SIZE;
+    this.speed = PLAYER_SPEED;
+    this.direction = 0; // 0: down, 1: right, 2: up, 3: left
+    this.hiding = false;
+    this.hidingSpot = null;
+    this.animFrame = 0;
+  }
+
+  update(p) {
+    if (this.hiding) return;
+
+    // Continuous movement based on held keys
+    let dx = 0;
+    let dy = 0;
+    let moving = false;
+
+    // Check which keys are currently pressed
+    if (gameState.keysPressed[37]) { // Left
+      dx -= 1;
+      this.direction = 3;
+      moving = true;
+    }
+    if (gameState.keysPressed[39]) { // Right
+      dx += 1;
+      this.direction = 1;
+      moving = true;
+    }
+    if (gameState.keysPressed[38]) { // Up
+      dy -= 1;
+      this.direction = 2;
+      moving = true;
+    }
+    if (gameState.keysPressed[40]) { // Down
+      dy += 1;
+      this.direction = 0;
+      moving = true;
+    }
+
+    // Normalize diagonal movement
+    if (dx !== 0 && dy !== 0) {
+      dx *= 0.707; // 1/sqrt(2)
+      dy *= 0.707;
+    }
+
+    if (moving) {
+      // Calculate movement speed
+      const currentSpeed = gameState.isRunning ? PLAYER_SPRINT_SPEED : PLAYER_SPEED;
+      
+      const newX = this.x + dx * currentSpeed;
+      const newY = this.y + dy * currentSpeed;
+
+      // Check collisions separately for X and Y movement
+      let canMoveX = true;
+      let canMoveY = true;
+
+      // Check wall collisions
+      for (const wall of gameState.walls) {
+        if (this.checkCollision(newX, this.y, wall)) {
+          canMoveX = false;
+        }
+        if (this.checkCollision(this.x, newY, wall)) {
+          canMoveY = false;
+        }
+      }
+
+      // Check door collisions (doors block movement when closed/locked)
+      for (const door of gameState.doors) {
+        if (!door.open) {
+          if (this.checkCollision(newX, this.y, door)) {
+            canMoveX = false;
+          }
+          if (this.checkCollision(this.x, newY, door)) {
+            canMoveY = false;
+          }
+        }
+      }
+
+      // Apply movement
+      if (canMoveX) this.x = newX;
+      if (canMoveY) this.y = newY;
+
+      // Update animation
+      this.animFrame += 0.2;
+    }
+
+    // Clamp to canvas
+    if (p) {
+      this.x = p.constrain(this.x, this.width / 2, p.width - this.width / 2);
+      this.y = p.constrain(this.y, this.height / 2, p.height - this.height / 2);
+    }
+  }
+
+  checkCollision(x, y, obstacle) {
+    return x - this.width / 2 < obstacle.x + obstacle.w &&
+           x + this.width / 2 > obstacle.x &&
+           y - this.height / 2 < obstacle.y + obstacle.h &&
+           y + this.height / 2 > obstacle.y;
+  }
+
+  hide(spot) {
+    this.hiding = true;
+    this.hidingSpot = spot;
+  }
+
+  unhide() {
+    this.hiding = false;
+    this.hidingSpot = null;
+  }
+
+  render(p) {
+    if (this.hiding) return;
+
+    p.push();
+    p.translate(this.x, this.y);
+    
+    // Player body
+    p.fill(60, 60, 80);
+    p.stroke(40, 40, 60);
+    p.strokeWeight(2);
+    p.ellipse(0, 0, this.width, this.height);
+    
+    // Direction indicator
+    p.fill(200, 200, 220);
+    p.noStroke();
+    const dirX = [0, 6, 0, -6][this.direction];
+    const dirY = [6, 0, -6, 0][this.direction];
+    p.ellipse(dirX, dirY, 6, 6);
+    
+    // Eyes
+    p.fill(255);
+    p.ellipse(-3, -2, 4, 5);
+    p.ellipse(3, -2, 4, 5);
+    p.fill(0);
+    p.ellipse(-3, -1, 2, 3);
+    p.ellipse(3, -1, 2, 3);
+    
+    p.pop();
+  }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

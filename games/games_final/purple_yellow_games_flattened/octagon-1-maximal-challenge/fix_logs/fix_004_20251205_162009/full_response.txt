@@ -1,0 +1,585 @@
+<analysis>
+- Issue identified: 
+    1. "Invisible obstacle" deaths are caused by the collision logic checking the player's new position (ceiling/floor) immediately when a flip starts, while the visual animation is still in progress (mid-air). This causes the player to die from obstacles on the destination surface before visually reaching it.
+    2. "Tiles disappearing" is caused by aggressive culling of tunnel segments. Segments were being removed when `z < -100` and stopped rendering when `z < -200`, causing them to vanish while still potentially visible or just as they passed the player, creating a popping effect.
+- Files affected: `physics.js`, `game.js`, `entities.js`
+- Changes needed:
+    1. In `physics.js`, disable collision detection when `player.isFlipping` is true. This makes the player effectively "jump" between surfaces without hitting walls in mid-air, matching the visual expectation.
+    2. In `game.js`, change the segment removal threshold from `-100` to `-500` to keep segments in memory longer as they pass behind the camera.
+    3. In `entities.js`, change the render culling threshold from `-200` to `-500` to ensure segments remain visible until they are well behind the view.
+</analysis>
+
+<code filename="physics.js">
+/**
+ * Collision detection and physics logic.
+ */
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, TUNNEL_RADIUS, SEGMENT_DEPTH, logGameEvent } from './globals.js';
+import { normalizeAngle, ANGLE_OFFSET } from './math_utils.js';
+
+export function checkCollisions(p) {
+    if (gameState.gamePhase !== "PLAYING") return;
+
+    const player = gameState.player;
+    if (!player) return;
+    
+    // Invincible while flipping (mid-air)
+    if (player.isFlipping) return;
+
+    // The player effectively resides at z = 50.
+    const playerZ = 50;
+
+    // Find segment overlapping player
+    // A segment at 'z' defines the tunnel walls from 'z' to 'z + SEGMENT_DEPTH'.
+    // We need to find the segment that contains the player's Z position.
+    const activeSegment = gameState.tunnelSegments.find(seg => 
+        seg.z <= playerZ && seg.z + SEGMENT_DEPTH > playerZ
+    );
+
+    if (activeSegment) {
+        // Determine which tunnel facet the player is currently "on".
+        // The tunnel rotates. The player is fixed at screen bottom (angle PI/2) or top (-PI/2).
+        
+        // Formula:
+        // World Angle of Panel i = rotation + i * (PI/4) + offset
+        // Player Angle in World = PI/2 (Bottom)
+        // We need to find 'i' such that Panel Angle is approx Player Angle.
+        
+        // Actually, easiest way: Transform Player Angle into Tunnel Local Space.
+        // localPlayerAngle = PlayerAngle - TunnelRotation
+        
+        let playerScreenAngle = Math.PI / 2; // Bottom (6 o'clock)
+        if (player.isTop) playerScreenAngle = -Math.PI / 2; // Top (12 o'clock)
+        
+        // Normalize
+        playerScreenAngle = normalizeAngle(playerScreenAngle);
+        
+        // Tunnel Rotation
+        const tunnelRot = normalizeAngle(gameState.tunnelRotation);
+        
+        // Relative Angle
+        let relativeAngle = normalizeAngle(playerScreenAngle - tunnelRot);
+        
+        // Convert to index 0-7
+        // Each segment is PI/4 wide (45 deg).
+        // Center of segment 0 is at PI/2 + PI/8 relative to start? 
+        // Based on getOctagonVertices: i * step + rotation + angleOffset
+        
+        // Let's calculate the index directly from the relative angle.
+        // We shift by the offset used in vertex generation.
+        
+        // We want the panel index where the player IS.
+        // The player is at `relativeAngle` in the local tunnel space.
+        // Vertices are at `i * step + angleOffset`.
+        // Panel `i` is between `vertex i` and `vertex i+1`.
+        
+        // localAngle approx (i + 0.5) * step + angleOffset
+        // Solve for i:
+        const step = Math.PI / 4;
+        
+        // Shift relative angle to align with our indexing
+        let adjustedAngle = relativeAngle - ANGLE_OFFSET;
+        adjustedAngle = normalizeAngle(adjustedAngle);
+        
+        // Map to 0-7
+        // Because of the wrap around, we need to be careful with negative mod.
+        let rawIndex = adjustedAngle / step;
+        
+        // The floor logic is simple: map angle to 8 buckets.
+        let index = Math.floor(rawIndex);
+        if (index < 0) index += 8;
+        index = index % 8;
+        
+        // Check the wall type at this index
+        const wallType = activeSegment.walls[index];
+        
+        // 0 = Safe, 1 = Obstacle, 2 = Gap
+        if (wallType === 1) {
+            // Hit Obstacle
+            handleCollision(p, "HIT_OBSTACLE");
+        } else if (wallType === 2) {
+            // Hit Gap -> Fall
+            handleCollision(p, "FELL_IN_GAP");
+        }
+    }
+}
+
+function handleCollision(p, cause) {
+    console.log("Collision: " + cause);
+    logGameEvent(p, 'collision', { cause: cause, score: gameState.score });
+    
+    // Create explosion effect
+    gameState.particles.push(
+        gameState.particleSystem.spawn(0, gameState.player.isTop ? -200 : 200, 50, 20, 'explosion')
+    );
+    
+    // Shake screen
+    gameState.cameraShake = 20;
+    
+    // End Game
+    gameState.gamePhase = "GAME_OVER_LOSE";
+}
+</code>
+
+<code filename="game.js">
+/**
+ * Main game loop and p5 instance setup.
+ */
+import { 
+    CANVAS_WIDTH, 
+    CANVAS_HEIGHT, 
+    gameState, 
+    FPS, 
+    SEGMENT_DEPTH, 
+    VIEW_DISTANCE, 
+    INITIAL_SPEED,
+    logGameEvent
+} from './globals.js';
+import { Player, TunnelSegment } from './entities.js';
+import { checkCollisions } from './physics.js';
+import { handleInput, keyPressed } from './input.js';
+import { renderUI, renderStartScreen, renderGameOver, renderPaused } from './ui.js';
+import { ParticleSystem } from './particles.js';
+import { get_automated_testing_action } from './automated_test.js';
+
+const p5 = window.p5;
+
+const gameInstance = new p5(p => {
+    
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+    
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(FPS);
+        p.randomSeed(42);
+        
+        // Initialize systems
+        gameState.particleSystem = new ParticleSystem();
+        
+        // Log start
+        logGameEvent(p, 'info', { msg: "Game Initialized" });
+    };
+    
+    p.draw = function() {
+        // Time management
+        const now = p.millis();
+        gameState.deltaTime = (now - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = now;
+        gameState.frameCount = p.frameCount;
+        
+        // Camera Shake decay
+        let shakeX = 0;
+        let shakeY = 0;
+        if (gameState.cameraShake > 0) {
+            shakeX = p.random(-gameState.cameraShake, gameState.cameraShake);
+            shakeY = p.random(-gameState.cameraShake, gameState.cameraShake);
+            gameState.cameraShake *= 0.9;
+            if (gameState.cameraShake < 0.5) gameState.cameraShake = 0;
+        }
+        
+        // Background with Shake
+        p.push();
+        p.translate(shakeX, shakeY);
+        p.background(10, 10, 15); // Dark BG
+        
+        switch (gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                break;
+                
+            case "PLAYING":
+                updateGame(p);
+                renderGame(p);
+                renderUI(p);
+                break;
+                
+            case "PAUSED":
+                renderGame(p);
+                renderPaused(p);
+                renderUI(p);
+                break;
+                
+            case "GAME_OVER_WIN":
+            case "GAME_OVER_LOSE":
+                renderGame(p);
+                renderGameOver(p);
+                break;
+        }
+        p.pop();
+        
+        // Handle Automated Testing Inputs
+        if (gameState.controlMode.startsWith("TEST") && gameState.gamePhase === "PLAYING") {
+            const action = get_automated_testing_action(gameState);
+            if (action) {
+                // Simulate key press
+                p.keyCode = action.keyCode;
+                keyPressed(p);
+                // Also simulate key down for rotation which relies on keyIsDown check
+                // For p5.js keyIsDown, we can't easily fake it without mocking the internal state.
+                // Instead, we can inject into input.js or set a flag in gameState.keys
+                // For simplicity in this structure, we'll manually trigger the logic in updateGame if needed
+                // OR better: Assume get_automated_testing_action returns momentary presses
+                // For rotation (continuous), we might need to modify handleInput.
+                // Let's hack the rotation directly here for testing.
+                if (action.keyCode === 37) gameState.tunnelRotation -= 0.1;
+                if (action.keyCode === 39) gameState.tunnelRotation += 0.1;
+            }
+        }
+    };
+    
+    p.keyPressed = function() {
+        // Check for phase controls first
+        keyPressed(p);
+    };
+    
+    // Helper to init game
+    window.setControlMode = function(mode) {
+        gameState.controlMode = mode;
+        console.log("Control Mode set to: " + mode);
+        // Force restart
+        p.keyCode = 82; // R
+        keyPressed(p);
+    };
+});
+
+function updateGame(p) {
+    // 1. Inputs
+    handleInput(p);
+    
+    // 2. Game Logic
+    
+    // Speed scaling
+    gameState.currentSpeed = Math.min(
+        gameState.currentSpeed + 0.005, 
+        25
+    );
+    
+    // Timer
+    gameState.timeRemaining -= gameState.deltaTime;
+    if (gameState.timeRemaining <= 0) {
+        gameState.gamePhase = "GAME_OVER_WIN";
+        logGameEvent(p, 'info', { msg: "Time Up - Win", score: gameState.score });
+    }
+    
+    // Score
+    gameState.score += gameState.currentSpeed * 0.1;
+    
+    // Player Update
+    if (!gameState.player) {
+        gameState.player = new Player();
+    }
+    gameState.player.update();
+    
+    // Tunnel Management
+    manageTunnel(p);
+    
+    // Particles
+    if (gameState.particleSystem) gameState.particleSystem.update();
+    
+    // Spawn Speed Lines
+    if (p.frameCount % 5 === 0) {
+        gameState.particleSystem.spawn(0, 0, 1000, 1, 'speed_line');
+    }
+    
+    // Physics
+    checkCollisions(p);
+}
+
+function manageTunnel(p) {
+    const segments = gameState.tunnelSegments;
+    const speed = gameState.currentSpeed;
+    
+    // Move segments
+    segments.forEach(seg => seg.update(speed));
+    
+    // Remove old
+    // Use -500 to allow segments to pass well behind the camera before disappearing
+    if (segments.length > 0 && segments[0].z < -500) {
+        segments.shift();
+    }
+    
+    // Add new
+    const lastZ = segments.length > 0 ? segments[segments.length - 1].z : 0;
+    if (lastZ < VIEW_DISTANCE) {
+        // Need more segments
+        let nextZ = lastZ + SEGMENT_DEPTH;
+        // If empty (start), fill up to view distance
+        if (segments.length === 0) {
+            for (let z = 0; z < VIEW_DISTANCE; z += SEGMENT_DEPTH) {
+                segments.push(new TunnelSegment(z, segments.length));
+            }
+        } else {
+            segments.push(new TunnelSegment(nextZ, segments[segments.length - 1].index + 1));
+        }
+    }
+}
+
+function renderGame(p) {
+    // Render Tunnel (Back to Front)
+    // Actually, Painter's algorithm suggests Back to Front for solid polys.
+    // Our segments array is usually sorted by Z (closest at 0, furthest at end).
+    // So we should iterate BACKWARDS.
+    
+    const segments = gameState.tunnelSegments;
+    for (let i = segments.length - 2; i >= 0; i--) {
+        const seg = segments[i];
+        const nextSeg = segments[i + 1];
+        seg.render(p, nextSeg);
+    }
+    
+    // Render Particles
+    gameState.particleSystem.render(p);
+    
+    // Render Player
+    if (gameState.player) {
+        gameState.player.render(p);
+    }
+}
+
+window.gameInstance = gameInstance;
+</code>
+
+<code filename="entities.js">
+/**
+ * Game entities: Player, Tunnel Segments, Obstacles.
+ */
+import { 
+    gameState, 
+    COLORS, 
+    TUNNEL_RADIUS, 
+    OCTAGON_SIDES, 
+    CANVAS_WIDTH, 
+    CANVAS_HEIGHT,
+    logGameEvent
+} from './globals.js';
+import { project3D, getOctagonVertices, normalizeAngle } from './math_utils.js';
+
+// ----- PLAYER -----
+export class Player {
+    constructor() {
+        this.width = 30;
+        this.height = 30;
+        this.isTop = false; // false = floor (bottom), true = ceiling (top)
+        this.flipProgress = 0; // 0 to 1 for animation
+        this.isFlipping = false;
+        
+        // 2D projected collision polygon
+        this.collisionPoly = [];
+        
+        // Visuals
+        this.color = [...COLORS.PLAYER];
+    }
+
+    flip() {
+        if (!this.isFlipping) {
+            this.isFlipping = true;
+            this.isTop = !this.isTop;
+            // Animation handled in update
+        }
+    }
+
+    update() {
+        // Handle flip animation
+        if (this.isFlipping) {
+            this.flipProgress += 0.1;
+            if (this.flipProgress >= 1) {
+                this.flipProgress = 0;
+                this.isFlipping = false;
+            }
+        }
+    }
+
+    render(p) {
+        // Calculate position based on flip state
+        // The player is visually at fixed X, but Y changes based on flip
+        // We use project3D to place the player in the tunnel "space" at z=50 (close to camera)
+        
+        const playerZ = 50;
+        const radius = TUNNEL_RADIUS - 30; // Slightly inside the walls
+        
+        // Interpolate Y position for smooth flip
+        // Bottom is roughly angle PI/2, Top is -PI/2
+        let angle = Math.PI / 2; // Bottom
+        
+        if (this.isFlipping) {
+            const start = this.isTop ? Math.PI / 2 : -Math.PI / 2;
+            const end = this.isTop ? -Math.PI / 2 : Math.PI / 2;
+            // Simple ease
+            const t = this.flipProgress;
+            // Linear lerp for angle is effectively moving along the circle, 
+            // but we want a straight line jump visually or arc? Let's do straight line.
+            // Actually, visually moving straight up/down is less dizzying.
+        } else {
+            angle = this.isTop ? -Math.PI / 2 : Math.PI / 2;
+        }
+
+        // Determine 2D screen coordinates
+        // We render the player simply at the bottom or top center of screen
+        // because the tunnel rotates around US.
+        
+        // However, to integrate with the 3D look, let's calculate the "World Y"
+        // Bottom Y is +radius, Top Y is -radius.
+        let worldY = radius;
+        if (this.isTop) worldY = -radius;
+        if (this.isFlipping) {
+             // Lerp between radius and -radius
+             const startY = this.isTop ? radius : -radius;
+             const endY = this.isTop ? -radius : radius;
+             worldY = startY + (endY - startY) * this.flipProgress;
+        }
+
+        const proj = project3D(0, worldY, playerZ);
+        
+        p.push();
+        p.translate(proj.x, proj.y);
+        
+        // Draw Player Shape (Triangle/Ship)
+        p.fill(this.color);
+        p.stroke(255);
+        p.strokeWeight(2);
+        
+        const size = 15;
+        if (this.isTop) {
+            p.triangle(-size, -size, size, -size, 0, size); // Pointing down
+        } else {
+            p.triangle(-size, size, size, size, 0, -size); // Pointing up
+        }
+        
+        // Update collision poly for debugging/physics
+        // A simple rect around center
+        this.collisionPoly = [
+            p.createVector(proj.x - size, proj.y - size),
+            p.createVector(proj.x + size, proj.y - size),
+            p.createVector(proj.x + size, proj.y + size),
+            p.createVector(proj.x - size, proj.y + size)
+        ];
+        
+        p.pop();
+        
+        // Log player state occasionally
+        if (p.frameCount % 60 === 0) {
+            logGameEvent(p, 'player', { 
+                isTop: this.isTop, 
+                rotation: gameState.tunnelRotation 
+            });
+        }
+    }
+}
+
+// ----- TUNNEL SEGMENT -----
+export class TunnelSegment {
+    constructor(z, index) {
+        this.z = z;
+        this.index = index;
+        this.walls = new Array(8).fill(0); // 0 = Clear, 1 = Wall/Obstacle, 2 = Gap
+        this.generated = false;
+        
+        // Procedural Generation
+        if (index > 5) { // Leave first few segments clear
+            this.generateObstacles();
+        }
+    }
+    
+    generateObstacles() {
+        const r = Math.random();
+        // Difficulty scaling
+        const difficulty = gameState.difficultyLevel;
+        const hazardChance = 0.3 + (difficulty * 0.05);
+        
+        if (r < hazardChance) {
+            // Pick a random side
+            const side = Math.floor(Math.random() * 8);
+            
+            // Type: 1 = Obstacle (Bump), 2 = Gap (Hole)
+            const type = Math.random() > 0.7 ? 2 : 1;
+            
+            this.walls[side] = type;
+            
+            // Sometimes add a second obstacle
+            if (Math.random() > 0.5) {
+                const side2 = (side + 4) % 8; // Opposite side
+                this.walls[side2] = Math.random() > 0.7 ? 2 : 1;
+            }
+        }
+    }
+    
+    update(speed) {
+        this.z -= speed;
+    }
+    
+    render(p, nextSegment) {
+        if (this.z < -500) return; // Too close to render (behind camera)
+        
+        // We need the rotation of the tunnel
+        const rotation = gameState.tunnelRotation;
+        
+        // Get vertices for this ring and the next ring (to form walls)
+        const currentVerts = getOctagonVertices(this.z, TUNNEL_RADIUS, rotation);
+        const nextVerts = getOctagonVertices(nextSegment.z, TUNNEL_RADIUS, rotation);
+        
+        // Project to 2D
+        const p1 = currentVerts.map(v => project3D(v.x, v.y, v.z));
+        const p2 = nextVerts.map(v => project3D(v.x, v.y, v.z));
+        
+        p.strokeWeight(2);
+        
+        // Draw each face
+        for (let i = 0; i < OCTAGON_SIDES; i++) {
+            const nextI = (i + 1) % OCTAGON_SIDES;
+            
+            // Determine type of wall
+            // We store obstacles on the "current" segment's exit side usually
+            // Visualizing the wall between i and i+1
+            
+            // The logic: walls[i] represents the panel at index i.
+            // Vertices i and i+1 form the panel i.
+            
+            const type = this.walls[i];
+            
+            // Gap: Don't draw the floor panel
+            if (type === 2) continue;
+            
+            // Define Quad coordinates
+            const poly = [
+                p.createVector(p1[i].x, p1[i].y),
+                p.createVector(p1[nextI].x, p1[nextI].y),
+                p.createVector(p2[nextI].x, p2[nextI].y),
+                p.createVector(p2[i].x, p2[i].y)
+            ];
+            
+            // Cull Back-faces? No, wireframe style or transparent.
+            // Simple depth sorting is handled by drawing order (back to front in game loop).
+            
+            // Color based on alternating segments
+            const isAlt = this.index % 2 === 0;
+            const baseColor = isAlt ? COLORS.TUNNEL_FILL_1 : COLORS.TUNNEL_FILL_2;
+            
+            // Draw Wall Panel
+            p.fill(baseColor);
+            p.stroke(COLORS.TUNNEL_LINES);
+            
+            if (type === 1) {
+                // Obstacle: Draw a distinct shape ON the panel or color it differently
+                p.fill(COLORS.OBSTACLE);
+            }
+            
+            p.beginShape();
+            poly.forEach(v => p.vertex(v.x, v.y));
+            p.endShape(p.CLOSE);
+            
+            // If Obstacle (Bump), we might need collision logic here if this is the active segment
+            // We'll handle collision in a separate pass, but for visuals:
+            if (type === 1) {
+                // Draw a "bump" sticking out
+                // Simple X on the panel
+                p.stroke(255, 0, 0);
+                p.line(poly[0].x, poly[0].y, poly[2].x, poly[2].y);
+                p.line(poly[1].x, poly[1].y, poly[3].x, poly[3].y);
+            }
+        }
+    }
+}
+</code>

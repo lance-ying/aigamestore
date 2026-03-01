@@ -1,0 +1,200 @@
+// input.js - Input handling
+
+import { gameState } from './globals.js';
+import { initializeLevel } from './levels.js'; // New import for auto-restart
+
+export function handleKeyPressed(p) {
+  // Log input
+  p.logs.inputs.push({
+    input_type: 'keyPressed',
+    data: { key: p.key, keyCode: p.keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+
+  // Global controls
+  if (p.keyCode === 13) { // ENTER
+    if (gameState.gamePhase === 'START') {
+      startGame(p);
+    }
+  } else if (p.keyCode === 27) { // ESC
+    if (gameState.gamePhase === 'PLAYING') {
+      pauseGame(p);
+    } else if (gameState.gamePhase === 'PAUSED') {
+      unpauseGame(p);
+    }
+  } else if (p.keyCode === 82) { // R
+    // Manual restart always takes precedence
+    if (gameState.gamePhase === 'GAME_OVER_WIN' || gameState.gamePhase === 'GAME_OVER_LOSE' || gameState.gamePhase === 'START' || gameState.gamePhase === 'PLAYING' || gameState.gamePhase === 'PAUSED') {
+      restartGame(p); // Manual restart goes to START screen
+    }
+  }
+
+  // Gameplay controls
+  if (gameState.gamePhase === 'PLAYING' && gameState.controlMode === 'HUMAN') {
+    if (p.keyCode === 32) { // SPACE
+      fireProjectile(p);
+    } else if (p.keyCode === 90) { // Z
+      swapBubbles();
+    }
+  }
+}
+
+export function handleContinuousInput(p) {
+  if (gameState.gamePhase !== 'PLAYING' || gameState.controlMode !== 'HUMAN') return;
+
+  if (p.keyIsDown(37)) { // LEFT ARROW
+    if (gameState.player) {
+      gameState.player.rotateLeft();
+    }
+  }
+  if (p.keyIsDown(39)) { // RIGHT ARROW
+    if (gameState.player) {
+      gameState.player.rotateRight();
+    }
+  }
+}
+
+function startGame(p) {
+  gameState.gamePhase = 'PLAYING';
+  gameState.score = 0;
+  gameState.currentLevel = 1;
+  // Ensure auto-restart state is clean when starting a new game
+  if (gameState.autoRestartTimeoutId) {
+    clearTimeout(gameState.autoRestartTimeoutId);
+    gameState.autoRestartTimeoutId = null;
+  }
+  gameState.autoRestartScheduled = false;
+
+  // Initialize level will be called in game loop
+  p.logs.game_info.push({
+    data: { event: 'game_start', gamePhase: gameState.gamePhase },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function pauseGame(p) {
+  gameState.gamePhase = 'PAUSED';
+  p.logs.game_info.push({
+    data: { event: 'game_paused', gamePhase: gameState.gamePhase },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function unpauseGame(p) {
+  gameState.gamePhase = 'PLAYING';
+  // Adjust level start time to account for pause duration
+  const pauseDuration = p.millis() - gameState.levelStartTime;
+  gameState.levelStartTime += pauseDuration;
+
+  p.logs.game_info.push({
+    data: { event: 'game_unpaused', gamePhase: gameState.gamePhase },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function restartGame(p) {
+  // This function is for manual restarts (e.g., 'R' key) and returns to the START screen.
+  // Clear any pending auto-restart
+  if (gameState.autoRestartTimeoutId) {
+    clearTimeout(gameState.autoRestartTimeoutId);
+    gameState.autoRestartTimeoutId = null;
+  }
+  gameState.autoRestartScheduled = false; // Reset the flag
+
+  gameState.gamePhase = 'START';
+  gameState.score = 0;
+  gameState.currentLevel = 1;
+  gameState.bubbleGrid = [];
+  gameState.projectileBubble = null;
+  gameState.nextBubble = null;
+  gameState.canFire = true; // Ensure canFire is reset
+  gameState.swapAvailable = true; // Ensure swapAvailable is reset
+  gameState.entities = []; // Clear any flying projectiles
+
+  p.logs.game_info.push({
+    data: { event: 'game_restart', gamePhase: gameState.gamePhase },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+// New function for automatic restart after game over
+function startNewGameAutomatically(p) {
+  // Clear any pending auto-restart
+  if (gameState.autoRestartTimeoutId) {
+    clearTimeout(gameState.autoRestartTimeoutId);
+    gameState.autoRestartTimeoutId = null;
+  }
+  gameState.autoRestartScheduled = false; // Reset the flag
+
+  // Reset core game state elements
+  gameState.score = 0;
+  gameState.currentLevel = 1;
+  gameState.bubbleGrid = []; // Clear existing bubbles
+  gameState.projectileBubble = null; // Clear current projectile
+  gameState.nextBubble = null; // Clear next bubble
+  gameState.canFire = true;
+  gameState.swapAvailable = true;
+  gameState.entities = []; // Clear any flying projectiles
+
+  // Transition directly to playing and initialize the first level
+  gameState.gamePhase = 'PLAYING';
+  initializeLevel(1, p); // Directly initialize level 1
+
+  p.logs.game_info.push({
+    data: { event: 'auto_game_start', gamePhase: gameState.gamePhase },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function fireProjectile(p) {
+  if (!gameState.canFire || !gameState.projectileBubble) return;
+  if (gameState.shotsRemaining <= 0) return;
+
+  const shooter = gameState.player;
+  const dir = shooter.getShootDirection();
+  const startX = shooter.x + dir.x * 30;
+  const startY = shooter.y + dir.y * 30;
+
+  // Create projectile from current bubble
+  // Light bubbles shoot faster (12 instead of 8)
+  const projectileSpeed = gameState.projectileBubble.isLight ? 12 : 8;
+  
+  const projectile = {
+    x: startX,
+    y: startY,
+    vx: dir.x,
+    vy: dir.y,
+    colorIndex: gameState.projectileBubble.colorIndex,
+    color: gameState.projectileBubble.color,
+    radius: gameState.projectileBubble.radius,
+    speed: projectileSpeed,
+    active: true,
+    isLight: gameState.projectileBubble.isLight
+  };
+
+  gameState.entities.push(projectile);
+  gameState.canFire = false;
+  gameState.shotsRemaining--;
+
+  // Move next bubble to current
+  gameState.projectileBubble = gameState.nextBubble;
+  gameState.nextBubble = null;
+  gameState.swapAvailable = true;
+}
+
+function swapBubbles() {
+  if (!gameState.swapAvailable || !gameState.projectileBubble || !gameState.nextBubble) return;
+
+  const temp = gameState.projectileBubble;
+  gameState.projectileBubble = gameState.nextBubble;
+  gameState.nextBubble = temp;
+  gameState.swapAvailable = false;
+}
+
+export { startGame, pauseGame, unpauseGame, restartGame, fireProjectile, swapBubbles, startNewGameAutomatically };

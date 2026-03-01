@@ -1,0 +1,388 @@
+<analysis>
+- Issue identified: The `PI` constant is used in `entities.js` (line 282) but was not imported into that file's scope. Although `PI` is correctly defined and exported from `utils.js`, `entities.js` only imported `clamp` from `utils.js`.
+- Files affected: `entities.js`
+- Changes needed: Add `PI` to the import statement from `utils.js` in `entities.js`.
+</analysis>
+<code filename="entities.js">
+/**
+ * entities.js
+ * Player, Enemy, and Collectible classes.
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './globals.js';
+import { getActionInput } from './input.js';
+import { BulletSystem, Patterns } from './bullets.js';
+import { Physics } from './physics.js';
+import { ParticleSystem } from './particles.js';
+import { clamp, PI } from './utils.js'; // Added PI to import
+
+/**
+ * Base Entity
+ */
+class Entity {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.vx = 0;
+        this.vy = 0;
+        this.width = 20;
+        this.height = 20;
+        this.radius = 10;
+        this.health = 10;
+        this.dead = false;
+        this.color = '#FFFFFF';
+        this.tags = [];
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+    }
+
+    render(p) {
+        p.fill(this.color);
+        p.circle(this.x, this.y, this.radius * 2);
+    }
+    
+    takeDamage(amount) {
+        this.health -= amount;
+        if (this.health <= 0) {
+            this.die();
+        }
+    }
+    
+    die() {
+        this.dead = true;
+        ParticleSystem.emit(this.x, this.y, 5, 'explosion');
+    }
+}
+
+/**
+ * Player Class
+ */
+export class Player extends Entity {
+    constructor(x, y) {
+        super(x, y);
+        this.speed = 5;
+        this.focusSpeed = 2.5;
+        this.radius = 3; // Hitbox radius (tiny)
+        this.visualRadius = 15;
+        this.color = COLORS.PLAYER;
+        this.health = 3; // Lives
+        
+        this.shootTimer = 0;
+        this.shootDelay = 5;
+        this.invulnerableTime = 0;
+        this.maxInvulnerable = 120; // 2 seconds
+        
+        this.dischargeTimer = 0;
+        this.dischargeMax = 300; // Cooldown for special
+        
+        gameState.player = this;
+    }
+
+    update(p) {
+        // Handle Input
+        let currentSpeed = this.speed;
+        let focused = false;
+        
+        if (getActionInput('focus')) {
+            currentSpeed = this.focusSpeed;
+            focused = true;
+        }
+
+        this.vx = 0;
+        this.vy = 0;
+        if (getActionInput('left')) this.vx = -currentSpeed;
+        if (getActionInput('right')) this.vx = currentSpeed;
+        if (getActionInput('up')) this.vy = -currentSpeed;
+        if (getActionInput('down')) this.vy = currentSpeed;
+
+        // Diagonal normalization
+        if (this.vx !== 0 && this.vy !== 0) {
+            this.vx *= 0.707;
+            this.vy *= 0.707;
+        }
+
+        // Apply movement
+        super.update();
+        
+        // Clamp bounds
+        this.x = clamp(this.x, this.visualRadius, CANVAS_WIDTH - this.visualRadius);
+        this.y = clamp(this.y, this.visualRadius, CANVAS_HEIGHT - this.visualRadius);
+
+        // Shooting
+        if (this.shootTimer > 0) this.shootTimer--;
+        if (getActionInput('shoot') && this.shootTimer <= 0) {
+            this.shoot();
+            this.shootTimer = this.shootDelay;
+        }
+        
+        // Special Weapon (Z)
+        if (getActionInput('special') && gameState.bombs > 0 && this.dischargeTimer <= 0) {
+            this.useSpecial();
+        }
+        if (this.dischargeTimer > 0) this.dischargeTimer--;
+
+        // Invulnerability
+        if (this.invulnerableTime > 0) this.invulnerableTime--;
+
+        // Collision with Collectibles
+        for (let i = gameState.collectibles.length - 1; i >= 0; i--) {
+            const c = gameState.collectibles[i];
+            if (Physics.checkCircleCircle(this.x, this.y, this.visualRadius + 10, c.x, c.y, c.radius)) {
+                c.collect();
+            }
+        }
+        
+        // Log Player Info
+        if (p.frameCount % 10 === 0) {
+            p.logs.player_info.push({
+                screen_x: this.x,
+                screen_y: this.y,
+                game_x: this.x,
+                game_y: this.y,
+                framecount: p.frameCount,
+                timestamp: Date.now()
+            });
+        }
+    }
+
+    shoot() {
+        // Main forward stream
+        BulletSystem.spawn(this.x - 5, this.y - 10, 0, -12, true, {});
+        BulletSystem.spawn(this.x + 5, this.y - 10, 0, -12, true, {});
+        
+        // Side spread if powered up (simple implementation: always active for fun)
+        BulletSystem.spawn(this.x - 10, this.y, -2, -10, true, { type: 'oval' });
+        BulletSystem.spawn(this.x + 10, this.y, 2, -10, true, { type: 'oval' });
+    }
+    
+    useSpecial() {
+        gameState.bombs--;
+        this.dischargeTimer = 60;
+        this.invulnerableTime = 60; // Brief i-frames
+        
+        // Clear screen logic
+        BulletSystem.clearEnemyBullets();
+        
+        // Visual flair
+        ParticleSystem.emit(this.x, this.y, 50, 'spark');
+        
+        // Damage all enemies
+        gameState.enemies.forEach(e => e.takeDamage(20));
+    }
+
+    hit() {
+        if (this.invulnerableTime > 0) return;
+        
+        gameState.lives--;
+        gameState.chain = 0; // Penalty
+        ParticleSystem.emit(this.x, this.y, 20, 'explosion');
+        
+        if (gameState.lives < 0) {
+            this.die();
+        } else {
+            this.invulnerableTime = this.maxInvulnerable;
+            // Reset position
+            this.x = CANVAS_WIDTH / 2;
+            this.y = CANVAS_HEIGHT - 50;
+            // Clear bullets to prevent spawn kill
+            BulletSystem.clearEnemyBullets();
+        }
+    }
+    
+    die() {
+        super.die();
+        gameState.gamePhase = "GAME_OVER_LOSE";
+    }
+
+    render(p) {
+        if (this.dead) return;
+        
+        // Flicker if invulnerable
+        if (this.invulnerableTime > 0 && Math.floor(p.frameCount / 4) % 2 === 0) return;
+
+        p.push();
+        p.translate(this.x, this.y);
+        
+        // Draw Ship Body
+        p.fill(this.color);
+        p.noStroke();
+        p.triangle(0, -this.visualRadius, -this.visualRadius, this.visualRadius, this.visualRadius, this.visualRadius);
+        
+        // Draw Hitbox (if focusing or always visible small dot)
+        if (getActionInput('focus')) {
+            p.fill(255, 0, 0);
+            p.circle(0, 0, this.radius * 2);
+            p.noFill();
+            p.stroke(255);
+            p.circle(0, 0, this.visualRadius * 2);
+        } else {
+            p.fill(0, 0, 50);
+            p.circle(0, 0, this.radius * 2);
+        }
+        
+        // Engine trails
+        p.fill(255, 100, 0, 150);
+        const trailLen = Math.random() * 20 + 10;
+        p.triangle(-5, 15, 5, 15, 0, 15 + trailLen);
+
+        p.pop();
+    }
+}
+
+/**
+ * Enemy Classes
+ */
+export class Enemy extends Entity {
+    constructor(x, y, type) {
+        super(x, y);
+        this.type = type;
+        this.scoreValue = 100;
+        this.age = 0;
+        
+        // Default props
+        this.health = 5;
+        this.radius = 15;
+        this.color = COLORS.ENEMY_WEAK;
+        
+        if (type === 'drone') {
+            this.health = 3;
+            this.scoreValue = 100;
+        } else if (type === 'tank') {
+            this.health = 40;
+            this.radius = 30;
+            this.color = COLORS.ENEMY_STRONG;
+            this.scoreValue = 1000;
+        } else if (type === 'interceptor') {
+            this.health = 8;
+            this.color = '#FFAA00';
+            this.scoreValue = 300;
+        }
+
+        gameState.enemies.push(this);
+    }
+
+    update(p) {
+        this.age++;
+        super.update();
+        
+        // Patterns based on type
+        if (this.type === 'drone') {
+            this.y += 2; // Move down
+            // Shoot occasionally
+            if (this.age % 120 === 60) {
+                Patterns.aimed(this.x, this.y, 4);
+            }
+        } else if (this.type === 'interceptor') {
+            this.y += 1.5;
+            this.x += Math.sin(this.age * 0.05) * 2;
+            if (this.age % 90 === 0) {
+                Patterns.ring(this.x, this.y, 8, 3);
+            }
+        } else if (this.type === 'tank') {
+            this.y += 0.5;
+            if (this.age % 60 === 0) {
+                Patterns.spiral(this.x, this.y, this.age, 5, 4);
+                Patterns.aimed(this.x, this.y, 5, PI/4, 3); // Aimed spread
+            }
+        }
+
+        // Cleanup offscreen
+        if (this.y > CANVAS_HEIGHT + 50 || this.x < -50 || this.x > CANVAS_WIDTH + 50) {
+            this.dead = true;
+            this.removeFromLists();
+        }
+    }
+    
+    die() {
+        super.die();
+        // Add Score
+        let multiplier = 1 + (gameState.chain * 0.1);
+        gameState.score += Math.floor(this.scoreValue * multiplier);
+        gameState.chain++;
+        gameState.chainTimer = gameState.chainMaxTime;
+        
+        // Chance to drop powerup/gold
+        if (Math.random() < 0.3) {
+            new Collectible(this.x, this.y);
+        }
+        
+        this.removeFromLists();
+    }
+    
+    removeFromLists() {
+        const idx = gameState.enemies.indexOf(this);
+        if (idx > -1) gameState.enemies.splice(idx, 1);
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        p.fill(this.color);
+        
+        // Draw enemy shape based on type
+        if (this.type === 'tank') {
+            p.rectMode(p.CENTER);
+            p.rect(0, 0, this.radius * 2, this.radius * 2);
+            // Core
+            p.fill(255, 0, 0);
+            p.circle(0, 0, this.radius);
+        } else {
+            // Rotated square for basic enemies
+            p.rotate(p.frameCount * 0.05);
+            p.rectMode(p.CENTER);
+            p.rect(0, 0, this.radius * 1.5, this.radius * 1.5);
+        }
+        p.pop();
+    }
+}
+
+/**
+ * Collectible Class (Score/Power items)
+ */
+export class Collectible extends Entity {
+    constructor(x, y) {
+        super(x, y);
+        this.radius = 8;
+        this.vy = 1; // Falls slowly
+        this.color = COLORS.GOLD;
+        gameState.collectibles.push(this);
+    }
+    
+    update() {
+        this.y += this.vy;
+        // Magnet effect if player is close or specialized
+        if (gameState.player && Physics.checkCircleCircle(this.x, this.y, 100, gameState.player.x, gameState.player.y, 10)) {
+            const angle = Math.atan2(gameState.player.y - this.y, gameState.player.x - this.x);
+            this.x += Math.cos(angle) * 4;
+            this.y += Math.sin(angle) * 4;
+        }
+        
+        if (this.y > CANVAS_HEIGHT + 20) {
+            this.dead = true;
+            this.remove();
+        }
+    }
+    
+    collect() {
+        gameState.score += 500;
+        this.dead = true;
+        this.remove();
+        // FX
+        ParticleSystem.emit(this.x, this.y, 3, 'spark');
+    }
+    
+    remove() {
+        const idx = gameState.collectibles.indexOf(this);
+        if (idx > -1) gameState.collectibles.splice(idx, 1);
+    }
+    
+    render(p) {
+        p.fill(this.color);
+        p.noStroke();
+        p.circle(this.x, this.y, this.radius * 2);
+    }
+}
+</code>

@@ -1,0 +1,1678 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+game.js:114 Uncaught TypeError: Cannot set properties of undefined (setting 'resetGame')
+    at game.js:114:35
+    at new p5 (p5.js:63229:17)
+    at game.js:16:22
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Underworld Tactics</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #111; color: #eee; font-family: monospace; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 2px solid #444; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #333; color: #fff; border: 1px solid #555; border-radius: 4px; font-family: inherit; transition: background 0.2s; }
+      .control-button:hover { background: #444; }
+      .control-button.active { background: #007bff; border-color: #0056b3; }
+      h1 { margin: 10px 0; text-transform: uppercase; letter-spacing: 2px; color: #00ccff; text-shadow: 0 0 10px rgba(0, 204, 255, 0.5); }
+      .info-text { max-width: 600px; text-align: center; margin-bottom: 15px; font-size: 0.9em; color: #aaa; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 10px;">
+      <h1 id="gameTitle">Underworld Tactics</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN', this)">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="setMode('TEST_1', this)">TEST 1 (Survival)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="setMode('TEST_2', this)">TEST 2 (Speedrun)</button>
+      </div>
+      <p class="info-text">
+        Descend into the procedural depths. Use Arrow Keys to select, SPACE to move/attack, SHIFT+SPACE to Jump.
+      </p>
+    </div>
+    
+    <!-- Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+    
+    <script>
+        function setMode(mode, btn) {
+            if(window.setControlMode) window.setControlMode(mode);
+            
+            // Update UI
+            document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        }
+    </script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+/**
+ * globals.js
+ * Contains global constants, state management, and configuration.
+ */
+
+// Canvas Dimensions
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Game Configuration
+export const CONFIG = {
+    FPS: 60,
+    GRID_SIZE: 25, // Radius of hex
+    GRID_COLS: 12,
+    GRID_ROWS: 9,
+    PLAYER_MAX_HP: 5,
+    PLAYER_START_HP: 3,
+    TURN_DELAY: 200, // ms between actions
+    ANIMATION_SPEED: 0.15, // Lerp speed
+};
+
+// Global Game State
+// Initialized in game.js setup
+export const gameState = {
+    // Core state
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2
+    
+    // Time tracking
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Game World
+    level: 1,
+    score: 0,
+    grid: null, // Holds HexGrid instance
+    entities: [], // All active entities
+    player: null,
+    enemies: [],
+    particles: [],
+    
+    // Turn Management
+    turnPhase: "PLAYER_INPUT", // PLAYER_INPUT, PLAYER_ACT, ANIMATING, ENEMY_ACT
+    turnCount: 0,
+    animationQueue: [], // Array of functions/promises to resolve
+    messageLog: [], // Text messages for UI
+    
+    // Cursor
+    cursor: {
+        q: 0,
+        r: 0, // Axial coords
+        col: 0,
+        row: 0, // Offset coords for navigation
+        visible: true
+    },
+    
+    // Camera / View (centering grid)
+    viewOffset: { x: 0, y: 0 }
+};
+
+// Expose gameState globally
+export function getGameState() {
+    return gameState;
+}
+window.getGameState = getGameState;
+
+// Logging Helper
+export function logGameEvent(p, type, data) {
+    if (p.logs && p.logs.game_info) {
+        p.logs.game_info.push({
+            type: type,
+            data: data,
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+</file>
+
+<file name="game.js">
+/**
+ * game.js
+ * Main entry point. Setup p5 instance, main loop.
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, logGameEvent } from './globals.js';
+import { handleInput, handleKeyPress } from './input.js';
+import { renderUI } from './ui.js';
+import { LevelGenerator } from './level_gen.js';
+import { animationSystem } from './animations.js';
+import { globalParticles } from './particles.js';
+
+// Setup p5 in instance mode
+const p5 = window.p5;
+
+const gameInstance = new p5(p => {
+
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        // Initialize Game
+        resetGame();
+        
+        // Initial Log
+        logGameEvent(p, "INIT", "Game Initialized");
+    };
+
+    p.draw = function() {
+        // Time management
+        const currentTime = p.millis();
+        gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = currentTime;
+        gameState.frameCount = p.frameCount;
+
+        // Input Polling (for automated tests mainly)
+        handleInput(p);
+
+        // Update Systems
+        if (gameState.gamePhase === 'PLAYING') {
+            animationSystem.update();
+            globalParticles.update();
+        }
+
+        // --- RENDER ---
+        p.background(20, 15, 25);
+        
+        // Apply Camera Shake
+        p.push();
+        animationSystem.applyCamera(p);
+
+        // Center Grid
+        // Calculate offset to center the grid
+        // Grid width approx: cols * size * 1.5
+        // Grid height approx: rows * size * sqrt(3)
+        // This is rough, can be refined
+        const gridW = gameState.grid ? gameState.grid.cols * 25 * 1.5 : 0;
+        const gridH = gameState.grid ? gameState.grid.rows * 25 * 1.7 : 0;
+        const offsetX = (CANVAS_WIDTH - gridW) / 2 + 20; // +20 padding adjust
+        const offsetY = (CANVAS_HEIGHT - gridH) / 2 + 20;
+        
+        p.translate(offsetX, offsetY);
+        gameState.viewOffset = { x: offsetX, y: offsetY };
+
+        // Render Game World
+        if (gameState.gamePhase !== 'START') {
+            if (gameState.grid) gameState.grid.render(p);
+            
+            // Entities
+            // Sort by Y for depth
+            const renderList = [...gameState.entities];
+            renderList.sort((a, b) => a.pixelY - b.pixelY);
+            renderList.forEach(e => e.render(p));
+            
+            globalParticles.render(p);
+        }
+
+        p.pop(); // End Camera
+
+        // Render UI (on top, no camera transform)
+        renderUI(p);
+        
+        // Logging Player Info
+        if (gameState.player && p.frameCount % 60 === 0) {
+            p.logs.player_info.push({
+                hp: gameState.player.hp,
+                q: gameState.player.q,
+                r: gameState.player.r,
+                framecount: p.frameCount,
+                timestamp: Date.now()
+            });
+        }
+    };
+
+    p.keyPressed = function() {
+        p.logs.inputs.push({
+            type: 'keyPressed',
+            key: p.key,
+            keyCode: p.keyCode,
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+        handleKeyPress(p);
+    };
+
+    // Global reset exposed to window
+    window.gameInstance.resetGame = resetGame;
+    window.gameInstance.resetLevel = resetLevel;
+
+    function resetGame() {
+        gameState.score = 0;
+        gameState.level = 1;
+        gameState.gamePhase = "START";
+        gameState.entities = [];
+        gameState.particles = [];
+        LevelGenerator.generate(1);
+        logGameEvent(p, "RESET", "Game Reset");
+    }
+
+    function resetLevel(level) {
+        LevelGenerator.generate(level);
+        logGameEvent(p, "LEVEL_START", level);
+    }
+});
+
+// Expose instance
+window.gameInstance = gameInstance;
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+};
+</file>
+
+<file name="ui.js">
+/**
+ * ui.js
+ * Rendering for HUD, Start Screen, etc.
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { HexMath, drawHex } from './utils.js';
+
+export function renderUI(p) {
+    if (gameState.gamePhase === 'START') {
+        renderStartScreen(p);
+    } else if (gameState.gamePhase === 'PLAYING' || gameState.gamePhase === 'PAUSED' || gameState.gamePhase.startsWith('GAME_OVER')) {
+        renderHUD(p);
+        renderCursor(p);
+        
+        if (gameState.gamePhase === 'PAUSED') renderPaused(p);
+        if (gameState.gamePhase.startsWith('GAME_OVER')) renderGameOver(p);
+    }
+}
+
+function renderStartScreen(p) {
+    p.background(10, 5, 15);
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    // Decorative Hexes
+    p.stroke(40);
+    p.noFill();
+    for(let i=0; i<5; i++) {
+        drawHex(p, CANVAS_WIDTH/2, CANVAS_HEIGHT/2, 100 + i*20, "stroke", p.color(40, 40, 60));
+    }
+
+    p.fill(0, 200, 255);
+    p.textSize(48);
+    p.text("UNDERWORLD TACTICS", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 60);
+    
+    p.fill(200);
+    p.textSize(16);
+    p.text("Descend into the depths. Outsmart the legion.", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    
+    p.fill(255, 200, 0);
+    p.textSize(20);
+    p.text("PRESS ENTER TO START", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60);
+}
+
+function renderHUD(p) {
+    // Stats Bar
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, 40);
+    
+    p.fill(255);
+    p.textSize(16);
+    p.textAlign(p.LEFT, p.CENTER);
+    p.text(`Level: ${gameState.level}`, 20, 20);
+    p.text(`Score: ${gameState.score}`, 120, 20);
+    
+    // HP
+    if (gameState.player) {
+        p.textAlign(p.RIGHT, p.CENTER);
+        p.text(`HP: ${gameState.player.hp}/${gameState.player.maxHp}`, CANVAS_WIDTH - 20, 20);
+    }
+    
+    // Controls Hint
+    p.fill(255, 255, 255, 100);
+    p.textSize(12);
+    p.textAlign(p.CENTER, p.BOTTOM);
+    p.text("Arrows: Select | Space: Move/Attack | Shift+Space: Jump | Z: Wait", CANVAS_WIDTH/2, CANVAS_HEIGHT - 10);
+}
+
+function renderCursor(p) {
+    if (!gameState.cursor.visible || !gameState.grid) return;
+    
+    const tile = gameState.grid.getTile(gameState.cursor.q, gameState.cursor.r);
+    if (!tile) return;
+    
+    const pulse = 150 + Math.sin(p.frameCount * 0.1) * 100;
+    
+    // Draw Cursor selection
+    p.noFill();
+    p.stroke(255, pulse);
+    p.strokeWeight(3);
+    drawHex(p, tile.pixelX, tile.pixelY, 22, "stroke", p.color(255, pulse));
+    
+    // Draw path line from player to cursor?
+    if (gameState.player) {
+        const pTile = gameState.grid.getTile(gameState.player.q, gameState.player.r);
+        const dist = HexMath.distance(pTile, tile);
+        
+        // Color code valid move
+        if (dist === 1) {
+            p.stroke(0, 255, 0, 100);
+            p.line(gameState.player.pixelX, gameState.player.pixelY, tile.pixelX, tile.pixelY);
+        } else if (dist === 2) {
+            p.stroke(255, 200, 0, 100); // Jump range
+            // Dashed line logic could go here
+             p.line(gameState.player.pixelX, gameState.player.pixelY, tile.pixelX, tile.pixelY);
+        }
+    }
+}
+
+function renderPaused(p) {
+    p.fill(0, 0, 0, 200);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.fill(255);
+    p.textSize(40);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+}
+
+function renderGameOver(p) {
+    p.fill(0, 0, 0, 220);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    const win = gameState.gamePhase === "GAME_OVER_WIN";
+    p.fill(win ? p.color(100, 255, 100) : p.color(255, 50, 50));
+    p.textSize(40);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text(win ? "VICTORY!" : "YOU DIED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 20);
+    
+    p.fill(255);
+    p.textSize(20);
+    p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 20);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60);
+}
+</file>
+
+<file name="logic.js">
+/**
+ * logic.js
+ * Game logic, turn management, combat resolution.
+ */
+
+import { gameState, CONFIG } from './globals.js';
+import { HexMath, lerp } from './utils.js';
+import { Pathfinder } from './grid.js';
+import { Player, Enemy } from './entities.js';
+import { globalParticles } from './particles.js';
+import { animationSystem } from './animations.js';
+
+export class GameLogic {
+    static async handlePlayerAction(action, data) {
+        if (gameState.turnPhase !== 'PLAYER_INPUT') return;
+        
+        let turnSpent = false;
+
+        // Player Actions
+        const pTile = gameState.grid.getTile(gameState.player.q, gameState.player.r);
+        
+        if (action === 'MOVE') {
+            const targetTile = data.tile;
+            
+            // Check adjacency
+            const dist = HexMath.distance(pTile, targetTile);
+            
+            if (dist === 1) {
+                // Interact
+                if (targetTile.type === 'WALL') {
+                    // Bonk
+                    animationSystem.shake(2);
+                } else if (targetTile.entity) {
+                    // Attack
+                    GameLogic.performAttack(gameState.player, targetTile.entity);
+                    turnSpent = true;
+                } else {
+                    // Move
+                    gameState.player.moveTo(targetTile);
+                    turnSpent = true;
+                    // Check for pickup/lava etc later
+                }
+            } else {
+                // Too far
+                // UI Sound or Shake?
+            }
+        } else if (action === 'JUMP') {
+            const targetTile = data.tile;
+            const dist = HexMath.distance(pTile, targetTile);
+            
+            if (dist === 2 && !targetTile.entity && targetTile.type !== 'WALL') {
+                 // Check if there is something between to jump over? (Optional rule)
+                 // Simply jump
+                 gameState.player.teleportTo(targetTile);
+                 turnSpent = true;
+                 animationSystem.shake(5); // Impact
+            }
+        } else if (action === 'WAIT') {
+            turnSpent = true;
+            globalParticles.emit(gameState.player.pixelX, gameState.player.pixelY, 'spark', 5);
+        }
+        
+        if (turnSpent) {
+            gameState.turnPhase = 'PLAYER_ACT'; // Block input
+            setTimeout(() => {
+                GameLogic.resolveEnvironment();
+                // If game over didn't happen
+                if (gameState.gamePhase === 'PLAYING') {
+                    GameLogic.startEnemyTurn();
+                }
+            }, CONFIG.TURN_DELAY);
+        }
+    }
+    
+    static resolveEnvironment() {
+        const pTile = gameState.grid.getTile(gameState.player.q, gameState.player.r);
+        
+        // Lava damage
+        if (pTile.type === 'LAVA') {
+            gameState.player.takeDamage(1);
+            gameState.messageLog.push("Burned by lava!");
+            animationSystem.shake(5);
+        }
+        
+        // Exit
+        if (pTile.type === 'EXIT') {
+            GameLogic.nextLevel();
+            return; // Stop turn processing
+        }
+        
+        // Check death
+        if (gameState.player.isDead) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+        }
+    }
+
+    static performAttack(attacker, defender) {
+        // Simple damage
+        const dmg = attacker.damage || 1; // Player defaults to 1 effectively
+        defender.takeDamage(dmg);
+        
+        // Bump animation
+        const dx = (defender.pixelX - attacker.pixelX) * 0.3;
+        const dy = (defender.pixelY - attacker.pixelY) * 0.3;
+        
+        animationSystem.addTween(attacker, 'pixelX', attacker.pixelX + dx, 5, 'easeOut');
+        animationSystem.addTween(attacker, 'pixelY', attacker.pixelY + dy, 5, 'easeOut');
+        
+        // Return animation is implicit or handle later? 
+        // For simplicity, we just tween back in next frame update or let it slide?
+        // Actually, let's just offset temporarily.
+        setTimeout(() => {
+            const tile = gameState.grid.getTile(attacker.q, attacker.r);
+            animationSystem.addTween(attacker, 'pixelX', tile.pixelX, 5, 'easeIn');
+            animationSystem.addTween(attacker, 'pixelY', tile.pixelY, 5, 'easeIn');
+        }, 100);
+
+        // Sound effect visual
+        globalParticles.emit(defender.pixelX, defender.pixelY, 'spark', 10);
+        
+        // Remove dead
+        if (defender.isDead) {
+            const idx = gameState.enemies.indexOf(defender);
+            if (idx > -1) gameState.enemies.splice(idx, 1);
+            const eIdx = gameState.entities.indexOf(defender);
+            if (eIdx > -1) gameState.entities.splice(eIdx, 1);
+            gameState.score += 10;
+        }
+    }
+
+    static startEnemyTurn() {
+        gameState.turnPhase = 'ENEMY_ACT';
+        
+        // Process enemies one by one or all at once?
+        // Sequential feels better for tactics
+        let delay = 0;
+        
+        gameState.enemies.forEach(enemy => {
+            if (enemy.isDead) return;
+            
+            setTimeout(() => {
+                GameLogic.processEnemyAI(enemy);
+            }, delay);
+            delay += 150;
+        });
+        
+        setTimeout(() => {
+            // End turn
+            if (gameState.player.hp <= 0) {
+                gameState.gamePhase = "GAME_OVER_LOSE";
+            } else {
+                gameState.turnPhase = 'PLAYER_INPUT';
+                gameState.turnCount++;
+            }
+        }, delay + 100);
+    }
+    
+    static processEnemyAI(enemy) {
+        if (!gameState.player || gameState.player.isDead) return;
+        
+        const pTile = gameState.grid.getTile(gameState.player.q, gameState.player.r);
+        const eTile = gameState.grid.getTile(enemy.q, enemy.r);
+        const dist = HexMath.distance(pTile, eTile);
+        
+        // Activation Range
+        if (dist > 8) return; // Too far, idle
+        
+        if (enemy.type === 'ENEMY_MELEE') {
+            if (dist === 1) {
+                GameLogic.performAttack(enemy, gameState.player);
+            } else {
+                // Move towards
+                const path = Pathfinder.findPath(eTile, pTile, gameState.grid, false);
+                if (path && path.length > 0) {
+                    const nextStep = path[0];
+                    if (!nextStep.entity) { // Double check not blocked
+                        enemy.moveTo(nextStep);
+                    }
+                }
+            }
+        } else if (enemy.type === 'ENEMY_RANGED') {
+            // Try to maintain range 3-4
+            if (dist <= enemy.range && dist > 1) {
+                // Fire projectile (Instant hit logic for simplicity)
+                GameLogic.performAttack(enemy, gameState.player);
+                // Visual beam
+                // ...
+            } else if (dist === 1) {
+                // Flee or Melee? Melee weak
+                GameLogic.performAttack(enemy, gameState.player);
+            } else {
+                // Move closer
+                const path = Pathfinder.findPath(eTile, pTile, gameState.grid, false);
+                if (path && path.length > 0) enemy.moveTo(path[0]);
+            }
+        } else if (enemy.type === 'ENEMY_BOMBER') {
+            // Suicide charge
+            if (dist === 1) {
+                // Explode
+                enemy.takeDamage(999); // Die
+                gameState.player.takeDamage(enemy.damage);
+                animationSystem.shake(10);
+                globalParticles.emit(enemy.pixelX, enemy.pixelY, 'blood', 20); // Big explosion
+            } else {
+                const path = Pathfinder.findPath(eTile, pTile, gameState.grid, false);
+                if (path && path.length > 0) enemy.moveTo(path[0]);
+            }
+        }
+    }
+    
+    static nextLevel() {
+        gameState.level++;
+        gameState.score += 100;
+        // Regenerate map in main game loop or trigger here?
+        // Let's set a flag or call generation directly if safe
+        // We need to import LevelGenerator but circular dependency risk?
+        // Pass via global or callback. 
+        // For now, let's just trigger a reset via gameInstance
+        window.gameInstance.resetLevel(gameState.level);
+        gameState.turnPhase = 'PLAYER_INPUT';
+    }
+}
+</file>
+
+<file name="grid.js">
+/**
+ * grid.js
+ * HexGrid data structure, Tile class, and Pathfinding.
+ */
+
+import { HexMath, drawHex } from './utils.js';
+import { CONFIG, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export class Tile {
+    constructor(q, r, col, row) {
+        this.q = q;
+        this.r = r;
+        this.col = col;
+        this.row = row;
+        this.type = 'FLOOR'; // FLOOR, WALL, LAVA, EXIT, VOID
+        this.entity = null; // Reference to entity standing here
+        
+        const pos = HexMath.hexToPixel(q, r);
+        this.pixelX = pos.x;
+        this.pixelY = pos.y;
+        
+        // Visuals
+        this.highlight = 0; // For flashing
+        this.visited = false;
+    }
+
+    render(p) {
+        if (this.type === 'VOID') return;
+
+        let color;
+        switch(this.type) {
+            case 'WALL': color = p.color(60, 60, 70); break;
+            case 'LAVA': 
+                const pulse = Math.sin(p.frameCount * 0.05) * 30;
+                color = p.color(180 + pulse, 50, 20); 
+                break;
+            case 'EXIT': color = p.color(200, 200, 255); break;
+            default: // FLOOR
+                color = p.color(40, 40, 50);
+                if (this.visited) color = p.color(50, 50, 60);
+        }
+
+        if (this.highlight > 0) {
+            color = p.lerpColor(color, p.color(255, 255, 255), this.highlight);
+            this.highlight *= 0.9;
+        }
+
+        drawHex(p, this.pixelX, this.pixelY, CONFIG.GRID_SIZE - 2, "fill", color);
+        
+        // Border
+        p.stroke(20, 20, 25);
+        p.strokeWeight(1);
+        p.noFill();
+        drawHex(p, this.pixelX, this.pixelY, CONFIG.GRID_SIZE - 2, "stroke", 0);
+
+        // Decor for Exit
+        if (this.type === 'EXIT') {
+            p.noFill();
+            p.stroke(255, 255, 100);
+            p.strokeWeight(2);
+            p.circle(this.pixelX, this.pixelY, CONFIG.GRID_SIZE * 0.8);
+        }
+        
+        // Decor for Wall
+        if (this.type === 'WALL') {
+            p.fill(30);
+            p.noStroke();
+            p.rectMode(p.CENTER);
+            p.rect(this.pixelX, this.pixelY, 15, 15);
+        }
+    }
+}
+
+export class HexGrid {
+    constructor(cols, rows) {
+        this.cols = cols;
+        this.rows = rows;
+        this.tiles = new Map(); // Key: "q,r", Value: Tile
+        this.tileArray = []; // Linear array for iteration
+
+        this.initGrid();
+    }
+
+    initGrid() {
+        for (let c = 0; c < this.cols; c++) {
+            for (let r = 0; r < this.rows; r++) {
+                const axial = HexMath.offsetToAxial(c, r);
+                const tile = new Tile(axial.q, axial.r, c, r);
+                this.tiles.set(`${axial.q},${axial.r}`, tile);
+                this.tileArray.push(tile);
+            }
+        }
+    }
+
+    getTile(q, r) {
+        return this.tiles.get(`${q},${r}`);
+    }
+    
+    getTileByOffset(col, row) {
+        const axial = HexMath.offsetToAxial(col, row);
+        return this.getTile(axial.q, axial.r);
+    }
+
+    getNeighbors(tile, ignoreObstacles = false) {
+        const coords = HexMath.getNeighbors(tile.q, tile.r);
+        const neighbors = [];
+        coords.forEach(c => {
+            const t = this.getTile(c.q, c.r);
+            if (t && t.type !== 'VOID') {
+                if (ignoreObstacles || (t.type !== 'WALL' && t.entity === null)) {
+                    neighbors.push(t);
+                } else if (!ignoreObstacles && (t.type === 'WALL' || t.entity !== null)) {
+                    // It's a neighbor but blocked
+                }
+            }
+        });
+        return neighbors;
+    }
+    
+    // For AI: Get neighbors even if blocked by entity (but not walls)
+    getWalkableNeighbors(tile) {
+        const coords = HexMath.getNeighbors(tile.q, tile.r);
+        const neighbors = [];
+        coords.forEach(c => {
+            const t = this.getTile(c.q, c.r);
+            if (t && t.type !== 'VOID' && t.type !== 'WALL') {
+                neighbors.push(t);
+            }
+        });
+        return neighbors;
+    }
+
+    render(p) {
+        // Sort by Y for simple depth sorting
+        // this.tileArray.sort((a, b) => a.pixelY - b.pixelY); // Optimization: Pre-sort or don't sort if unnecessary for flat tiles
+        
+        this.tileArray.forEach(tile => tile.render(p));
+    }
+}
+
+// Simple Pathfinding (BFS) for uniform cost, or A*
+export class Pathfinder {
+    static findPath(startTile, endTile, grid, ignoreEntities = false) {
+        if (!startTile || !endTile) return null;
+
+        const frontier = [];
+        frontier.push(startTile);
+        const cameFrom = new Map();
+        cameFrom.set(startTile, null);
+
+        while (frontier.length > 0) {
+            const current = frontier.shift();
+
+            if (current === endTile) {
+                break;
+            }
+
+            const neighbors = grid.getWalkableNeighbors(current);
+            for (const next of neighbors) {
+                // If checking for movement, we can't walk through entities unless it's the target (to attack)
+                let isBlocked = false;
+                if (!ignoreEntities && next.entity !== null && next !== endTile) {
+                    isBlocked = true;
+                }
+                
+                if (next.type === 'LAVA') isBlocked = false; // Can walk on lava (takes dmg)
+
+                if (!cameFrom.has(next) && !isBlocked) {
+                    frontier.push(next);
+                    cameFrom.set(next, current);
+                }
+            }
+        }
+
+        if (!cameFrom.has(endTile)) return null; // No path
+
+        // Reconstruct
+        const path = [];
+        let curr = endTile;
+        while (curr !== startTile) {
+            path.push(curr);
+            curr = cameFrom.get(curr);
+        }
+        path.reverse(); // Start -> End
+        return path;
+    }
+}
+</file>
+
+<file name="animations.js">
+/**
+ * animations.js
+ * Handles tweening, camera shake, and smooth transitions.
+ */
+
+import { gameState } from './globals.js';
+import { lerp } from './utils.js';
+
+class Tween {
+    constructor(target, property, endValue, duration, easing = 'linear') {
+        this.target = target;
+        this.property = property;
+        this.startValue = target[property];
+        this.endValue = endValue;
+        this.duration = duration; // in frames
+        this.currentTime = 0;
+        this.easing = easing;
+        this.finished = false;
+    }
+
+    update() {
+        if (this.finished) return;
+        
+        this.currentTime++;
+        const t = Math.min(1, this.currentTime / this.duration);
+        
+        let easedT = t;
+        if (this.easing === 'easeOut') {
+            easedT = 1 - Math.pow(1 - t, 3);
+        } else if (this.easing === 'easeInOut') {
+            easedT = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        }
+
+        this.target[this.property] = lerp(this.startValue, this.endValue, easedT);
+
+        if (this.currentTime >= this.duration) {
+            this.target[this.property] = this.endValue;
+            this.finished = true;
+        }
+    }
+}
+
+export class AnimationManager {
+    constructor() {
+        this.tweens = [];
+        this.screenShake = 0;
+    }
+
+    addTween(target, property, endValue, duration, easing) {
+        this.tweens.push(new Tween(target, property, endValue, duration, easing));
+    }
+
+    shake(amount) {
+        this.screenShake = amount;
+    }
+
+    update() {
+        // Update tweens
+        for (let i = this.tweens.length - 1; i >= 0; i--) {
+            this.tweens[i].update();
+            if (this.tweens[i].finished) {
+                this.tweens.splice(i, 1);
+            }
+        }
+
+        // Update shake
+        if (this.screenShake > 0) {
+            this.screenShake *= 0.9; // decay
+            if (this.screenShake < 0.5) this.screenShake = 0;
+        }
+    }
+
+    applyCamera(p) {
+        if (this.screenShake > 0) {
+            const rx = (Math.random() - 0.5) * this.screenShake;
+            const ry = (Math.random() - 0.5) * this.screenShake;
+            p.translate(rx, ry);
+        }
+    }
+}
+
+export const animationSystem = new AnimationManager();
+</file>
+
+<file name="testing.js">
+/**
+ * testing.js
+ * Automated testing bots.
+ */
+
+import { HexMath } from './utils.js';
+import { Pathfinder } from './grid.js';
+
+export function get_automated_testing_action(gameState) {
+    if (gameState.gamePhase !== 'PLAYING') {
+        if (gameState.gamePhase === 'START') return { keyCode: 13, shiftKey: false }; // ENTER
+        if (gameState.gamePhase.startsWith('GAME_OVER')) return { keyCode: 82, shiftKey: false }; // R
+        return null;
+    }
+
+    if (gameState.turnPhase !== 'PLAYER_INPUT') return null;
+
+    // Use a delay to simulate human speed and prevent stack overflow if logic is too fast
+    if (Date.now() % 500 < 50) return null; // Very basic throttling
+
+    switch (gameState.controlMode) {
+        case "TEST_1": return getSurvivalAction(gameState);
+        case "TEST_2": return getSpeedrunAction(gameState);
+        default: return null;
+    }
+}
+
+function getSurvivalAction(gameState) {
+    // 1. Check health, if low, run away from enemies
+    // 2. Otherwise, attack isolated enemies
+    // 3. Else wait
+    
+    // For simplicity: Move to cursor first, then execute
+    // We need to emulate the "Move cursor then Space" flow
+    // But since we can inject commands, let's cheat and move cursor to target instantly then press space
+    
+    // Find best tile
+    const pTile = gameState.grid.getTile(gameState.player.q, gameState.player.r);
+    const neighbors = gameState.grid.getNeighbors(pTile);
+    
+    let bestTile = null;
+    let maxScore = -999;
+    
+    neighbors.forEach(n => {
+        let score = 0;
+        if (n.type === 'LAVA') score -= 50;
+        if (n.type === 'WALL') score -= 100;
+        
+        // Enemy proximity
+        let closestEnemyDist = 999;
+        gameState.enemies.forEach(e => {
+            const dist = HexMath.distance(n, gameState.grid.getTile(e.q, e.r));
+            if (dist < closestEnemyDist) closestEnemyDist = dist;
+        });
+        
+        if (n.entity) { // Attack
+             // Only attack if not surrounded
+             if (closestEnemyDist > 1) score += 20; 
+             else score -= 10; // Dangerous
+        } else {
+             score += closestEnemyDist * 2; // Prefer distance
+        }
+        
+        // Prefer Exit slightly
+        if (n.type === 'EXIT') score += 100;
+        
+        if (score > maxScore) {
+            maxScore = score;
+            bestTile = n;
+        }
+    });
+    
+    if (bestTile) {
+        // We need to move cursor to bestTile.
+        // But handling multi-step cursor movement is hard in one frame.
+        // HACK: Teleport cursor state for the test
+        gameState.cursor.col = bestTile.col;
+        gameState.cursor.row = bestTile.row;
+        gameState.cursor.q = bestTile.q;
+        gameState.cursor.r = bestTile.r;
+        
+        return { keyCode: 32, shiftKey: false }; // SPACE
+    }
+    
+    return { keyCode: 90, shiftKey: false }; // WAIT
+}
+
+function getSpeedrunAction(gameState) {
+    // A* to Exit
+    const pTile = gameState.grid.getTile(gameState.player.q, gameState.player.r);
+    
+    // Find Exit
+    let exitTile = null;
+    gameState.grid.tileArray.forEach(t => { if(t.type === 'EXIT') exitTile = t; });
+    
+    if (!exitTile) return null;
+    
+    const path = Pathfinder.findPath(pTile, exitTile, gameState.grid, true); // Ignore entities for pathing planning
+    
+    if (path && path.length > 0) {
+        const next = path[0];
+        gameState.cursor.col = next.col;
+        gameState.cursor.row = next.row;
+        gameState.cursor.q = next.q;
+        gameState.cursor.r = next.r;
+        
+        // If entity there, check if we can jump over?
+        if (next.entity) {
+            // Attack!
+             return { keyCode: 32, shiftKey: false };
+        }
+        
+        // Jump heuristic: if path[1] is valid and path[0] is lava/enemy
+        if (path.length > 1) {
+            const jumpTarget = path[1];
+             // Simple logic: random jump to speed up?
+             // Not implemented for simplicity, just move.
+        }
+        
+        return { keyCode: 32, shiftKey: false };
+    }
+    
+    return { keyCode: 90, shiftKey: false }; // WAIT
+}
+</file>
+
+<file name="entities.js">
+/**
+ * entities.js
+ * Player and Enemy classes.
+ */
+
+import { CONFIG, gameState } from './globals.js';
+import { HexMath, drawHealthBar } from './utils.js';
+import { animationSystem } from './animations.js';
+import { globalParticles } from './particles.js';
+
+class Entity {
+    constructor(q, r, type) {
+        this.q = q;
+        this.r = r;
+        this.type = type; // 'PLAYER', 'ENEMY_MELEE', 'ENEMY_RANGED', 'ENEMY_BOMBER'
+        
+        const pos = HexMath.hexToPixel(q, r);
+        this.pixelX = pos.x;
+        this.pixelY = pos.y;
+        
+        this.hp = 1;
+        this.maxHp = 1;
+        this.isDead = false;
+        
+        // Link to grid
+        if (gameState.grid) {
+            const tile = gameState.grid.getTile(q, r);
+            if (tile) tile.entity = this;
+        }
+    }
+
+    moveTo(tile) {
+        // Remove from old tile
+        const oldTile = gameState.grid.getTile(this.q, this.r);
+        if (oldTile) oldTile.entity = null;
+
+        // Update coords
+        this.q = tile.q;
+        this.r = tile.r;
+        
+        // Link to new tile
+        tile.entity = this;
+
+        // Animate visual position
+        animationSystem.addTween(this, 'pixelX', tile.pixelX, 10, 'easeOut');
+        animationSystem.addTween(this, 'pixelY', tile.pixelY, 10, 'easeOut');
+        
+        // Footprint particles
+        globalParticles.emit(tile.pixelX, tile.pixelY, 'dust', 3);
+    }
+    
+    teleportTo(tile) {
+        const oldTile = gameState.grid.getTile(this.q, this.r);
+        if (oldTile) oldTile.entity = null;
+        
+        this.q = tile.q;
+        this.r = tile.r;
+        tile.entity = this;
+        this.pixelX = tile.pixelX;
+        this.pixelY = tile.pixelY;
+        
+        globalParticles.emit(tile.pixelX, tile.pixelY, 'magic', 10);
+    }
+
+    takeDamage(amount) {
+        this.hp -= amount;
+        
+        // Shake animation
+        const shakeAmt = 5;
+        this.pixelX += (Math.random() - 0.5) * shakeAmt;
+        this.pixelY += (Math.random() - 0.5) * shakeAmt;
+        
+        globalParticles.emit(this.pixelX, this.pixelY, 'blood', 8);
+
+        if (this.hp <= 0) {
+            this.die();
+        }
+    }
+
+    die() {
+        this.isDead = true;
+        const tile = gameState.grid.getTile(this.q, this.r);
+        if (tile) tile.entity = null;
+    }
+
+    render(p) {
+        // Base implementation
+        p.push();
+        p.translate(this.pixelX, this.pixelY);
+        p.fill(255);
+        p.circle(0, 0, 20);
+        p.pop();
+    }
+}
+
+export class Player extends Entity {
+    constructor(q, r) {
+        super(q, r, 'PLAYER');
+        this.maxHp = CONFIG.PLAYER_MAX_HP;
+        this.hp = CONFIG.PLAYER_START_HP;
+        this.energy = 3; // For special moves
+        this.jumpRange = 2;
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.pixelX, this.pixelY);
+        
+        // Glow
+        p.noStroke();
+        p.fill(0, 200, 255, 50 + Math.sin(p.frameCount * 0.1) * 20);
+        p.circle(0, 0, 35);
+
+        // Body
+        p.fill(0, 200, 255);
+        p.stroke(255);
+        p.strokeWeight(2);
+        
+        // Draw Spartan Helmet shape roughly
+        p.beginShape();
+        p.vertex(0, -15);
+        p.vertex(10, -5);
+        p.vertex(10, 10);
+        p.vertex(0, 15);
+        p.vertex(-10, 10);
+        p.vertex(-10, -5);
+        p.endShape(p.CLOSE);
+        
+        // Plume
+        p.stroke(255, 50, 50);
+        p.line(0, -15, -15, -5);
+        
+        p.pop();
+        
+        drawHealthBar(p, this);
+    }
+}
+
+export class Enemy extends Entity {
+    constructor(q, r, type) {
+        super(q, r, type);
+        this.alerted = false;
+        
+        switch(type) {
+            case 'ENEMY_MELEE':
+                this.hp = 2;
+                this.maxHp = 2;
+                this.damage = 1;
+                this.color = [255, 50, 50];
+                break;
+            case 'ENEMY_RANGED':
+                this.hp = 1;
+                this.maxHp = 1;
+                this.damage = 1;
+                this.range = 4;
+                this.color = [150, 50, 255];
+                break;
+            case 'ENEMY_BOMBER':
+                this.hp = 3;
+                this.maxHp = 3;
+                this.damage = 2;
+                this.color = [255, 150, 0];
+                break;
+        }
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.pixelX, this.pixelY);
+        
+        p.fill(this.color);
+        p.stroke(255);
+        p.strokeWeight(1);
+        
+        if (this.type === 'ENEMY_MELEE') {
+            p.rectMode(p.CENTER);
+            p.rect(0, 0, 24, 24, 4);
+            // Sword icon
+            p.stroke(0);
+            p.line(-8, 8, 8, -8);
+        } else if (this.type === 'ENEMY_RANGED') {
+            p.triangle(0, -15, 12, 10, -12, 10);
+            // Bow icon
+            p.noFill();
+            p.stroke(0);
+            p.arc(0, 5, 10, 10, Math.PI, 0);
+        } else if (this.type === 'ENEMY_BOMBER') {
+            p.circle(0, 0, 26);
+            // Bomb fuse
+            p.stroke(255);
+            p.line(0, -13, 5, -20);
+            p.noStroke();
+            p.fill(255, 200, 0);
+            p.circle(5, -20, 4);
+        }
+        
+        p.pop();
+        
+        drawHealthBar(p, this);
+    }
+}
+</file>
+
+<file name="utils.js">
+/**
+ * utils.js
+ * Mathematical helpers, Hexagon logic, and general utilities.
+ */
+
+import { CONFIG, gameState } from './globals.js';
+
+// --- Math Helpers ---
+
+export function lerp(start, end, amt) {
+    return (1 - amt) * start + amt * end;
+}
+
+export function distSq(x1, y1, x2, y2) {
+    return (x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1);
+}
+
+// --- Hexagon Math (Axial Coordinates) ---
+// We use "Flat topped" hexagons.
+// q = x axis, r = z axis (in cube coords) -> q, r storage
+// conversion to pixel x,y
+
+export class HexMath {
+    static hexToPixel(q, r) {
+        const size = CONFIG.GRID_SIZE;
+        const x = size * (3/2 * q);
+        const y = size * (Math.sqrt(3)/2 * q + Math.sqrt(3) * r);
+        return { x, y };
+    }
+
+    static pixelToHex(x, y) {
+        const size = CONFIG.GRID_SIZE;
+        const q = (2/3 * x) / size;
+        const r = (-1/3 * x + Math.sqrt(3)/3 * y) / size;
+        return HexMath.hexRound(q, r);
+    }
+
+    static hexRound(q, r) {
+        let s = -q - r;
+        let rq = Math.round(q);
+        let rr = Math.round(r);
+        let rs = Math.round(s);
+
+        const q_diff = Math.abs(rq - q);
+        const r_diff = Math.abs(rr - r);
+        const s_diff = Math.abs(rs - s);
+
+        if (q_diff > r_diff && q_diff > s_diff) {
+            rq = -rr - rs;
+        } else if (r_diff > s_diff) {
+            rr = -rq - rs;
+        }
+        
+        return { q: rq, r: rr };
+    }
+
+    // Offset coordinates (Odd-Q)
+    // Used for array storage and cursor movement
+    static axialToOffset(q, r) {
+        const col = q;
+        const row = r + (q - (q & 1)) / 2;
+        return { col, row };
+    }
+
+    static offsetToAxial(col, row) {
+        const q = col;
+        const r = row - (col - (col & 1)) / 2;
+        return { q, r };
+    }
+
+    static distance(h1, h2) {
+        return (Math.abs(h1.q - h2.q) 
+              + Math.abs(h1.q + h1.r - h2.q - h2.r) 
+              + Math.abs(h1.r - h2.r)) / 2;
+    }
+
+    static getNeighbors(q, r) {
+        const directions = [
+            {q: 1, r: 0}, {q: 1, r: -1}, {q: 0, r: -1},
+            {q: -1, r: 0}, {q: -1, r: 1}, {q: 0, r: 1}
+        ];
+        return directions.map(d => ({ q: q + d.q, r: r + d.r }));
+    }
+}
+
+// --- Drawing Helpers ---
+
+export function drawHex(p, x, y, size, mode = "stroke", color = 255) {
+    p.push();
+    p.translate(x, y);
+    if (mode === "fill") {
+        p.fill(color);
+        p.noStroke();
+    } else {
+        p.noFill();
+        p.stroke(color);
+        p.strokeWeight(2);
+    }
+    
+    p.beginShape();
+    for (let i = 0; i < 6; i++) {
+        const angle = 2 * Math.PI / 6 * i;
+        const vx = size * Math.cos(angle);
+        const vy = size * Math.sin(angle);
+        p.vertex(vx, vy);
+    }
+    p.endShape(p.CLOSE);
+    p.pop();
+}
+
+export function drawHealthBar(p, entity, yOffset = -20) {
+    if (!entity.hp || !entity.maxHp) return;
+    
+    const w = 30;
+    const h = 4;
+    const x = entity.pixelX - w/2;
+    const y = entity.pixelY + yOffset;
+    
+    p.noStroke();
+    p.fill(50);
+    p.rect(x, y, w, h);
+    
+    const pct = entity.hp / entity.maxHp;
+    if (pct > 0.5) p.fill(0, 255, 0);
+    else if (pct > 0.25) p.fill(255, 200, 0);
+    else p.fill(255, 0, 0);
+    
+    p.rect(x, y, w * pct, h);
+}
+</file>
+
+<file name="particles.js">
+/**
+ * particles.js
+ * Visual effects system.
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+class Particle {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.vx = (Math.random() - 0.5) * 3;
+        this.vy = (Math.random() - 0.5) * 3;
+        this.life = 1.0;
+        this.decay = 0.02 + Math.random() * 0.03;
+        this.type = type; // 'spark', 'blood', 'magic', 'dust'
+        
+        if (type === 'blood') {
+            this.color = [200, 0, 0];
+            this.size = Math.random() * 4 + 2;
+            this.gravity = 0.2;
+        } else if (type === 'magic') {
+            this.color = [0, 255, 255];
+            this.size = Math.random() * 3 + 1;
+            this.gravity = -0.05;
+            this.vx *= 0.5;
+            this.vy *= 0.5;
+        } else if (type === 'dust') {
+            this.color = [150, 150, 150];
+            this.size = Math.random() * 5 + 2;
+            this.gravity = 0;
+            this.vx *= 0.2;
+            this.vy *= 0.2;
+        } else { // spark
+            this.color = [255, 200, 50];
+            this.size = Math.random() * 3 + 1;
+            this.gravity = 0.1;
+        }
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        if (this.gravity) this.vy += this.gravity;
+        
+        this.life -= this.decay;
+        this.vx *= 0.95;
+        this.vy *= 0.95;
+    }
+
+    render(p) {
+        p.noStroke();
+        p.fill(this.color[0], this.color[1], this.color[2], this.life * 255);
+        p.circle(this.x, this.y, this.size * this.life);
+    }
+
+    isDead() {
+        return this.life <= 0;
+    }
+}
+
+export class ParticleSystem {
+    constructor() {
+        this.particles = [];
+    }
+
+    emit(x, y, type, count = 10) {
+        for (let i = 0; i < count; i++) {
+            this.particles.push(new Particle(x, y, type));
+        }
+    }
+
+    update() {
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+            this.particles[i].update();
+            if (this.particles[i].isDead()) {
+                this.particles.splice(i, 1);
+            }
+        }
+    }
+
+    render(p) {
+        this.particles.forEach(pt => pt.render(p));
+    }
+    
+    clear() {
+        this.particles = [];
+    }
+}
+
+export const globalParticles = new ParticleSystem();
+</file>
+
+<file name="level_gen.js">
+/**
+ * level_gen.js
+ * Procedural Map Generation.
+ */
+
+import { gameState, CONFIG } from './globals.js';
+import { HexGrid } from './grid.js';
+import { Player, Enemy } from './entities.js';
+import { HexMath } from './utils.js';
+
+export class LevelGenerator {
+    static generate(level) {
+        const grid = new HexGrid(CONFIG.GRID_COLS, CONFIG.GRID_ROWS);
+        
+        // 1. Fill with Floor
+        // Already done in init
+        
+        // 2. Add Walls (Cellular Automata or Random Blobs)
+        const wallCount = 15 + level * 2;
+        for (let i = 0; i < wallCount; i++) {
+            const c = Math.floor(Math.random() * CONFIG.GRID_COLS);
+            const r = Math.floor(Math.random() * CONFIG.GRID_ROWS);
+            const tile = grid.getTileByOffset(c, r);
+            if (tile) tile.type = 'WALL';
+        }
+        
+        // 3. Add Lava
+        const lavaCount = 5 + level;
+        for (let i = 0; i < lavaCount; i++) {
+            const c = Math.floor(Math.random() * CONFIG.GRID_COLS);
+            const r = Math.floor(Math.random() * CONFIG.GRID_ROWS);
+            const tile = grid.getTileByOffset(c, r);
+            if (tile && tile.type !== 'WALL') tile.type = 'LAVA';
+        }
+        
+        // 4. Set Start and End
+        // Start usually top left-ish, End bottom right-ish
+        const startTile = grid.getTileByOffset(1, 1) || grid.getTileByOffset(0,0);
+        const endTile = grid.getTileByOffset(CONFIG.GRID_COLS - 2, CONFIG.GRID_ROWS - 2);
+        
+        startTile.type = 'FLOOR'; // Ensure safe
+        endTile.type = 'EXIT';
+        endTile.entity = null; // Clear anything
+        
+        // Ensure path exists? (Flood fill check)
+        // If not, regenerate? For simplicity in this constraints, we force a path or assume probability is high enough.
+        // Let's clear a straight line if we want to be safe, but that's boring.
+        // We will just clear neighbors of start and end.
+        grid.getNeighbors(startTile, true).forEach(t => t.type = 'FLOOR');
+        grid.getNeighbors(endTile, true).forEach(t => t.type = 'FLOOR');
+        
+        // 5. Spawn Player
+        const player = new Player(startTile.q, startTile.r);
+        gameState.entities = [player];
+        gameState.player = player;
+        gameState.enemies = [];
+        
+        // 6. Spawn Enemies
+        const enemyCount = 2 + Math.floor(level * 1.5);
+        let spawned = 0;
+        let attempts = 0;
+        while (spawned < enemyCount && attempts < 100) {
+            attempts++;
+            const c = Math.floor(Math.random() * CONFIG.GRID_COLS);
+            const r = Math.floor(Math.random() * CONFIG.GRID_ROWS);
+            const tile = grid.getTileByOffset(c, r);
+            
+            if (tile && tile.type === 'FLOOR' && !tile.entity && HexMath.distance(tile, startTile) > 3) {
+                const types = ['ENEMY_MELEE', 'ENEMY_MELEE', 'ENEMY_RANGED', 'ENEMY_BOMBER'];
+                const type = types[Math.floor(Math.random() * types.length)];
+                const enemy = new Enemy(tile.q, tile.r, type);
+                gameState.enemies.push(enemy);
+                gameState.entities.push(enemy);
+                spawned++;
+            }
+        }
+        
+        gameState.grid = grid;
+        
+        // Reset Cursor
+        gameState.cursor.col = startTile.col;
+        gameState.cursor.row = startTile.row;
+        const axial = HexMath.offsetToAxial(startTile.col, startTile.row);
+        gameState.cursor.q = axial.q;
+        gameState.cursor.r = axial.r;
+    }
+}
+</file>
+
+<file name="input.js">
+/**
+ * input.js
+ * Input handling and Controller logic.
+ */
+
+import { gameState, logGameEvent } from './globals.js';
+import { HexMath } from './utils.js';
+import { GameLogic } from './logic.js';
+import { get_automated_testing_action } from './testing.js';
+
+export function handleInput(p) {
+    // If automated test, override input
+    if (gameState.controlMode !== 'HUMAN') {
+        const action = get_automated_testing_action(gameState);
+        if (action) {
+            processKey(p, action.keyCode, action.shiftKey);
+        }
+        return;
+    }
+}
+
+export function handleKeyPress(p) {
+    processKey(p, p.keyCode, p.keyIsDown(16)); // 16 is SHIFT
+}
+
+function processKey(p, keyCode, isShift) {
+    // Global State Controls
+    if (keyCode === 13) { // ENTER
+        if (gameState.gamePhase === "START") {
+            gameState.gamePhase = "PLAYING";
+            logGameEvent(p, "PHASE_CHANGE", "PLAYING");
+        }
+        return;
+    }
+    
+    if (keyCode === 27) { // ESC
+        if (gameState.gamePhase === "PLAYING") gameState.gamePhase = "PAUSED";
+        else if (gameState.gamePhase === "PAUSED") gameState.gamePhase = "PLAYING";
+        return;
+    }
+    
+    if (keyCode === 82) { // R
+        if (gameState.gamePhase.startsWith("GAME_OVER")) {
+             window.gameInstance.resetGame();
+        }
+        return;
+    }
+
+    // Gameplay Controls
+    if (gameState.gamePhase !== "PLAYING" || gameState.turnPhase !== "PLAYER_INPUT") return;
+
+    // Cursor Movement
+    let dCol = 0;
+    let dRow = 0;
+    
+    if (keyCode === 37) dCol = -1; // LEFT
+    if (keyCode === 38) dRow = -1; // UP
+    if (keyCode === 39) dCol = 1;  // RIGHT
+    if (keyCode === 40) dRow = 1;  // DOWN
+    
+    if (dCol !== 0 || dRow !== 0) {
+        // Move cursor in offset coords
+        const newCol = gameState.cursor.col + dCol;
+        const newRow = gameState.cursor.row + dRow;
+        
+        // Clamp to grid
+        if (gameState.grid && 
+            newCol >= 0 && newCol < gameState.grid.cols &&
+            newRow >= 0 && newRow < gameState.grid.rows) {
+            
+            gameState.cursor.col = newCol;
+            gameState.cursor.row = newRow;
+            const axial = HexMath.offsetToAxial(newCol, newRow);
+            gameState.cursor.q = axial.q;
+            gameState.cursor.r = axial.r;
+        }
+        return;
+    }
+    
+    // Actions
+    if (keyCode === 32) { // SPACE
+        const targetTile = gameState.grid.getTile(gameState.cursor.q, gameState.cursor.r);
+        if (targetTile) {
+            if (isShift) {
+                GameLogic.handlePlayerAction('JUMP', { tile: targetTile });
+            } else {
+                GameLogic.handlePlayerAction('MOVE', { tile: targetTile });
+            }
+        }
+    }
+    
+    if (keyCode === 90) { // Z
+        GameLogic.handlePlayerAction('WAIT', {});
+    }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

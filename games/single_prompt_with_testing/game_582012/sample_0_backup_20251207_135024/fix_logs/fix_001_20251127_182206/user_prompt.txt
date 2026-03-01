@@ -1,0 +1,1244 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you make my attacks actually do damage to the boss, and can you make my attacks be more visual so that I know if attacks are actually hitting
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Monster Hunter: Browser Edition</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      
+      #game-container {
+          width: 600px;
+          height: 400px;
+          position: relative;
+          overflow: hidden;
+          box-shadow: 0 0 20px rgba(0,0,0,0.5);
+      }
+      
+      canvas { display: block; }
+      
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+      .control-button:hover { background: #555; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Monster Hunter: Browser Edition</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN', this)">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="setMode('TEST_1', this)">TEST: Move</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="setMode('TEST_2', this)">TEST: Attack</button>
+        <button id="test_3_ModeBtn" class="control-button" onclick="setMode('TEST_3', this)">TEST: Win</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 10px auto; line-height: 1.4; font-size: 14px;">
+        Hunt the Wyvern! Use WASD to move, SPACE to attack, and SHIFT to dodge.
+      </p>
+    </div>
+    
+    <div id="game-container">
+        <!-- Game Canvas Injected Here -->
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/seedrandom/3.0.5/seedrandom.min.js"></script>
+    
+    <script>
+      function setMode(mode, btn) {
+          if(window.setControlMode) window.setControlMode(mode);
+          document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+      }
+    </script>
+    
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Game State Object
+export const gameState = {
+    // Core Phases
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    
+    // Entities
+    player: null,
+    monster: null,
+    entities: [], // Environment, particles, etc.
+    
+    // Three.js Core
+    scene: null,
+    camera: null,
+    renderer: null,
+    gameContainer: null,
+    
+    // Lighting
+    lights: [],
+    
+    // Physics
+    gravity: new THREE.Vector3(0, -0.5, 0),
+    groundLevel: 0,
+    
+    // Camera settings
+    cameraOffset: new THREE.Vector3(0, 12, 16),
+    cameraTarget: new THREE.Vector3(0, 0, 0),
+    
+    // Time
+    frameCount: 0,
+    deltaTime: 0,
+    lastTime: 0,
+    
+    // Game Logic
+    score: 0,
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2, etc.
+    keys: {}, // Input state
+    
+    // Testing
+    testTimer: 0
+};
+
+// Expose globally
+window.getGameState = () => gameState;
+
+// Logging System
+window.logs = {
+    game_info: [],
+    player_info: [],
+    inputs: []
+};
+
+export function logGameInfo(data) {
+    window.logs.game_info.push({
+        ...data,
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+}
+
+export function logPlayerInfo() {
+    if (!gameState.player) return;
+    
+    // Project 3D pos to 2D screen for logging requirements
+    const v = gameState.player.mesh.position.clone().project(gameState.camera);
+    const screenX = (v.x + 1) * CANVAS_WIDTH / 2;
+    const screenY = (-v.y + 1) * CANVAS_HEIGHT / 2;
+
+    window.logs.player_info.push({
+        screen_x: screenX,
+        screen_y: screenY,
+        game_x: gameState.player.mesh.position.x,
+        game_y: gameState.player.mesh.position.y,
+        game_z: gameState.player.mesh.position.z,
+        health: gameState.player.health,
+        state: gameState.player.state,
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+}
+
+export function logInput(type, key, keyCode) {
+    window.logs.inputs.push({
+        input_type: type,
+        data: { key, keyCode },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+}
+</file>
+
+<file name="game.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, logGameInfo, logPlayerInfo, logInput } from './globals.js';
+import { setupRenderer } from './renderer.js';
+import { setupCamera, updateCamera, applyCameraShake } from './camera.js';
+import { setupLighting } from './lighting.js';
+import { Player, Monster, Environment } from './entities.js';
+import { updatePhysics, handleCollisions } from './physics.js';
+import { setupUI, renderUI } from './ui.js';
+
+// Init
+function init() {
+    Math.seedrandom('42');
+    
+    setupRenderer();
+    setupCamera();
+    setupLighting();
+    setupUI();
+    
+    // Environment is static, add once
+    new Environment();
+    
+    gameState.gamePhase = 'START';
+    
+    // Global Event Listener for Controls
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    
+    // Expose control mode setter
+    window.setControlMode = (mode) => {
+        gameState.controlMode = mode;
+        console.log("Control Mode set to: " + mode);
+        // If testing, restart to ensure clean state
+        if (mode.startsWith("TEST")) {
+            resetGame();
+            gameState.gamePhase = 'PLAYING';
+        }
+    };
+    
+    requestAnimationFrame(gameLoop);
+}
+
+function resetGame() {
+    // Clear dynamic entities
+    if (gameState.player) gameState.scene.remove(gameState.player.mesh);
+    if (gameState.monster) gameState.scene.remove(gameState.monster.mesh);
+    gameState.entities.forEach(e => gameState.scene.remove(e.mesh));
+    gameState.entities = [];
+    
+    // Recreate
+    gameState.player = new Player(0, 0, 10);
+    gameState.monster = new Monster(0, 0, -10);
+    
+    gameState.score = 0;
+    gameState.frameCount = 0;
+}
+
+function onKeyDown(e) {
+    gameState.keys[e.keyCode] = true;
+    logInput('keydown', e.key, e.keyCode);
+    
+    if (e.keyCode === 13) { // ENTER
+        if (gameState.gamePhase === 'START') {
+            resetGame();
+            gameState.gamePhase = 'PLAYING';
+            logGameInfo({ action: "GAME_START" });
+        }
+    }
+    
+    if (e.keyCode === 27) { // ESC
+        if (gameState.gamePhase === 'PLAYING') gameState.gamePhase = 'PAUSED';
+        else if (gameState.gamePhase === 'PAUSED') gameState.gamePhase = 'PLAYING';
+    }
+    
+    if (e.keyCode === 82) { // R
+        if (gameState.gamePhase === 'GAME_OVER_WIN' || gameState.gamePhase === 'GAME_OVER_LOSE') {
+            gameState.gamePhase = 'START';
+        }
+    }
+}
+
+function onKeyUp(e) {
+    gameState.keys[e.keyCode] = false;
+    logInput('keyup', e.key, e.keyCode);
+}
+
+// Automated Testing Logic
+function runTests(deltaTime) {
+    if (gameState.controlMode === 'TEST_1') { // Movement Test
+        gameState.keys[87] = true; // Hold W
+        if (gameState.frameCount > 60) {
+            console.log("TEST_1 Complete. Z pos: " + gameState.player.mesh.position.z);
+            gameState.controlMode = 'HUMAN';
+            gameState.keys[87] = false;
+        }
+    }
+    else if (gameState.controlMode === 'TEST_2') { // Attack Test
+        gameState.keys[32] = true; // Press Space
+        if (gameState.player.state === 'ATTACK') {
+             console.log("TEST_2 Success: Player Attacking");
+             gameState.controlMode = 'HUMAN';
+             gameState.keys[32] = false;
+        }
+    }
+    else if (gameState.controlMode === 'TEST_3') { // Win Test
+        if (gameState.monster) gameState.monster.health = 1;
+        gameState.player.mesh.position.copy(gameState.monster.mesh.position).add(new THREE.Vector3(0,0,2));
+        gameState.player.mesh.lookAt(gameState.monster.mesh.position);
+        gameState.keys[32] = true; // Attack
+    }
+}
+
+// Loop
+function gameLoop(time) {
+    requestAnimationFrame(gameLoop);
+    
+    const dt = Math.min((time - gameState.lastTime) / 1000, 0.1);
+    gameState.lastTime = time;
+    gameState.deltaTime = dt;
+    gameState.frameCount++;
+    
+    if (gameState.controlMode !== 'HUMAN' && gameState.gamePhase === 'PLAYING') {
+        runTests(dt);
+    }
+    
+    if (gameState.gamePhase === 'PLAYING') {
+        // Update Entities
+        if (gameState.player) gameState.player.update(dt);
+        if (gameState.monster) gameState.monster.update(dt);
+        
+        // Update Particles/Temp entities
+        for (let i = gameState.entities.length - 1; i >= 0; i--) {
+            const ent = gameState.entities[i];
+            if (ent.update(dt)) {
+                gameState.entities.splice(i, 1);
+            }
+        }
+        
+        updatePhysics(dt);
+        handleCollisions();
+        updateCamera(dt);
+        
+        // Log periodically
+        if (gameState.frameCount % 60 === 0) {
+            logGameInfo({ fps: Math.round(1/dt) });
+        }
+        logPlayerInfo();
+    }
+    
+    if (gameState.renderer) {
+        gameState.renderer.render(gameState.scene, gameState.camera);
+    }
+    
+    renderUI();
+}
+
+// Start
+init();
+</file>
+
+<file name="renderer.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function setupRenderer() {
+    // Container
+    const container = document.getElementById('game-container') || document.body;
+    gameState.gameContainer = container;
+
+    // Renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    
+    container.appendChild(renderer.domElement);
+    gameState.renderer = renderer;
+
+    // Scene
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87CEEB); // Sky Blue
+    scene.fog = new THREE.Fog(0x87CEEB, 20, 100);
+    gameState.scene = scene;
+}
+</file>
+
+<file name="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+let canvas, ctx;
+
+export function setupUI() {
+    canvas = document.createElement('canvas');
+    canvas.width = CANVAS_WIDTH;
+    canvas.height = CANVAS_HEIGHT;
+    canvas.style.position = 'absolute';
+    canvas.style.top = '0';
+    canvas.style.left = '0';
+    canvas.style.pointerEvents = 'none';
+    
+    if (gameState.gameContainer) {
+        gameState.gameContainer.appendChild(canvas);
+    }
+    
+    ctx = canvas.getContext('2d');
+}
+
+export function renderUI() {
+    if (!ctx) return;
+    
+    // Clear
+    ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    if (gameState.gamePhase === 'START') {
+        drawStartScreen();
+    } else if (gameState.gamePhase === 'PLAYING' || gameState.gamePhase === 'PAUSED') {
+        drawHUD();
+        if (gameState.gamePhase === 'PAUSED') drawPauseScreen();
+    } else if (gameState.gamePhase === 'GAME_OVER_WIN') {
+        drawWinScreen();
+    } else if (gameState.gamePhase === 'GAME_OVER_LOSE') {
+        drawLoseScreen();
+    }
+}
+
+function drawStartScreen() {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    ctx.fillStyle = '#FFD700';
+    ctx.font = 'bold 32px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('MONSTER HUNTER', CANVAS_WIDTH/2, 120);
+    ctx.font = '24px Arial';
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillText('Browser Edition', CANVAS_WIDTH/2, 150);
+    
+    ctx.font = '16px Arial';
+    ctx.fillText('Press ENTER to Start', CANVAS_WIDTH/2, 250);
+    
+    ctx.fillStyle = '#CCCCCC';
+    ctx.font = '14px Arial';
+    ctx.fillText('WASD: Move | SPACE: Attack | SHIFT: Dodge | Z: Potion', CANVAS_WIDTH/2, 300);
+}
+
+function drawHUD() {
+    if (!gameState.player || !gameState.monster) return;
+
+    // Player Health Bar
+    const pHealthPct = gameState.player.health / gameState.player.maxHealth;
+    drawBar(20, 20, 200, 20, pHealthPct, '#00FF00', '#333333');
+    ctx.fillStyle = 'white';
+    ctx.font = '12px Arial';
+    ctx.textAlign = 'left';
+    ctx.fillText(`HP: ${Math.ceil(gameState.player.health)}`, 25, 35);
+    
+    // Stamina Bar
+    const pStamPct = gameState.player.stamina / gameState.player.maxStamina;
+    drawBar(20, 45, 150, 10, pStamPct, '#FFFF00', '#333333');
+    
+    // Potions
+    ctx.fillText(`Potions: ${gameState.player.potions}`, 20, 70);
+
+    // Boss Health Bar
+    const mHealthPct = Math.max(0, gameState.monster.health / gameState.monster.maxHealth);
+    const barW = 300;
+    drawBar((CANVAS_WIDTH - barW)/2, 350, barW, 25, mHealthPct, '#FF0000', '#333333');
+    ctx.textAlign = 'center';
+    ctx.fillText('WYVERN', CANVAS_WIDTH/2, 367);
+}
+
+function drawBar(x, y, w, h, pct, color, bgColor) {
+    ctx.fillStyle = bgColor;
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y, w * pct, h);
+    ctx.strokeStyle = 'white';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x, y, w, h);
+}
+
+function drawPauseScreen() {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    ctx.fillStyle = 'white';
+    ctx.font = '30px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('PAUSED', CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+}
+
+function drawWinScreen() {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    ctx.fillStyle = '#00FF00';
+    ctx.font = 'bold 40px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('QUEST CLEARED', CANVAS_WIDTH/2, 150);
+    
+    ctx.fillStyle = 'white';
+    ctx.font = '20px Arial';
+    ctx.fillText('The Wyvern has been slain!', CANVAS_WIDTH/2, 200);
+    ctx.fillText('Press R to Play Again', CANVAS_WIDTH/2, 250);
+}
+
+function drawLoseScreen() {
+    ctx.fillStyle = 'rgba(50, 0, 0, 0.8)';
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    ctx.fillStyle = '#FF0000';
+    ctx.font = 'bold 40px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('QUEST FAILED', CANVAS_WIDTH/2, 150);
+    
+    ctx.fillStyle = 'white';
+    ctx.font = '20px Arial';
+    ctx.fillText('You have fainted.', CANVAS_WIDTH/2, 200);
+    ctx.fillText('Press R to Retry', CANVAS_WIDTH/2, 250);
+}
+</file>
+
+<file name="lighting.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+
+export function setupLighting() {
+    // Ambient Light (Base environment light)
+    const ambientLight = new THREE.AmbientLight(0x404040, 0.6); // Soft white
+    gameState.scene.add(ambientLight);
+    gameState.lights.push(ambientLight);
+
+    // Hemisphere Light (Sky/Ground contrast)
+    const hemiLight = new THREE.HemisphereLight(0xffffbb, 0x080820, 0.5);
+    gameState.scene.add(hemiLight);
+    gameState.lights.push(hemiLight);
+
+    // Directional Light (The Sun)
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    dirLight.position.set(20, 50, 20);
+    dirLight.castShadow = true;
+    
+    // Shadow properties
+    dirLight.shadow.mapSize.width = 1024;
+    dirLight.shadow.mapSize.height = 1024;
+    const d = 50;
+    dirLight.shadow.camera.left = -d;
+    dirLight.shadow.camera.right = d;
+    dirLight.shadow.camera.top = d;
+    dirLight.shadow.camera.bottom = -d;
+    dirLight.shadow.camera.far = 3500;
+    dirLight.shadow.bias = -0.0001;
+
+    gameState.scene.add(dirLight);
+    gameState.lights.push(dirLight);
+}
+</file>
+
+<file name="entities.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+import { createColorMaterial } from './utils.js';
+
+// --- Base Entity ---
+class Entity {
+    constructor() {
+        this.mesh = new THREE.Group();
+        this.position = this.mesh.position;
+        this.velocity = new THREE.Vector3();
+        this.toRemove = false;
+    }
+
+    update(deltaTime) {}
+}
+
+// --- Player Class ---
+export class Player extends Entity {
+    constructor(x, y, z) {
+        super();
+        this.mesh.position.set(x, y, z);
+        this.radius = 1.0;
+        
+        // Stats
+        this.maxHealth = 100;
+        this.health = 100;
+        this.maxStamina = 100;
+        this.stamina = 100;
+        this.damage = 15;
+        this.potions = 3;
+        
+        // Movement
+        this.speed = 8.0;
+        this.rotationSpeed = 10.0;
+        this.forward = new THREE.Vector3(0, 0, 1);
+        
+        // State Machine
+        this.state = 'IDLE'; // IDLE, MOVE, ATTACK, DODGE, HURT, DEAD
+        this.stateTimer = 0;
+        this.invulnerable = false;
+        
+        // Combat flags
+        this.isHitboxActive = false;
+        this.hasHitThisFrame = false;
+
+        // Visuals construction
+        this.createVisuals();
+        
+        gameState.scene.add(this.mesh);
+    }
+
+    createVisuals() {
+        // Materials
+        const armorMat = createColorMaterial(0x4682B4); // Steel Blue
+        const skinMat = createColorMaterial(0xFFDAB9); // Peach Puff
+        const swordMat = createColorMaterial(0xC0C0C0); // Silver
+        
+        // Body
+        const bodyGeo = new THREE.BoxGeometry(0.8, 1.0, 0.5);
+        this.body = new THREE.Mesh(bodyGeo, armorMat);
+        this.body.position.y = 1.0;
+        this.body.castShadow = true;
+        this.mesh.add(this.body);
+        
+        // Head
+        const headGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+        this.head = new THREE.Mesh(headGeo, skinMat);
+        this.head.position.y = 1.75;
+        this.mesh.add(this.head);
+        
+        // Great Sword (Attached to back or hand)
+        const swordBladeGeo = new THREE.BoxGeometry(0.3, 2.5, 0.1);
+        const swordHandleGeo = new THREE.BoxGeometry(0.1, 0.8, 0.1);
+        this.sword = new THREE.Group();
+        
+        const blade = new THREE.Mesh(swordBladeGeo, swordMat);
+        blade.position.y = 1.25;
+        const handle = new THREE.Mesh(swordHandleGeo, createColorMaterial(0x8B4513));
+        handle.position.y = -0.4;
+        
+        this.sword.add(blade);
+        this.sword.add(handle);
+        
+        // Initial sword pos (on back)
+        this.sword.position.set(0, 1.5, -0.4);
+        this.sword.rotation.z = 0.5;
+        this.mesh.add(this.sword);
+    }
+
+    update(deltaTime) {
+        if (this.state === 'DEAD') return;
+
+        // Stamina regen
+        if (this.state !== 'DODGE' && this.stamina < this.maxStamina) {
+            this.stamina += 10 * deltaTime;
+            if (this.stamina > this.maxStamina) this.stamina = this.maxStamina;
+        }
+
+        // Apply Gravity
+        if (this.mesh.position.y > 0) {
+            this.velocity.add(gameState.gravity.clone().multiplyScalar(deltaTime * 60)); // Scale for dt
+        }
+
+        // Update Position based on velocity
+        this.mesh.position.add(this.velocity.clone().multiplyScalar(deltaTime));
+        
+        // Ground Collision
+        if (this.mesh.position.y < 0) {
+            this.mesh.position.y = 0;
+            this.velocity.y = 0;
+            this.velocity.x *= 0.8; // Friction
+            this.velocity.z *= 0.8;
+        } else {
+            // Air drag
+            this.velocity.x *= 0.95;
+            this.velocity.z *= 0.95;
+        }
+
+        // State Logic
+        switch(this.state) {
+            case 'IDLE':
+            case 'MOVE':
+                this.handleMovement(deltaTime);
+                this.handleActionInput();
+                break;
+            case 'ATTACK':
+                this.updateAttack(deltaTime);
+                break;
+            case 'DODGE':
+                this.updateDodge(deltaTime);
+                break;
+            case 'HURT':
+                this.updateHurt(deltaTime);
+                break;
+        }
+        
+        // Reset sword position if not attacking
+        if (this.state !== 'ATTACK') {
+             this.sword.position.lerp(new THREE.Vector3(0, 1.5, -0.4), 0.1);
+             this.sword.rotation.set(0, 0, 0.5);
+             // Make sword bob while running
+             if (this.state === 'MOVE') {
+                 this.sword.position.y += Math.sin(gameState.frameCount * 0.2) * 0.05;
+             }
+        }
+    }
+
+    handleMovement(deltaTime) {
+        const keys = gameState.keys;
+        const moveDir = new THREE.Vector3(0, 0, 0);
+
+        if (keys[87] || keys[38]) moveDir.z -= 1; // W / Up
+        if (keys[83] || keys[40]) moveDir.z += 1; // S / Down
+        if (keys[65] || keys[37]) moveDir.x -= 1; // A / Left
+        if (keys[68] || keys[39]) moveDir.x += 1; // D / Right
+
+        if (moveDir.lengthSq() > 0) {
+            this.state = 'MOVE';
+            moveDir.normalize();
+            
+            // Rotate towards movement
+            const targetRotation = Math.atan2(moveDir.x, moveDir.z);
+            // Smooth rotation
+            let rotDiff = targetRotation - this.mesh.rotation.y;
+            // Normalize angle to -PI to PI
+            while (rotDiff > Math.PI) rotDiff -= Math.PI * 2;
+            while (rotDiff < -Math.PI) rotDiff += Math.PI * 2;
+            
+            this.mesh.rotation.y += rotDiff * this.rotationSpeed * deltaTime;
+            
+            // Move
+            this.forward.set(Math.sin(this.mesh.rotation.y), 0, Math.cos(this.mesh.rotation.y));
+            const moveVec = this.forward.clone().multiplyScalar(this.speed * deltaTime);
+            this.mesh.position.add(moveVec);
+        } else {
+            this.state = 'IDLE';
+        }
+    }
+
+    handleActionInput() {
+        const keys = gameState.keys;
+        
+        // Attack (Space)
+        if (keys[32]) {
+            this.startAttack();
+        }
+        // Dodge (Shift)
+        else if (keys[16] && this.stamina >= 20) {
+            this.startDodge();
+        }
+        // Potion (Z)
+        else if (keys[90] && this.potions > 0 && this.health < this.maxHealth) {
+            this.usePotion();
+        }
+    }
+
+    startAttack() {
+        this.state = 'ATTACK';
+        this.stateTimer = 0;
+        this.isHitboxActive = false;
+        this.hasHitThisFrame = false;
+    }
+
+    updateAttack(deltaTime) {
+        this.stateTimer += deltaTime;
+        
+        // Simple Attack Animation: Swing sword down
+        // 0.0 - 0.2: Windup
+        // 0.2 - 0.4: Active Swing (Hitbox active)
+        // 0.4 - 0.8: Recovery
+        
+        if (this.stateTimer < 0.2) {
+            // Windup: Raise sword
+            this.sword.position.set(0.5, 2.5, 0.5);
+            this.sword.rotation.set(-0.5, 0, 0);
+        } else if (this.stateTimer < 0.4) {
+            // Swing
+            this.isHitboxActive = true;
+            const progress = (this.stateTimer - 0.2) / 0.2; // 0 to 1
+            const angle = lerp(-0.5, 2.5, progress);
+            this.sword.rotation.set(angle, 0, 0);
+            this.sword.position.set(0, 1.5, 1.5);
+        } else if (this.stateTimer < 0.8) {
+            // Recovery
+            this.isHitboxActive = false;
+            // Slowly return
+        } else {
+            // End attack
+            this.state = 'IDLE';
+        }
+    }
+
+    startDodge() {
+        this.state = 'DODGE';
+        this.stateTimer = 0;
+        this.stamina -= 20;
+        
+        // Dash impulse
+        const dashSpeed = 15.0;
+        this.velocity.add(this.forward.clone().multiplyScalar(dashSpeed));
+    }
+
+    updateDodge(deltaTime) {
+        this.stateTimer += deltaTime;
+        
+        // Roll animation logic (rotation mesh)
+        this.body.rotation.x += 15 * deltaTime;
+        
+        if (this.stateTimer > 0.5) {
+            this.state = 'IDLE';
+            this.body.rotation.x = 0;
+            this.velocity.set(0,0,0);
+        }
+    }
+    
+    usePotion() {
+        this.potions--;
+        this.health = Math.min(this.health + 50, this.maxHealth);
+        // Maybe add a drinking pause/animation?
+        // For responsiveness, instant heal but slow movement could be added.
+    }
+
+    updateHurt(deltaTime) {
+        this.stateTimer += deltaTime;
+        if (this.stateTimer > 0.4) {
+            this.state = 'IDLE';
+        }
+    }
+
+    takeDamage(amount) {
+        if (this.state === 'DODGE' || this.state === 'DEAD') return;
+        
+        this.health -= amount;
+        if (this.health <= 0) {
+            this.health = 0;
+            this.die();
+        } else {
+            this.state = 'HURT';
+            this.stateTimer = 0;
+        }
+    }
+    
+    die() {
+        this.state = 'DEAD';
+        this.mesh.rotation.x = -Math.PI / 2;
+        this.mesh.position.y = 0.5;
+        gameState.gamePhase = 'GAME_OVER_LOSE';
+    }
+}
+
+// --- Monster Class ---
+export class Monster extends Entity {
+    constructor(x, y, z) {
+        super();
+        this.mesh.position.set(x, y, z);
+        this.radius = 3.0; // Hitbox size
+        
+        // Stats
+        this.maxHealth = 500;
+        this.health = 500;
+        this.damage = 25;
+        
+        // State
+        this.state = 'IDLE'; // IDLE, CHASE, CHARGE, ATTACK, STUNNED
+        this.stateTimer = 0;
+        this.hasHitPlayer = false;
+        
+        this.createVisuals();
+        gameState.scene.add(this.mesh);
+    }
+
+    createVisuals() {
+        const skinMat = createColorMaterial(0x8B0000); // Dark Red
+        const wingMat = createColorMaterial(0x330000); // Very Dark Red
+        
+        // Body
+        const bodyGeo = new THREE.BoxGeometry(2.5, 2.5, 4.0);
+        this.body = new THREE.Mesh(bodyGeo, skinMat);
+        this.body.position.y = 2.5;
+        this.body.castShadow = true;
+        this.mesh.add(this.body);
+        
+        // Head
+        const headGeo = new THREE.BoxGeometry(1.5, 1.5, 2.5);
+        this.head = new THREE.Mesh(headGeo, skinMat);
+        this.head.position.set(0, 3.5, 3.5);
+        this.mesh.add(this.head);
+        
+        // Tail
+        const tailGeo = new THREE.BoxGeometry(1.0, 1.0, 4.0);
+        this.tail = new THREE.Mesh(tailGeo, skinMat);
+        this.tail.position.set(0, 2.0, -4.0);
+        this.mesh.add(this.tail);
+        
+        // Wings
+        const wingGeo = new THREE.BoxGeometry(5.0, 0.2, 3.0);
+        this.wings = new THREE.Mesh(wingGeo, wingMat);
+        this.wings.position.set(0, 4.0, 0);
+        this.mesh.add(this.wings);
+    }
+
+    update(deltaTime) {
+        if (!gameState.player || gameState.player.state === 'DEAD') return;
+        if (this.health <= 0) return;
+
+        const distToPlayer = this.mesh.position.distanceTo(gameState.player.mesh.position);
+        
+        // Look at player (only rotate Y)
+        if (this.state !== 'CHARGE') { // Don't turn while charging
+            const targetPos = gameState.player.mesh.position.clone();
+            const lookPos = new THREE.Vector3(targetPos.x, this.mesh.position.y, targetPos.z);
+            this.mesh.lookAt(lookPos);
+        }
+
+        // State Machine
+        switch(this.state) {
+            case 'IDLE':
+                this.stateTimer += deltaTime;
+                if (this.stateTimer > 2.0) {
+                    this.decideNextMove(distToPlayer);
+                }
+                break;
+            case 'CHASE':
+                this.updateChase(deltaTime, distToPlayer);
+                break;
+            case 'CHARGE':
+                this.updateCharge(deltaTime);
+                break;
+            case 'ATTACK':
+                this.updateAttack(deltaTime);
+                break;
+            case 'STUNNED':
+                this.stateTimer += deltaTime;
+                if (this.stateTimer > 2.0) this.state = 'IDLE';
+                break;
+        }
+
+        // Animations (breathing/flap)
+        this.wings.rotation.z = Math.sin(gameState.frameCount * 0.1) * 0.2;
+        this.tail.rotation.y = Math.sin(gameState.frameCount * 0.1) * 0.3;
+    }
+
+    decideNextMove(dist) {
+        this.stateTimer = 0;
+        const roll = Math.random();
+        
+        if (dist > 25) {
+            this.state = 'CHASE';
+        } else if (dist > 8) {
+            if (roll < 0.6) this.state = 'CHARGE';
+            else this.state = 'CHASE';
+        } else {
+            if (roll < 0.7) this.state = 'ATTACK'; // Bite
+            else this.state = 'IDLE'; // Pause
+        }
+    }
+
+    updateChase(deltaTime, dist) {
+        if (dist < 6) {
+            this.state = 'ATTACK';
+            this.stateTimer = 0;
+            return;
+        }
+        // Move forward
+        const moveSpeed = 6.0;
+        const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(this.mesh.quaternion);
+        this.mesh.position.add(forward.multiplyScalar(moveSpeed * deltaTime));
+        
+        // Walking animation
+        this.body.position.y = 2.5 + Math.sin(gameState.frameCount * 0.3) * 0.2;
+    }
+
+    updateCharge(deltaTime) {
+        this.stateTimer += deltaTime;
+        const chargeSpeed = 18.0;
+        
+        // Windup
+        if (this.stateTimer < 1.0) {
+            // Roar/Stomp animation
+            this.head.position.y = 3.5 + Math.sin(this.stateTimer * 20) * 0.2;
+        } 
+        // Charge
+        else if (this.stateTimer < 2.5) {
+            const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(this.mesh.quaternion);
+            this.mesh.position.add(forward.multiplyScalar(chargeSpeed * deltaTime));
+            this.hasHitPlayer = false; // logic handled in physics.js
+        }
+        // Recover
+        else if (this.stateTimer < 3.5) {
+            // Slide to stop
+        } else {
+            this.state = 'IDLE';
+            this.stateTimer = 0;
+        }
+    }
+
+    updateAttack(deltaTime) {
+        this.stateTimer += deltaTime;
+        
+        // Bite Animation
+        if (this.stateTimer < 0.5) {
+            // Windup head back
+            this.head.position.z = 2.5;
+        } else if (this.stateTimer < 0.8) {
+            // Snap forward
+            this.head.position.z = 5.0;
+            this.hasHitPlayer = false; // Logic in physics.js
+        } else if (this.stateTimer < 1.5) {
+            // Return
+            this.head.position.z = 3.5;
+        } else {
+            this.state = 'IDLE';
+            this.stateTimer = 0;
+        }
+    }
+
+    takeDamage(amount) {
+        this.health -= amount;
+        
+        // Visual flash
+        this.body.material.emissive.setHex(0xff0000);
+        setTimeout(() => { 
+            if(this.body) this.body.material.emissive.setHex(0x000000); 
+        }, 100);
+
+        if (this.health <= 0) {
+            this.die();
+        } else {
+            // Small chance to flinch/stun
+            if (Math.random() < 0.2 && this.state !== 'STUNNED') {
+                this.state = 'STUNNED';
+                this.stateTimer = 0;
+            }
+        }
+    }
+
+    die() {
+        this.toRemove = true;
+        gameState.scene.remove(this.mesh);
+        gameState.gamePhase = 'GAME_OVER_WIN';
+    }
+}
+
+export class Environment {
+    constructor() {
+        // Ground
+        const groundGeo = new THREE.PlaneGeometry(100, 100);
+        const groundMat = new THREE.MeshStandardMaterial({ color: 0x228B22 }); // Forest Green
+        this.ground = new THREE.Mesh(groundGeo, groundMat);
+        this.ground.rotation.x = -Math.PI / 2;
+        this.ground.receiveShadow = true;
+        gameState.scene.add(this.ground);
+        
+        // Trees (Simple Cylinders/Cones)
+        this.trees = [];
+        for (let i = 0; i < 20; i++) {
+            const x = (Math.random() - 0.5) * 80;
+            const z = (Math.random() - 0.5) * 80;
+            
+            // Don't place near center
+            if (Math.abs(x) < 15 && Math.abs(z) < 15) continue;
+            
+            const tree = new THREE.Group();
+            const trunk = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.5, 0.8, 3, 8),
+                createColorMaterial(0x8B4513)
+            );
+            trunk.position.y = 1.5;
+            
+            const leaves = new THREE.Mesh(
+                new THREE.ConeGeometry(3, 6, 8),
+                createColorMaterial(0x006400)
+            );
+            leaves.position.y = 4.5;
+            
+            tree.add(trunk);
+            tree.add(leaves);
+            tree.position.set(x, 0, z);
+            gameState.scene.add(tree);
+        }
+        
+        // Boundary Stones
+        // (Visual only for now, player stays in arena mostly by gameplay flow)
+    }
+}
+</file>
+
+<file name="utils.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// Random number generator wrapper (will use seedrandom globally)
+export function randomRange(min, max) {
+    return Math.random() * (max - min) + min;
+}
+
+// Simple easing
+export function lerp(start, end, amt) {
+    return (1 - amt) * start + amt * end;
+}
+
+// Check intersection between two spheres
+export function checkSphereIntersection(pos1, radius1, pos2, radius2) {
+    const distSq = pos1.distanceToSquared(pos2);
+    const radSum = radius1 + radius2;
+    return distSq < (radSum * radSum);
+}
+
+// Check intersection between box (AABB) and sphere
+// Simplified: treat box as sphere for broad phase, then closer check if needed
+// For this game, sphere-sphere is mostly sufficient for dynamic entities
+export function checkAABBIntersection(boxMin, boxMax, point) {
+    return (
+        point.x >= boxMin.x && point.x <= boxMax.x &&
+        point.y >= boxMin.y && point.y <= boxMax.y &&
+        point.z >= boxMin.z && point.z <= boxMax.z
+    );
+}
+
+export function createColorMaterial(colorHex) {
+    return new THREE.MeshStandardMaterial({ 
+        color: colorHex, 
+        roughness: 0.7, 
+        metalness: 0.1 
+    });
+}
+</file>
+
+<file name="camera.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+
+export function setupCamera() {
+    gameState.camera = new THREE.PerspectiveCamera(
+        60, // FOV
+        600 / 400, // Aspect
+        0.1, // Near
+        1000 // Far
+    );
+    gameState.camera.position.copy(gameState.cameraOffset);
+    gameState.camera.lookAt(0, 0, 0);
+}
+
+export function updateCamera(deltaTime) {
+    if (!gameState.player) return;
+
+    // Target position (Player position)
+    const targetPos = gameState.player.mesh.position.clone();
+    
+    // Desired camera position based on offset
+    // In a full game, we might rotate offset based on mouse, but here fixed angle is fine for keyboard only
+    const desiredPos = targetPos.clone().add(gameState.cameraOffset);
+
+    // Smoothly interpolate current camera position to desired position
+    const smoothFactor = 5.0 * deltaTime;
+    gameState.camera.position.lerp(desiredPos, smoothFactor);
+
+    // Smoothly update look target
+    gameState.cameraTarget.lerp(targetPos, smoothFactor);
+    gameState.camera.lookAt(gameState.cameraTarget);
+}
+
+export function applyCameraShake(intensity) {
+    const shake = new THREE.Vector3(
+        (Math.random() - 0.5) * intensity,
+        (Math.random() - 0.5) * intensity,
+        (Math.random() - 0.5) * intensity
+    );
+    gameState.camera.position.add(shake);
+}
+</file>
+
+<file name="physics.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+import { checkSphereIntersection } from './utils.js';
+
+export function updatePhysics(deltaTime) {
+    // Ground collision is handled inside entity updates usually for simple games,
+    // but we can do broad phase checks here.
+}
+
+export function handleCollisions() {
+    if (!gameState.player || !gameState.monster) return;
+
+    const player = gameState.player;
+    const monster = gameState.monster;
+
+    // 1. Player Weapon vs Monster
+    if (player.state === 'ATTACK' && player.isHitboxActive) {
+        // Simple hitbox check: Sphere in front of player
+        const attackPos = player.mesh.position.clone().add(
+            player.forward.clone().multiplyScalar(2.0)
+        );
+        const attackRadius = 2.5;
+
+        // Check against monster body
+        if (checkSphereIntersection(attackPos, attackRadius, monster.mesh.position, monster.radius)) {
+            if (!player.hasHitThisFrame) {
+                monster.takeDamage(player.damage);
+                player.hasHitThisFrame = true; // Prevent multi-hit per swing
+                
+                // Visual feedback
+                createHitParticle(attackPos);
+            }
+        }
+    }
+
+    // 2. Monster Attack vs Player
+    if (monster.state === 'ATTACK' || monster.state === 'CHARGE') {
+        // Only hit if player is not dodging (invincibility frames)
+        if (player.state !== 'DODGE') {
+            const dist = player.mesh.position.distanceTo(monster.mesh.position);
+            const hitThreshold = monster.state === 'CHARGE' ? 3.5 : 4.0; // Charge is body slam, Attack is bite/swipe
+
+            if (dist < hitThreshold) {
+                if (!monster.hasHitPlayer) {
+                    player.takeDamage(monster.damage);
+                    monster.hasHitPlayer = true;
+                    
+                    // Knockback
+                    const kbDir = player.mesh.position.clone().sub(monster.mesh.position).normalize();
+                    kbDir.y = 0.5; // Slight lift
+                    player.velocity.add(kbDir.multiplyScalar(15));
+                }
+            }
+        }
+    }
+}
+
+function createHitParticle(pos) {
+    // Simple visual effect for hit (flash)
+    // Since we can't create complex particle systems easily without heavy code, 
+    // we spawn a temporary mesh that fades out
+    const geom = new THREE.SphereGeometry(1, 8, 8);
+    const mat = new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 1 });
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.position.copy(pos);
+    gameState.scene.add(mesh);
+    
+    // Add to entities to be updated/removed
+    gameState.entities.push({
+        mesh: mesh,
+        life: 0.2,
+        update: function(dt) {
+            this.life -= dt;
+            this.mesh.scale.multiplyScalar(1.1);
+            this.mesh.material.opacity = this.life * 5;
+            if (this.life <= 0) {
+                gameState.scene.remove(this.mesh);
+                return true; // remove me
+            }
+            return false;
+        }
+    });
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

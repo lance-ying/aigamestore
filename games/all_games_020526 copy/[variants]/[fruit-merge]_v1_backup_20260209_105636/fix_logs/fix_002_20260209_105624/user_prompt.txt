@@ -1,0 +1,1348 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+the pause functionality is kind of glitchy, like when I hold esc, it spams inbetween the pause and unpausen state, can you fix that
+
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Game</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #2c3e50; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; font-family: 'Comic Sans MS', 'Chalkboard SE', 'Segoe UI', sans-serif; }
+      canvas { border: 4px solid #fff; border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.4); }
+      #gameInfo { text-align: center; margin-bottom: 15px; }
+      h1 { color: #FFB6C1; margin: 0 0 8px 0; font-size: 42px; font-weight: 800; text-shadow: 3px 3px 0px rgba(0,0,0,0.2); -webkit-text-stroke: 1px #fff; }
+      p { color: #e0e0e0; font-size: 15px; margin: 4px 0; max-width: 600px; line-height: 1.5; font-weight: 500; }
+      .controls { font-size: 14px; color: #aaa; background: rgba(0,0,0,0.2); padding: 5px 15px; border-radius: 15px; display: inline-block; margin-top: 5px; }
+    </style>
+  </head>
+  <body>
+    <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Drop and merge identical fruits to create bigger ones, aiming for the ultimate watermelon. Strategically position fruits to combine them into the next type. Keep fruits below the danger line to avoid game over and achieve the highest score!</p>
+    <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Left/A: Move Left | Arrow Right/D: Move Right | Arrow Down/S: Drop Faster | SPACE: Quick Drop | ENTER: Start Game | ESC: Pause Game | R: Restart</p>
+    <canvas id="gameCanvas" width="600" height="400"></canvas>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/seedrandom/3.0.5/seedrandom.min.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+// globals.js - Global constants and state management
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const CONTAINER_WIDTH = 300;
+export const CONTAINER_HEIGHT = 350;
+export const CONTAINER_X = CANVAS_WIDTH / 2;
+export const CONTAINER_Y = CANVAS_HEIGHT - CONTAINER_HEIGHT / 2 - 10;
+export const CONTAINER_WALL_THICKNESS = 10;
+
+// Calculated container top Y for reference
+const CONTAINER_TOP_Y = CONTAINER_Y - CONTAINER_HEIGHT / 2;
+
+// Default danger line (fallback)
+export const DANGER_LINE_Y = CONTAINER_TOP_Y + 60;
+export const DANGER_LINE_GRACE_FRAMES = 120; // 2 seconds at 60fps
+
+// Level definitions
+// dangerY: Y position of danger line. Smaller value = higher on screen = easier (more space).
+// CONTAINER_TOP_Y is approx 40.
+export const LEVELS = [
+  { name: "Easy I", threshold: 0, color: '#87CEEB', dangerY: CONTAINER_TOP_Y + 10 },      // Very high (Easy)
+  { name: "Easy II", threshold: 200, color: '#98FB98', dangerY: CONTAINER_TOP_Y + 30 },   // High
+  { name: "Medium I", threshold: 500, color: '#DDA0DD', dangerY: CONTAINER_TOP_Y + 60 },  // Standard
+  { name: "Medium II", threshold: 1000, color: '#F0E68C', dangerY: CONTAINER_TOP_Y + 80 },// Lower
+  { name: "Hard I", threshold: 2000, color: '#FFA07A', dangerY: CONTAINER_TOP_Y + 100 },  // Low (Hard)
+  { name: "Hard II", threshold: 3500, color: '#FF6347', dangerY: CONTAINER_TOP_Y + 120 }  // Very Low (Harder)
+];
+
+// Fruit types with sizes and colors
+// Added restitution (bounciness) and friction (texture) to vary physics behavior
+export const FRUIT_TYPES = [
+  { name: 'cherry', radius: 15, color: '#ff0000', score: 1, restitution: 0.9, friction: 0.001 },
+  { name: 'strawberry', radius: 20, color: '#ff1744', score: 3, restitution: 0.8, friction: 0.002 },
+  { name: 'grape', radius: 25, color: '#9c27b0', score: 6, restitution: 0.7, friction: 0.005 },
+  { name: 'orange', radius: 30, color: '#ff9800', score: 10, restitution: 0.6, friction: 0.01 },
+  { name: 'apple', radius: 35, color: '#f44336', score: 15, restitution: 0.5, friction: 0.05 },
+  { name: 'pear', radius: 40, color: '#cddc39', score: 21, restitution: 0.4, friction: 0.1 },
+  { name: 'peach', radius: 45, color: '#ffb74d', score: 28, restitution: 0.3, friction: 0.2 },
+  { name: 'pineapple', radius: 50, color: '#ffd54f', score: 36, restitution: 0.25, friction: 0.3 },
+  { name: 'melon', radius: 55, color: '#4caf50', score: 45, restitution: 0.2, friction: 0.4 },
+  { name: 'watermelon', radius: 60, color: '#1b5e20', score: 55, restitution: 0.1, friction: 0.5 }
+];
+
+export const gameState = {
+  player: null,
+  entities: [],
+  score: 0,
+  highScore: 0,
+  currentLevelIndex: 0,
+  gamePhase: "START",
+  engine: null,
+  world: null,
+  canvas: null,
+  ctx: null,
+  currentFruit: null,
+  currentFruitType: 0,
+  nextFruitType: 0,
+  dropX: CANVAS_WIDTH / 2,
+  isDropping: false,
+  frameCount: 0,
+  dangerFrameCount: 0,
+  dangerLineY: DANGER_LINE_Y,
+  dangerGraceFrames: DANGER_LINE_GRACE_FRAMES,
+  container: null,
+  walls: [],
+  mergeQueue: [],
+  levelUpEffectFrames: 0,
+  pendingLevelIndex: 0,
+  autoRestartTimeoutId: null, // New: Stores the ID of the setTimeout for auto-restart
+  autoRestartScheduled: false // New: Prevents multiple auto-restarts from being scheduled
+};
+
+export const logs = {
+  game_info: [],
+  player_info: [],
+  inputs: []
+};
+
+window.logs = logs;
+
+export function getGameState() {
+  return gameState;
+}
+
+window.getGameState = getGameState;
+</file>
+
+<file name="game.js">
+// game.js - Main game logic and initialization
+
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Engine, World, Bodies, Body, Runner } = Matter;
+
+import { 
+  gameState, 
+  logs,
+  CANVAS_WIDTH,
+  CANVAS_HEIGHT,
+  CONTAINER_WIDTH,
+  CONTAINER_HEIGHT,
+  CONTAINER_X,
+  CONTAINER_Y,
+  CONTAINER_WALL_THICKNESS,
+  FRUIT_TYPES,
+  DANGER_LINE_Y,
+  DANGER_LINE_GRACE_FRAMES,
+  LEVELS
+} from './globals.js';
+
+import { Fruit, Container } from './entities.js';
+import { setupPhysics, processMerges, checkDangerZone } from './physics.js';
+import { setupInput, updateInput } from './input.js';
+import { render } from './render.js';
+
+// Helper function to clear auto-restart related flags and timers
+function _clearAutoRestartFlags() {
+  if (gameState.autoRestartTimeoutId) {
+    clearTimeout(gameState.autoRestartTimeoutId);
+    gameState.autoRestartTimeoutId = null;
+  }
+  gameState.autoRestartScheduled = false;
+}
+
+// Initialize the game
+function init() {
+  // Seed random for reproducibility
+  Math.seedrandom(42);
+  
+  // Get canvas and context
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  
+  gameState.canvas = canvas;
+  gameState.ctx = ctx;
+  
+  // Create Matter.js engine
+  const engine = Engine.create();
+  const world = engine.world;
+  world.gravity.y = 1;
+  
+  gameState.engine = engine;
+  gameState.world = world;
+  
+  // Create container
+  const container = new Container(
+    CONTAINER_X,
+    CONTAINER_Y,
+    CONTAINER_WIDTH,
+    CONTAINER_HEIGHT,
+    CONTAINER_WALL_THICKNESS
+  );
+  gameState.container = container;
+  
+  // Create container walls
+  const leftWall = Bodies.rectangle(
+    CONTAINER_X - CONTAINER_WIDTH / 2 - CONTAINER_WALL_THICKNESS / 2,
+    CONTAINER_Y,
+    CONTAINER_WALL_THICKNESS,
+    CONTAINER_HEIGHT,
+    { isStatic: true, label: 'wall' }
+  );
+  
+  const rightWall = Bodies.rectangle(
+    CONTAINER_X + CONTAINER_WIDTH / 2 + CONTAINER_WALL_THICKNESS / 2,
+    CONTAINER_Y,
+    CONTAINER_WALL_THICKNESS,
+    CONTAINER_HEIGHT,
+    { isStatic: true, label: 'wall' }
+  );
+  
+  const bottomWall = Bodies.rectangle(
+    CONTAINER_X,
+    CONTAINER_Y + CONTAINER_HEIGHT / 2 + CONTAINER_WALL_THICKNESS / 2,
+    CONTAINER_WIDTH + CONTAINER_WALL_THICKNESS * 2,
+    CONTAINER_WALL_THICKNESS,
+    { isStatic: true, label: 'wall' }
+  );
+  
+  gameState.walls = [leftWall, rightWall, bottomWall];
+  World.add(world, gameState.walls);
+  
+  // Setup physics
+  setupPhysics();
+  
+  // Setup input
+  setupInput();
+  
+  // Initialize danger line position (default)
+  gameState.dangerLineY = LEVELS[0].dangerY || DANGER_LINE_Y;
+  gameState.dangerGraceFrames = DANGER_LINE_GRACE_FRAMES;
+  
+  // Log initial state
+  logs.game_info.push({
+    game_status: 'START',
+    data: {},
+    framecount: 0,
+    timestamp: Date.now()
+  });
+  
+  // Start game loop
+  gameLoop();
+}
+
+export function startGame() {
+  _clearAutoRestartFlags(); // Clear any pending auto-restart from a previous game
+
+  gameState.gamePhase = 'PLAYING';
+  gameState.score = 0;
+  gameState.currentLevelIndex = 0;
+  gameState.frameCount = 0;
+  gameState.dangerFrameCount = 0;
+  gameState.isDropping = false;
+  gameState.dropX = CANVAS_WIDTH / 2;
+  gameState.mergeQueue = [];
+  gameState.levelUpEffectFrames = 0;
+  gameState.pendingLevelIndex = 0;
+  
+  // Set initial danger line
+  gameState.dangerLineY = LEVELS[0].dangerY || DANGER_LINE_Y;
+  
+  // Clear all entities
+  gameState.entities.forEach(entity => {
+    if (entity instanceof Fruit) {
+      World.remove(gameState.world, entity.body);
+    }
+  });
+  gameState.entities = [];
+  
+  // Initialize both current and next fruit types
+  gameState.currentFruitType = Math.floor(Math.random() * Math.min(5, FRUIT_TYPES.length));
+  gameState.nextFruitType = Math.floor(Math.random() * Math.min(5, FRUIT_TYPES.length));
+  gameState.currentFruit = true;
+  
+  logs.game_info.push({
+    game_status: 'PLAYING',
+    data: {},
+    framecount: gameState.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function pauseGame() {
+  gameState.gamePhase = 'PAUSED';
+  
+  logs.game_info.push({
+    game_status: 'PAUSED',
+    data: {},
+    framecount: gameState.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function restartGame() { // This is the manual restart to START screen
+  _clearAutoRestartFlags(); // Clear any pending auto-restart if manual restart occurs
+
+  gameState.gamePhase = 'START';
+  
+  // Clear all entities
+  gameState.entities.forEach(entity => {
+    if (entity instanceof Fruit) {
+      World.remove(gameState.world, entity.body);
+    }
+  });
+  gameState.entities = [];
+  gameState.mergeQueue = [];
+  
+  // Reset level info
+  gameState.currentLevelIndex = 0;
+  gameState.dangerLineY = LEVELS[0].dangerY || DANGER_LINE_Y;
+  gameState.levelUpEffectFrames = 0;
+  gameState.pendingLevelIndex = 0;
+  
+  logs.game_info.push({
+    game_status: 'START',
+    data: {},
+    framecount: gameState.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function dropCurrentFruit(quickDrop) {
+  if (gameState.isDropping || !gameState.currentFruit) return;
+  
+  gameState.isDropping = true;
+  
+  // Spawn fruit at y=80 (safely inside container) instead of y=50
+  const spawnY = 80;
+  
+  // Use the current fruit type for dropping
+  const fruit = new Fruit(gameState.dropX, spawnY, gameState.currentFruitType);
+  
+  // If quick drop, give it initial velocity
+  if (quickDrop) {
+    Body.setVelocity(fruit.body, { x: 0, y: 8 });
+  }
+  
+  World.add(gameState.world, fruit.body);
+  gameState.entities.push(fruit);
+  
+  logs.player_info.push({
+    screen_x: gameState.dropX,
+    screen_y: spawnY,
+    game_x: fruit.body.position.x,
+    game_y: fruit.body.position.y,
+    framecount: gameState.frameCount,
+    timestamp: Date.now()
+  });
+  
+  // Move next fruit to current, and generate new next fruit
+  gameState.currentFruitType = gameState.nextFruitType;
+  gameState.nextFruitType = Math.floor(Math.random() * Math.min(5, FRUIT_TYPES.length));
+  
+  // Wait a moment before allowing next drop
+  setTimeout(() => {
+    gameState.isDropping = false;
+  }, 500);
+}
+
+function completeLevelTransition() {
+  const nextLevelIndex = gameState.pendingLevelIndex;
+  
+  // Actually perform the level transition
+  gameState.currentLevelIndex = nextLevelIndex;
+  
+  // Update danger line
+  if (LEVELS[nextLevelIndex].dangerY) {
+    gameState.dangerLineY = LEVELS[nextLevelIndex].dangerY;
+  } else {
+    gameState.dangerLineY = DANGER_LINE_Y;
+  }
+
+  // Clear all fruits for the new level
+  gameState.entities.forEach(entity => {
+    if (entity instanceof Fruit) {
+      World.remove(gameState.world, entity.body);
+    }
+  });
+  gameState.entities = [];
+  
+  // Reset to playing phase
+  gameState.gamePhase = 'PLAYING';
+  gameState.isDropping = false;
+  
+  // Log level up completion
+  logs.game_info.push({
+    game_status: 'LEVEL_UP_COMPLETE',
+    data: { 
+      level: LEVELS[nextLevelIndex].name, 
+      score: gameState.score,
+      level_index: nextLevelIndex
+    },
+    framecount: gameState.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function updateGame() {
+  if (gameState.gamePhase === 'LEVEL_UP_EFFECT') {
+    // Handle level up effect timer
+    gameState.levelUpEffectFrames--;
+    if (gameState.levelUpEffectFrames <= 0) {
+      completeLevelTransition();
+    }
+    return;
+  }
+  
+  if (gameState.gamePhase !== 'PLAYING') return;
+  
+  gameState.frameCount++;
+  
+  // Update input
+  updateInput();
+  
+  // Process merges (now happens automatically in collision handler)
+  processMerges();
+  
+  // Check danger zone
+  checkDangerZone();
+  
+  // Log player info periodically
+  if (gameState.frameCount % 60 === 0 && gameState.entities.length > 0) {
+    const playerFruit = gameState.entities[0];
+    if (playerFruit instanceof Fruit) {
+      logs.player_info.push({
+        screen_x: playerFruit.body.position.x,
+        screen_y: playerFruit.body.position.y,
+        game_x: playerFruit.body.position.x,
+        game_y: playerFruit.body.position.y,
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+}
+
+function gameLoop() {
+  requestAnimationFrame(gameLoop);
+  
+  // Update physics (but not during level up effect to freeze the game)
+  if (gameState.gamePhase === 'PLAYING') {
+    Engine.update(gameState.engine, 1000 / 60);
+    updateGame();
+  } else if (gameState.gamePhase === 'LEVEL_UP_EFFECT') {
+    // Still update the effect timer
+    updateGame();
+  }
+  
+  // Render
+  render();
+}
+
+// Start the game
+init();
+
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : window.gameState;
+  if (state) {
+    state.currentLevel = levelNum;
+    if (typeof loadLevel === 'function') {
+      loadLevel(levelNum);
+    } else if (typeof initializeLevel === 'function') {
+      initializeLevel(levelNum);
+    }
+    if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+</file>
+
+<file name="render.js">
+// render.js - Rendering functions
+
+import { 
+  gameState, 
+  CANVAS_WIDTH, 
+  CANVAS_HEIGHT, 
+  CONTAINER_WIDTH,
+  CONTAINER_X,
+  CONTAINER_Y,
+  FRUIT_TYPES,
+  DANGER_LINE_GRACE_FRAMES,
+  LEVELS
+} from './globals.js';
+import { Fruit } from './entities.js';
+
+// Font configuration
+const FONT_MAIN = 'bold 24px "Comic Sans MS", "Chalkboard SE", sans-serif';
+const FONT_LARGE = 'bold 56px "Comic Sans MS", "Chalkboard SE", sans-serif';
+const FONT_MEDIUM = 'bold 32px "Comic Sans MS", "Chalkboard SE", sans-serif';
+const FONT_SMALL = 'bold 16px "Comic Sans MS", "Chalkboard SE", sans-serif';
+
+export function render() {
+  const ctx = gameState.ctx;
+  
+  // Clear canvas with current level background color
+  const currentLevel = LEVELS[gameState.currentLevelIndex] || LEVELS[0];
+  ctx.fillStyle = currentLevel.color;
+  ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Add a subtle pattern (polka dots) for cartoon feel
+  ctx.save();
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+  for (let x = 0; x < CANVAS_WIDTH; x += 20) {
+    for (let y = 0; y < CANVAS_HEIGHT; y += 20) {
+      if ((x + y) % 40 === 0) {
+        ctx.beginPath();
+        ctx.arc(x, y, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+  ctx.restore();
+  
+  if (gameState.gamePhase === 'START') {
+    renderStartScreen(ctx);
+  } else if (gameState.gamePhase === 'PLAYING' || gameState.gamePhase === 'PAUSED' || gameState.gamePhase === 'LEVEL_UP_EFFECT') {
+    renderGameplay(ctx);
+    if (gameState.gamePhase === 'PAUSED') {
+      renderPauseOverlay(ctx);
+    } else if (gameState.gamePhase === 'LEVEL_UP_EFFECT') {
+      renderLevelUpEffect(ctx);
+    }
+  } else if (gameState.gamePhase === 'GAME_OVER_WIN' || gameState.gamePhase === 'GAME_OVER_LOSE') {
+    renderGameplay(ctx);
+    renderGameOverScreen(ctx);
+  }
+}
+
+function renderStartScreen(ctx) {
+  // Gradient background
+  const gradient = ctx.createLinearGradient(0, 0, 0, CANVAS_HEIGHT);
+  gradient.addColorStop(0, '#FFE5B4');
+  gradient.addColorStop(1, '#FFB6C1');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Main message: "press enter to begin"
+  ctx.save();
+  ctx.fillStyle = '#FF6B6B'; // Using the old title color
+  ctx.font = FONT_MEDIUM; // Using a medium font size
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('press enter to begin', CANVAS_WIDTH / 2, 80); // Moved to main title position
+  ctx.restore();
+  
+  // Instructions box
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+  ctx.strokeStyle = '#FFB6C1';
+  ctx.lineWidth = 4;
+  const boxX = CANVAS_WIDTH / 2 - 250;
+  const boxY = 120; // Adjusted Y position to move up with the title
+  const boxWidth = 500;
+  const boxHeight = 80; // Adjusted height for fewer lines
+  
+  // Rounded rect for box
+  ctx.beginPath();
+  ctx.roundRect(boxX, boxY, boxWidth, boxHeight, 20);
+  ctx.fill();
+  ctx.stroke();
+  
+  // Instructions
+  ctx.fillStyle = '#444';
+  ctx.font = '16px "Comic Sans MS", sans-serif';
+  ctx.textAlign = 'center';
+  
+  const instructions = [
+    '← → or A/D: Move  |  ↓ or S: Drop  |  SPACE: Quick drop',
+    'ESC: Pause  |  Keep fruits below the danger line!',
+  ];
+  
+  instructions.forEach((line, i) => {
+    const y = boxY + 30 + i * 28; // Adjusted starting Y within the box
+    ctx.fillText(line, CANVAS_WIDTH / 2, y);
+  });
+  
+  // Draw sample fruits using the new visual helper
+  const sampleY = 380;
+  const startX = 75;
+  const spacing = 55;
+  
+  for (let i = 0; i < Math.min(10, FRUIT_TYPES.length); i++) {
+    const fruit = FRUIT_TYPES[i];
+    const x = startX + i * spacing;
+    const radius = fruit.radius * 0.45;
+    
+    // Use the shared visual helper
+    Fruit.drawVisuals(ctx, x, sampleY, radius, fruit.color);
+  }
+}
+
+function renderGameplay(ctx) {
+  // Draw container
+  if (gameState.container) {
+    gameState.container.draw(ctx);
+  }
+  
+  // Draw danger line (use dynamic dangerLineY)
+  ctx.strokeStyle = gameState.dangerFrameCount > 0 ? '#ff0000' : 'rgba(255, 0, 0, 0.5)';
+  ctx.lineWidth = 4;
+  ctx.setLineDash([15, 10]);
+  ctx.beginPath();
+  ctx.moveTo(CONTAINER_X - CONTAINER_WIDTH / 2, gameState.dangerLineY);
+  ctx.lineTo(CONTAINER_X + CONTAINER_WIDTH / 2, gameState.dangerLineY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  
+  // Draw danger warning
+  if (gameState.dangerFrameCount > 0) {
+    const progress = gameState.dangerFrameCount / DANGER_LINE_GRACE_FRAMES;
+    ctx.fillStyle = `rgba(255, 0, 0, ${0.3 + progress * 0.4})`;
+    ctx.fillRect(
+      CONTAINER_X - CONTAINER_WIDTH / 2,
+      CONTAINER_Y - gameState.container.height / 2,
+      CONTAINER_WIDTH,
+      60
+    );
+    
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 24px "Comic Sans MS", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.shadowColor = 'black';
+    ctx.shadowBlur = 4;
+    ctx.fillText('DANGER!', CONTAINER_X, gameState.dangerLineY - 30);
+    ctx.shadowBlur = 0;
+  }
+  
+  // Draw all fruits
+  gameState.entities.forEach(entity => {
+    if (entity instanceof Fruit) {
+      entity.draw(ctx);
+    }
+  });
+  
+  // Draw current fruit preview (the one being positioned)
+  if (gameState.currentFruit && !gameState.isDropping && gameState.gamePhase === 'PLAYING') {
+    const fruit = FRUIT_TYPES[gameState.currentFruitType];
+    const previewY = 80;
+    
+    // Drop guide line
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([8, 8]);
+    ctx.beginPath();
+    ctx.moveTo(gameState.dropX, previewY + fruit.radius);
+    ctx.lineTo(gameState.dropX, CONTAINER_Y + gameState.container.height / 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    
+    // Draw the fruit visuals
+    Fruit.drawVisuals(ctx, gameState.dropX, previewY, fruit.radius, fruit.color);
+  }
+  
+  // Draw UI
+  ctx.fillStyle = '#333';
+  ctx.textAlign = 'left';
+  
+  // Score Box
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.beginPath();
+  ctx.roundRect(5, 5, 150, 120, 10);
+  ctx.fill();
+  
+  ctx.fillStyle = '#333';
+  ctx.font = FONT_MAIN;
+  ctx.fillText(`Score: ${gameState.score}`, 15, 35);
+  
+  ctx.font = FONT_SMALL;
+  ctx.fillText(`High: ${gameState.highScore}`, 15, 60);
+  
+  // Display Level and Target Score
+  const currentLevel = LEVELS[gameState.currentLevelIndex] || LEVELS[0];
+  const nextLevel = LEVELS[gameState.currentLevelIndex + 1];
+  
+  ctx.font = 'bold 20px "Comic Sans MS", sans-serif';
+  ctx.fillStyle = '#2c3e50';
+  ctx.fillText(`Level: ${currentLevel.name}`, 15, 90);
+  
+  if (nextLevel) {
+    ctx.font = FONT_SMALL;
+    ctx.fillStyle = '#555';
+    ctx.fillText(`Target: ${nextLevel.threshold}`, 15, 115);
+  } else {
+    ctx.font = FONT_SMALL;
+    ctx.fillStyle = '#555';
+    ctx.fillText(`Max Level`, 15, 115);
+  }
+  
+  // Next fruit preview box
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.beginPath();
+  ctx.roundRect(CANVAS_WIDTH - 90, 5, 85, 90, 10);
+  ctx.fill();
+
+  ctx.textAlign = 'center';
+  ctx.font = FONT_SMALL;
+  ctx.fillStyle = '#333';
+  ctx.fillText('Next:', CANVAS_WIDTH - 47, 25);
+  
+  const nextFruitPreview = FRUIT_TYPES[gameState.nextFruitType];
+  const previewX = CANVAS_WIDTH - 47;
+  const previewY = 60;
+  
+  // Use shared visual helper for next fruit
+  Fruit.drawVisuals(ctx, previewX, previewY, nextFruitPreview.radius * 0.7, nextFruitPreview.color);
+}
+
+function renderLevelUpEffect(ctx) {
+  // Semi-transparent overlay
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+  ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  const newLevel = LEVELS[gameState.pendingLevelIndex];
+  
+  // Pulsating effect based on remaining frames
+  const progress = 1 - (gameState.levelUpEffectFrames / 120);
+  const scale = 1 + Math.sin(progress * Math.PI * 4) * 0.1;
+  
+  ctx.save();
+  ctx.translate(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  ctx.scale(scale, scale);
+  
+  // Draw stars/sparkles animation
+  const sparkleCount = 20;
+  for (let i = 0; i < sparkleCount; i++) {
+    const angle = (i / sparkleCount) * Math.PI * 2 + progress * Math.PI * 2;
+    const radius = 120 + Math.sin(progress * Math.PI * 2) * 20;
+    const x = Math.cos(angle) * radius;
+    const y = Math.sin(angle) * radius;
+    const size = 3 + Math.sin(progress * Math.PI * 4 + i) * 2;
+    
+    ctx.fillStyle = `rgba(255, 255, 100, ${0.5 + Math.sin(progress * Math.PI * 4 + i) * 0.5})`;
+    ctx.beginPath();
+    ctx.arc(x, y, size, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Draw star shape
+    ctx.fillStyle = `rgba(255, 255, 255, ${0.7 + Math.sin(progress * Math.PI * 4 + i) * 0.3})`;
+    ctx.beginPath();
+    for (let p = 0; p < 5; p++) {
+      const starAngle = (p / 5) * Math.PI * 2 - Math.PI / 2;
+      const starX = x + Math.cos(starAngle) * size * 2;
+      const starY = y + Math.sin(starAngle) * size * 2;
+      if (p === 0) ctx.moveTo(starX, starY);
+      else ctx.lineTo(starX, starY);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
+  
+  // Main text
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  
+  // "LEVEL UP!" text with glow
+  ctx.shadowColor = '#FFD700';
+  ctx.shadowBlur = 20;
+  ctx.fillStyle = '#FFD700';
+  ctx.font = 'bold 64px "Comic Sans MS", sans-serif';
+  ctx.fillText('LEVEL UP!', 0, -60);
+  ctx.shadowBlur = 0;
+  
+  // New level name
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 36px "Comic Sans MS", sans-serif';
+  ctx.fillText(newLevel.name, 0, 10);
+  
+  // Congratulations message
+  ctx.font = 'bold 20px "Comic Sans MS", sans-serif';
+  ctx.fillStyle = '#aaffaa';
+  ctx.fillText('Great Job!', 0, 50);
+  
+  ctx.restore();
+  
+  // Confetti effect
+  const confettiCount = 30;
+  for (let i = 0; i < confettiCount; i++) {
+    const x = (i / confettiCount) * CANVAS_WIDTH;
+    const offset = Math.sin(progress * Math.PI * 2 + i) * 30;
+    const y = progress * CANVAS_HEIGHT + offset;
+    const colors = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#f7dc6f', '#bb8fce'];
+    const color = colors[i % colors.length];
+    
+    ctx.fillStyle = color;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(progress * Math.PI * 4 + i);
+    ctx.fillRect(-5, -5, 10, 10);
+    ctx.restore();
+  }
+}
+
+function renderPauseOverlay(ctx) {
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+  ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  ctx.fillStyle = '#fff';
+  ctx.font = FONT_LARGE;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.shadowColor = 'rgba(0,0,0,0.5)';
+  ctx.shadowBlur = 10;
+  ctx.fillText('PAUSED', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  ctx.shadowBlur = 0;
+  
+  ctx.font = FONT_MAIN;
+  ctx.fillText('Press ESC to resume', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+}
+
+function renderGameOverScreen(ctx) {
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+  ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  ctx.fillStyle = '#fff';
+  ctx.font = FONT_LARGE;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  
+  if (gameState.gamePhase === 'GAME_OVER_WIN') {
+    ctx.fillText('YOU WIN!', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 60);
+  } else {
+    ctx.fillText('GAME OVER', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 60);
+  }
+  
+  ctx.font = FONT_MEDIUM;
+  ctx.fillText(`Score: ${gameState.score}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  
+  ctx.font = FONT_MAIN;
+  ctx.fillText(`High Score: ${gameState.highScore}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 40);
+  
+  // Restart Button style
+  const btnY = CANVAS_HEIGHT / 2 + 80;
+  ctx.fillStyle = '#FF6B6B';
+  ctx.beginPath();
+  ctx.roundRect(CANVAS_WIDTH/2 - 120, btnY, 240, 50, 25);
+  ctx.fill();
+  
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 24px "Comic Sans MS", sans-serif';
+  ctx.fillText('PRESS R TO RESTART', CANVAS_WIDTH / 2, btnY + 25);
+}
+</file>
+
+<file name="entities.js">
+// entities.js - Entity classes for game objects
+
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Bodies } = Matter;
+
+import { FRUIT_TYPES } from './globals.js';
+
+export class Fruit {
+  constructor(x, y, typeIndex) {
+    this.typeIndex = typeIndex;
+    this.fruitData = FRUIT_TYPES[typeIndex];
+    
+    // Use defined physics properties or defaults
+    const restitution = this.fruitData.restitution !== undefined ? this.fruitData.restitution : 0.3;
+    const friction = this.fruitData.friction !== undefined ? this.fruitData.friction : 0.5;
+    
+    this.body = Bodies.circle(x, y, this.fruitData.radius, {
+      restitution: restitution,
+      friction: friction,
+      density: 0.01,
+      label: 'fruit'
+    });
+    
+    this.body.fruitInstance = this;
+    this.merged = false;
+  }
+  
+  draw(ctx) {
+    if (this.merged) return;
+    
+    ctx.save();
+    ctx.translate(this.body.position.x, this.body.position.y);
+    ctx.rotate(this.body.angle);
+    
+    // Use the static helper to draw the visuals at (0,0)
+    Fruit.drawVisuals(ctx, 0, 0, this.fruitData.radius, this.fruitData.color);
+    
+    ctx.restore();
+  }
+
+  // Static helper to draw a cartoon fruit at a specific location
+  // Useful for the main game loop, previews, and UI
+  static drawVisuals(ctx, x, y, radius, color) {
+    ctx.save();
+    ctx.translate(x, y);
+
+    // 1. Body with Gradient
+    const gradient = ctx.createRadialGradient(
+      -radius * 0.3, -radius * 0.3, 0, 
+      0, 0, radius
+    );
+    gradient.addColorStop(0, Fruit.lightenColor(color, 40));
+    gradient.addColorStop(1, color);
+    
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(0, 0, radius, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // 2. Thick Cartoon Outline
+    ctx.strokeStyle = '#2c3e50'; // Dark blue-grey outline
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    
+    // 3. Glossy Highlight (Top Left)
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+    ctx.beginPath();
+    ctx.ellipse(-radius * 0.35, -radius * 0.35, radius * 0.25, radius * 0.15, Math.PI / 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 4. Cartoon Face
+    // Only draw face if fruit is big enough to look good
+    if (radius > 10) {
+      // Eyes
+      const eyeX = radius * 0.25;
+      const eyeY = -radius * 0.05;
+      const eyeSize = radius * 0.15;
+      
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(-eyeX, eyeY, eyeSize, 0, Math.PI * 2); // Left Eye
+      ctx.arc(eyeX, eyeY, eyeSize, 0, Math.PI * 2);  // Right Eye
+      ctx.fill();
+      
+      // Pupils
+      ctx.fillStyle = '#2c3e50';
+      const pupilSize = eyeSize * 0.5;
+      ctx.beginPath();
+      ctx.arc(-eyeX, eyeY, pupilSize, 0, Math.PI * 2);
+      ctx.arc(eyeX, eyeY, pupilSize, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Mouth (Simple Smile)
+      ctx.strokeStyle = '#2c3e50';
+      ctx.lineWidth = 2;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.arc(0, eyeY + radius * 0.15, radius * 0.2, 0.2 * Math.PI, 0.8 * Math.PI);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+  
+  static lightenColor(color, percent) {
+    const num = parseInt(color.replace("#", ""), 16);
+    const amt = Math.round(2.55 * percent);
+    const R = (num >> 16) + amt;
+    const G = (num >> 8 & 0x00FF) + amt;
+    const B = (num & 0x0000FF) + amt;
+    return "#" + (0x1000000 + (R < 255 ? R < 1 ? 0 : R : 255) * 0x10000 +
+      (G < 255 ? G < 1 ? 0 : G : 255) * 0x100 +
+      (B < 255 ? B < 1 ? 0 : B : 255))
+      .toString(16).slice(1);
+  }
+  
+  static darkenColor(color, percent) {
+    const num = parseInt(color.replace("#", ""), 16);
+    const amt = Math.round(2.55 * percent);
+    const R = (num >> 16) - amt;
+    const G = (num >> 8 & 0x00FF) - amt;
+    const B = (num & 0x0000FF) - amt;
+    return "#" + (0x1000000 + (R > 0 ? R : 0) * 0x10000 +
+      (G > 0 ? G : 0) * 0x100 +
+      (B > 0 ? B : 0))
+      .toString(16).slice(1);
+  }
+}
+
+export class Container {
+  constructor(x, y, width, height, wallThickness) {
+    this.x = x;
+    this.y = y;
+    this.width = width;
+    this.height = height;
+    this.wallThickness = wallThickness;
+  }
+  
+  draw(ctx) {
+    // Draw stylized wooden crate container
+    
+    // Background (Inside of the box)
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+    ctx.fillRect(
+      this.x - this.width / 2,
+      this.y - this.height / 2,
+      this.width,
+      this.height
+    );
+
+    // Wall Styles
+    const woodColor = '#8B4513';
+    const woodLight = '#A0522D';
+    const borderColor = '#5D4037';
+    
+    ctx.fillStyle = woodColor;
+    ctx.strokeStyle = borderColor;
+    ctx.lineWidth = 3;
+    ctx.lineJoin = 'round';
+    
+    // Helper to draw a wall segment
+    const drawWall = (x, y, w, h) => {
+      ctx.fillRect(x, y, w, h);
+      
+      // Add wood grain texture effect
+      ctx.save();
+      ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      // Simple lines for texture
+      for(let i=0; i<w; i+=10) {
+        ctx.moveTo(x + i, y);
+        ctx.lineTo(x + i, y + h);
+      }
+      ctx.stroke();
+      ctx.restore();
+      
+      // Outline
+      ctx.strokeRect(x, y, w, h);
+    };
+
+    // Left wall
+    drawWall(
+      this.x - this.width / 2 - this.wallThickness,
+      this.y - this.height / 2,
+      this.wallThickness,
+      this.height
+    );
+    
+    // Right wall
+    drawWall(
+      this.x + this.width / 2,
+      this.y - this.height / 2,
+      this.wallThickness,
+      this.height
+    );
+    
+    // Bottom
+    drawWall(
+      this.x - this.width / 2 - this.wallThickness,
+      this.y + this.height / 2,
+      this.width + this.wallThickness * 2,
+      this.wallThickness
+    );
+  }
+}
+</file>
+
+<file name="physics.js">
+// physics.js - Physics and collision handling
+
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Events, World, Body } = Matter;
+
+import { gameState, FRUIT_TYPES, logs, LEVELS, DANGER_LINE_Y } from './globals.js';
+import { Fruit } from './entities.js';
+import { restartGame, startGame } from './game.js'; // Import startGame
+
+export function setupPhysics() {
+  Events.on(gameState.engine, 'collisionStart', handleCollisions);
+}
+
+function handleCollisions(event) {
+  if (gameState.gamePhase !== 'PLAYING') return;
+  
+  const pairs = event.pairs;
+  
+  pairs.forEach(pair => {
+    const bodyA = pair.bodyA;
+    const bodyB = pair.bodyB;
+    
+    // Check if both bodies are fruits
+    if (bodyA.label === 'fruit' && bodyB.label === 'fruit') {
+      const fruitA = bodyA.fruitInstance;
+      const fruitB = bodyB.fruitInstance;
+      
+      // Check if they're the same type and not already merged
+      if (fruitA && fruitB && 
+          !fruitA.merged && !fruitB.merged &&
+          fruitA.typeIndex === fruitB.typeIndex &&
+          fruitA.typeIndex < FRUIT_TYPES.length - 1) {
+        
+        // Mark both as merged immediately
+        fruitA.merged = true;
+        fruitB.merged = true;
+        
+        // Calculate merge position (midpoint)
+        const mergeX = (bodyA.position.x + bodyB.position.x) / 2;
+        const mergeY = (bodyA.position.y + bodyB.position.y) / 2;
+        const newTypeIndex = fruitA.typeIndex + 1;
+        
+        // Process merge immediately (automatic, no delay)
+        executeMerge(bodyA, bodyB, fruitA, fruitB, mergeX, mergeY, newTypeIndex);
+      }
+    }
+  });
+}
+
+function executeMerge(bodyA, bodyB, fruitA, fruitB, mergeX, mergeY, newTypeIndex) {
+  // Remove old bodies from physics world
+  World.remove(gameState.world, [bodyA, bodyB]);
+  
+  // Remove old fruits from entities array
+  gameState.entities = gameState.entities.filter(
+    e => e !== fruitA && e !== fruitB
+  );
+  
+  // Add score
+  const scoreGained = FRUIT_TYPES[newTypeIndex].score;
+  gameState.score += scoreGained;
+  
+  // Check level progression
+  const nextLevelIndex = gameState.currentLevelIndex + 1;
+  if (nextLevelIndex < LEVELS.length && gameState.score >= LEVELS[nextLevelIndex].threshold) {
+    // Trigger level up effect instead of immediate transition
+    gameState.gamePhase = 'LEVEL_UP_EFFECT';
+    gameState.pendingLevelIndex = nextLevelIndex;
+    gameState.levelUpEffectFrames = 120; // Show effect for 2 seconds (120 frames at 60fps)
+    
+    // Log level up
+    logs.game_info.push({
+      game_status: 'LEVEL_UP_START',
+      data: { 
+        level: LEVELS[nextLevelIndex].name, 
+        score: gameState.score,
+        new_level_index: nextLevelIndex
+      },
+      framecount: gameState.frameCount,
+      timestamp: Date.now()
+    });
+    
+    // Don't spawn merged fruit or clear entities yet - that happens after the effect
+    return;
+  }
+  
+  // If not leveling up, create new merged fruit
+  const newFruit = new Fruit(mergeX, mergeY, newTypeIndex);
+  World.add(gameState.world, newFruit.body);
+  gameState.entities.push(newFruit);
+  
+  // Update high score
+  if (gameState.score > gameState.highScore) {
+    gameState.highScore = gameState.score;
+  }
+}
+
+export function processMerges() {
+  // No longer needed as merges are processed immediately in collision handler
+  // Kept for compatibility
+}
+
+export function checkDangerZone() {
+  if (gameState.gamePhase !== 'PLAYING') return;
+  
+  // Check if any fruit is above danger line
+  let fruitInDanger = false;
+  
+  gameState.entities.forEach(entity => {
+    if (entity instanceof Fruit && !entity.merged) {
+      const topY = entity.body.position.y - entity.fruitData.radius;
+      
+      // Only check fruits that have been in the game for a bit (not freshly dropped)
+      const velocity = entity.body.velocity;
+      const isSettled = Math.abs(velocity.y) < 5 || velocity.y > 0;
+      
+      if (topY < gameState.dangerLineY && isSettled) {
+        fruitInDanger = true;
+      }
+    }
+  });
+  
+  if (fruitInDanger) {
+    gameState.dangerFrameCount++;
+    
+    if (gameState.dangerFrameCount >= gameState.dangerGraceFrames) {
+      endGame(false);
+    }
+  } else {
+    gameState.dangerFrameCount = 0;
+  }
+}
+
+function endGame(won) {
+  gameState.gamePhase = won ? 'GAME_OVER_WIN' : 'GAME_OVER_LOSE';
+  
+  logs.game_info.push({
+    game_status: gameState.gamePhase,
+    data: { score: gameState.score, highScore: gameState.highScore },
+    framecount: gameState.frameCount,
+    timestamp: Date.now()
+  });
+
+  // Add auto-restart logic
+  if (!gameState.autoRestartScheduled) {
+    gameState.autoRestartScheduled = true;
+    gameState.autoRestartTimeoutId = setTimeout(() => {
+      // Call startGame() instead of restartGame() for auto-restart
+      startGame(); // This will reset state and set phase to PLAYING
+      // The autoRestartScheduled and autoRestartTimeoutId flags are cleared by startGame() itself.
+    }, 1000); // 1 second delay
+  }
+}
+</file>
+
+<file name="input.js">
+// input.js - Input handling
+
+import { gameState, logs, CONTAINER_WIDTH, CONTAINER_X, CANVAS_WIDTH, FRUIT_TYPES } from './globals.js';
+import { startGame, pauseGame, restartGame, dropCurrentFruit } from './game.js';
+
+const keys = {};
+
+export function setupInput() {
+  document.addEventListener('keydown', handleKeyDown);
+  document.addEventListener('keyup', handleKeyUp);
+}
+
+function handleKeyDown(e) {
+  const keyCode = e.keyCode;
+  
+  // Log input
+  logs.inputs.push({
+    input_type: 'keydown',
+    data: { key: e.key, keyCode: keyCode },
+    framecount: gameState.frameCount,
+    timestamp: Date.now()
+  });
+  
+  // Set key state (for continuous input)
+  keys[keyCode] = true;
+  
+  // Prevent repeat events for action keys only
+  const isActionKey = keyCode === 32 || keyCode === 40 || keyCode === 83 || 
+                      keyCode === 13 || keyCode === 27 || keyCode === 82;
+  
+  if (isActionKey && keys[`action_${keyCode}`]) return;
+  if (isActionKey) keys[`action_${keyCode}`] = true;
+  
+  // ENTER to start
+  if (keyCode === 13 && gameState.gamePhase === 'START') {
+    startGame();
+    return;
+  }
+  
+  // ESC to pause
+  if (keyCode === 27 && gameState.gamePhase === 'PLAYING') {
+    pauseGame();
+    return;
+  }
+  
+  // ESC to unpause
+  if (keyCode === 27 && gameState.gamePhase === 'PAUSED') {
+    gameState.gamePhase = 'PLAYING';
+    logs.game_info.push({
+      game_status: 'PLAYING',
+      data: {},
+      framecount: gameState.frameCount,
+      timestamp: Date.now()
+    });
+    return;
+  }
+  
+  // R to restart from game over
+  if (keyCode === 82 && (gameState.gamePhase === 'GAME_OVER_WIN' || gameState.gamePhase === 'GAME_OVER_LOSE')) {
+    restartGame();
+    return;
+  }
+  
+  // Gameplay controls
+  if (gameState.gamePhase === 'PLAYING' && !gameState.isDropping) {
+    // SPACE to quick drop
+    if (keyCode === 32) {
+      dropCurrentFruit(true);
+      return;
+    }
+    
+    // Down arrow or S for drop
+    if (keyCode === 40 || keyCode === 83) {
+      dropCurrentFruit(false);
+    }
+  }
+}
+
+function handleKeyUp(e) {
+  const keyCode = e.keyCode;
+  keys[keyCode] = false;
+  keys[`action_${keyCode}`] = false;
+  
+  logs.inputs.push({
+    input_type: 'keyup',
+    data: { key: e.key, keyCode: keyCode },
+    framecount: gameState.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function updateInput() {
+  // Continuous movement input - runs every frame
+  if (gameState.gamePhase === 'PLAYING' && !gameState.isDropping) {
+    const currentFruitRadius = FRUIT_TYPES[gameState.currentFruitType].radius;
+    const moveDistance = 3; // Reduced from 5 to 3 for slower movement
+    const minX = CONTAINER_X - CONTAINER_WIDTH / 2 + currentFruitRadius;
+    const maxX = CONTAINER_X + CONTAINER_WIDTH / 2 - currentFruitRadius;
+    
+    // Left arrow (37) or A (65)
+    if (keys[37] || keys[65]) {
+      gameState.dropX = Math.max(minX, gameState.dropX - moveDistance);
+    }
+    
+    // Right arrow (39) or D (68)
+    if (keys[39] || keys[68]) {
+      gameState.dropX = Math.min(maxX, gameState.dropX + moveDistance);
+    }
+  }
+}
+
+export { keys };
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

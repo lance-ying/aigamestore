@@ -1,0 +1,1400 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+when i refresh the game or reset, i can't throw any knives, and the visuals when the knife lands on the wood, when the knife lands on the wood, it gets inside the wood in in the opposite side of the circle, and resetting the game doesn't give any apples, can you fix all of this? 
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Knife Master Challenge</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #1e1e24; color: #fff; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 4px solid #333; box-shadow: 0 0 20px rgba(0,0,0,0.5); border-radius: 4px; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 10px 20px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; font-weight: bold; transition: background 0.2s; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #e63946; }
+      
+      h1 { margin-bottom: 10px; text-transform: uppercase; letter-spacing: 2px; }
+      .desc { max-width: 600px; text-align: center; color: #aaa; margin-bottom: 20px; line-height: 1.5; font-size: 14px; }
+      .controls { background: #2b2d42; padding: 15px; border-radius: 8px; font-size: 13px; color: #ccc; margin-top: 20px; }
+    </style>
+  </head>
+  <body>
+    <div>
+      <h1 id="gameTitle">Knife Master</h1>
+      <p class="desc">
+        Throw knives into the rotating logs. Slice apples for bonus points. 
+        Defeat bosses every 5th stage. Don't hit other knives!
+      </p>
+      
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN', this)">Human Mode</button>
+        <button id="test1ModeBtn" class="control-button" onclick="setMode('TEST_1', this)">Bot: Perfect Play</button>
+        <button id="test2ModeBtn" class="control-button" onclick="setMode('TEST_2', this)">Bot: Stress Test</button>
+      </div>
+    </div>
+
+    <!-- p5.js container created automatically, but we usually let p5 append to body. -->
+    
+    <div class="controls">
+        <strong>Controls:</strong> SPACE/Z: Throw &bull; ENTER: Start &bull; ESC: Pause &bull; R: Restart
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script type="module" src="game.js"></script>
+    
+    <script>
+        function setMode(mode, btn) {
+            if (window.setControlMode) {
+                window.setControlMode(mode);
+                
+                // Update UI
+                document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                
+                // Focus canvas
+                document.querySelector('canvas')?.focus();
+            }
+        }
+    </script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+/**
+ * automated_testing_controller.js
+ * Logic for the testing bots.
+ */
+
+import { GAME_CONFIG, CANVAS_HEIGHT } from './globals.js';
+import { normalizeAngle } from './physics.js';
+
+export function get_automated_testing_action(gameState) {
+    if (gameState.controlMode === "TEST_1") {
+        return getTestWinAction(gameState);
+    } else if (gameState.controlMode === "TEST_2") {
+        return getTestRandomAction(gameState);
+    }
+    return null;
+}
+
+function getTestWinAction(gameState) {
+    // Wait if no active knife or target
+    if (!gameState.activeKnife || !gameState.target) return null;
+    if (gameState.activeKnife.state !== "READY") return null;
+
+    const target = gameState.target;
+    
+    // Calculate time for knife to hit target
+    // Distance from knife tip to target edge (approximately)
+    const knifeTipY = gameState.activeKnife.y - gameState.activeKnife.height/2;
+    const targetEdgeY = target.y + target.radius;
+    const dist = knifeTipY - targetEdgeY;
+    const speed = GAME_CONFIG.knifeSpeed;
+    const framesToHit = dist / speed;
+    
+    // Predict target rotation after framesToHit
+    // NOTE: This assumes constant speed for simplicity, but target speed varies.
+    // For perfect play, we need to integrate speed over time or assume current speed persists.
+    // Given the complexity of patterns, we assume current speed holds for the short travel time.
+    const predictedRotation = target.rotation + (target.currentSpeed * framesToHit);
+    
+    // The knife hits at screen angle PI/2 (bottom).
+    // We want to find the angle on the target relative to its rotation.
+    // AngleOnTarget = ScreenHitAngle - TargetRotation
+    // ScreenHitAngle is PI/2 (90 deg, bottom)
+    const impactAngleOnTarget = normalizeAngle((Math.PI / 2) - predictedRotation);
+    
+    // Check if this angle is safe
+    const isSafe = isAngleSafe(impactAngleOnTarget, gameState.stuckKnives);
+    
+    if (isSafe) {
+        return { throw: true };
+    }
+    
+    return null;
+}
+
+function isAngleSafe(angle, existingKnives) {
+    const tolerance = GAME_CONFIG.collisionTolerance * 1.5; // Add extra safety margin for bot
+    
+    for (let k of existingKnives) {
+        let diff = Math.abs(normalizeAngle(angle) - normalizeAngle(k.angle));
+        if (diff > Math.PI) diff = (Math.PI * 2) - diff;
+        
+        if (diff < tolerance) return false;
+    }
+    return true;
+}
+
+function getTestRandomAction(gameState) {
+    // Simply throw randomly with high frequency
+    if (Math.random() < 0.1) {
+        return { throw: true };
+    }
+    return null;
+}
+
+window.get_automated_testing_action = get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+/**
+ * globals.js
+ * Contains global constants, game state management, and configuration.
+ */
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+
+// Game Configuration
+export const GAME_CONFIG = {
+    gravity: 0.5,
+    knifeSpeed: 25,
+    knifeSpawnY: 340,
+    targetCenterY: 140, // Center of the log
+    targetRadius: 60,
+    stickDepth: 20, // How deep the knife goes into the log
+    collisionTolerance: 0.15, // Radians distance to consider a collision
+    bossInterval: 5, // Every 5 levels is a boss
+    colors: {
+        bg: [30, 30, 40],
+        ui: [255, 255, 255],
+        accent: [255, 100, 100],
+        woodLight: [160, 120, 60],
+        woodDark: [100, 70, 30],
+        knifeHandle: [50, 50, 60],
+        knifeBlade: [200, 200, 210]
+    }
+};
+
+// Global Game State
+// initialized in game.js setup, updated in draw
+export const gameState = {
+    // Core state
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE, LEVEL_TRANSITION
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2
+    
+    // Level progress
+    score: 0,
+    stage: 1,
+    applesCollected: 0,
+    
+    // Level specific data
+    knivesRemaining: 0, // Knives player needs to throw to clear level
+    
+    // Entities
+    player: null, // Virtual player object for stats
+    target: null, // The current rotating log/boss
+    activeKnife: null, // The knife currently being prepared or thrown
+    projectiles: [], // Array of flying knives (usually just one, but good for extensibility)
+    stuckKnives: [], // Knives attached to the target
+    particles: [], // Visual effects
+    
+    // Physics & Time
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Screen Shake
+    shakeAmplitude: 0,
+    shakeDuration: 0,
+
+    // Input state
+    keys: {}
+};
+
+/**
+ * Returns the global game state.
+ * Exposed to window for debugging and external access.
+ */
+export function getGameState() {
+    return gameState;
+}
+
+// Expose globally
+window.getGameState = getGameState;
+
+/**
+ * Resets the level-specific state (called when advancing level or restarting)
+ */
+export function resetLevelState() {
+    gameState.projectiles = [];
+    gameState.stuckKnives = [];
+    gameState.activeKnife = null;
+    gameState.particles = [];
+}
+
+/**
+ * Full game reset
+ */
+export function resetGame() {
+    gameState.score = 0;
+    gameState.stage = 1;
+    gameState.applesCollected = 0;
+    resetLevelState();
+}
+</file>
+
+<file name="game.js">
+/**
+ * game.js
+ * Main entry point, game loop, and level management.
+ */
+
+import { gameState, getGameState, GAME_CONFIG, CANVAS_WIDTH, CANVAS_HEIGHT, TARGET_FPS, resetLevelState } from './globals.js';
+import { Knife, Target, Apple } from './entities.js';
+import { checkKnifeTargetCollision, checkKnifeKnifeCollision, checkKnifeAppleCollision, getImpactAngle, triggerScreenShake, getShakeOffset, normalizeAngle } from './physics.js';
+import { renderStartScreen, renderUI, renderGameOver, renderPaused } from './ui.js';
+import { handleKeyPressed, handleAutomatedInput } from './input.js';
+import { spawnParticles, updateAndRenderParticles } from './particles.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(TARGET_FPS);
+        p.randomSeed(42);
+        
+        // Log start
+        p.logs.game_info.push({
+            data: { gamePhase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    };
+
+    p.draw = function() {
+        // Update Time
+        const now = p.millis();
+        gameState.deltaTime = (now - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = now;
+        gameState.frameCount = p.frameCount;
+        
+        // Automated Input
+        handleAutomatedInput();
+
+        // Screen Shake calculation
+        const shake = getShakeOffset(p);
+        
+        p.push();
+        // Apply camera shake globally
+        p.translate(shake.x, shake.y);
+        
+        // Background
+        p.background(GAME_CONFIG.colors.bg);
+        
+        switch (gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                break;
+            case "PLAYING":
+                updateGame(p);
+                renderGame(p);
+                renderUI(p);
+                break;
+            case "PAUSED":
+                renderGame(p);
+                renderPaused(p);
+                break;
+            case "GAME_OVER_WIN":
+            case "GAME_OVER_LOSE":
+                renderGame(p);
+                renderGameOver(p);
+                break;
+        }
+        
+        p.pop();
+    };
+
+    p.keyPressed = function() {
+        handleKeyPressed(p);
+    };
+    
+    // Setup Level Helper
+    p.setupLevel = function() {
+        resetLevelState();
+        
+        const isBoss = gameState.stage % GAME_CONFIG.bossInterval === 0;
+        
+        // Create Target
+        gameState.target = new Target(isBoss, gameState.stage);
+        
+        // Add Pre-existing knives (Obstacles)
+        // More obstacles on higher levels
+        const obstacleCount = isBoss ? 0 : Math.min(Math.floor(gameState.stage / 2), 5);
+        for(let i=0; i<obstacleCount; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const k = new Knife(0, 0); // Pos doesn't matter for stuck
+            k.state = "STUCK";
+            k.angle = angle;
+            gameState.stuckKnives.push(k);
+        }
+        
+        // Add Apples
+        const appleChance = 0.5;
+        if (Math.random() < appleChance || isBoss) {
+            const count = isBoss ? 3 : 1;
+            for(let i=0; i<count; i++) {
+                // Find open spot roughly
+                const angle = Math.random() * Math.PI * 2;
+                gameState.target.addApple(angle);
+            }
+        }
+        
+        // Set Knives needed to clear
+        gameState.knivesRemaining = 7 + Math.floor(gameState.stage * 0.5);
+        
+        // Spawn first active knife
+        spawnNextKnife();
+    };
+});
+
+function spawnNextKnife() {
+    gameState.activeKnife = new Knife(CANVAS_WIDTH / 2, GAME_CONFIG.knifeSpawnY);
+}
+
+function updateGame(p) {
+    // 0. Initialize Level if needed
+    if (!gameState.target) {
+        p.setupLevel();
+    }
+    
+    // 1. Update Target
+    if (gameState.target) {
+        gameState.target.update();
+    }
+    
+    // 2. Update Active Knife
+    if (gameState.activeKnife) {
+        gameState.activeKnife.update();
+        
+        // Collision Detection
+        if (gameState.activeKnife.state === "FLYING") {
+            const k = gameState.activeKnife;
+            const t = gameState.target;
+            
+            if (checkKnifeTargetCollision(k, t)) {
+                handleKnifeHit(p, k, t);
+            }
+        }
+    }
+    
+    // 3. Update Projectiles (Rebounding knives)
+    for (let i = gameState.projectiles.length - 1; i >= 0; i--) {
+        const k = gameState.projectiles[i];
+        k.update();
+        if (k.y > CANVAS_HEIGHT + 100) {
+            gameState.projectiles.splice(i, 1);
+        }
+    }
+    
+    // 4. Update Particles
+    // Particles update in their own manager but we call it here
+}
+
+function handleKnifeHit(p, knife, target) {
+    // 1. Calculate Stick Angle
+    // The angle on the target where the knife hit.
+    // Screen Hit Angle is PI/2 (90 deg).
+    // AngleOnTarget = ScreenAngle - TargetRotation
+    const screenAngle = Math.PI / 2;
+    const hitAngle = normalizeAngle(screenAngle - target.rotation);
+    
+    // 2. Check Valid Hit (vs Existing Knives)
+    if (checkKnifeKnifeCollision(hitAngle, gameState.stuckKnives)) {
+        // FAIL!
+        failGame(p, knife);
+        return;
+    }
+    
+    // 3. Check Apple Hit
+    const hitAppleIndex = checkKnifeAppleCollision(knife, target);
+    if (hitAppleIndex !== null) {
+        // Collect Apple
+        target.apples.splice(hitAppleIndex, 1);
+        gameState.applesCollected++;
+        gameState.score += 50; // Bonus score
+        
+        // Apple Particles
+        // We need world coords of the hit
+        // Approx at top of knife
+        spawnParticles(knife.x, knife.y - knife.height/2, "APPLE", 8);
+    }
+    
+    // 4. Stick the knife
+    knife.state = "STUCK";
+    knife.angle = hitAngle;
+    gameState.stuckKnives.push(knife);
+    gameState.activeKnife = null;
+    gameState.score += 10;
+    
+    // Visual Feedback
+    target.pulse = 5;
+    spawnParticles(knife.x, knife.y - knife.height/2, "WOOD", 5);
+    triggerScreenShake(3, 5); // Mild shake
+    
+    // 5. Progression Check
+    if (gameState.knivesRemaining > 0) {
+        // More knives to throw
+        setTimeout(() => spawnNextKnife(), 100);
+    } else {
+        // LEVEL CLEARED
+        levelClear(p);
+    }
+}
+
+function failGame(p, knife) {
+    // Rebound the knife
+    knife.rebound();
+    gameState.projectiles.push(knife); // Add to projectiles to fall
+    gameState.activeKnife = null;
+    
+    triggerScreenShake(10, 20); // Big shake
+    spawnParticles(knife.x, knife.y - knife.height/2, "SPARK", 15);
+    
+    gameState.gamePhase = "GAME_OVER_LOSE";
+}
+
+function levelClear(p) {
+    // Break the log effect?
+    // For now, just wait a sec then next level
+    // Maybe small pause or flash
+    
+    // Reset Target
+    gameState.target = null; // Will trigger setupLevel in updateGame
+    gameState.stage++;
+    
+    // Reset physics speed dampening?
+    // Handled in setupLevel gen
+}
+
+function renderGame(p) {
+    // Render Particles First (behind?) or Last (front?)
+    // Usually particles on top
+    
+    // Render Target (which renders stuck knives)
+    if (gameState.target) {
+        gameState.target.render(p);
+    }
+    
+    // Render Active Knife
+    if (gameState.activeKnife) {
+        gameState.activeKnife.render(p);
+    }
+    
+    // Render Projectiles (falling knives)
+    gameState.projectiles.forEach(k => k.render(p));
+    
+    // Render Particles
+    updateAndRenderParticles(p);
+}
+
+// Global hook
+window.gameInstance = gameInstance;
+window.setControlMode = (mode) => {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+};
+</file>
+
+<file name="ui.js">
+/**
+ * ui.js
+ * Renders the HUD, Start Screen, Game Over, etc.
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, GAME_CONFIG } from './globals.js';
+
+export function renderUI(p) {
+    // Score
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(24);
+    p.fill(255);
+    p.text(gameState.score, 20, 20);
+
+    // Stage
+    p.textAlign(p.CENTER, p.TOP);
+    p.textSize(32);
+    p.fill(200, 200, 200);
+    p.text(`STAGE ${gameState.stage}`, CANVAS_WIDTH / 2, 20);
+    
+    // Boss Indicator
+    if (gameState.stage % 5 === 0) {
+        p.fill(255, 50, 50);
+        p.textSize(16);
+        p.text("BOSS BATTLE", CANVAS_WIDTH / 2, 55);
+    }
+
+    // Apples
+    p.textAlign(p.RIGHT, p.TOP);
+    p.textSize(24);
+    p.fill(220, 50, 50);
+    p.text(`🍎 ${gameState.applesCollected}`, CANVAS_WIDTH - 20, 20);
+
+    // Remaining Knives (Bottom Left)
+    drawKnivesIndicator(p);
+}
+
+function drawKnivesIndicator(p) {
+    const startX = 30;
+    const startY = CANVAS_HEIGHT - 40;
+    const spacing = 15;
+    
+    for (let i = 0; i < gameState.knivesRemaining + (gameState.activeKnife?.state === "READY" ? 1 : 0); i++) {
+        // Draw icon representing available knife
+        p.fill(100, 100, 120);
+        if (i < gameState.knivesRemaining) p.fill(200, 200, 220); // Active ones brighter
+        
+        p.noStroke();
+        p.rect(startX, startY - (i * spacing), 6, 12);
+    }
+}
+
+export function renderStartScreen(p) {
+    p.background(GAME_CONFIG.colors.bg);
+    
+    // Title
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(60);
+    p.fill(255);
+    p.stroke(0);
+    p.strokeWeight(4);
+    p.text("KNIFE", CANVAS_WIDTH / 2, 120);
+    p.fill(255, 50, 50);
+    p.text("MASTER", CANVAS_WIDTH / 2, 180);
+    
+    // Knife Decoration
+    p.push();
+    p.translate(CANVAS_WIDTH/2, 250);
+    p.rotate(Math.PI/4);
+    p.fill(200);
+    p.rect(0, 0, 10, 60);
+    p.pop();
+
+    p.noStroke();
+    p.fill(200);
+    p.textSize(20);
+    p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 320);
+    
+    p.textSize(14);
+    p.fill(150);
+    p.text("SPACE to Throw", CANVAS_WIDTH / 2, 350);
+}
+
+export function renderGameOver(p) {
+    p.push();
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(50);
+    
+    if (gameState.gamePhase === "GAME_OVER_WIN") {
+        p.fill(50, 255, 50);
+        p.text("STAGE CLEAR!", CANVAS_WIDTH / 2, 150);
+    } else {
+        p.fill(255, 50, 50);
+        p.text("GAME OVER", CANVAS_WIDTH / 2, 150);
+    }
+    
+    p.textSize(30);
+    p.fill(255);
+    p.text(`Score: ${gameState.score}`, CANVAS_WIDTH / 2, 220);
+    p.text(`Stage: ${gameState.stage}`, CANVAS_WIDTH / 2, 260);
+    
+    p.textSize(20);
+    p.fill(200);
+    p.text("Press R to Restart", CANVAS_WIDTH / 2, 320);
+    p.pop();
+}
+
+export function renderPaused(p) {
+    p.push();
+    p.fill(0, 0, 0, 100);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.text("PAUSED", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+    p.pop();
+}
+</file>
+
+<file name="entities.js">
+/**
+ * entities.js
+ * Classes for Game Entities: Knife, Target, Apple, Boss.
+ */
+
+import { gameState, GAME_CONFIG, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { normalizeAngle } from './physics.js';
+
+/**
+ * The Knife projectile.
+ */
+export class Knife {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.width = 12;
+        this.height = 50;
+        this.state = "READY"; // READY, FLYING, STUCK, REBOUND
+        this.angle = 0; // Relative angle on target when stuck
+        this.vx = 0;
+        this.vy = 0;
+        
+        // For rebound physics
+        this.rotSpeed = 0; 
+    }
+
+    throw() {
+        if (this.state === "READY") {
+            this.state = "FLYING";
+            this.vy = -GAME_CONFIG.knifeSpeed;
+        }
+    }
+
+    update() {
+        if (this.state === "FLYING") {
+            this.y += this.vy;
+        } else if (this.state === "REBOUND") {
+            this.x += this.vx;
+            this.y += this.vy;
+            this.vy += GAME_CONFIG.gravity; // Gravity
+            this.angle += this.rotSpeed;
+            
+            // Remove if off screen
+            if (this.y > CANVAS_HEIGHT + 50) {
+                // Determine removal logic in game loop
+            }
+        }
+    }
+
+    rebound() {
+        this.state = "REBOUND";
+        this.vx = (Math.random() - 0.5) * 10;
+        this.vy = 5 + Math.random() * 5;
+        this.rotSpeed = (Math.random() - 0.5) * 0.5;
+    }
+
+    render(p) {
+        p.push();
+        
+        if (this.state === "STUCK") {
+            // Render relative to target in Target.render() usually, 
+            // but if we render here, we need coordinate transformation.
+            // We'll let the Target render its stuck knives to handle rotation easily.
+            // This render method is for Flying/Ready/Rebound knives.
+        } else if (this.state === "REBOUND") {
+            p.translate(this.x, this.y);
+            p.rotate(this.angle);
+            this.drawKnifeGraphic(p);
+        } else {
+            // READY or FLYING
+            p.translate(this.x, this.y);
+            // No rotation for straight throw
+            this.drawKnifeGraphic(p);
+        }
+        
+        p.pop();
+    }
+
+    // Helper to draw the vector art of the knife
+    drawKnifeGraphic(p) {
+        p.noStroke();
+        
+        // Handle
+        p.fill(GAME_CONFIG.colors.knifeHandle);
+        p.rectMode(p.CENTER);
+        p.rect(0, 15, 10, 20, 2);
+        
+        // Guard
+        p.fill(80);
+        p.rect(0, 5, 14, 4);
+        
+        // Blade
+        p.fill(GAME_CONFIG.colors.knifeBlade);
+        p.beginShape();
+        p.vertex(-4, 5);
+        p.vertex(4, 5);
+        p.vertex(4, -20); // Straight part
+        p.vertex(0, -30); // Tip
+        p.vertex(-4, -20);
+        p.endShape(p.CLOSE);
+        
+        // Shine on blade
+        p.fill(255, 255, 255, 150);
+        p.beginShape();
+        p.vertex(0, -28);
+        p.vertex(2, -18);
+        p.vertex(0, -20);
+        p.endShape(p.CLOSE);
+    }
+}
+
+/**
+ * The Apple collectible.
+ */
+export class Apple {
+    constructor(angle) {
+        this.angle = angle; // Angle relative to target
+        this.radius = 12;
+        this.hit = false;
+    }
+    
+    render(p, targetRadius) {
+        if (this.hit) return;
+        
+        // Calculate position relative to target center (0,0 local)
+        // Apple sits on the edge
+        const dist = targetRadius; 
+        const x = Math.cos(this.angle) * dist;
+        const y = Math.sin(this.angle) * dist;
+        
+        p.push();
+        p.translate(x, y);
+        p.rotate(this.angle + Math.PI / 2); // Rotate to stick out perpendicular
+        
+        // Apple Body
+        p.fill(200, 30, 30);
+        p.stroke(150, 20, 20);
+        p.strokeWeight(1);
+        p.circle(0, 0, this.radius * 2);
+        
+        // Shine
+        p.noStroke();
+        p.fill(255, 255, 255, 100);
+        p.circle(-3, -3, 6);
+        
+        // Stem
+        p.stroke(80, 50, 20);
+        p.strokeWeight(2);
+        p.line(0, -this.radius + 2, 0, -this.radius - 5);
+        
+        // Leaf
+        p.noStroke();
+        p.fill(50, 180, 50);
+        p.ellipse(3, -this.radius - 3, 6, 3);
+        
+        p.pop();
+    }
+}
+
+/**
+ * The main target (Log). Can be a Boss.
+ */
+export class Target {
+    constructor(isBoss = false, stage = 1) {
+        this.x = CANVAS_WIDTH / 2;
+        this.y = GAME_CONFIG.targetCenterY;
+        this.radius = GAME_CONFIG.targetRadius;
+        this.isBoss = isBoss;
+        this.stage = stage;
+        
+        this.rotation = 0;
+        this.apples = [];
+        
+        // Rotation Pattern
+        // Patterns define how the speed changes over time
+        this.rotationPattern = this.generatePattern(stage, isBoss);
+        this.patternTimer = 0;
+        this.currentSpeed = 0;
+        
+        // Visuals
+        this.textureSeed = Math.random() * 1000;
+        this.pulse = 0;
+    }
+
+    generatePattern(stage, isBoss) {
+        // Difficulty scaler
+        const baseSpeed = 0.02 + (stage * 0.002);
+        
+        if (isBoss) {
+            // Boss patterns are erratic
+            return [
+                { duration: 120, speed: baseSpeed * 2 },
+                { duration: 60, speed: -baseSpeed * 2 }, // Quick reverse
+                { duration: 90, speed: baseSpeed * 0.5 }, // Slow
+                { duration: 40, speed: baseSpeed * 3 }, // Burst
+                { duration: 30, speed: 0 } // Stop
+            ];
+        } else {
+            // Normal patterns
+            const type = stage % 4;
+            switch(type) {
+                case 0: // Constant
+                    return [{ duration: 9999, speed: baseSpeed }];
+                case 1: // Stop and Go
+                    return [
+                        { duration: 120, speed: baseSpeed },
+                        { duration: 60, speed: 0 },
+                        { duration: 120, speed: baseSpeed }
+                    ];
+                case 2: // Reverse
+                    return [
+                        { duration: 180, speed: baseSpeed },
+                        { duration: 180, speed: -baseSpeed }
+                    ];
+                case 3: // Variable
+                    return [
+                        { duration: 120, speed: baseSpeed },
+                        { duration: 120, speed: baseSpeed * 2 },
+                        { duration: 120, speed: baseSpeed * 0.5 }
+                    ];
+            }
+        }
+        return [{ duration: 9999, speed: 0.03 }];
+    }
+
+    update() {
+        // Handle rotation pattern
+        const currentPhase = this.rotationPattern[0];
+        
+        // Lerp speed for smoothness
+        this.currentSpeed = this.lerp(this.currentSpeed, currentPhase.speed, 0.1);
+        this.rotation += this.currentSpeed;
+        
+        // Normalize rotation
+        this.rotation = normalizeAngle(this.rotation);
+        
+        // Timer for pattern
+        this.patternTimer++;
+        if (this.patternTimer >= currentPhase.duration) {
+            this.patternTimer = 0;
+            // Cycle pattern
+            this.rotationPattern.push(this.rotationPattern.shift());
+        }
+        
+        // Pulse effect when hit (handled via external setting of this.pulse)
+        if (this.pulse > 0) this.pulse -= 1;
+    }
+
+    lerp(start, end, amt) {
+        return (1 - amt) * start + amt * end;
+    }
+
+    addApple(angle) {
+        this.apples.push(new Apple(angle));
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        
+        // Apply rotation
+        p.rotate(this.rotation);
+        
+        // Draw stuck knives FIRST so they appear behind the front of the log but on it
+        // Actually, in 2D, if we draw knives here, they rotate with the canvas.
+        // We draw them before the log if they are 'behind' (top half) and after if 'front'?
+        // No, simple layering: Log -> Knives. Knives stick OUT of the log.
+        // But to make it look like they are embedded, we can draw the log, then the knives.
+        
+        // Draw Stuck Knives (Handles sticking out)
+        // We need to iterategameState.stuckKnives
+        // But wait, the knives in gameState.stuckKnives need to be rendered RELATIVE to this rotation.
+        // In game.js, we push knives to gameState.stuckKnives.
+        // Here we render them.
+        
+        // Draw Apples
+        this.apples.forEach(apple => apple.render(p, this.radius));
+        
+        // Draw the Log/Target Body
+        if (this.isBoss) {
+            this.renderBossVisuals(p);
+        } else {
+            this.renderLogVisuals(p);
+        }
+        
+        // Draw Stuck Knives ON TOP of the log (the handles)
+        gameState.stuckKnives.forEach(knife => {
+            p.push();
+            // Calculate position on the circle edge
+            // The knife angle is the angle on the log where it is stuck.
+            // Since we already rotated the coordinate system by this.rotation,
+            // we just rotate by knife.angle.
+            p.rotate(knife.angle);
+            p.translate(0, this.radius); // Move to edge
+            
+            // The knife is sticking IN. 
+            // In Knife.render, (0,0) is center.
+            // We want the blade inside, handle outside.
+            // Let's adjust manually.
+            p.translate(0, 0); // At edge
+            
+            // Draw knife
+            // Since we are at the edge, rotated correctly:
+            // Pointing out? Standard knife points UP (neg Y).
+            // We want handle OUT, blade IN.
+            // So if we rotate PI, it points IN. 
+            // Actually, let's just draw it relative to local (0,0) which is edge.
+            
+            p.rotate(Math.PI); // Point outward
+            
+            // Draw simplified knife for stuck state
+            p.noStroke();
+            // Handle
+            p.fill(GAME_CONFIG.colors.knifeHandle);
+            p.rectMode(p.CENTER);
+            p.rect(0, 20, 10, 24, 2);
+            // Guard
+            p.fill(80);
+            p.rect(0, 8, 14, 4);
+            // Blade (partially hidden/embedded)
+            p.fill(GAME_CONFIG.colors.knifeBlade);
+            p.rect(0, 0, 8, 10); // Small bit visible
+            
+            p.pop();
+        });
+        
+        p.pop();
+    }
+
+    renderLogVisuals(p) {
+        const r = this.radius + (this.pulse > 0 ? 2 : 0);
+        
+        // Main Wood
+        p.fill(GAME_CONFIG.colors.woodLight);
+        p.stroke(GAME_CONFIG.colors.woodDark);
+        p.strokeWeight(4);
+        p.circle(0, 0, r * 2);
+        
+        // Rings
+        p.noFill();
+        p.stroke(GAME_CONFIG.colors.woodDark);
+        p.strokeWeight(2);
+        p.circle(0, 0, r * 1.4);
+        p.circle(0, 0, r * 0.8);
+        p.circle(0, 0, r * 0.3);
+        
+        // Texture lines (cracks) based on seed
+        p.push();
+        p.stroke(GAME_CONFIG.colors.woodDark);
+        p.strokeWeight(2);
+        const count = 5;
+        for (let i = 0; i < count; i++) {
+            const angle = (this.textureSeed + i * (Math.PI * 2 / count)) % (Math.PI * 2);
+            const len = r * (0.4 + Math.sin(i * 132) * 0.2);
+            p.rotate(angle);
+            p.line(0, 0, 0, len);
+            p.rotate(-angle);
+        }
+        p.pop();
+    }
+    
+    renderBossVisuals(p) {
+        const r = this.radius + (this.pulse > 0 ? 3 : 0);
+        const bossType = this.stage % 3; // 3 boss types
+        
+        if (bossType === 0) {
+            // CHEESE BOSS
+            p.fill(255, 220, 50); // Yellow
+            p.stroke(200, 150, 0);
+            p.strokeWeight(4);
+            p.circle(0, 0, r * 2);
+            // Holes
+            p.fill(200, 150, 0);
+            p.noStroke();
+            p.circle(10, 10, 15);
+            p.circle(-20, 20, 10);
+            p.circle(20, -20, 12);
+            p.circle(-10, -30, 8);
+        } else if (bossType === 1) {
+            // TIRE BOSS
+            p.fill(40); // Dark Grey
+            p.stroke(20);
+            p.strokeWeight(4);
+            p.circle(0, 0, r * 2);
+            // Hubcap
+            p.fill(150);
+            p.circle(0, 0, r);
+            // Treads
+            p.stroke(20);
+            p.strokeWeight(5);
+            for(let i=0; i<8; i++) {
+                p.rotate(Math.PI/4);
+                p.line(r-10, 0, r, 0);
+            }
+        } else {
+            // TOMATO BOSS
+            p.fill(220, 40, 40); // Red
+            p.stroke(150, 20, 20);
+            p.strokeWeight(4);
+            p.circle(0, 0, r * 2);
+            // Green top
+            p.fill(50, 180, 50);
+            p.noStroke();
+            p.rectMode(p.CENTER);
+            p.rect(0, 0, 20, 20);
+            p.push();
+            for(let i=0; i<5; i++) {
+                p.rotate(Math.PI*2/5);
+                p.triangle(0, 0, 5, 25, -5, 25);
+            }
+            p.pop();
+        }
+    }
+}
+</file>
+
+<file name="physics.js">
+/**
+ * physics.js
+ * Handles collision detection, physics updates, and math utilities.
+ */
+
+import { gameState, GAME_CONFIG, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+/**
+ * Normalizes an angle to be between 0 and TWO_PI
+ */
+export function normalizeAngle(angle) {
+    const TWO_PI = Math.PI * 2;
+    let a = angle % TWO_PI;
+    if (a < 0) a += TWO_PI;
+    return a;
+}
+
+/**
+ * Checks collision between a flying knife and the target (log).
+ * @param {Knife} knife 
+ * @param {Target} target 
+ */
+export function checkKnifeTargetCollision(knife, target) {
+    // Determine the hit point based on knife tip
+    // Knife is a rectangle, we care about the top center point
+    const tipX = knife.x;
+    const tipY = knife.y - knife.height / 2;
+
+    // Simple circle collision check for the tip entering the log
+    const dist = Math.sqrt(Math.pow(tipX - target.x, 2) + Math.pow(tipY - target.y, 2));
+    
+    return dist <= target.radius;
+}
+
+/**
+ * Checks if a newly stuck knife collides with any existing knives on the target.
+ * This is the core "Fail" condition logic.
+ * @param {number} hitAngle - The angle on the target where the new knife hit (radians)
+ * @param {Array} existingKnives - Array of knives already on the target
+ */
+export function checkKnifeKnifeCollision(hitAngle, existingKnives) {
+    const tolerance = GAME_CONFIG.collisionTolerance;
+    
+    for (let other of existingKnives) {
+        // Calculate difference between angles
+        // We need to account for the wrapping at 0/TWO_PI
+        let diff = Math.abs(normalizeAngle(hitAngle) - normalizeAngle(other.angle));
+        
+        // Handle wrap-around case (e.g. 0.1 vs 6.2)
+        if (diff > Math.PI) {
+            diff = (Math.PI * 2) - diff;
+        }
+        
+        if (diff < tolerance) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Checks if the knife hit an apple attached to the target.
+ * @param {Knife} knife 
+ * @param {Target} target 
+ */
+export function checkKnifeAppleCollision(knife, target) {
+    if (!target.apples || target.apples.length === 0) return null;
+
+    // Knife tip position
+    const tipX = knife.x;
+    const tipY = knife.y - knife.height / 2;
+
+    for (let i = 0; i < target.apples.length; i++) {
+        const apple = target.apples[i];
+        
+        // Calculate apple's world position based on target rotation
+        const appleAngle = apple.angle + target.rotation;
+        const appleX = target.x + Math.cos(appleAngle) * target.radius;
+        const appleY = target.y + Math.sin(appleAngle) * target.radius;
+        
+        // Distance check (knife tip vs apple center)
+        const dist = Math.sqrt(Math.pow(tipX - appleX, 2) + Math.pow(tipY - appleY, 2));
+        
+        if (dist < apple.radius + 10) { // +10 for generous hit box
+            return i; // Return index of hit apple
+        }
+    }
+    return null;
+}
+
+/**
+ * Calculate the angle of impact relative to the target center.
+ * @param {number} x - collision point x
+ * @param {number} y - collision point y
+ * @param {number} cx - center x
+ * @param {number} cy - center y
+ */
+export function getImpactAngle(x, y, cx, cy) {
+    // At the moment of impact (knife flying up), the angle is PI/2 (90 deg) usually,
+    // but relative to the rotation of the log.
+    // Actually, since the knife always hits from the bottom center in this game style,
+    // the impact angle on the screen is always PI/2 (bottom of circle).
+    // However, we need to store it relative to the log's current rotation.
+    
+    // Screen angle of hit is PI/2 (90 degrees, straight down from center)
+    // Wait, in p5, 0 is right, PI/2 is down, PI is left, 3PI/2 is up.
+    // The knife comes from the bottom, so it hits the bottom of the log.
+    const screenHitAngle = Math.PI / 2; 
+    
+    return screenHitAngle;
+}
+
+/**
+ * Apply screen shake effect
+ * @param {number} amplitude - Pixels to shake
+ * @param {number} duration - Frames to shake
+ */
+export function triggerScreenShake(amplitude, duration) {
+    gameState.shakeAmplitude = amplitude;
+    gameState.shakeDuration = duration;
+}
+
+/**
+ * Updates screen shake and returns current offset
+ */
+export function getShakeOffset(p) {
+    if (gameState.shakeDuration > 0) {
+        gameState.shakeDuration--;
+        const dx = p.random(-gameState.shakeAmplitude, gameState.shakeAmplitude);
+        const dy = p.random(-gameState.shakeAmplitude, gameState.shakeAmplitude);
+        return { x: dx, y: dy };
+    }
+    return { x: 0, y: 0 };
+}
+</file>
+
+<file name="particles.js">
+/**
+ * particles.js
+ * Particle system for visual effects.
+ */
+
+import { gameState, GAME_CONFIG } from './globals.js';
+
+class Particle {
+    constructor(x, y, color) {
+        this.x = x;
+        this.y = y;
+        this.vx = (Math.random() - 0.5) * 5;
+        this.vy = (Math.random() - 0.5) * 5;
+        this.size = Math.random() * 4 + 2;
+        this.color = color;
+        this.alpha = 255;
+        this.decay = Math.random() * 5 + 2;
+        this.gravity = 0.2;
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.vy += this.gravity;
+        this.alpha -= this.decay;
+    }
+
+    render(p) {
+        p.noStroke();
+        p.fill(this.color[0], this.color[1], this.color[2], this.alpha);
+        p.rectMode(p.CENTER);
+        p.square(this.x, this.y, this.size);
+    }
+}
+
+class WoodChip extends Particle {
+    constructor(x, y) {
+        super(x, y, GAME_CONFIG.colors.woodLight);
+        this.size = Math.random() * 6 + 3;
+    }
+}
+
+class AppleSlice extends Particle {
+    constructor(x, y) {
+        super(x, y, [220, 30, 30]); // Red
+        this.gravity = 0.3;
+        this.size = 8;
+    }
+}
+
+class Spark extends Particle {
+    constructor(x, y) {
+        super(x, y, [255, 255, 100]); // Yellow
+        this.gravity = 0.1;
+        this.decay = 10;
+    }
+}
+
+/**
+ * Spawns an explosion of particles.
+ */
+export function spawnParticles(x, y, type, count = 10) {
+    for (let i = 0; i < count; i++) {
+        let p;
+        if (type === "WOOD") p = new WoodChip(x, y);
+        else if (type === "APPLE") p = new AppleSlice(x, y);
+        else if (type === "SPARK") p = new Spark(x, y);
+        else p = new Particle(x, y, [255, 255, 255]);
+        
+        gameState.particles.push(p);
+    }
+}
+
+/**
+ * Update and render all particles.
+ */
+export function updateAndRenderParticles(p) {
+    for (let i = gameState.particles.length - 1; i >= 0; i--) {
+        const part = gameState.particles[i];
+        part.update();
+        part.render(p);
+        
+        if (part.alpha <= 0) {
+            gameState.particles.splice(i, 1);
+        }
+    }
+}
+</file>
+
+<file name="input.js">
+/**
+ * input.js
+ * Handles keyboard input and input logging.
+ */
+
+import { gameState, resetGame, resetLevelState } from './globals.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+export function handleInput(p) {
+    // Only process input if window is focused or explicit click
+    // Note: p5 handles this via events, but we want to poll state or event-driven?
+    // The requirement says use p.keyPressed etc in main file.
+    // Here we can contain logic to interpret those keys.
+}
+
+export function handleKeyPressed(p) {
+    // Log input
+    p.logs.inputs.push({
+        input_type: 'keyPressed',
+        data: { key: p.key, keyCode: p.keyCode },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+    });
+
+    const k = p.keyCode;
+    
+    // ENTER - Start Game / Next Level (debug)
+    if (k === 13) {
+        if (gameState.gamePhase === "START") {
+            gameState.gamePhase = "PLAYING";
+            resetGame();
+        } else if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+            gameState.gamePhase = "START";
+        }
+    }
+
+    // R - Restart
+    if (k === 82) {
+        if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+            gameState.gamePhase = "START";
+        }
+    }
+
+    // ESC - Pause
+    if (k === 27) {
+        if (gameState.gamePhase === "PLAYING") {
+            gameState.gamePhase = "PAUSED";
+        } else if (gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = "PLAYING";
+        }
+    }
+
+    // Gameplay Controls: SPACE (32) or Z (90)
+    if ((k === 32 || k === 90) && gameState.gamePhase === "PLAYING") {
+        throwKnife();
+    }
+}
+
+export function handleAutomatedInput() {
+    // Check if automated mode is active
+    if (gameState.controlMode === "HUMAN") return;
+    
+    if (gameState.gamePhase === "PLAYING") {
+        const action = get_automated_testing_action(gameState);
+        if (action && action.throw) {
+            throwKnife();
+        }
+    } else if (gameState.gamePhase === "START" || gameState.gamePhase.startsWith("GAME_OVER")) {
+        // Auto restart for testing continuity
+        if (Math.random() < 0.05) {
+             if (gameState.gamePhase === "START") {
+                gameState.gamePhase = "PLAYING";
+                resetGame();
+             } else {
+                 gameState.gamePhase = "START";
+             }
+        }
+    }
+}
+
+function throwKnife() {
+    // Check if we can throw
+    if (gameState.activeKnife && gameState.activeKnife.state === "READY") {
+        gameState.activeKnife.throw();
+        gameState.knivesRemaining--;
+        // We will spawn a new ready knife after a delay or animation check in game loop
+    }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

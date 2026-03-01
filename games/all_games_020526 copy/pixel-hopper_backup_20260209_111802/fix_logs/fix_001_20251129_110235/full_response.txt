@@ -1,0 +1,173 @@
+<analysis>
+- Issue identified: The game fails to load due to an incorrect ES module import of p5.collide2d library. The library is not available as an ES module with named exports, and should be loaded as a global script. Additionally, there are references to undefined properties `gameState.canvasWidth` and `gameState.canvasHeight` that should use the imported constants instead.
+
+- Files affected: 
+  - index.html (needs p5.collide2d script tag)
+  - physics.js (needs to remove ESM import and fix variable references)
+
+- Changes needed:
+  1. Add p5.collide2d library as a script tag in index.html
+  2. Remove the invalid ESM import from physics.js
+  3. Use p.collideRectRect() method instead of imported function
+  4. Fix gameState.canvasWidth/Height references to use CANVAS_WIDTH/HEIGHT constants
+</analysis>
+
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Pixel Hopper</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; font-family: sans-serif; transition: background 0.2s; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #007bff; }
+      .control-button:active { transform: translateY(1px); }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: 'Segoe UI', Arial, sans-serif; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 2px;">Pixel Hopper</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN', this)">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="setMode('TEST_1', this)">TEST (AI Survival)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="setMode('TEST_2', this)">TEST (Random Chaos)</button>
+      </div>
+      <p id="gameDescription" style="color: #aaa; font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto 10px auto; line-height: 1.4; font-size: 14px;">
+        Navigate an endless procedural world. Hop across roads, rivers, and train tracks.
+      </p>
+      <p id="gameControls" style="color: #888; font-family: monospace; max-width: 600px; margin: 0 auto 20px auto; font-size: 12px;">
+        ARROWS: Move | ENTER: Start | ESC: Pause | R: Restart
+      </p>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.min.js"></script>
+    <script type="module" src="game.js"></script>
+    
+    <script>
+      function setMode(mode, btn) {
+        if (window.setControlMode) {
+          window.setControlMode(mode);
+          document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          // Focus canvas
+          document.querySelector('canvas').focus();
+        }
+      }
+    </script>
+  </body>
+</html>
+</code>
+
+<code filename="physics.js">
+import { gameState, GRID_SIZE, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function checkCollisions(p) {
+    const player = gameState.player;
+    if (!player || player.isDead) return;
+
+    // 1. Get the lane the player is currently on
+    // Lane index corresponds to player.gridY (negative because world goes up)
+    // Actually, let's map player world Y to lane index.
+    // In our system, gridY = 0 is start. gridY = -1 is one forward.
+    // Lane manager stores lanes such that index 0 is at gridY = 0?
+    // Let's defer to how LaneManager handles coordinates.
+    // Assuming LaneManager.getLaneAt(gridY) exists.
+    
+    const currentLane = gameState.laneManager.getLaneAt(player.gridY);
+    
+    if (!currentLane) return; // Should not happen
+
+    // 2. Check collisions based on lane type
+    
+    // A. Solid Static Obstacles (Trees) - handled in movement logic (pre-move check)
+    //    But we double check here just in case.
+    
+    // B. Dynamic Obstacles (Cars, Trains)
+    if (currentLane.type === 'ROAD' || currentLane.type === 'RAIL') {
+        const playerRect = player.getHitbox();
+        
+        for (let obstacle of currentLane.obstacles) {
+            const obsRect = obstacle.getHitbox();
+            if (p.collideRectRect(
+                playerRect.x, playerRect.y, playerRect.w, playerRect.h,
+                obsRect.x, obsRect.y, obsRect.w, obsRect.h
+            )) {
+                player.die("CRUSHED");
+                return;
+            }
+        }
+    }
+    
+    // C. Water Logic (Logs)
+    if (currentLane.type === 'WATER') {
+        // Assume unsafe until proven safe by a log
+        let onLog = false;
+        const playerRect = player.getHitbox();
+        
+        // Slightly shrink player hitbox for log standing to be forgiving
+        const footRect = {
+            x: playerRect.x + 5,
+            y: playerRect.y + 5,
+            w: playerRect.w - 10,
+            h: playerRect.h - 10
+        };
+
+        for (let log of currentLane.obstacles) {
+            const logRect = log.getHitbox();
+            if (p.collideRectRect(
+                footRect.x, footRect.y, footRect.w, footRect.h,
+                logRect.x, logRect.y, logRect.w, logRect.h
+            )) {
+                onLog = true;
+                // Move player with log
+                if (!player.isMoving) {
+                    player.visualX += log.speed;
+                    // Update grid X roughly to track (though visual is detached)
+                    // We only enforce grid X snap when hopping. 
+                    // While on log, we float.
+                }
+                break;
+            }
+        }
+        
+        // If mid-jump, we are safe (flying over water)
+        // If not moving and not on log -> Drown
+        if (!onLog && !player.isMoving && !player.isJumping()) {
+            player.die("DROWNED");
+            return;
+        }
+    }
+    
+    // 3. Screen Bounds
+    // If player drifted off screen while on log
+    if (player.visualX < -GRID_SIZE || player.visualX > CANVAS_WIDTH + GRID_SIZE) {
+        player.die("OFF_SCREEN");
+    }
+    
+    // Camera catch up (Eagle)
+    // If player falls too far behind camera
+    const screenY = player.visualY - gameState.cameraY;
+    if (screenY > CANVAS_HEIGHT + GRID_SIZE) {
+        player.die("EAGLE");
+    }
+}
+
+export function isSolid(gridX, gridY) {
+    const lane = gameState.laneManager.getLaneAt(gridY);
+    if (!lane) return true; // Void is solid/unsafe
+    
+    // Check trees/rocks
+    // Lane stores obstacles. Static obstacles map by X.
+    if (lane.staticMap && lane.staticMap[gridX]) {
+        return true;
+    }
+    
+    return false;
+}
+</code>

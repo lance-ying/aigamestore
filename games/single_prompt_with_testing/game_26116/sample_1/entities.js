@@ -1,0 +1,417 @@
+/**
+ * Game Entities.
+ * Contains classes for Player, Enemies, Projectiles, and Interactive Objects.
+ */
+
+import { gameState, GRAVITY, FRICTION, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { KEY, isKeyDown, wasKeyPressed } from './input.js';
+import { resolvePlatformCollisions, applyPhysics, checkAABB } from './physics.js';
+import { ParticleSystem } from './particles.js';
+
+// Base Entity Class
+class Entity {
+    constructor(x, y, w, h, type) {
+        this.x = x;
+        this.y = y;
+        this.w = w;
+        this.h = h;
+        this.type = type; // PLAYER, ENEMY, PROJECTILE, ITEM
+        this.vx = 0;
+        this.vy = 0;
+        this.active = true;
+        this.grounded = false;
+        this.useGravity = true;
+        this.facing = 1; // 1 = Right, -1 = Left
+        this.color = [255, 255, 255];
+    }
+
+    update(p) {
+        // Base update
+    }
+
+    render(p) {
+        p.fill(this.color);
+        p.rect(this.x, this.y, this.w, this.h);
+    }
+}
+
+// ------------------------------------------------------------------
+// PLAYER CLASS
+// ------------------------------------------------------------------
+export class Player extends Entity {
+    constructor(x, y) {
+        super(x, y, 24, 32, 'PLAYER');
+        this.speed = 4;
+        this.jumpForce = -10.5;
+        this.health = 100;
+        this.maxHealth = 100;
+        this.invincibleTime = 0;
+        
+        // Animation states
+        this.animTimer = 0;
+        this.isMoving = false;
+        this.gunCooldown = 0;
+        this.gunMaxCooldown = 15;
+    }
+
+    update(p) {
+        // Input Handling
+        const left = isKeyDown(KEY.LEFT);
+        const right = isKeyDown(KEY.RIGHT);
+        const up = isKeyDown(KEY.UP);
+        const down = isKeyDown(KEY.DOWN); // Crouch?
+        const jump = isKeyDown(KEY.SPACE);
+        const shoot = isKeyDown(KEY.Z);
+        const shift = isKeyDown(KEY.SHIFT);
+
+        // Movement X
+        if (!shift) { // Shift locks movement for precise aiming
+            if (left) {
+                this.vx = -this.speed;
+                this.facing = -1;
+                this.isMoving = true;
+            } else if (right) {
+                this.vx = this.speed;
+                this.facing = 1;
+                this.isMoving = true;
+            } else {
+                this.vx = 0;
+                this.isMoving = false;
+            }
+        } else {
+            this.vx = 0;
+            // Can change facing while locked?
+            if (left) this.facing = -1;
+            if (right) this.facing = 1;
+        }
+
+        // Jump
+        if (jump && this.grounded) {
+            this.vy = this.jumpForce;
+            this.grounded = false;
+            ParticleSystem.spawnDust(this.x + this.w/2, this.y + this.h);
+        }
+
+        // Variable Jump Height (release space to fall faster)
+        if (!jump && this.vy < -2) {
+            this.vy *= 0.5;
+        }
+
+        // Shooting
+        if (shoot && this.gunCooldown <= 0) {
+            this.shoot(up);
+            this.gunCooldown = this.gunMaxCooldown;
+        }
+        if (this.gunCooldown > 0) this.gunCooldown--;
+
+        // Apply Physics
+        applyPhysics(this);
+        resolvePlatformCollisions(this, gameState.platforms);
+
+        // Invincibility
+        if (this.invincibleTime > 0) this.invincibleTime--;
+
+        // Animation Timer
+        if (this.isMoving && this.grounded) {
+            this.animTimer += 0.2;
+        } else {
+            this.animTimer = 0;
+        }
+    }
+
+    shoot(aimUp) {
+        let px = this.x + this.w/2;
+        let py = this.y + this.h/2;
+        let pvx = 0;
+        let pvy = 0;
+
+        if (aimUp) {
+            pvy = -12;
+            pvx = 0;
+            py -= 10;
+        } else {
+            pvx = 12 * this.facing;
+            px += 10 * this.facing;
+        }
+
+        const proj = new Projectile(px, py, pvx, pvy, 'PLAYER_BULLET');
+        gameState.entities.push(proj);
+        
+        // Recoil effect
+        ParticleSystem.spawnSpark(px, py, pvx * 0.2, pvy * 0.2);
+    }
+
+    takeDamage(amount) {
+        if (this.invincibleTime > 0) return;
+        
+        this.health -= amount;
+        this.invincibleTime = 60; // 1 second
+        
+        // Knockback
+        this.vy = -5;
+        this.vx = -this.facing * 5;
+        
+        ParticleSystem.spawnExplosion(this.x + this.w/2, this.y + this.h/2, [255, 0, 0], 5);
+
+        if (this.health <= 0) {
+            this.die();
+        }
+    }
+
+    die() {
+        this.active = false;
+        ParticleSystem.spawnExplosion(this.x, this.y, [0, 255, 0], 20);
+        gameState.gamePhase = "GAME_OVER_LOSE";
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x + this.w/2, this.y + this.h/2); // Center pivot
+        
+        // Invincibility Flash
+        if (this.invincibleTime > 0 && Math.floor(p.frameCount / 4) % 2 === 0) {
+            p.pop();
+            return;
+        }
+
+        p.scale(this.facing, 1); // Flip horizontal based on facing
+
+        // Bobbing animation
+        let bobY = 0;
+        if (this.grounded && this.isMoving) {
+            bobY = Math.sin(this.animTimer) * 2;
+        }
+
+        // Draw Frog Body
+        p.noStroke();
+        p.fill(60, 180, 60); // Green
+        p.rectMode(p.CENTER);
+        p.rect(0, bobY, 24, 32, 4);
+        
+        // Draw Belly
+        p.fill(200, 240, 200);
+        p.rect(0, bobY + 4, 14, 20, 2);
+
+        // Draw Eyes
+        p.fill(255);
+        p.ellipse(-6, -10 + bobY, 8, 8);
+        p.ellipse(6, -10 + bobY, 8, 8);
+        p.fill(0);
+        p.ellipse(-6, -10 + bobY, 3, 3);
+        p.ellipse(6, -10 + bobY, 3, 3);
+
+        // Draw Gun
+        p.fill(40, 40, 60);
+        let gunAngle = 0;
+        if (isKeyDown(KEY.UP)) {
+            p.rotate(-Math.PI/2); // Point up
+            p.translate(5, -5); // Adjust pivot
+        }
+        p.rect(10, 5 + bobY, 16, 8);
+        p.fill(20, 20, 40);
+        p.rect(16, 5 + bobY, 4, 4); // Barrel
+
+        p.pop();
+    }
+}
+
+// ------------------------------------------------------------------
+// PROJECTILE CLASS
+// ------------------------------------------------------------------
+export class Projectile extends Entity {
+    constructor(x, y, vx, vy, type) {
+        super(x, y, 10, 10, type); // Rect size
+        this.vx = vx;
+        this.vy = vy;
+        this.life = 100; // Frames
+        this.useGravity = false;
+        this.damage = 10;
+    }
+
+    update(p) {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life--;
+
+        if (this.life <= 0) this.active = false;
+        
+        // Platform Collision
+        for (let plat of gameState.platforms) {
+            if (checkAABB(this, plat)) {
+                this.active = false;
+                ParticleSystem.spawnSpark(this.x, this.y, -this.vx*0.5, -this.vy*0.5);
+                return;
+            }
+        }
+
+        // Entity Collision
+        if (this.type === 'PLAYER_BULLET') {
+            for (let e of gameState.entities) {
+                if (e.type === 'ENEMY' && e.active && checkAABB(this, e)) {
+                    e.takeDamage(this.damage);
+                    this.active = false;
+                    ParticleSystem.spawnExplosion(this.x, this.y, [255, 255, 100], 5);
+                    return;
+                }
+            }
+        }
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        p.noStroke();
+        if (this.type === 'PLAYER_BULLET') {
+            p.fill(100, 200, 255);
+            p.circle(5, 5, 8);
+            p.fill(255);
+            p.circle(5, 5, 4);
+        }
+        p.pop();
+    }
+}
+
+// ------------------------------------------------------------------
+// ENEMY CLASSES
+// ------------------------------------------------------------------
+export class Enemy extends Entity {
+    constructor(x, y, w, h) {
+        super(x, y, w, h, 'ENEMY');
+        this.health = 30;
+        this.color = [50, 50, 50];
+        this.damage = 10;
+    }
+
+    takeDamage(amount) {
+        this.health -= amount;
+        // Flash white logic can be added in render
+        if (this.health <= 0) {
+            this.die();
+        }
+    }
+
+    die() {
+        this.active = false;
+        gameState.score += 100;
+        ParticleSystem.spawnExplosion(this.x + this.w/2, this.y + this.h/2, this.color, 15);
+    }
+
+    checkPlayerCollision() {
+        if (gameState.player && gameState.player.active) {
+            if (checkAABB(this, gameState.player)) {
+                gameState.player.takeDamage(this.damage);
+            }
+        }
+    }
+}
+
+export class Slime extends Enemy {
+    constructor(x, y) {
+        super(x, y, 30, 20);
+        this.vx = -1.5;
+        this.patrolDist = 0;
+        this.color = [30, 30, 30];
+    }
+
+    update(p) {
+        applyPhysics(this);
+        resolvePlatformCollisions(this, gameState.platforms);
+        
+        // Simple Patrol Logic
+        // Add defensive check for 'this' to prevent TypeError if context is lost
+        if (this && this.vx === 0 && this.grounded) { 
+            this.vx = (Math.random() > 0.5 ? 1 : -1) * 1.5; // Turn around if hit wall
+        }
+        
+        // Turn around at ledges could be added with raycasts, 
+        // but for now let's just reverse occasionally
+        if (p.frameCount % 120 === 0) this.vx *= -1;
+
+        this.checkPlayerCollision();
+    }
+
+    render(p) {
+        p.fill(this.color);
+        p.stroke(0);
+        // Squish animation
+        let hMod = Math.sin(p.frameCount * 0.2) * 2;
+        p.rect(this.x, this.y + hMod, this.w, this.h - hMod, 5);
+        
+        // Eyes
+        p.fill(255, 50, 50);
+        p.ellipse(this.x + 8, this.y + 8 + hMod, 6, 6);
+        p.ellipse(this.x + 22, this.y + 8 + hMod, 6, 6);
+    }
+}
+
+export class Bat extends Enemy {
+    constructor(x, y) {
+        super(x, y, 20, 20);
+        this.startY = y;
+        this.offset = Math.random() * 10;
+        this.useGravity = false;
+        this.health = 20;
+    }
+
+    update(p) {
+        // Sine wave movement
+        this.x -= 2; // Move left
+        this.y = this.startY + Math.sin((p.frameCount + this.offset) * 0.1) * 30;
+
+        if (this.x < gameState.camera.x - 50) this.active = false; // Despawn
+
+        this.checkPlayerCollision();
+    }
+
+    render(p) {
+        p.fill(10, 10, 10);
+        p.noStroke();
+        
+        // Wings
+        let wingY = Math.sin(p.frameCount * 0.5) * 10;
+        p.triangle(this.x + 10, this.y + 10, this.x - 10, this.y - wingY, this.x - 5, this.y + 10);
+        p.triangle(this.x + 10, this.y + 10, this.x + 30, this.y - wingY, this.x + 25, this.y + 10);
+        
+        // Body
+        p.circle(this.x + 10, this.y + 10, 15);
+        p.fill(255, 0, 0);
+        p.circle(this.x + 7, this.y + 8, 3);
+        p.circle(this.x + 13, this.y + 8, 3);
+    }
+}
+
+// ------------------------------------------------------------------
+// INTERACTIVE OBJECTS
+// ------------------------------------------------------------------
+export class Teleporter extends Entity {
+    constructor(x, y) {
+        super(x, y, 60, 80, 'TELEPORTER');
+        this.useGravity = false;
+    }
+
+    update(p) {
+        // Emit particles
+        if (p.frameCount % 5 === 0) {
+            ParticleSystem.spawnSpark(
+                this.x + 10 + Math.random() * 40,
+                this.y + 10 + Math.random() * 60,
+                0, -1
+            );
+        }
+
+        // Win Condition
+        if (gameState.player && checkAABB(this, gameState.player)) {
+            gameState.gamePhase = "GAME_OVER_WIN";
+        }
+    }
+
+    render(p) {
+        p.fill(50, 50, 70);
+        p.rect(this.x, this.y, this.w, this.h);
+        
+        // Glowing Core
+        let glow = 150 + Math.sin(p.frameCount * 0.1) * 100;
+        p.fill(100, glow, 255);
+        p.rect(this.x + 10, this.y + 10, this.w - 20, this.h - 20);
+    }
+}

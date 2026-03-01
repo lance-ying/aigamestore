@@ -1,0 +1,87 @@
+/**
+ * Collision detection and physics updates.
+ */
+
+import { gameState, BLOCK_SIZE, BALL_RADIUS } from './globals.js';
+import { getGridKey, worldToScreen } from './iso_math.js';
+
+export function checkCollisions() {
+    const player = gameState.player;
+    if (!player || player.isDead) return;
+
+    // 1. Check if player is on a block
+    // We check the point directly under the ball
+    // Tolerance: Allow the ball to be slightly off-center, but center must be on a block
+    
+    // Calculate grid position
+    // We use Math.round to find the nearest block center
+    const gridX = Math.round(player.x / BLOCK_SIZE);
+    const gridZ = Math.round(player.z / BLOCK_SIZE);
+    
+    const key = getGridKey(gridX, gridZ);
+    
+    if (!gameState.blocks.has(key)) {
+        // No block under center of ball
+        // Check strict bounds? 
+        // ZigZag usually allows the ball to be "on" the block as long as the center is within the square
+        // Actually, simpler: check if `abs(player.x - block.x) < size/2 + radius` etc?
+        // Since we snap to grid, checking existence of block at rounded coord is effectively checking if center is inside the voronoi region of that block.
+        // It's a good approximation.
+        
+        player.startFalling();
+    }
+
+    // 2. Collectibles
+    for (const c of gameState.collectibles) {
+        if (!c.collected) {
+            const dx = player.x - c.x;
+            const dz = player.z - c.z;
+            const dist = Math.sqrt(dx*dx + dz*dz);
+            if (dist < BALL_RADIUS + 15) { // 15 is approx radius of diamond
+                c.collect();
+            }
+        }
+    }
+}
+
+export function updateCamera() {
+    const player = gameState.player;
+    if (!player) return;
+
+    const target = worldToScreen(player.x, player.y, player.z);
+    
+    // Smooth follow
+    // We want the player to be slightly offset so they can see ahead
+    // "Ahead" depends on direction, but generally we want player in center-ish
+    
+    // Convert target to screen coordinates relative to center
+    // Screen X, Screen Y
+    // gameState.camera.x/y are offsets subtracted from canvas center
+    
+    // We want: CANVAS_WIDTH/2 = (screenX - camX)
+    // => camX = screenX - CANVAS_WIDTH/2  (This puts player at center)
+    // But screenX is already calculated from (0,0).
+    
+    // Let's look at applyCamera: x + (W/2 - camX)
+    // To center: camX should be screenX.
+    
+    // We want to lerp camera.x to screenX
+    const smoothing = 0.1;
+    
+    // Only follow if not super dead (to keep seeing the fall)
+    if (player.y > -200) {
+        // Calculate the "Iso" position of the player without camera
+        const pIso = worldToScreen(player.x, player.y, player.z);
+        
+        gameState.camera.x += (pIso.x - gameState.camera.x) * smoothing;
+        gameState.camera.y += (pIso.y - gameState.camera.y) * smoothing;
+    }
+    
+    // Apply shake
+    if (gameState.camera.shake > 0) {
+        gameState.camera.x += (Math.random() - 0.5) * gameState.camera.shake;
+        gameState.camera.y += (Math.random() - 0.5) * gameState.camera.shake;
+        gameState.camera.shake *= 0.9;
+        if (gameState.camera.shake < 0.5) gameState.camera.shake = 0;
+    }
+}

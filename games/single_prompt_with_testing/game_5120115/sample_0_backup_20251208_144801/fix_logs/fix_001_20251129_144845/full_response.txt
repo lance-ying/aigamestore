@@ -1,0 +1,504 @@
+<analysis>
+- Issue identified: 
+  1. Crash on simulation: `Car` class is not imported in `input.js`, causing ReferenceError when `startSimulation()` tries to instantiate it. Additionally, `physics.js` references `gameState.level` properties that don't exist (should be `LEVEL_CONFIG`).
+  2. Road length restriction: ROAD material has `maxLen: 100` which is too short to span the gap (gap is 400 pixels wide from x=100 to x=500), making it nearly impossible to build bridges.
+
+- Files affected: 
+  - `input.js` (missing Car import)
+  - `physics.js` (incorrect level config references)
+  - `globals.js` (ROAD maxLen too restrictive)
+
+- Changes needed:
+  1. Import `Car` class in `input.js`
+  2. Replace `gameState.level` with `LEVEL_CONFIG` in `physics.js`
+  3. Increase ROAD `maxLen` from 100 to 200 in `globals.js` to allow longer road segments
+</analysis>
+
+<code filename="input.js">
+import { gameState, MATERIALS, LEVEL_CONFIG, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Node, Constraint, Car } from './entities.js';
+
+export function handleInput(p) {
+    // Only handle inputs if key is pressed this frame (using keyReleased or keyPressed events in game.js is better, 
+    // but for continuous movement we might check keys here. 
+    // However, the constraint says "gameplay must be responsive to player inputs".
+    // We will use p.keyPressed in game.js for discreet actions and checkDown for holds if needed.
+    // Here we implement the logic called by those events.
+}
+
+export function handleKeyPress(p) {
+    // Phase Transitions
+    if (p.keyCode === 13) { // ENTER
+        if (gameState.gamePhase === "START") {
+            gameState.gamePhase = "PLAYING";
+            gameState.subPhase = "BUILD";
+            resetLevel();
+            return;
+        }
+        if (gameState.gamePhase === "PLAYING") {
+            if (gameState.subPhase === "BUILD") {
+                startSimulation();
+            } else {
+                // In Sim, Enter goes back to Build
+                gameState.subPhase = "BUILD";
+                resetSimulation();
+            }
+        }
+        if (gameState.gamePhase.startsWith("GAME_OVER")) {
+            // Enter usually confirms, but constraint says R restarts.
+            // We'll let Enter do nothing or restart. Let's stick to R for restart.
+        }
+    }
+    
+    if (p.keyCode === 27) { // ESC
+        if (gameState.gamePhase === "PLAYING") {
+            gameState.gamePhase = "PAUSED";
+        } else if (gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = "PLAYING";
+        }
+    }
+
+    if (p.keyCode === 82) { // R
+        if (gameState.gamePhase !== "START") {
+            gameState.gamePhase = "START";
+            resetLevel();
+        }
+    }
+
+    // Gameplay Controls
+    if (gameState.gamePhase === "PLAYING" && gameState.subPhase === "BUILD") {
+        handleBuildControls(p);
+    }
+    
+    // Log
+    p.logs.inputs.push({
+        key: p.key,
+        keyCode: p.keyCode,
+        frame: p.frameCount
+    });
+}
+
+function handleBuildControls(p) {
+    const MOVE_AMT = gameState.cursorSnap;
+    
+    // Arrow Keys: Move Cursor
+    if (p.keyCode === p.LEFT_ARROW) gameState.cursorX = Math.max(0, gameState.cursorX - MOVE_AMT);
+    if (p.keyCode === p.RIGHT_ARROW) gameState.cursorX = Math.min(CANVAS_WIDTH, gameState.cursorX + MOVE_AMT);
+    if (p.keyCode === p.UP_ARROW) gameState.cursorY = Math.max(0, gameState.cursorY - MOVE_AMT);
+    if (p.keyCode === p.DOWN_ARROW) gameState.cursorY = Math.min(CANVAS_HEIGHT, gameState.cursorY + MOVE_AMT);
+    
+    // Shift: Cycle Material
+    if (p.keyCode === 16) { // Shift
+        const mats = Object.keys(MATERIALS);
+        let idx = mats.indexOf(gameState.selectedMaterial);
+        idx = (idx + 1) % mats.length;
+        gameState.selectedMaterial = mats[idx];
+    }
+    
+    // Space: Action
+    if (p.keyCode === 32) {
+        performBuildSpaceAction();
+    }
+    
+    // Z: Delete / Undo
+    if (p.keyCode === 90) {
+        performDeleteAction();
+    }
+}
+
+function performBuildSpaceAction() {
+    // 1. Check if cursor is on an existing node
+    const hover = findNodeAt(gameState.cursorX, gameState.cursorY);
+    
+    if (gameState.selectedNode) {
+        // We are dragging a line from selectedNode
+        
+        let targetNode = hover;
+        
+        // If no node exists at cursor, try to create one
+        if (!targetNode) {
+            // Check max length
+            const dist = Math.hypot(gameState.cursorX - gameState.selectedNode.x, gameState.cursorY - gameState.selectedNode.y);
+            const matProp = MATERIALS[gameState.selectedMaterial];
+            
+            if (dist <= matProp.maxLen) {
+                // Check budget
+                // Node cost (if new) + Edge cost
+                const edgeCost = Math.ceil(dist * 0.1 * (matProp.cost / 10)); // approximate cost calc
+                if (gameState.currentCost + edgeCost <= gameState.budget) {
+                    targetNode = new Node(gameState.cursorX, gameState.cursorY);
+                    gameState.nodes.push(targetNode);
+                } else {
+                    // Budget exceeded
+                    return;
+                }
+            } else {
+                // Too long
+                return;
+            }
+        }
+        
+        // Try to connect selectedNode to targetNode
+        if (targetNode && targetNode !== gameState.selectedNode) {
+            // Check if connection already exists
+            const exists = gameState.constraints.some(c => 
+                (c.nodeA === gameState.selectedNode && c.nodeB === targetNode) ||
+                (c.nodeB === gameState.selectedNode && c.nodeA === targetNode)
+            );
+            
+            if (!exists) {
+                const dist = Math.hypot(targetNode.x - gameState.selectedNode.x, targetNode.y - gameState.selectedNode.y);
+                const matProp = MATERIALS[gameState.selectedMaterial];
+                if (dist <= matProp.maxLen) {
+                    const edgeCost = Math.ceil(dist * 0.1 * (matProp.cost / 10)); // Simplified cost logic
+                    if (gameState.currentCost + edgeCost <= gameState.budget) {
+                        gameState.constraints.push(new Constraint(gameState.selectedNode, targetNode, gameState.selectedMaterial));
+                        gameState.currentCost += edgeCost;
+                        
+                        // Move selection to new node for chain building
+                        gameState.selectedNode = targetNode;
+                    }
+                }
+            } else {
+                // If exists, just move selection
+                gameState.selectedNode = targetNode;
+            }
+        } else if (targetNode === gameState.selectedNode) {
+            // Deselect
+            gameState.selectedNode = null;
+        }
+        
+    } else {
+        // No node selected
+        if (hover) {
+            // Select it
+            gameState.selectedNode = hover;
+        } else {
+            // Create standalone node? Not usually useful, but allowed if free? 
+            // Poly Bridge usually requires starting from an existing node or anchor.
+            // We'll allow starting from existing nodes only to prevent floating structures.
+        }
+    }
+}
+
+function performDeleteAction() {
+    // 1. If dragging (selectedNode), cancel drag
+    if (gameState.selectedNode) {
+        gameState.selectedNode = null;
+        return;
+    }
+    
+    // 2. Delete item under cursor
+    const hoverNode = findNodeAt(gameState.cursorX, gameState.cursorY);
+    if (hoverNode && !hoverNode.fixed) {
+        // Remove node and all attached constraints
+        // Re-calculate cost? Simplifying: No refund on delete for this version? 
+        // Better: Refund.
+        
+        // Find constraints
+        const attached = gameState.constraints.filter(c => c.nodeA === hoverNode || c.nodeB === hoverNode);
+        attached.forEach(c => {
+            // refund logic would go here
+        });
+        
+        gameState.constraints = gameState.constraints.filter(c => c.nodeA !== hoverNode && c.nodeB !== hoverNode);
+        gameState.nodes = gameState.nodes.filter(n => n !== hoverNode);
+    } else {
+        // Check if edge is under cursor? (Harder with point cursor)
+        // Skip for now.
+    }
+}
+
+function findNodeAt(x, y) {
+    return gameState.nodes.find(n => Math.hypot(n.x - x, n.y - y) < 10);
+}
+
+export function resetLevel() {
+    gameState.nodes = [];
+    gameState.constraints = [];
+    gameState.cars = [];
+    gameState.currentCost = 0;
+    
+    // Add Anchors
+    LEVEL_CONFIG.anchorPoints.forEach(pt => {
+        gameState.nodes.push(new Node(pt.x, pt.y, true));
+    });
+    
+    // Reset Car (but don't spawn until sim?)
+    // Actually, usually car is part of the level definition.
+}
+
+export function startSimulation() {
+    gameState.subPhase = "SIMULATE";
+    gameState.simFrame = 0;
+    
+    // Save backup of positions to restore later
+    gameState.nodes.forEach(n => {
+        n.savedX = n.x;
+        n.savedY = n.y;
+        n.oldX = n.x;
+        n.oldY = n.y;
+    });
+    
+    // Spawn Car
+    gameState.cars = [new Car(LEVEL_CONFIG.anchorPoints[0].x, LEVEL_CONFIG.anchorPoints[0].y - 30)];
+}
+
+export function resetSimulation() {
+    gameState.subPhase = "BUILD";
+    gameState.cars = [];
+    gameState.nodes.forEach(n => {
+        n.x = n.savedX;
+        n.y = n.savedY;
+        n.oldX = n.savedX;
+        n.oldY = n.savedY;
+    });
+    // Reset stress colors
+    gameState.constraints.forEach(c => c.currentStress = 0);
+}
+</code>
+
+<code filename="physics.js">
+import { gameState, MATERIALS, CANVAS_HEIGHT, LEVEL_CONFIG } from './globals.js';
+
+// Simple Vector helper to avoid overhead of p5.Vector for massive particle counts
+export class Vec2 {
+    constructor(x, y) { this.x = x; this.y = y; }
+    add(v) { this.x += v.x; this.y += v.y; return this; }
+    sub(v) { this.x -= v.x; this.y -= v.y; return this; }
+    mult(n) { this.x *= n; this.y *= n; return this; }
+    mag() { return Math.sqrt(this.x * this.x + this.y * this.y); }
+    normalize() {
+        const m = this.mag();
+        if (m > 0) this.mult(1/m);
+        return this;
+    }
+    dist(v) { return Math.sqrt((this.x-v.x)**2 + (this.y-v.y)**2); }
+    copy() { return new Vec2(this.x, this.y); }
+}
+
+export function updatePhysics(p) {
+    gameState.simFrame++;
+
+    // 1. Verlet Integration for Particles (Nodes & Car parts)
+    gameState.nodes.forEach(node => {
+        if (!node.fixed) {
+            let tempX = node.x;
+            let tempY = node.y;
+            
+            // Velocity approximation
+            let vx = (node.x - node.oldX) * gameState.friction;
+            let vy = (node.y - node.oldY) * gameState.friction;
+            
+            // Apply Forces
+            vy += gameState.gravity * node.mass;
+            
+            node.x += vx;
+            node.y += vy;
+            
+            node.oldX = tempX;
+            node.oldY = tempY;
+        }
+    });
+
+    // 2. Constraint Solving (Relaxation Loop)
+    const iterations = 5;
+    for (let i = 0; i < iterations; i++) {
+        // Resolve Structural Constraints
+        gameState.constraints.forEach(c => c.resolve());
+        
+        // Resolve Car Constraints (Chassis rigidity)
+        gameState.cars.forEach(car => car.resolveConstraints());
+        
+        // Resolve Collisions
+        resolveCollisions();
+    }
+}
+
+export function checkBreakage() {
+    // Check if any constraint exceeds max stress
+    for (let i = gameState.constraints.length - 1; i >= 0; i--) {
+        const c = gameState.constraints[i];
+        const stress = c.getStress();
+        if (stress > 1.0 && c.material !== "SPRING") {
+            // Break!
+            return true;
+        }
+    }
+    return false;
+}
+
+function resolveCollisions() {
+    // Keep nodes above ground (outside gap)
+    gameState.nodes.forEach(node => {
+        if (!node.fixed) {
+            // Ground collision check
+            const isOverGap = node.x > LEVEL_CONFIG.gapStart && node.x < LEVEL_CONFIG.gapEnd;
+            if (!isOverGap) {
+                if (node.y > LEVEL_CONFIG.groundLevel) {
+                    node.y = LEVEL_CONFIG.groundLevel;
+                    // Ground friction impulse
+                    let vx = node.x - node.oldX;
+                    node.oldX = node.x - (vx * gameState.groundFriction);
+                }
+            } else {
+                // Water/Abyss collision - if too deep, maybe fail? 
+                // For now, let them fall.
+                if (node.y > CANVAS_HEIGHT + 100) {
+                    // Node fell off world
+                }
+            }
+        }
+    });
+    
+    // Car Wheel vs Road Collision
+    gameState.cars.forEach(car => {
+        car.wheels.forEach(wheel => {
+            let collided = false;
+            
+            // 1. Check Terrain
+            const isOverGap = wheel.x > LEVEL_CONFIG.gapStart && wheel.x < LEVEL_CONFIG.gapEnd;
+            if (!isOverGap) {
+                if (wheel.y + wheel.radius > LEVEL_CONFIG.groundLevel) {
+                    const pen = (wheel.y + wheel.radius) - LEVEL_CONFIG.groundLevel;
+                    wheel.y -= pen;
+                    // Simple friction
+                    let vx = wheel.x - wheel.oldX;
+                    wheel.oldX = wheel.x - (vx * 0.9);
+                    collided = true;
+                    wheel.onGround = true;
+                }
+            }
+            
+            // 2. Check Road Segments (Line-Circle Collision)
+            if (!collided) {
+                wheel.onGround = false;
+                gameState.constraints.forEach(c => {
+                    if (c.material === "ROAD") {
+                        if (checkLineCircle(c.nodeA, c.nodeB, wheel)) {
+                            wheel.onGround = true;
+                        }
+                    }
+                });
+            }
+        });
+    });
+}
+
+function checkLineCircle(p1, p2, circle) {
+    // Vector from p1 to p2
+    let dx = p2.x - p1.x;
+    let dy = p2.y - p1.y;
+    let lenSq = dx*dx + dy*dy;
+    
+    // Project circle center onto line segment
+    let t = ((circle.x - p1.x) * dx + (circle.y - p1.y) * dy) / lenSq;
+    
+    // Clamp t to segment [0, 1]
+    t = Math.max(0, Math.min(1, t));
+    
+    // Closest point on segment
+    let closestX = p1.x + t * dx;
+    let closestY = p1.y + t * dy;
+    
+    // Distance check
+    let distX = circle.x - closestX;
+    let distY = circle.y - closestY;
+    let dist = Math.sqrt(distX*distX + distY*distY);
+    
+    if (dist < circle.radius) {
+        // Collision response: push circle out along normal
+        let nx = distX / dist;
+        let ny = distY / dist;
+        let pen = circle.radius - dist;
+        
+        // Push wheel
+        circle.x += nx * pen;
+        circle.y += ny * pen;
+        
+        // Push bridge nodes slightly (Newton's 3rd law approximation)
+        // Distribute impulse based on t (closer node takes more)
+        if (!p1.fixed) {
+            p1.x -= nx * pen * 0.2 * (1-t);
+            p1.y -= ny * pen * 0.2 * (1-t);
+        }
+        if (!p2.fixed) {
+            p2.x -= nx * pen * 0.2 * t;
+            p2.y -= ny * pen * 0.2 * t;
+        }
+        
+        return true;
+    }
+    return false;
+}
+</code>
+
+<code filename="globals.js">
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const gameState = {
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    subPhase: "BUILD",  // BUILD, SIMULATE
+    controlMode: "HUMAN",
+    
+    // Level Data
+    budget: 12000,
+    currentCost: 0,
+    
+    // Entities
+    entities: [],
+    nodes: [],
+    constraints: [],
+    cars: [],
+    
+    // Editor State
+    cursorX: 100,
+    cursorY: 300,
+    cursorSnap: 20,
+    selectedNode: null,
+    hoveredNode: null,
+    selectedMaterial: "ROAD", // ROAD, WOOD, STEEL, SPRING
+    
+    // Physics State
+    gravity: 0.2,
+    friction: 0.98,
+    groundFriction: 0.8,
+    simFrame: 0,
+    
+    // Performance
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Logs
+    logs: null
+};
+
+export const MATERIALS = {
+    ROAD: { cost: 200, strength: 100, weight: 1.0, color: [50, 50, 50], maxLen: 200 },
+    WOOD: { cost: 100, strength: 60, weight: 0.5, color: [160, 82, 45], maxLen: 120 },
+    STEEL: { cost: 400, strength: 200, weight: 2.0, color: [192, 192, 192], maxLen: 180 },
+    SPRING: { cost: 300, strength: 80, weight: 0.5, color: [255, 100, 100], maxLen: 100, stiffness: 0.05 }
+};
+
+export const LEVEL_CONFIG = {
+    groundLevel: 350,
+    gapStart: 100,
+    gapEnd: 500,
+    anchorPoints: [
+        {x: 100, y: 300},
+        {x: 100, y: 200}, // Higher anchor for support
+        {x: 500, y: 300},
+        {x: 500, y: 200}
+    ],
+    winX: 550
+};
+
+export function getGameState() {
+    return gameState;
+}
+
+// Expose globally
+window.getGameState = getGameState;
+</code>

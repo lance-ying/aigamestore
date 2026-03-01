@@ -1,0 +1,4694 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+the auto restart should not put me back to the enter start screen, can you fix that
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; } /* active button for current control mode */
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic testing)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
+        <button id="test_3_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_3')">TEST (Damage & Health)</button>
+        <button id="test_4_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_4')">TEST (Ammo System)</button>
+        <button id="test_5_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_5')">TEST (Enemy AI)</button>
+      </div>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Keys: Move your soldier in four directions<br>Z: Fire weapon<br>SPACE: Sprint (faster movement with reduced accuracy)<br>SHIFT: Take cover/crouch (reduced movement speed but improved accuracy)<br>ENTER: Start game from title screen<br>ESC: Pause/unpause game<br>R: Restart game after victory or defeat</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script>
+      // Try to load dev_mode.js, but don't fail if it doesn't exist
+      (function() {
+        const script = document.createElement('script');
+        script.src = '../../dev_mode.js';
+        script.onerror = function() {
+          console.log('[Battle Zone] dev_mode.js not found, continuing without it');
+        };
+        document.head.appendChild(script);
+      })();
+    </script>
+    <script type="module" src="game.js"></script>
+    <script type="module" src="gym_api.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="gym_api.js">
+// gym_api.js - Gym API for reinforcement learning
+// AUTO-GENERATED from template - game-specific customizations applied
+
+import { 
+  gameState, 
+  CANVAS_WIDTH, 
+  CANVAS_HEIGHT,
+  KEY,
+  resetGame,
+} from './globals.js';
+import { Player } from './entities.js';
+import { generateLevel } from './level.js';
+
+// Add RL control mode
+export const CONTROL_RL = "RL";
+
+// Store the current RL action to be executed
+let rlAction = {
+  up: false,
+  down: false,
+  left: false,
+  right: false,
+  shoot: false,
+  sprint: false,
+  crouch: false,
+};
+
+// Previous state for reward calculation
+let previousState = {
+  score: 0,
+  health: 100,
+  ammo: 30,
+  enemiesKilled: 0,
+  isAlive: true,
+};
+
+// Frame counter for synchronization
+let stepReady = true;
+
+/**
+ * Apply RL action to the player
+ */
+function applyRLAction() {
+  if (!gameState.player || !gameState.player.health || gameState.player.health <= 0) return;
+  
+  // The game loop will read rlAction via getRLKeys()
+  // No direct application needed here
+}
+
+/**
+ * Calculate reward based on state changes
+ */
+function calculateReward() {
+  let reward = 0;
+  
+  const currentScore = gameState.score || 0;
+  const currentHealth = gameState.player ? gameState.player.health : 0;
+  const currentAmmo = gameState.player ? gameState.player.ammo : 0;
+  const currentEnemiesKilled = gameState.enemiesKilled || 0;
+  const currentIsAlive = gameState.player && gameState.player.health > 0;
+  
+  // 1. Score delta (primary reward)
+  const scoreDelta = currentScore - previousState.score;
+  reward += scoreDelta * 1.0;
+  
+  // 2. Kill enemy reward
+  const killDelta = currentEnemiesKilled - previousState.enemiesKilled;
+  reward += killDelta * 10.0;
+  
+  // 3. Survival reward
+  if (currentIsAlive) {
+    reward += 0.01;
+  }
+  
+  // 4. Death penalty
+  if (previousState.isAlive && !currentIsAlive) {
+    reward -= 100.0;
+  }
+  
+  // 5. Damage taken penalty
+  const damageTaken = previousState.health - currentHealth;
+  if (damageTaken > 0) {
+    reward -= damageTaken * 1.0;
+  }
+  
+  // 6. Mission complete bonus
+  if (gameState.gamePhase === "GAME_OVER_WIN") {
+    reward += 500.0;
+  }
+  
+  // Update previous state
+  previousState.score = currentScore;
+  previousState.health = currentHealth;
+  previousState.ammo = currentAmmo;
+  previousState.enemiesKilled = currentEnemiesKilled;
+  previousState.isAlive = currentIsAlive;
+  
+  return reward;
+}
+
+/**
+ * Get normalized player state for observation
+ * CRITICAL: Always returns an object with consistent shape, never null
+ */
+function getPlayerState() {
+  if (!gameState.player || !gameState.player.health || gameState.player.health <= 0) {
+    return {
+      x: 0.5,
+      y: 0.5,
+      health: 0,
+      ammo: 0,
+      direction: 0,
+      isSprinting: false,
+      isCrouching: false,
+      reloading: false,
+    };
+  }
+  
+  return {
+    x: gameState.player.x / gameState.level.width,
+    y: gameState.player.y / gameState.level.height,
+    health: gameState.player.health / gameState.player.maxHealth,
+    ammo: gameState.player.ammo / gameState.player.maxAmmo,
+    direction: gameState.player.direction,
+    isSprinting: gameState.player.isSprinting,
+    isCrouching: gameState.player.isCrouching,
+    reloading: gameState.player.reloading,
+  };
+}
+
+/**
+ * Find nearest entity of a given type
+ * CRITICAL: Always returns {x, y, distance} object, never null
+ */
+function findNearest(entities, getPosition) {
+  // Always return default structure for consistency
+  const defaultResult = {
+    x: 0,
+    y: 0,
+    distance: 1.0,
+  };
+  
+  if (!gameState.player || !gameState.player.health || gameState.player.health <= 0) {
+    return defaultResult;
+  }
+  
+  let nearest = null;
+  let minDist = Infinity;
+  
+  // Defensive: ensure entities is an array
+  if (!entities || !Array.isArray(entities) || entities.length === 0) {
+    return defaultResult;
+  }
+  
+  for (let entity of entities) {
+    try {
+      const pos = getPosition(entity);
+      if (!pos || typeof pos.x !== 'number' || typeof pos.y !== 'number') continue;
+      
+      const dx = pos.x - gameState.player.x;
+      const dy = pos.y - gameState.player.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      
+      if (dist < minDist) {
+        minDist = dist;
+        nearest = { x: pos.x, y: pos.y, distance: dist };
+      }
+    } catch (e) {
+      // Skip entities that cause errors
+      continue;
+    }
+  }
+  
+  if (nearest) {
+    // Normalize relative position
+    nearest.x = (nearest.x - gameState.player.x) / gameState.level.width;
+    nearest.y = (nearest.y - gameState.player.y) / gameState.level.height;
+    // Normalize distance
+    const maxDist = Math.sqrt(gameState.level.width * gameState.level.width + gameState.level.height * gameState.level.height);
+    nearest.distance = nearest.distance / maxDist;
+    return nearest;
+  }
+  
+  // Return default values when no entity found
+  return defaultResult;
+}
+
+/**
+ * Find nearest N entities of a given type
+ */
+function findNearestN(entities, getPosition, n) {
+  const results = [];
+  const defaultResult = { x: 0, y: 0, distance: 1.0 };
+  
+  if (!gameState.player || !gameState.player.health || gameState.player.health <= 0) {
+    for (let i = 0; i < n; i++) {
+      results.push({ ...defaultResult });
+    }
+    return results;
+  }
+  
+  if (!entities || !Array.isArray(entities) || entities.length === 0) {
+    for (let i = 0; i < n; i++) {
+      results.push({ ...defaultResult });
+    }
+    return results;
+  }
+  
+  // Calculate distances for all entities
+  const entitiesWithDist = [];
+  for (let entity of entities) {
+    try {
+      const pos = getPosition(entity);
+      if (!pos || typeof pos.x !== 'number' || typeof pos.y !== 'number') continue;
+      
+      const dx = pos.x - gameState.player.x;
+      const dy = pos.y - gameState.player.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      
+      entitiesWithDist.push({ entity, pos, distance: dist });
+    } catch (e) {
+      continue;
+    }
+  }
+  
+  // Sort by distance
+  entitiesWithDist.sort((a, b) => a.distance - b.distance);
+  
+  // Take the nearest N
+  for (let i = 0; i < n; i++) {
+    if (i < entitiesWithDist.length) {
+      const item = entitiesWithDist[i];
+      // Normalize
+      const relX = (item.pos.x - gameState.player.x) / gameState.level.width;
+      const relY = (item.pos.y - gameState.player.y) / gameState.level.height;
+      const maxDist = Math.sqrt(gameState.level.width * gameState.level.width + gameState.level.height * gameState.level.height);
+      const normDist = item.distance / maxDist;
+      
+      results.push({
+        x: relX,
+        y: relY,
+        distance: normDist,
+        entity: item.entity,
+      });
+    } else {
+      results.push({ ...defaultResult });
+    }
+  }
+  
+  return results;
+}
+
+/**
+ * Get enemy type as number
+ */
+function getEnemyTypeNumber(enemy) {
+  const typeMap = {
+    'regular': 0,
+    'elite': 1,
+    'heavy': 2,
+    'scout': 3,
+    'sniper': 4,
+    'tank': 5,
+  };
+  return typeMap[enemy.type] || 0;
+}
+
+/**
+ * Validate and normalize state to ensure consistent shape
+ * CRITICAL: Ensures all fields exist and have correct types
+ */
+function validateState(state) {
+  // Ensure all required fields exist with correct structure
+  const validatedState = {
+    player: state.player || {x: 0.5, y: 0.5, health: 0, ammo: 0, direction: 0, isSprinting: false, isCrouching: false, reloading: false},
+    nearestEnemy: state.nearestEnemy || {x: 0, y: 0, distance: 1.0, health: 0, type: 0},
+    secondNearestEnemy: state.secondNearestEnemy || {x: 0, y: 0, distance: 1.0, health: 0, type: 0},
+    thirdNearestEnemy: state.thirdNearestEnemy || {x: 0, y: 0, distance: 1.0, health: 0, type: 0},
+    nearestHealth: state.nearestHealth || {x: 0, y: 0, distance: 1.0},
+    nearestAmmo: state.nearestAmmo || {x: 0, y: 0, distance: 1.0},
+    nearestObstacle: state.nearestObstacle || {x: 0, y: 0, distance: 1.0},
+    mission: state.mission || {missionType: 0, enemiesKilled: 0, requiredKills: 0, extractionDistance: 1.0},
+    game: state.game || {score: 0, level: 1, timeElapsed: 0},
+  };
+  
+  // Ensure player object has all fields
+  if (validatedState.player) {
+    validatedState.player = {
+      x: typeof validatedState.player.x === 'number' ? validatedState.player.x : 0.5,
+      y: typeof validatedState.player.y === 'number' ? validatedState.player.y : 0.5,
+      health: typeof validatedState.player.health === 'number' ? validatedState.player.health : 0,
+      ammo: typeof validatedState.player.ammo === 'number' ? validatedState.player.ammo : 0,
+      direction: typeof validatedState.player.direction === 'number' ? validatedState.player.direction : 0,
+      isSprinting: typeof validatedState.player.isSprinting === 'boolean' ? validatedState.player.isSprinting : false,
+      isCrouching: typeof validatedState.player.isCrouching === 'boolean' ? validatedState.player.isCrouching : false,
+      reloading: typeof validatedState.player.reloading === 'boolean' ? validatedState.player.reloading : false,
+    };
+  }
+  
+  // Ensure enemy objects have all fields
+  ['nearestEnemy', 'secondNearestEnemy', 'thirdNearestEnemy'].forEach(key => {
+    if (validatedState[key]) {
+      validatedState[key] = {
+        x: typeof validatedState[key].x === 'number' ? validatedState[key].x : 0,
+        y: typeof validatedState[key].y === 'number' ? validatedState[key].y : 0,
+        distance: typeof validatedState[key].distance === 'number' ? validatedState[key].distance : 1.0,
+        health: typeof validatedState[key].health === 'number' ? validatedState[key].health : 0,
+        type: typeof validatedState[key].type === 'number' ? validatedState[key].type : 0,
+      };
+    }
+  });
+  
+  // Ensure pickup/obstacle objects have all fields
+  ['nearestHealth', 'nearestAmmo', 'nearestObstacle'].forEach(key => {
+    if (validatedState[key]) {
+      validatedState[key] = {
+        x: typeof validatedState[key].x === 'number' ? validatedState[key].x : 0,
+        y: typeof validatedState[key].y === 'number' ? validatedState[key].y : 0,
+        distance: typeof validatedState[key].distance === 'number' ? validatedState[key].distance : 1.0,
+      };
+    }
+  });
+  
+  // Ensure mission object has all fields
+  if (validatedState.mission) {
+    validatedState.mission = {
+      missionType: typeof validatedState.mission.missionType === 'number' ? validatedState.mission.missionType : 0,
+      enemiesKilled: typeof validatedState.mission.enemiesKilled === 'number' ? validatedState.mission.enemiesKilled : 0,
+      requiredKills: typeof validatedState.mission.requiredKills === 'number' ? validatedState.mission.requiredKills : 0,
+      extractionDistance: typeof validatedState.mission.extractionDistance === 'number' ? validatedState.mission.extractionDistance : 1.0,
+    };
+  }
+  
+  // Ensure game object has all fields
+  if (validatedState.game) {
+    validatedState.game = {
+      score: typeof validatedState.game.score === 'number' ? validatedState.game.score : 0,
+      level: typeof validatedState.game.level === 'number' ? validatedState.game.level : 1,
+      timeElapsed: typeof validatedState.game.timeElapsed === 'number' ? validatedState.game.timeElapsed : 0,
+    };
+  }
+  
+  return validatedState;
+}
+
+/**
+ * Gym API implementation
+ */
+const gymAPI = {
+  /**
+   * Reset the environment to initial state
+   * @returns {Object} Initial observation with done=false, reward=0
+   */
+  reset() {
+    // Set control mode to RL
+    gameState.controlMode = CONTROL_RL;
+    
+    // Reset action
+    rlAction = {
+      up: false,
+      down: false,
+      left: false,
+      right: false,
+      shoot: false,
+      sprint: false,
+      crouch: false,
+    };
+    
+    // Reset game
+    resetGame();
+    
+    // Get p5 instance (try different possible references)
+    const p5Instance = window.gameInstance || window.p5Instance;
+    if (p5Instance) {
+      generateLevel(p5Instance);
+    } else {
+      console.warn('p5 instance not found, using fallback');
+      // Create a minimal mock p5 object for level generation
+      const mockP5 = {
+        random: (min, max) => {
+          if (max === undefined) {
+            return Math.random() * min;
+          }
+          return min + Math.random() * (max - min);
+        },
+        floor: Math.floor,
+        dist: (x1, y1, x2, y2) => Math.sqrt((x2-x1)*(x2-x1) + (y2-y1)*(y2-y1)),
+      };
+      generateLevel(mockP5);
+    }
+    
+    gameState.player = new Player(gameState.level.width / 2, gameState.level.height / 2);
+    gameState.gamePhase = "PLAYING";
+    
+    // Initialize previous state
+    previousState = {
+      score: 0,
+      health: gameState.player.health,
+      ammo: gameState.player.ammo,
+      enemiesKilled: 0,
+      isAlive: true,
+    };
+    
+    stepReady = true;
+    
+    return {
+      done: false,
+      reward: 0,
+    };
+  },
+  
+  /**
+   * Execute one step with the given action
+   * @param {Number} action - Discrete action (0-12)
+   * @returns {Object} {reward: number, done: boolean, info: Object}
+   */
+  step(action) {
+    // Convert discrete action to control object
+    // Action mapping:
+    // 0: no-op
+    // 1: up
+    // 2: down
+    // 3: left
+    // 4: right
+    // 5: shoot
+    // 6: up + shoot
+    // 7: down + shoot
+    // 8: left + shoot
+    // 9: right + shoot
+    // 10: sprint
+    // 11: crouch
+    // 12: up + sprint
+    
+    // Reset all actions
+    rlAction = {
+      up: false,
+      down: false,
+      left: false,
+      right: false,
+      shoot: false,
+      sprint: false,
+      crouch: false,
+    };
+    
+    // Ensure action is a number
+    const actionNum = typeof action === 'number' ? action : parseInt(action, 10);
+    
+    // Validate action range
+    if (isNaN(actionNum) || actionNum < 0 || actionNum > 12) {
+      console.warn('Invalid action:', action);
+      // Default to no-op
+    } else {
+      // Apply the discrete action
+      switch (actionNum) {
+        case 0: // no-op
+          break;
+        case 1: // up
+          rlAction.up = true;
+          break;
+        case 2: // down
+          rlAction.down = true;
+          break;
+        case 3: // left
+          rlAction.left = true;
+          break;
+        case 4: // right
+          rlAction.right = true;
+          break;
+        case 5: // shoot
+          rlAction.shoot = true;
+          break;
+        case 6: // up + shoot
+          rlAction.up = true;
+          rlAction.shoot = true;
+          break;
+        case 7: // down + shoot
+          rlAction.down = true;
+          rlAction.shoot = true;
+          break;
+        case 8: // left + shoot
+          rlAction.left = true;
+          rlAction.shoot = true;
+          break;
+        case 9: // right + shoot
+          rlAction.right = true;
+          rlAction.shoot = true;
+          break;
+        case 10: // sprint
+          rlAction.sprint = true;
+          break;
+        case 11: // crouch
+          rlAction.crouch = true;
+          break;
+        case 12: // up + sprint
+          rlAction.up = true;
+          rlAction.sprint = true;
+          break;
+      }
+    }
+    
+    // Check if game is in playable state
+    if (gameState.gamePhase !== "PLAYING") {
+      return {
+        reward: 0,
+        done: true,
+        info: this.getInfo(),
+      };
+    }
+    
+    // Apply the action and update game state
+    applyRLAction();
+    
+    // Calculate reward based on state changes
+    const reward = calculateReward();
+    
+    // Check if episode is done
+    const isDone = gameState.gamePhase === "GAME_OVER_WIN" || 
+                   gameState.gamePhase === "GAME_OVER_LOSE" ||
+                   !gameState.player ||
+                   gameState.player.health <= 0;
+    
+    return {
+      reward: reward,
+      done: isDone,
+      info: this.getInfo(),
+    };
+  },
+  
+  /**
+   * Get structured state observation
+   * @returns {Object} Normalized state representation
+   */
+  getState() {
+    const player = getPlayerState();
+    
+    // Find nearest enemies (with defensive checks)
+    const enemies = gameState.enemies || [];
+    const nearestEnemies = findNearestN(enemies, (e) => ({ x: e.x, y: e.y }), 3);
+    
+    const nearestEnemy = nearestEnemies[0] || { x: 0, y: 0, distance: 1.0 };
+    const secondNearestEnemy = nearestEnemies[1] || { x: 0, y: 0, distance: 1.0 };
+    const thirdNearestEnemy = nearestEnemies[2] || { x: 0, y: 0, distance: 1.0 };
+    
+    // Add health and type to enemies
+    if (nearestEnemy.entity) {
+      nearestEnemy.health = nearestEnemy.entity.health;
+      nearestEnemy.type = getEnemyTypeNumber(nearestEnemy.entity);
+      delete nearestEnemy.entity;
+    } else {
+      nearestEnemy.health = 0;
+      nearestEnemy.type = 0;
+    }
+    
+    if (secondNearestEnemy.entity) {
+      secondNearestEnemy.health = secondNearestEnemy.entity.health;
+      secondNearestEnemy.type = getEnemyTypeNumber(secondNearestEnemy.entity);
+      delete secondNearestEnemy.entity;
+    } else {
+      secondNearestEnemy.health = 0;
+      secondNearestEnemy.type = 0;
+    }
+    
+    if (thirdNearestEnemy.entity) {
+      thirdNearestEnemy.health = thirdNearestEnemy.entity.health;
+      thirdNearestEnemy.type = getEnemyTypeNumber(thirdNearestEnemy.entity);
+      delete thirdNearestEnemy.entity;
+    } else {
+      thirdNearestEnemy.health = 0;
+      thirdNearestEnemy.type = 0;
+    }
+    
+    // Find nearest health pickup (with defensive checks)
+    const pickups = gameState.pickups || [];
+    const healthPickups = pickups.filter(p => p.type === "health");
+    const nearestHealth = findNearest(healthPickups, (p) => ({ x: p.x, y: p.y }));
+    
+    // Find nearest ammo pickup (with defensive checks)
+    const ammoPickups = pickups.filter(p => p.type === "ammo");
+    const nearestAmmo = findNearest(ammoPickups, (p) => ({ x: p.x, y: p.y }));
+    
+    // Find nearest obstacle (with defensive checks)
+    const obstacles = gameState.obstacles || [];
+    const nearestObstacle = findNearest(
+      obstacles,
+      (o) => ({
+        x: o.x + o.width / 2,
+        y: o.y + o.height / 2,
+      })
+    );
+    
+    // Mission state
+    // Now mission is always combined, so we return 2 to indicate new mode
+    const missionType = 2; 
+    
+    const extractionDistance = gameState.extractionPointObj && gameState.player ? 
+      Math.sqrt(
+        Math.pow(gameState.extractionPoint.x - gameState.player.x, 2) +
+        Math.pow(gameState.extractionPoint.y - gameState.player.y, 2)
+      ) / Math.sqrt(gameState.level.width * gameState.level.width + gameState.level.height * gameState.level.height) : 1.0;
+    
+    const mission = {
+      missionType: missionType,
+      enemiesKilled: gameState.enemiesKilled || 0,
+      requiredKills: gameState.requiredKills || 0,
+      extractionDistance: extractionDistance,
+    };
+    
+    // Game state
+    const game = {
+      score: gameState.score || 0,
+      level: gameState.currentLevel || 1,
+      timeElapsed: gameState.timeElapsed || 0,
+    };
+    
+    const state = {
+      player: player,
+      nearestEnemy: nearestEnemy,
+      secondNearestEnemy: secondNearestEnemy,
+      thirdNearestEnemy: thirdNearestEnemy,
+      nearestHealth: nearestHealth,
+      nearestAmmo: nearestAmmo,
+      nearestObstacle: nearestObstacle,
+      mission: mission,
+      game: game,
+    };
+    
+    // Validate and normalize state to ensure consistent shape
+    return validateState(state);
+  },
+  
+  /**
+   * Get debug information
+   * @returns {Object} Current game state info
+   */
+  getInfo() {
+    return {
+      phase: gameState.gamePhase,
+      level: gameState.currentLevel,
+      score: gameState.score,
+      playerHealth: gameState.player ? gameState.player.health : 0,
+      playerAmmo: gameState.player ? gameState.player.ammo : 0,
+      playerReserveAmmo: gameState.player ? gameState.player.reserveAmmo : 0,
+      enemyCount: gameState.enemies.length,
+      enemiesKilled: gameState.enemiesKilled,
+      requiredKills: gameState.requiredKills,
+      mission: gameState.mission,
+      timeElapsed: gameState.timeElapsed,
+    };
+  },
+  
+  /**
+   * Get the current RL action (for game loop to read)
+   */
+  getRLAction() {
+    return rlAction;
+  },
+  
+  /**
+   * Get the current RL keys (for game loop to read)
+   * This is what game.js expects
+   */
+  getRLKeys() {
+    return rlAction;
+  },
+  
+  /**
+   * Check if control mode is RL
+   */
+  isRLMode() {
+    return gameState.controlMode === CONTROL_RL;
+  },
+};
+
+// Expose API on window object
+window.gymAPI = gymAPI;
+
+// Also expose the control mode constant
+window.CONTROL_RL = CONTROL_RL;
+
+export default gymAPI;
+</file>
+
+<file name="automated_testing_controller.js">
+import { KEY, gameState } from './globals.js';
+
+// TEST_1: Basic testing with sticky keys
+function getStickyKeysAction(gameState) {
+  // Use frame count to change actions periodically
+  const frameCount = gameState.player ? gameState.player.lastShot : 0;
+  const cycleLength = 120; // Change action every 2 seconds at 60 FPS
+  const actionIndex = Math.floor(frameCount / cycleLength) % 5;
+  
+  // Track player's position to detect if stuck
+  if (!gameState.testData) {
+    gameState.testData = {
+      lastPositions: [],
+      stuckCounter: 0,
+      randomActionTimer: 0
+    };
+  }
+  
+  // Store last 10 positions
+  if (gameState.player) {
+    gameState.testData.lastPositions.push({x: gameState.player.x, y: gameState.player.y});
+    if (gameState.testData.lastPositions.length > 10) {
+      gameState.testData.lastPositions.shift();
+    }
+    
+    // Check if stuck (not moving much)
+    if (gameState.testData.lastPositions.length === 10) {
+      const firstPos = gameState.testData.lastPositions[0];
+      const lastPos = gameState.testData.lastPositions[9];
+      const distance = Math.sqrt(
+        Math.pow(lastPos.x - firstPos.x, 2) + 
+        Math.pow(lastPos.y - firstPos.y, 2)
+      );
+      
+      if (distance < 5) {
+        gameState.testData.stuckCounter++;
+      } else {
+        gameState.testData.stuckCounter = 0;
+      }
+      
+      // If stuck for a while, use random actions
+      if (gameState.testData.stuckCounter > 5) {
+        gameState.testData.randomActionTimer = 60; // Use random actions for 1 second
+        gameState.testData.stuckCounter = 0;
+      }
+    }
+    
+    // Use random actions if timer is active
+    if (gameState.testData.randomActionTimer > 0) {
+      gameState.testData.randomActionTimer--;
+      return [KEY.UP, KEY.DOWN, KEY.LEFT, KEY.RIGHT, KEY.Z, KEY.SPACE, KEY.SHIFT][Math.floor(Math.random() * 7)];
+    }
+  }
+  
+  // Regular action patterns
+  switch (actionIndex) {
+    case 0: // Move right and shoot
+      return frameCount % 10 < 5 ? KEY.RIGHT : KEY.Z;
+    case 1: // Move left and shoot
+      return frameCount % 10 < 5 ? KEY.LEFT : KEY.Z;
+    case 2: // Move up and sprint
+      return frameCount % 10 < 5 ? KEY.UP : KEY.SPACE;
+    case 3: // Move down and take cover
+      return frameCount % 10 < 5 ? KEY.DOWN : KEY.SHIFT;
+    case 4: // Circle movement
+      const subCycle = frameCount % 40;
+      if (subCycle < 10) return KEY.RIGHT;
+      if (subCycle < 20) return KEY.DOWN;
+      if (subCycle < 30) return KEY.LEFT;
+      return KEY.UP;
+  }
+  
+  return KEY.Z; // Default to shooting
+}
+
+// TEST_2: Win the game
+function getTestWinAction(gameState) {
+  if (!gameState.player) return null;
+  
+  // Initialize test data if not exists
+  if (!gameState.testWinData) {
+    gameState.testWinData = {
+      mode: "explore",
+      targetEnemy: null,
+      targetPickup: null,
+      lastPositions: [],
+      stuckCounter: 0,
+      pathTimer: 0,
+      currentPath: [],
+      lastHealth: gameState.player.health,
+      healthCritical: false
+    };
+  }
+  
+  const data = gameState.testWinData;
+  
+  // Track positions to detect if stuck
+  data.lastPositions.push({x: gameState.player.x, y: gameState.player.y});
+  if (data.lastPositions.length > 15) {
+    data.lastPositions.shift();
+  }
+  
+  // Check if stuck
+  if (data.lastPositions.length === 15) {
+    const firstPos = data.lastPositions[0];
+    const lastPos = data.lastPositions[14];
+    const distance = Math.sqrt(
+      Math.pow(lastPos.x - firstPos.x, 2) + 
+      Math.pow(lastPos.y - firstPos.y, 2)
+    );
+    
+    if (distance < 10) {
+      data.stuckCounter++;
+    } else {
+      data.stuckCounter = 0;
+    }
+    
+    // If stuck, change targets or use random movement
+    if (data.stuckCounter > 10) {
+      data.targetEnemy = null;
+      data.targetPickup = null;
+      data.mode = "random";
+      data.pathTimer = 30;
+      data.stuckCounter = 0;
+    }
+  }
+  
+  // Check if health decreased - prioritize finding health
+  if (gameState.player.health < data.lastHealth) {
+    data.lastHealth = gameState.player.health;
+    if (gameState.player.health < 40) {
+      data.healthCritical = true;
+    }
+  }
+  
+  // If health is critical, look for health packs
+  if (data.healthCritical && gameState.player.health < 40) {
+    // Find closest health pickup
+    let closestHealth = null;
+    let minDist = Infinity;
+    
+    for (const pickup of gameState.pickups) {
+      if (pickup.type === "health") {
+        const dist = distance(gameState.player, pickup);
+        if (dist < minDist) {
+          minDist = dist;
+          closestHealth = pickup;
+        }
+      }
+    }
+    
+    if (closestHealth) {
+      data.mode = "get_health";
+      data.targetPickup = closestHealth;
+    } else {
+      // No health packs, continue with mission
+      data.healthCritical = false;
+    }
+  }
+  
+  // If ammo is low, look for ammo
+  if (gameState.player.ammo < 5 && !data.healthCritical) {
+    // Find closest ammo pickup
+    let closestAmmo = null;
+    let minDist = Infinity;
+    
+    for (const pickup of gameState.pickups) {
+      if (pickup.type === "ammo") {
+        const dist = distance(gameState.player, pickup);
+        if (dist < minDist) {
+          minDist = dist;
+          closestAmmo = pickup;
+        }
+      }
+    }
+    
+    if (closestAmmo) {
+      data.mode = "get_ammo";
+      data.targetPickup = closestAmmo;
+    }
+  }
+  
+  // Reset health critical if health is restored
+  if (data.healthCritical && gameState.player.health > 60) {
+    data.healthCritical = false;
+  }
+  
+  // Decision making based on mission type
+  if (gameState.mission === "elimination") {
+    // For elimination mission, prioritize killing enemies
+    if (!data.healthCritical && gameState.player.ammo > 5 && data.mode !== "get_ammo") {
+      data.mode = "hunt";
+    }
+    
+    // If we've killed enough enemies, switch to win mode
+    if (gameState.enemiesKilled >= gameState.requiredKills) {
+      return KEY.UP; // Just move up to trigger win condition
+    }
+  } else if (gameState.mission === "extraction") {
+    // For extraction mission, prioritize reaching extraction point if healthy
+    if (!data.healthCritical && gameState.player.ammo > 10 && data.mode !== "get_ammo" && data.mode !== "get_health") {
+      data.mode = "extract";
+    }
+  }
+  
+  // Execute actions based on current mode
+  switch (data.mode) {
+    case "explore":
+      // Random exploration to find items and enemies
+      if (data.pathTimer <= 0) {
+        data.pathTimer = 60 + Math.floor(Math.random() * 60);
+        data.currentPath = Math.floor(Math.random() * 4);
+      }
+      data.pathTimer--;
+      
+      // Random direction movement
+      switch (data.currentPath) {
+        case 0: return KEY.UP;
+        case 1: return KEY.RIGHT;
+        case 2: return KEY.DOWN;
+        case 3: return KEY.LEFT;
+      }
+      break;
+      
+    case "hunt":
+      // Find closest enemy and attack
+      if (!data.targetEnemy || !gameState.enemies.includes(data.targetEnemy)) {
+        let closestEnemy = null;
+        let minDist = Infinity;
+        
+        for (const enemy of gameState.enemies) {
+          const dist = distance(gameState.player, enemy);
+          if (dist < minDist) {
+            minDist = dist;
+            closestEnemy = enemy;
+          }
+        }
+        
+        data.targetEnemy = closestEnemy;
+      }
+      
+      if (data.targetEnemy) {
+        return moveTowardsAndAttack(gameState.player, data.targetEnemy);
+      }
+      break;
+      
+    case "get_health":
+      if (data.targetPickup) {
+        return moveTowards(gameState.player, data.targetPickup);
+      } else {
+        data.mode = "explore";
+      }
+      break;
+      
+    case "get_ammo":
+      if (data.targetPickup) {
+        return moveTowards(gameState.player, data.targetPickup);
+      } else {
+        data.mode = "explore";
+      }
+      break;
+      
+    case "extract":
+      if (gameState.extractionPointObj) {
+        return moveTowards(gameState.player, gameState.extractionPointObj);
+      } else {
+        data.mode = "explore";
+      }
+      break;
+      
+    case "random":
+      // Random movement to get unstuck
+      return [KEY.UP, KEY.DOWN, KEY.LEFT, KEY.RIGHT][Math.floor(Math.random() * 4)];
+  }
+  
+  // Default action
+  return KEY.Z; // Shoot as default
+}
+
+// TEST_3: Test player damage and health system
+function getTestDamageHealthAction(gameState) {
+  if (!gameState.player) return null;
+  
+  // Initialize test data
+  if (!gameState.testDamageData) {
+    gameState.testDamageData = {
+      phase: "find_enemy",
+      targetEnemy: null,
+      healthBefore: gameState.player.health,
+      damageTestDone: false,
+      healingTestDone: false,
+      targetHealth: null,
+      waitTimer: 0,
+      stuckCounter: 0,
+      lastPositions: []
+    };
+  }
+  
+  const data = gameState.testDamageData;
+  
+  // Track positions to detect if stuck
+  data.lastPositions.push({x: gameState.player.x, y: gameState.player.y});
+  if (data.lastPositions.length > 15) {
+    data.lastPositions.shift();
+  }
+  
+  // Check if stuck
+  if (data.lastPositions.length === 15) {
+    const firstPos = data.lastPositions[0];
+    const lastPos = data.lastPositions[14];
+    const distance = Math.sqrt(
+      Math.pow(lastPos.x - firstPos.x, 2) + 
+      Math.pow(lastPos.y - firstPos.y, 2)
+    );
+    
+    if (distance < 10) {
+      data.stuckCounter++;
+    } else {
+      data.stuckCounter = 0;
+    }
+    
+    // If stuck, use random movement
+    if (data.stuckCounter > 10) {
+      data.stuckCounter = 0;
+      return [KEY.UP, KEY.DOWN, KEY.LEFT, KEY.RIGHT][Math.floor(Math.random() * 4)];
+    }
+  }
+  
+  // Check if health changed
+  if (gameState.player.health < data.healthBefore) {
+    data.damageTestDone = true;
+  } else if (gameState.player.health > data.healthBefore && data.damageTestDone) {
+    data.healingTestDone = true;
+  }
+  
+  data.healthBefore = gameState.player.health;
+  
+  // Test phases
+  switch (data.phase) {
+    case "find_enemy":
+      // Find an enemy to test damage
+      if (!data.targetEnemy || !gameState.enemies.includes(data.targetEnemy)) {
+        let closestEnemy = null;
+        let minDist = Infinity;
+        
+        for (const enemy of gameState.enemies) {
+          const dist = distance(gameState.player, enemy);
+          if (dist < minDist && dist > 100) { // Not too close
+            minDist = dist;
+            closestEnemy = enemy;
+          }
+        }
+        
+        data.targetEnemy = closestEnemy;
+      }
+      
+      if (data.targetEnemy) {
+        // Move towards enemy but keep some distance
+        const dist = distance(gameState.player, data.targetEnemy);
+        if (dist < 150) {
+          // We're close enough, let enemy hit us
+          data.phase = "test_damage";
+          data.waitTimer = 60; // Wait 1 second
+        } else {
+          return moveTowards(gameState.player, data.targetEnemy);
+        }
+      } else {
+        // No enemy found, explore
+        return [KEY.UP, KEY.DOWN, KEY.LEFT, KEY.RIGHT][Math.floor(Math.random() * 4)];
+      }
+      break;
+      
+    case "test_damage":
+      // Wait to get hit
+      if (data.waitTimer > 0) {
+        data.waitTimer--;
+        return null; // Stand still
+      }
+      
+      if (data.damageTestDone) {
+        data.phase = "find_health";
+      } else {
+        // Move closer to enemy to ensure we get hit
+        return moveTowards(gameState.player, data.targetEnemy);
+      }
+      break;
+      
+    case "find_health":
+      // Find health pickup to test healing
+      if (!data.targetHealth) {
+        let closestHealth = null;
+        let minDist = Infinity;
+        
+        for (const pickup of gameState.pickups) {
+          if (pickup.type === "health") {
+            const dist = distance(gameState.player, pickup);
+            if (dist < minDist) {
+              minDist = dist;
+              closestHealth = pickup;
+            }
+          }
+        }
+        
+        data.targetHealth = closestHealth;
+      }
+      
+      if (data.targetHealth) {
+        return moveTowards(gameState.player, data.targetHealth);
+      } else {
+        // No health found, explore
+        return [KEY.UP, KEY.DOWN, KEY.LEFT, KEY.RIGHT][Math.floor(Math.random() * 4)];
+      }
+      
+      if (data.healingTestDone) {
+        data.phase = "test_complete";
+      }
+      break;
+      
+    case "test_complete":
+      // Test is complete, just survive
+      return getStickyKeysAction(gameState);
+  }
+  
+  return KEY.Z; // Default action
+}
+
+// TEST_4: Test ammunition system
+function getTestAmmoAction(gameState) {
+  if (!gameState.player) return null;
+  
+  // Initialize test data
+  if (!gameState.testAmmoData) {
+    gameState.testAmmoData = {
+      phase: "deplete_ammo",
+      ammoTestDone: false,
+      reloadTestDone: false,
+      pickupTestDone: false,
+      targetAmmo: null,
+      lastAmmo: gameState.player.ammo,
+      waitTimer: 0,
+      stuckCounter: 0,
+      lastPositions: []
+    };
+  }
+  
+  const data = gameState.testAmmoData;
+  
+  // Track positions to detect if stuck
+  data.lastPositions.push({x: gameState.player.x, y: gameState.player.y});
+  if (data.lastPositions.length > 15) {
+    data.lastPositions.shift();
+  }
+  
+  // Check if stuck
+  if (data.lastPositions.length === 15) {
+    const firstPos = data.lastPositions[0];
+    const lastPos = data.lastPositions[14];
+    const distance = Math.sqrt(
+      Math.pow(lastPos.x - firstPos.x, 2) + 
+      Math.pow(lastPos.y - firstPos.y, 2)
+    );
+    
+    if (distance < 10) {
+      data.stuckCounter++;
+    } else {
+      data.stuckCounter = 0;
+    }
+    
+    // If stuck, use random movement
+    if (data.stuckCounter > 10) {
+      data.stuckCounter = 0;
+      return [KEY.UP, KEY.DOWN, KEY.LEFT, KEY.RIGHT][Math.floor(Math.random() * 4)];
+    }
+  }
+  
+  // Check ammo changes
+  if (gameState.player.ammo < data.lastAmmo) {
+    data.ammoTestDone = true;
+  }
+  
+  if (gameState.player.ammo === 0 && gameState.player.reloading) {
+    data.reloadTestDone = true;
+  }
+  
+  if (gameState.player.ammo > 0 && data.lastAmmo === 0) {
+    data.pickupTestDone = true;
+  }
+  
+  data.lastAmmo = gameState.player.ammo;
+  
+  // Test phases
+  switch (data.phase) {
+    case "deplete_ammo":
+      // Keep shooting until ammo is depleted
+      if (gameState.player.ammo === 0) {
+        data.phase = "find_ammo";
+      }
+      return KEY.Z; // Shoot
+      
+    case "find_ammo":
+      // Find ammo pickup
+      if (!data.targetAmmo) {
+        let closestAmmo = null;
+        let minDist = Infinity;
+        
+        for (const pickup of gameState.pickups) {
+          if (pickup.type === "ammo") {
+            const dist = distance(gameState.player, pickup);
+            if (dist < minDist) {
+              minDist = dist;
+              closestAmmo = pickup;
+            }
+          }
+        }
+        
+        data.targetAmmo = closestAmmo;
+      }
+      
+      if (data.targetAmmo) {
+        return moveTowards(gameState.player, data.targetAmmo);
+      } else {
+        // No ammo found, explore
+        return [KEY.UP, KEY.DOWN, KEY.LEFT, KEY.RIGHT][Math.floor(Math.random() * 4)];
+      }
+      
+      if (data.pickupTestDone) {
+        data.phase = "test_complete";
+      }
+      break;
+      
+    case "test_complete":
+      // Test is complete, just survive
+      return getStickyKeysAction(gameState);
+  }
+  
+  return KEY.Z; // Default action
+}
+
+// TEST_5: Test enemy AI behavior
+function getTestEnemyAIAction(gameState) {
+  if (!gameState.player) return null;
+  
+  // Initialize test data
+  if (!gameState.testAIData) {
+    gameState.testAIData = {
+      phase: "find_enemy",
+      targetEnemy: null,
+      observationTime: 0,
+      testStates: ["patrol", "chase", "attack", "cover"],
+      currentTestState: 0,
+      stateTestDone: false,
+      waitTimer: 0,
+      circleTimer: 0,
+      stuckCounter: 0,
+      lastPositions: []
+    };
+  }
+  
+  const data = gameState.testAIData;
+  
+  // Track positions to detect if stuck
+  data.lastPositions.push({x: gameState.player.x, y: gameState.player.y});
+  if (data.lastPositions.length > 15) {
+    data.lastPositions.shift();
+  }
+  
+  // Check if stuck
+  if (data.lastPositions.length === 15) {
+    const firstPos = data.lastPositions[0];
+    const lastPos = data.lastPositions[14];
+    const distance = Math.sqrt(
+      Math.pow(lastPos.x - firstPos.x, 2) + 
+      Math.pow(lastPos.y - firstPos.y, 2)
+    );
+    
+    if (distance < 10) {
+      data.stuckCounter++;
+    } else {
+      data.stuckCounter = 0;
+    }
+    
+    // If stuck, use random movement
+    if (data.stuckCounter > 10) {
+      data.stuckCounter = 0;
+      return [KEY.UP, KEY.DOWN, KEY.LEFT, KEY.RIGHT][Math.floor(Math.random() * 4)];
+    }
+  }
+  
+  // Test phases
+  switch (data.phase) {
+    case "find_enemy":
+      // Find an enemy to test AI
+      if (!data.targetEnemy || !gameState.enemies.includes(data.targetEnemy)) {
+        let suitableEnemy = null;
+        
+        for (const enemy of gameState.enemies) {
+          const dist = distance(gameState.player, enemy);
+          if (dist > 300) { // Far enough to observe patrol behavior
+            suitableEnemy = enemy;
+            break;
+          }
+        }
+        
+        data.targetEnemy = suitableEnemy;
+      }
+      
+      if (data.targetEnemy) {
+        data.phase = "test_patrol";
+        data.observationTime = 180; // 3 seconds
+      } else {
+        // No suitable enemy, explore
+        return [KEY.UP, KEY.DOWN, KEY.LEFT, KEY.RIGHT][Math.floor(Math.random() * 4)];
+      }
+      break;
+      
+    case "test_patrol":
+      // Observe enemy patrol behavior from a distance
+      if (data.observationTime > 0) {
+        data.observationTime--;
+        return null; // Stand still
+      } else {
+        data.phase = "test_chase";
+        data.observationTime = 180; // 3 seconds
+      }
+      break;
+      
+    case "test_chase":
+      // Move closer to trigger chase behavior
+      const dist = distance(gameState.player, data.targetEnemy);
+      if (dist > 200) {
+        return moveTowards(gameState.player, data.targetEnemy);
+      } else {
+        // Close enough, observe chase
+        if (data.observationTime > 0) {
+          data.observationTime--;
+          
+          // Circle around to maintain distance
+          data.circleTimer = (data.circleTimer + 1) % 60;
+          if (data.circleTimer < 15) return KEY.UP;
+          if (data.circleTimer < 30) return KEY.RIGHT;
+          if (data.circleTimer < 45) return KEY.DOWN;
+          return KEY.LEFT;
+        } else {
+          data.phase = "test_attack";
+          data.observationTime = 180; // 3 seconds
+        }
+      }
+      break;
+      
+    case "test_attack":
+      // Get even closer to trigger attack behavior
+      const attackDist = distance(gameState.player, data.targetEnemy);
+      if (attackDist > 100) {
+        return moveTowards(gameState.player, data.targetEnemy);
+      } else {
+        // Close enough, observe attack
+        if (data.observationTime > 0) {
+          data.observationTime--;
+          
+          // Strafe to avoid getting hit too much
+          data.circleTimer = (data.circleTimer + 1) % 60;
+          if (data.circleTimer < 30) return KEY.LEFT;
+          return KEY.RIGHT;
+        } else {
+          data.phase = "test_complete";
+        }
+      }
+      break;
+      
+    case "test_complete":
+      // Test is complete, just survive
+      return getStickyKeysAction(gameState);
+  }
+  
+  return KEY.Z; // Default action
+}
+
+// Helper functions
+function distance(obj1, obj2) {
+  return Math.sqrt(Math.pow(obj1.x - obj2.x, 2) + Math.pow(obj1.y - obj2.y, 2));
+}
+
+function moveTowards(player, target) {
+  const dx = target.x - player.x;
+  const dy = target.y - player.y;
+  const angle = Math.atan2(dy, dx);
+  
+  // Determine the best direction to move
+  const directions = [
+    { key: KEY.RIGHT, angle: 0 },
+    { key: KEY.UP, angle: -Math.PI/2 },
+    { key: KEY.LEFT, angle: Math.PI },
+    { key: KEY.DOWN, angle: Math.PI/2 }
+  ];
+  
+  let bestDirection = directions[0];
+  let smallestAngleDiff = Math.abs(normalizeAngle(angle - directions[0].angle));
+  
+  for (let i = 1; i < directions.length; i++) {
+    const angleDiff = Math.abs(normalizeAngle(angle - directions[i].angle));
+    if (angleDiff < smallestAngleDiff) {
+      smallestAngleDiff = angleDiff;
+      bestDirection = directions[i];
+    }
+  }
+  
+  return bestDirection.key;
+}
+
+function moveTowardsAndAttack(player, target) {
+  const dist = distance(player, target);
+  
+  if (dist < 200) {
+    // Close enough to shoot
+    return KEY.Z;
+  } else {
+    return moveTowards(player, target);
+  }
+}
+
+function normalizeAngle(angle) {
+  while (angle < -Math.PI) angle += 2 * Math.PI;
+  while (angle > Math.PI) angle -= 2 * Math.PI;
+  return angle;
+}
+
+// Main testing controller
+export function game_testing_controller(gameState) {
+  switch (gameState.controlMode) {
+    case "TEST_1":
+      return getStickyKeysAction(gameState);
+    case "TEST_2":
+      return getTestWinAction(gameState);
+    case "TEST_3":
+      return getTestDamageHealthAction(gameState);
+    case "TEST_4":
+      return getTestAmmoAction(gameState);
+    case "TEST_5":
+      return getTestEnemyAIAction(gameState);
+    default:
+      return getStickyKeysAction(gameState);
+  }
+}
+
+// Expose the game_testing_controller function globally
+window.game_testing_controller = game_testing_controller;
+export default game_testing_controller;
+</file>
+
+<file name="globals.js">
+// Game state and constants
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const PLAYER_SPEED = 2.5;
+export const PLAYER_SPRINT_SPEED = 4;
+export const PLAYER_COVER_SPEED = 1.5;
+export const BULLET_SPEED = 6;
+export const ENEMY_SPEED = 1.2;
+export const ENEMY_BULLET_SPEED = 3;
+
+// Weapon definitions
+export const WEAPONS = {
+  pistol: {
+    name: "Pistol",
+    fireRate: 300,
+    damage: 1,
+    ammo: 7,
+    maxAmmo: 7,
+    reserveAmmo: 21,
+    maxReserveAmmo: 42,
+    accuracy: 0.05,
+    sprintAccuracy: 0.2,
+    crouchAccuracy: 0.01,
+    bulletSpeed: 6,
+    reloadTime: 2500, // Slower reload
+    type: "bullet"
+  },
+  rifle: {
+    name: "Rifle",
+    fireRate: 150,
+    damage: 1,
+    ammo: 14,
+    maxAmmo: 14,
+    reserveAmmo: 42,
+    maxReserveAmmo: 84,
+    accuracy: 0.03,
+    sprintAccuracy: 0.15,
+    crouchAccuracy: 0.005,
+    bulletSpeed: 8,
+    reloadTime: 3000, // Slower reload
+    type: "bullet"
+  },
+  shotgun: {
+    name: "Shotgun",
+    fireRate: 800,
+    damage: 2,
+    ammo: 7,
+    maxAmmo: 7,
+    reserveAmmo: 14,
+    maxReserveAmmo: 28,
+    accuracy: 0.3,
+    sprintAccuracy: 0.5,
+    crouchAccuracy: 0.2,
+    bulletSpeed: 5,
+    reloadTime: 4000, // Very slow reload
+    pellets: 5,
+    type: "bullet"
+  },
+  sniper: {
+    name: "Sniper",
+    fireRate: 1500,
+    damage: 5, // Increased damage
+    ammo: 5,
+    maxAmmo: 5,
+    reserveAmmo: 10,
+    maxReserveAmmo: 20,
+    accuracy: 0.01,
+    sprintAccuracy: 0.3,
+    crouchAccuracy: 0.001,
+    bulletSpeed: 12,
+    reloadTime: 4500, // Very slow reload
+    type: "bullet"
+  },
+  rocket_launcher: {
+    name: "RPG",
+    fireRate: 2000,
+    damage: 10, // Direct hit damage
+    explosionDamage: 8, // Splash damage
+    explosionRadius: 80,
+    ammo: 1,
+    maxAmmo: 1,
+    reserveAmmo: 3,
+    maxReserveAmmo: 5,
+    accuracy: 0.1,
+    sprintAccuracy: 0.4,
+    crouchAccuracy: 0.05,
+    bulletSpeed: 5,
+    reloadTime: 5000, // Extremely slow reload
+    type: "rocket"
+  }
+};
+
+// Game state object to track all game data
+export const gameState = {
+  player: null,
+  bullets: [],
+  enemyBullets: [],
+  enemies: [],
+  obstacles: [],
+  pickups: [],
+  weaponPickups: [],
+  score: 0,
+  gamePhase: "START",
+  controlMode: "HUMAN",
+  currentLevel: 1,
+  level: {
+    width: 1200,
+    height: 800,
+    cameraX: 0,
+    cameraY: 0
+  },
+  extractionPoint: { x: 0, y: 0 },
+  extractionPointObj: null,
+  requiredKills: 10,
+  enemiesKilled: 0,
+  mission: "combined", // Always combined now
+  timeElapsed: 0,
+  // Auto-restart timer
+  autoRestartTimer: null,
+  // Replay state
+  replayMode: false,
+  replayValidation: {
+    enabled: false,
+    discrepancies: []
+  }
+};
+
+// Keyboard codes
+export const KEY = {
+  LEFT: 37,
+  UP: 38,
+  RIGHT: 39,
+  DOWN: 40,
+  SPACE: 32,
+  SHIFT: 16,
+  Z: 90,
+  ENTER: 13,
+  ESC: 27,
+  R: 82,
+  KEY_1: 49,
+  KEY_2: 50,
+  KEY_3: 51,
+  KEY_4: 52,
+  KEY_5: 53
+};
+
+// Get game state function (exposed globally)
+export function getGameState() {
+  return gameState;
+}
+
+// Helper functions
+export function resetGame() {
+  gameState.bullets = [];
+  gameState.enemyBullets = [];
+  gameState.enemies = [];
+  gameState.obstacles = [];
+  gameState.pickups = [];
+  gameState.weaponPickups = [];
+  gameState.score = 0;
+  gameState.enemiesKilled = 0;
+  gameState.timeElapsed = 0;
+  gameState.player = null;
+  gameState.level.cameraX = 0;
+  gameState.level.cameraY = 0;
+  
+  // Mission is always combined: Kill enemies AND extract
+  gameState.mission = "combined";
+  
+  // Define difficulty progression: 2 Easy, 2 Medium, then Hard but slower scaling
+  if (gameState.currentLevel <= 2) {
+    // Easy Levels (1-2): Low kill count
+    gameState.requiredKills = 5 + (gameState.currentLevel - 1) * 3; // L1: 5, L2: 8
+  } else if (gameState.currentLevel <= 4) {
+    // Medium Levels (3-4): Medium kill count
+    gameState.requiredKills = 12 + (gameState.currentLevel - 3) * 4; // L3: 12, L4: 16
+  } else {
+    // Hard Levels (5+): Slower scaling
+    // Previous: 20 + (L-5)*5 -> 20, 25, 30
+    // New: 18 + (L-5)*3 -> 18, 21, 24
+    gameState.requiredKills = 18 + (gameState.currentLevel - 5) * 3;
+  }
+}
+
+export function nextLevel() {
+  gameState.currentLevel++;
+  resetGame();
+}
+
+export function resetToLevel1() {
+  gameState.currentLevel = 1;
+  resetGame();
+}
+</file>
+
+<file name="rng.js">
+// Seeded Random Number Generator for deterministic replay
+// Uses a simple Linear Congruential Generator (LCG) algorithm
+
+let seed = 42;
+let state = seed;
+
+/**
+ * Set the seed for the RNG
+ * @param {number} newSeed - The seed value
+ */
+export function setSeed(newSeed) {
+  seed = newSeed;
+  state = newSeed;
+}
+
+/**
+ * Get the current seed
+ * @returns {number} The current seed
+ */
+export function getSeed() {
+  return seed;
+}
+
+/**
+ * Generate a random number between 0 and 1 (exclusive of 1)
+ * Uses LCG: state = (state * 1664525 + 1013904223) % 2^32
+ * @returns {number} Random number between 0 and 1
+ */
+export function random() {
+  // LCG parameters (from Numerical Recipes)
+  state = (state * 1664525 + 1013904223) >>> 0; // Use unsigned right shift to ensure 32-bit
+  // Convert to float between 0 and 1
+  return (state >>> 0) / 0xFFFFFFFF;
+}
+
+/**
+ * Generate a random number between min and max (exclusive of max)
+ * @param {number} min - Minimum value (inclusive)
+ * @param {number} max - Maximum value (exclusive)
+ * @returns {number} Random number between min and max
+ */
+export function randomRange(min, max) {
+  if (max === undefined) {
+    max = min;
+    min = 0;
+  }
+  return min + random() * (max - min);
+}
+
+/**
+ * Generate a random integer between min and max (inclusive)
+ * @param {number} min - Minimum value (inclusive)
+ * @param {number} max - Maximum value (inclusive)
+ * @returns {number} Random integer between min and max
+ */
+export function randomInt(min, max) {
+  if (max === undefined) {
+    max = min;
+    min = 0;
+  }
+  return Math.floor(random() * (max - min + 1)) + min;
+}
+
+/**
+ * Reset the RNG state to the current seed
+ * Useful for ensuring determinism after loading a game state
+ */
+export function reset() {
+  state = seed;
+}
+
+// Initialize with default seed
+setSeed(42);
+
+</file>
+
+<file name="game.js">
+import { CANVAS_WIDTH, CANVAS_HEIGHT, KEY, gameState, resetGame, getGameState, nextLevel, resetToLevel1 } from './globals.js';
+import { Player, Enemy, Bullet, Obstacle, Pickup, ExtractionPoint, WeaponPickup } from './entities.js';
+import { generateLevel } from './level.js';
+import { drawUI, drawStartScreen, drawGameOverScreen } from './ui.js';
+import { setupInputHandlers, keys, handleAutomatedInputs, startGame, pauseGame, resumeGame, resetToStart, applyReplayInputs } from './input.js';
+import { game_testing_controller } from './automated_testing_controller.js';
+import { random } from './rng.js';
+import { isReplayMode, shouldTransitionPhase, getLoggedPlayerInfo, isReplayPaused, getReplaySpeed, initReplay } from './replay_controller.js';
+import { setSeed } from './rng.js';
+import { initReplayUI, showReplayUI, enableValidation } from './replay_ui.js';
+
+function checkPointInRect(pointX, pointY, rectX, rectY, rectWidth, rectHeight) {
+  return pointX >= rectX && pointX <= rectX + rectWidth && 
+         pointY >= rectY && pointY <= rectY + rectHeight;
+}
+
+window.getGameState = getGameState;
+
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  const buttons = document.querySelectorAll('.control-button');
+  buttons.forEach(button => {
+    button.classList.remove('active');
+  });
+  
+  const activeButton = document.getElementById(mode === "HUMAN" ? "humanModeBtn" : `test_${mode.split('_')[1]}_ModeBtn`);
+  if (activeButton) {
+    activeButton.classList.add('active');
+  }
+  
+  if (window.gameInstance && window.gameInstance.logs) {
+    window.gameInstance.logs.game_info.push({
+      "game_status": gameState.gamePhase,
+      "data": { "controlMode": mode },
+      "framecount": window.gameInstance.frameCount,
+      "timestamp": Date.now()
+    });
+  }
+};
+
+const p5 = window.p5;
+let gameInstance = new p5(p => {
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    setSeed(42); // Initialize seeded RNG with same seed
+    
+    p.logs = {
+      "game_info": [],
+      "player_info": [],
+      "inputs": []
+    };
+    
+    gameState.gamePhase = "START";
+    gameState.controlMode = "HUMAN";
+    gameState.replayMode = false;
+    gameState.autoRestartTimer = null; // Initialize auto-restart timer
+    
+    setupInputHandlers(p);
+    
+    // Check if replay mode should be initialized from URL parameters
+    const urlParams = new URLSearchParams(window.location.search);
+    const replayInputsUrl = urlParams.get('replay_inputs');
+    const replayLogsUrl = urlParams.get('replay_logs');
+    
+    if (replayInputsUrl && replayLogsUrl) {
+      // Load replay data asynchronously
+      Promise.all([
+        fetch(replayInputsUrl).then(r => r.json()),
+        fetch(replayLogsUrl).then(r => r.json())
+      ]).then(([inputsData, logsData]) => {
+        initReplay(inputsData, logsData);
+        gameState.replayMode = true;
+        gameState.controlMode = "REPLAY";
+        
+        // Reset RNG to ensure determinism
+        setSeed(42);
+        if (window.gameInstance) {
+          window.gameInstance.randomSeed(42);
+        }
+        
+        // Initialize replay UI
+        initReplayUI();
+        showReplayUI();
+        
+        // Enable validation
+        enableValidation();
+        
+        console.log('[Replay] Replay mode activated from URL parameters');
+      }).catch(err => {
+        console.error('[Replay] Failed to load replay data:', err);
+      });
+    }
+    
+    p.logs.game_info.push({
+      "game_status": gameState.gamePhase,
+      "data": {},
+      "framecount": p.frameCount,
+      "timestamp": Date.now()
+    });
+  };
+  
+  p.draw = function() {
+    // Handle replay mode
+    if (isReplayMode()) {
+      // Check if replay is paused
+      if (isReplayPaused()) {
+        // Still render but don't update
+        p.background(30);
+        // Render current state without updating
+        renderCurrentState(p);
+        return;
+      }
+      
+      // Apply replay inputs for this frame
+      applyReplayInputs(p);
+      
+      // Check for phase transitions
+      const phaseEvent = shouldTransitionPhase(p.frameCount);
+      if (phaseEvent) {
+        const newPhase = phaseEvent.game_status;
+        if (newPhase !== gameState.gamePhase) {
+          console.log(`[Replay] Phase transition at frame ${p.frameCount}: ${gameState.gamePhase} -> ${newPhase}`);
+          gameState.gamePhase = newPhase;
+          
+          // Handle level transitions
+          if (phaseEvent.data && phaseEvent.data.level) {
+            gameState.currentLevel = phaseEvent.data.level;
+            resetGame();
+            // Reset RNG to ensure determinism after restart
+            setSeed(42);
+            p.randomSeed(42);
+            generateLevel(p);
+            gameState.player = new Player(gameState.level.width / 2, gameState.level.height / 2);
+          }
+          
+          // Handle game start/restart
+          if (newPhase === "START" || (newPhase === "PLAYING" && !gameState.player)) {
+            resetGame();
+            // Reset RNG to ensure determinism after restart
+            setSeed(42);
+            p.randomSeed(42);
+            generateLevel(p);
+            gameState.player = new Player(gameState.level.width / 2, gameState.level.height / 2);
+            console.log(`[Replay] Game reset at frame ${p.frameCount}, RNG reseeded`);
+          }
+        }
+      }
+      
+      // Validation is performed regardless of pause state, but only if enabled
+      if (gameState.replayValidation.enabled) {
+        const loggedInfo = getLoggedPlayerInfo(p.frameCount);
+        if (loggedInfo && gameState.player) {
+          const actualX = gameState.player.x;
+          const actualY = gameState.player.y;
+          const loggedX = loggedInfo.game_x;
+          const loggedY = loggedInfo.game_y;
+          const diffX = Math.abs(actualX - loggedX);
+          const diffY = Math.abs(actualY - loggedY);
+          
+          // Use a tolerance of 2 pixels to account for floating point precision
+          // and small timing differences
+          const tolerance = 2;
+          
+          if (diffX > tolerance || diffY > tolerance) {
+            // Only log if we haven't already logged too many discrepancies
+            // to avoid memory issues
+            if (gameState.replayValidation.discrepancies.length < 1000) {
+              gameState.replayValidation.discrepancies.push({
+                frame: p.frameCount,
+                actual: { x: actualX, y: actualY },
+                logged: { x: loggedX, y: loggedY },
+                diff: { x: diffX, y: diffY }
+              });
+            }
+            
+            // Log first few discrepancies for debugging
+            if (gameState.replayValidation.discrepancies.length <= 5) {
+              console.warn(`[Replay Validation] Frame ${p.frameCount}: Position mismatch`, {
+                actual: { x: actualX, y: actualY },
+                logged: { x: loggedX, y: loggedY },
+                diff: { x: diffX, y: diffY }
+              });
+            }
+          }
+        }
+      }
+    }
+    
+    p.background(30);
+    
+    switch (gameState.gamePhase) {
+      case "START":
+        drawStartScreen(p);
+        break;
+        
+      case "PLAYING":
+        // Only use automated testing controller for non-RL, non-HUMAN, non-REPLAY modes
+        if (gameState.controlMode !== "HUMAN" && gameState.controlMode !== "RL" && gameState.controlMode !== "REPLAY") {
+          handleAutomatedInputs(p);
+        }
+        
+        if (!gameState.player) {
+          resetGame();
+          generateLevel(p);
+          gameState.player = new Player(gameState.level.width / 2, gameState.level.height / 2);
+        }
+        
+        gameState.timeElapsed += 1/60;
+        
+        // Handle input - RL mode takes precedence over other input methods
+        let inputKeys = keys;
+        
+        if (window.gymAPI && window.gymAPI.isRLMode && window.gymAPI.isRLMode()) {
+          // RL mode active - read actions from RL agent
+          const rlAction = window.gymAPI.getRLAction();
+          
+          // Convert action object to keys format (string properties, not keycodes)
+          inputKeys = {
+            left: rlAction.left || false,
+            right: rlAction.right || false,
+            up: rlAction.up || false,
+            down: rlAction.down || false,
+            shoot: rlAction.shoot || false,
+            sprint: rlAction.sprint || false,
+            crouch: rlAction.crouch || false,
+          };
+        }
+        // Otherwise use normal keyboard input (keys object from input.js)
+        
+        gameState.player.update(p, inputKeys);
+        
+        p.logs.player_info.push({
+          "screen_x": gameState.player.x - gameState.level.cameraX,
+          "screen_y": gameState.player.y - gameState.level.cameraY,
+          "game_x": gameState.player.x,
+          "game_y": gameState.player.y,
+          "framecount": p.frameCount,
+          "timestamp": Date.now()
+        });
+        
+        if (gameState.extractionPointObj) {
+          gameState.extractionPointObj.update(p);
+          
+          if (p.dist(gameState.player.x, gameState.player.y, 
+                      gameState.extractionPoint.x, gameState.extractionPoint.y) < 40) {
+            
+            // Check win condition: Reached extraction AND enough kills
+            if (gameState.enemiesKilled >= gameState.requiredKills) {
+              gameState.gamePhase = "GAME_OVER_WIN";
+              gameState.score += 1000;
+              
+              p.logs.game_info.push({
+                "game_status": gameState.gamePhase,
+                "data": { "score": gameState.score },
+                "framecount": p.frameCount,
+                "timestamp": Date.now()
+              });
+            } else {
+              // Show hint that more kills are needed
+              p.push();
+              p.fill(255, 50, 50);
+              p.textSize(20);
+              p.textAlign(p.CENTER, p.CENTER);
+              p.text("ELIMINATE MORE ENEMIES TO EXTRACT!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 4);
+              p.pop();
+            }
+          }
+        }
+        
+        for (let i = gameState.pickups.length - 1; i >= 0; i--) {
+          const pickup = gameState.pickups[i];
+          pickup.update(p);
+          
+          if (p.dist(gameState.player.x, gameState.player.y, pickup.x, pickup.y) < gameState.player.radius + pickup.radius) {
+            if (pickup.type === "health") {
+              gameState.player.health = Math.min(gameState.player.maxHealth, gameState.player.health + 30);
+            } else if (pickup.type === "ammo") {
+              // Add to reserve ammo instead of just filling clip
+              const weapon = gameState.player.weapons[gameState.player.currentWeapon];
+              weapon.reserveAmmo = Math.min(weapon.maxReserveAmmo, weapon.reserveAmmo + weapon.maxAmmo * 2);
+              gameState.player.reserveAmmo = weapon.reserveAmmo;
+              
+              // Also fill current clip if possible
+              if (gameState.player.ammo < gameState.player.maxAmmo) {
+                 // But reload logic handles this usually, let's just add to reserve to force reload mechanic usage
+                 // Or we can be nice and fill the clip too? Let's stick to reserve to make it "scarce" feeling
+              }
+            }
+            
+            gameState.pickups.splice(i, 1);
+            gameState.score += 50;
+          }
+        }
+        
+        // Handle weapon pickups
+        for (let i = gameState.weaponPickups.length - 1; i >= 0; i--) {
+          const weaponPickup = gameState.weaponPickups[i];
+          weaponPickup.update(p);
+          
+          if (p.dist(gameState.player.x, gameState.player.y, weaponPickup.x, weaponPickup.y) < gameState.player.radius + weaponPickup.radius) {
+            gameState.player.pickupWeapon(weaponPickup.weaponType);
+            gameState.weaponPickups.splice(i, 1);
+            gameState.score += 100;
+          }
+        }
+        
+        // Helper function for explosions
+        const createExplosion = (x, y, radius, damage) => {
+          // Visual effect
+          p.push();
+          p.noStroke();
+          p.fill(255, 100, 0, 150);
+          p.circle(x - gameState.level.cameraX, y - gameState.level.cameraY, radius * 2);
+          p.fill(255, 200, 0, 200);
+          p.circle(x - gameState.level.cameraX, y - gameState.level.cameraY, radius);
+          p.pop();
+          
+          // Damage enemies
+          for (const enemy of gameState.enemies) {
+            const dist = p.dist(x, y, enemy.x, enemy.y);
+            if (dist < radius + enemy.radius) {
+              // Calculate falloff damage
+              const damageFactor = 1 - (dist / (radius + enemy.radius));
+              const actualDamage = Math.ceil(damage * damageFactor);
+              
+              const killed = enemy.takeDamage(actualDamage);
+              if (killed && !enemy.dead) { // Prevent double counting
+                enemy.dead = true;
+                // We'll handle removal in the main loop or mark for removal
+              }
+            }
+          }
+        };
+
+        for (let i = gameState.enemies.length - 1; i >= 0; i--) {
+          const enemy = gameState.enemies[i];
+          if (enemy.dead) { // Handle explosion kills
+             gameState.enemies.splice(i, 1);
+             gameState.enemiesKilled++;
+             gameState.score += 100; // Simplified score for explosion kills
+             continue;
+          }
+          
+          enemy.update(p, gameState.player);
+          
+          for (let j = gameState.bullets.length - 1; j >= 0; j--) {
+            const bullet = gameState.bullets[j];
+            if (p.dist(enemy.x, enemy.y, bullet.x, bullet.y) < enemy.radius + bullet.radius) {
+              let killed = false;
+              
+              if (bullet.type === "rocket") {
+                createExplosion(bullet.x, bullet.y, bullet.explosionRadius, bullet.explosionDamage);
+                killed = enemy.takeDamage(bullet.damage); // Direct hit damage
+              } else {
+                killed = enemy.takeDamage(bullet.damage);
+              }
+              
+              if (killed || enemy.dead) {
+                if (!enemy.dead) { // If not already dead from explosion
+                    gameState.enemies.splice(i, 1);
+                    gameState.enemiesKilled++;
+                    
+                    // Score based on enemy type
+                    if (enemy.type === "elite") gameState.score += 200;
+                    else if (enemy.type === "heavy") gameState.score += 300;
+                    else if (enemy.type === "scout") gameState.score += 150;
+                    else if (enemy.type === "sniper") gameState.score += 250;
+                    else if (enemy.type === "tank") gameState.score += 400;
+                    else gameState.score += 100;
+                    
+                    if (random() < 0.3) {
+                      const pickupType = random() < 0.4 ? "health" : "ammo";
+                      gameState.pickups.push(new Pickup(enemy.x, enemy.y, pickupType));
+                    }
+                }
+              }
+              
+              gameState.bullets.splice(j, 1);
+              break;
+            }
+          }
+        }
+        
+        for (let i = gameState.bullets.length - 1; i >= 0; i--) {
+          const bullet = gameState.bullets[i];
+          const remove = bullet.update();
+          
+          let hitObstacle = false;
+          for (const obstacle of gameState.obstacles) {
+            if (checkPointInRect(bullet.x, bullet.y, obstacle.x, obstacle.y, obstacle.width, obstacle.height)) {
+              if (bullet.type === "rocket") {
+                createExplosion(bullet.x, bullet.y, bullet.explosionRadius, bullet.explosionDamage);
+              }
+              gameState.bullets.splice(i, 1);
+              hitObstacle = true;
+              break;
+            }
+          }
+          
+          if (!hitObstacle && remove && i < gameState.bullets.length) {
+            gameState.bullets.splice(i, 1);
+          }
+        }
+        
+        for (let i = gameState.enemyBullets.length - 1; i >= 0; i--) {
+          const bullet = gameState.enemyBullets[i];
+          const remove = bullet.update();
+          
+          if (p.dist(gameState.player.x, gameState.player.y, bullet.x, bullet.y) < gameState.player.radius + bullet.radius) {
+            gameState.player.takeDamage(bullet.damage);
+            gameState.enemyBullets.splice(i, 1);
+            continue;
+          }
+          
+          for (const obstacle of gameState.obstacles) {
+            if (checkPointInRect(bullet.x, bullet.y, obstacle.x, obstacle.y, obstacle.width, obstacle.height)) {
+              gameState.enemyBullets.splice(i, 1);
+              break;
+            }
+          }
+          
+          if (remove && i < gameState.enemyBullets.length) {
+            gameState.enemyBullets.splice(i, 1);
+          }
+        }
+        
+        if (gameState.extractionPointObj) {
+          gameState.extractionPointObj.draw(p);
+        }
+        
+        for (const obstacle of gameState.obstacles) {
+          obstacle.draw(p);
+        }
+        
+        for (const pickup of gameState.pickups) {
+          pickup.draw(p);
+        }
+        
+        for (const weaponPickup of gameState.weaponPickups) {
+          weaponPickup.draw(p);
+        }
+        
+        for (const enemy of gameState.enemies) {
+          enemy.draw(p);
+        }
+        
+        gameState.player.draw(p);
+        
+        for (const bullet of gameState.bullets) {
+          bullet.draw(p);
+        }
+        
+        for (const bullet of gameState.enemyBullets) {
+          bullet.draw(p);
+        }
+        
+        drawUI(p);
+        break;
+        
+      case "PAUSED":
+        if (gameState.extractionPointObj) {
+          gameState.extractionPointObj.draw(p);
+        }
+        
+        for (const obstacle of gameState.obstacles) {
+          obstacle.draw(p);
+        }
+        
+        for (const pickup of gameState.pickups) {
+          pickup.draw(p);
+        }
+        
+        for (const weaponPickup of gameState.weaponPickups) {
+          weaponPickup.draw(p);
+        }
+        
+        for (const enemy of gameState.enemies) {
+          enemy.draw(p);
+        }
+        
+        if (gameState.player) {
+          gameState.player.draw(p);
+        }
+        
+        for (const bullet of gameState.bullets) {
+          bullet.draw(p);
+        }
+        
+        for (const bullet of gameState.enemyBullets) {
+          bullet.draw(p);
+        }
+        
+        drawUI(p);
+        
+        p.fill(0, 100);
+        p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        
+        break;
+        
+      case "GAME_OVER_WIN":
+      case "GAME_OVER_LOSE":
+        p.push();
+        p.tint(255, 100);
+        
+        if (gameState.extractionPointObj) {
+          gameState.extractionPointObj.draw(p);
+        }
+        
+        for (const obstacle of gameState.obstacles) {
+          obstacle.draw(p);
+        }
+        
+        for (const pickup of gameState.pickups) {
+          pickup.draw(p);
+        }
+        
+        for (const weaponPickup of gameState.weaponPickups) {
+          weaponPickup.draw(p);
+        }
+        
+        for (const enemy of gameState.enemies) {
+          enemy.draw(p);
+        }
+        
+        if (gameState.player) {
+          gameState.player.draw(p);
+        }
+        
+        p.pop();
+        
+        drawGameOverScreen(p, gameState.gamePhase === "GAME_OVER_WIN");
+
+        // Auto-restart logic
+        if (!isReplayMode()) {
+            if (gameState.autoRestartTimer === null) { // Initialize timer if not set
+                gameState.autoRestartTimer = p.frameCount;
+            }
+            const framesToWait = p.frameRate(); // 1 second (60 frames at 60fps)
+            if (p.frameCount - gameState.autoRestartTimer >= framesToWait) {
+                // Clear the auto-restart timer immediately
+                gameState.autoRestartTimer = null; 
+
+                // Determine restart action
+                if (gameState.gamePhase === "GAME_OVER_WIN") {
+                    nextLevel(); // Increments level, calls resetGame(), sets player = null
+                    gameState.gamePhase = "PLAYING"; // Immediately transition to PLAYING
+                } else { // GAME_OVER_LOSE
+                    resetToLevel1(); // Sets level to 1, calls resetGame(), sets player = null
+                    gameState.gamePhase = "START"; // Transition to START screen
+                }
+                
+                // Reset RNG for deterministic levels
+                setSeed(42);
+                p.randomSeed(42);
+
+                // If phase is PLAYING, immediately generate level and player
+                if (gameState.gamePhase === "PLAYING") {
+                  generateLevel(p);
+                  gameState.player = new Player(gameState.level.width / 2, gameState.level.height / 2);
+                }
+                
+                // Log the auto-restart event
+                p.logs.game_info.push({
+                    "game_status": gameState.gamePhase,
+                    "data": { "autoRestart": true, "level": gameState.currentLevel },
+                    "framecount": p.frameCount,
+                    "timestamp": Date.now()
+                });
+            }
+        }
+        break;
+    }
+  };
+});
+
+window.gameInstance = gameInstance;
+
+// Expose level loading functions for dev mode
+window.loadLevel = function(levelNum) {
+  const state = getGameState();
+  if (state) {
+    state.currentLevel = levelNum;
+    resetGame();
+    if (window.gameInstance) {
+      generateLevel(window.gameInstance);
+      state.player = new Player(state.level.width / 2, state.level.height / 2);
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Expose replay UI initialization (will be imported and called directly)
+
+// Expose replay initialization function
+window.initReplay = async function(inputsUrl, logsUrl) {
+  try {
+    const [inputsResponse, logsResponse] = await Promise.all([
+      fetch(inputsUrl),
+      fetch(logsUrl)
+    ]);
+    
+    const inputsData = await inputsResponse.json();
+    const logsData = await logsResponse.json();
+    
+    initReplay(inputsData, logsData);
+    gameState.replayMode = true;
+    gameState.controlMode = "REPLAY";
+    
+    // Reset RNG to ensure determinism
+    setSeed(42);
+    if (window.gameInstance) {
+      window.gameInstance.randomSeed(42);
+    }
+    
+    // Initialize replay UI
+    initReplayUI();
+    showReplayUI();
+    
+    // Enable validation
+    enableValidation();
+    
+    // Reset game to start
+    resetGame();
+    if (window.gameInstance) {
+      generateLevel(window.gameInstance);
+      gameState.player = new Player(gameState.level.width / 2, gameState.level.height / 2);
+      gameState.gamePhase = "START";
+    }
+    
+    console.log('[Replay] Replay initialized successfully');
+    return true;
+  } catch (error) {
+    console.error('[Replay] Failed to initialize replay:', error);
+    return false;
+  }
+};
+
+// Helper function to render current state without updating (for paused replay)
+function renderCurrentState(p) {
+  if (gameState.extractionPointObj) {
+    gameState.extractionPointObj.draw(p);
+  }
+  
+  for (const obstacle of gameState.obstacles) {
+    obstacle.draw(p);
+  }
+  
+  for (const pickup of gameState.pickups) {
+    pickup.draw(p);
+  }
+  
+  for (const weaponPickup of gameState.weaponPickups) {
+    weaponPickup.draw(p);
+  }
+  
+  for (const enemy of gameState.enemies) {
+    enemy.draw(p);
+  }
+  
+  if (gameState.player) {
+    gameState.player.draw(p);
+  }
+  
+  for (const bullet of gameState.bullets) {
+    bullet.draw(p);
+  }
+  
+  for (const bullet of gameState.enemyBullets) {
+    bullet.draw(p);
+  }
+  
+  drawUI(p);
+}
+</file>
+
+<file name="ui.js">
+import { CANVAS_WIDTH, CANVAS_HEIGHT, gameState } from './globals.js';
+
+export function drawUI(p) {
+  p.push();
+  
+  if (gameState.player) {
+    const healthPercentage = gameState.player.health / gameState.player.maxHealth;
+    p.noStroke();
+    p.fill(50);
+    p.rect(20, 20, 150, 15);
+    p.fill(255, 0, 0);
+    p.rect(20, 20, 150 * healthPercentage, 15);
+    p.fill(255);
+    p.textSize(12);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text(`HEALTH: ${gameState.player.health}/${gameState.player.maxHealth}`, 95, 27);
+    
+    p.fill(50);
+    p.rect(20, 45, 150, 15);
+    p.fill(255, 200, 0);
+    const ammoPercentage = gameState.player.ammo / gameState.player.maxAmmo;
+    p.rect(20, 45, 150 * ammoPercentage, 15);
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    // Display clip ammo and reserve ammo
+    p.text(`AMMO: ${gameState.player.ammo} / ${gameState.player.reserveAmmo}`, 95, 52);
+    
+    if (gameState.player.reloading) {
+      p.fill(255, 200, 0);
+      p.textAlign(p.LEFT, p.CENTER);
+      p.text("RELOADING...", 180, 52);
+    } else if (gameState.player.ammo === 0 && gameState.player.reserveAmmo === 0) {
+      p.fill(255, 50, 50);
+      p.textAlign(p.LEFT, p.CENTER);
+      p.text("NO AMMO!", 180, 52);
+    }
+    
+    // Current weapon display
+    p.fill(255);
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(14);
+    const weaponName = gameState.player.weapons[gameState.player.currentWeapon].name;
+    p.text(`WEAPON: ${weaponName}`, 20, 70);
+    
+    // Available weapons (1-5 keys)
+    p.textSize(10);
+    p.textAlign(p.LEFT, p.TOP);
+    let yPos = 90;
+    if (gameState.player.weapons.pistol) {
+      p.fill(gameState.player.currentWeapon === "pistol" ? 255 : 150);
+      p.text("1: Pistol", 20, yPos);
+      yPos += 15;
+    }
+    if (gameState.player.weapons.rifle) {
+      p.fill(gameState.player.currentWeapon === "rifle" ? 255 : 150);
+      p.text("2: Rifle", 20, yPos);
+      yPos += 15;
+    }
+    if (gameState.player.weapons.shotgun) {
+      p.fill(gameState.player.currentWeapon === "shotgun" ? 255 : 150);
+      p.text("3: Shotgun", 20, yPos);
+      yPos += 15;
+    }
+    if (gameState.player.weapons.sniper) {
+      p.fill(gameState.player.currentWeapon === "sniper" ? 255 : 150);
+      p.text("4: Sniper", 20, yPos);
+      yPos += 15;
+    }
+    if (gameState.player.weapons.rocket_launcher) {
+      p.fill(gameState.player.currentWeapon === "rocket_launcher" ? 255 : 150);
+      p.text("5: RPG", 20, yPos);
+    }
+  }
+  
+  // Level indicator
+  p.fill(255);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(16);
+  p.text(`LEVEL ${gameState.currentLevel}`, 20, CANVAS_HEIGHT - 50);
+  
+  // Score/Kill counter
+  p.fill(255);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(14);
+  p.text(`SCORE: ${gameState.score}`, CANVAS_WIDTH - 20, 20);
+  
+  // Mission objective - Updated to show both requirements
+  p.textAlign(p.CENTER, p.TOP);
+  p.text(`MISSION: ELIMINATE ${gameState.enemiesKilled}/${gameState.requiredKills} AND EXTRACT`, CANVAS_WIDTH / 2, 20);
+  
+  // Time elapsed
+  const minutes = Math.floor(gameState.timeElapsed / 60);
+  const seconds = Math.floor(gameState.timeElapsed % 60);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.text(`TIME: ${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`, CANVAS_WIDTH - 20, 40);
+  
+  // Status indicators
+  if (gameState.player) {
+    p.textAlign(p.LEFT, p.BOTTOM);
+    p.textSize(12);
+    if (gameState.player.isSprinting) {
+      p.fill(0, 200, 255);
+      p.text("SPRINTING", 20, CANVAS_HEIGHT - 20);
+    } else if (gameState.player.isCrouching) {
+      p.fill(0, 255, 200);
+      p.text("TAKING COVER", 20, CANVAS_HEIGHT - 20);
+    }
+  }
+  
+  // Pause indicator
+  if (gameState.gamePhase === "PAUSED") {
+    p.fill(255);
+    p.textAlign(p.RIGHT, p.TOP);
+    p.textSize(16);
+    p.text("PAUSED", CANVAS_WIDTH - 20, 70);
+  }
+  
+  p.pop();
+}
+
+export function drawStartScreen(p) {
+  p.push();
+  p.background(20);
+  
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(40);
+  p.text("press enter to begin", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+  
+  p.textSize(14);
+  p.text("CONTROLS:", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+  p.text("Arrow Keys: Move | Z: Shoot | SPACE: Sprint | SHIFT: Take Cover", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 70);
+  p.text("1-5: Switch Weapons | ESC: Pause | R: Restart", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 90);
+  
+  p.pop();
+}
+
+export function drawGameOverScreen(p, won) {
+  p.push();
+  p.fill(0, 150);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(40);
+  
+  if (won) {
+    p.fill(0, 255, 100);
+    p.text("MISSION COMPLETE", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 3);
+    
+    p.fill(255);
+    p.textSize(24);
+    p.text(`LEVEL ${gameState.currentLevel} CLEARED`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 3 + 40);
+  } else {
+    p.fill(255, 50, 50);
+    p.text("MISSION FAILED", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 3);
+  }
+  
+  p.fill(255);
+  p.textSize(20);
+  p.text(`SCORE: ${gameState.score}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  
+  const minutes = Math.floor(gameState.timeElapsed / 60);
+  const seconds = Math.floor(gameState.timeElapsed % 60);
+  p.text(`TIME: ${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 30);
+  
+  p.text(`ENEMIES ELIMINATED: ${gameState.enemiesKilled}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 60);
+  
+  p.textSize(20);
+  if (Math.floor(p.frameCount / 30) % 2 === 0) {
+    if (won) {
+      p.text("PRESS ENTER FOR NEXT LEVEL", CANVAS_WIDTH / 2, CANVAS_HEIGHT * 3 / 4 - 20);
+    }
+    p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, CANVAS_HEIGHT * 3 / 4 + 10);
+  }
+  
+  p.pop();
+}
+</file>
+
+<file name="replay_ui.js">
+// Replay UI - Controls and display for replay mode
+import { isReplayMode, pauseReplay, resumeReplay, isReplayPaused, getCurrentFrame, getReplayMetadata } from './replay_controller.js';
+import { gameState } from './globals.js';
+
+let uiContainer = null;
+let isUIVisible = true;
+
+/**
+ * Initialize replay UI
+ */
+export function initReplayUI() {
+  if (uiContainer) {
+    return; // Already initialized
+  }
+  
+  // Create UI container
+  uiContainer = document.createElement('div');
+  uiContainer.id = 'replay-ui';
+  uiContainer.style.cssText = `
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 15px;
+    border-radius: 8px;
+    font-family: monospace;
+    font-size: 12px;
+    z-index: 10000;
+    min-width: 250px;
+    display: none;
+  `;
+  
+  // Create UI content
+  uiContainer.innerHTML = `
+    <div style="margin-bottom: 10px; font-weight: bold; border-bottom: 1px solid #555; padding-bottom: 5px;">
+      REPLAY CONTROLS
+    </div>
+    <div id="replay-status" style="margin-bottom: 10px;">
+      Status: <span id="replay-status-text">Loading...</span>
+    </div>
+    <div id="replay-frame-info" style="margin-bottom: 10px;">
+      Frame: <span id="replay-frame">0</span> / <span id="replay-total-frames">0</span>
+    </div>
+    <div style="margin-bottom: 10px;">
+      <button id="replay-play-pause" style="padding: 5px 10px; cursor: pointer;">Pause</button>
+    </div>
+    <div id="replay-validation" style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #555; display: none;">
+      <div style="font-size: 10px; color: #ffaa00;">
+        Validation: <span id="replay-validation-count">0</span> discrepancies
+      </div>
+    </div>
+  `;
+  
+  document.body.appendChild(uiContainer);
+  
+  // Wire up controls
+  setupControls();
+  
+  // Start update loop
+  updateUI();
+}
+
+/**
+ * Setup control event handlers
+ */
+function setupControls() {
+  const playPauseBtn = document.getElementById('replay-play-pause');
+  
+  if (playPauseBtn) {
+    playPauseBtn.addEventListener('click', () => {
+      if (isReplayPaused()) {
+        resumeReplay();
+        playPauseBtn.textContent = 'Pause';
+      } else {
+        pauseReplay();
+        playPauseBtn.textContent = 'Play';
+      }
+    });
+  }
+}
+
+/**
+ * Update UI display
+ */
+function updateUI() {
+  if (!uiContainer || !isReplayMode()) {
+    return;
+  }
+  
+  // Update frame counter
+  const frameEl = document.getElementById('replay-frame');
+  const totalFramesEl = document.getElementById('replay-total-frames');
+  const statusText = document.getElementById('replay-status-text');
+  const playPauseBtn = document.getElementById('replay-play-pause');
+  
+  if (frameEl) {
+    frameEl.textContent = getCurrentFrame();
+  }
+  
+  const metadata = getReplayMetadata();
+  if (totalFramesEl && metadata) {
+    totalFramesEl.textContent = metadata.totalFrames;
+  }
+  
+  if (statusText) {
+    if (isReplayPaused()) {
+      statusText.textContent = 'Paused';
+      statusText.style.color = '#ffaa00';
+    } else {
+      statusText.textContent = 'Playing';
+      statusText.style.color = '#00ff00';
+    }
+  }
+  
+  if (playPauseBtn) {
+    playPauseBtn.textContent = isReplayPaused() ? 'Play' : 'Pause';
+  }
+  
+  // Update validation display
+  if (gameState.replayValidation.enabled) {
+    const validationDiv = document.getElementById('replay-validation');
+    const validationCount = document.getElementById('replay-validation-count');
+    if (validationDiv) {
+      validationDiv.style.display = 'block';
+    }
+    if (validationCount) {
+      validationCount.textContent = gameState.replayValidation.discrepancies.length;
+      if (gameState.replayValidation.discrepancies.length > 0) {
+        validationCount.style.color = '#ff4444';
+      } else {
+        validationCount.style.color = '#00ff00';
+      }
+    }
+  }
+  
+  // Schedule next update
+  requestAnimationFrame(updateUI);
+}
+
+/**
+ * Show replay UI
+ */
+export function showReplayUI() {
+  if (uiContainer) {
+    uiContainer.style.display = 'block';
+    isUIVisible = true;
+  }
+}
+
+/**
+ * Hide replay UI
+ */
+export function hideReplayUI() {
+  if (uiContainer) {
+    uiContainer.style.display = 'none';
+    isUIVisible = false;
+  }
+}
+
+/**
+ * Toggle replay UI visibility
+ */
+export function toggleReplayUI() {
+  if (isUIVisible) {
+    hideReplayUI();
+  } else {
+    showReplayUI();
+  }
+}
+
+/**
+ * Enable validation mode
+ */
+export function enableValidation() {
+  gameState.replayValidation.enabled = true;
+  gameState.replayValidation.discrepancies = [];
+}
+
+/**
+ * Get validation results
+ */
+export function getValidationResults() {
+  return {
+    enabled: gameState.replayValidation.enabled,
+    discrepancies: gameState.replayValidation.discrepancies,
+    totalDiscrepancies: gameState.replayValidation.discrepancies.length
+  };
+}
+
+</file>
+
+<file name="replay_controller.js">
+// Replay Controller - Loads and manages replay data from inputs.json and logs.json
+import { KEY, gameState } from './globals.js';
+
+let replayData = null;
+let isReplayActive = false;
+let currentFrame = 0;
+let replaySpeed = 1.0;
+let isPaused = false;
+let frameInputs = {}; // Map of frame number to active inputs
+let gameInfoEvents = []; // Game state transitions
+let playerInfoLog = []; // Logged player positions for validation
+let startTimestamp = null;
+let originalStartTimestamp = null;
+
+// Map keyboard event keys to game KEY constants
+const KEY_MAP = {
+  "ArrowLeft": KEY.LEFT,
+  "ArrowRight": KEY.RIGHT,
+  "ArrowUp": KEY.UP,
+  "ArrowDown": KEY.DOWN,
+  "z": KEY.Z,
+  "Z": KEY.Z,
+  " ": KEY.SPACE,
+  "Shift": KEY.SHIFT,
+  "Enter": KEY.ENTER,
+  "Escape": KEY.ESC,
+  "Esc": KEY.ESC,
+  "r": KEY.R,
+  "R": KEY.R,
+  "1": KEY.KEY_1,
+  "2": KEY.KEY_2,
+  "3": KEY.KEY_3,
+  "4": KEY.KEY_4,
+};
+
+// Map keyboard event codes to game KEY constants
+const CODE_MAP = {
+  "ArrowLeft": KEY.LEFT,
+  "ArrowRight": KEY.RIGHT,
+  "ArrowUp": KEY.UP,
+  "ArrowDown": KEY.DOWN,
+  "KeyZ": KEY.Z,
+  "Space": KEY.SPACE,
+  "ShiftLeft": KEY.SHIFT,
+  "ShiftRight": KEY.SHIFT,
+  "Enter": KEY.ENTER,
+  "Escape": KEY.ESC,
+  "KeyR": KEY.R,
+  "Digit1": KEY.KEY_1,
+  "Digit2": KEY.KEY_2,
+  "Digit3": KEY.KEY_3,
+  "Digit4": KEY.KEY_4,
+};
+
+/**
+ * Initialize replay mode with inputs.json and logs.json data
+ * @param {Object} inputsData - Parsed inputs.json data
+ * @param {Object} logsData - Parsed logs.json data
+ */
+export function initReplay(inputsData, logsData) {
+  replayData = {
+    inputs: inputsData,
+    logs: logsData
+  };
+  
+  isReplayActive = true;
+  currentFrame = 0;
+  replaySpeed = 1.0;
+  isPaused = false;
+  frameInputs = {};
+  gameInfoEvents = [];
+  playerInfoLog = [];
+  
+  // Parse logs.json FIRST (has framecounts, more accurate)
+  if (logsData) {
+    if (logsData.game_info) {
+      gameInfoEvents = logsData.game_info;
+    }
+    if (logsData.player_info) {
+      playerInfoLog = logsData.player_info;
+    }
+    if (logsData.inputs && logsData.inputs.length > 0) {
+      // Prioritize inputs from logs.json - they have framecounts!
+      console.log('[Replay] Loading inputs from logs.json (with framecounts)');
+      parseInputEvents(logsData.inputs);
+    }
+  }
+  
+  // Parse inputs.json events (fallback or supplement)
+  if (inputsData && inputsData.events && inputsData.events.length > 0) {
+    // Use inputs.json if logs.json didn't have inputs, or if we want to supplement
+    const hasLogsInputs = logsData && logsData.inputs && logsData.inputs.length > 0;
+    
+    if (!hasLogsInputs) {
+      console.log('[Replay] Loading inputs from inputs.json (timestamp-based, using frame anchors)');
+      // Use improved frame estimation with anchors from logs
+      parseInputEventsWithAnchors(inputsData.events, gameInfoEvents, playerInfoLog);
+    } else {
+      console.log('[Replay] Using logs.json inputs (inputs.json available but not needed)');
+    }
+  }
+  
+  // Find the first timestamp to use as baseline
+  if (inputsData && inputsData.events && inputsData.events.length > 0) {
+    originalStartTimestamp = inputsData.events[0].timestamp;
+    startTimestamp = Date.now();
+  } else if (gameInfoEvents.length > 0) {
+    originalStartTimestamp = gameInfoEvents[0].timestamp;
+    startTimestamp = Date.now();
+  }
+  
+  console.log('[Replay] Initialized replay:', {
+    inputEventsFromInputsJson: inputsData?.events?.length || 0,
+    inputEventsFromLogsJson: logsData?.inputs?.length || 0,
+    gameInfoEvents: gameInfoEvents.length,
+    playerInfoFrames: playerInfoLog.length,
+    totalFrameInputs: Object.keys(frameInputs).length,
+    firstFrame: gameInfoEvents.length > 0 ? gameInfoEvents[0].framecount : 0,
+    lastFrame: playerInfoLog.length > 0 ? playerInfoLog[playerInfoLog.length - 1].framecount : 0
+  });
+}
+
+/**
+ * Parse input events and build frame-based input map
+ * @param {Array} events - Array of input events
+ */
+function parseInputEvents(events) {
+  // Group events by framecount if available, otherwise estimate from timestamps
+  let frameEstimate = 0;
+  let lastTimestamp = null;
+  let firstTimestamp = null;
+  const frameRate = 60; // 60 FPS
+  
+  for (const event of events) {
+    let eventFrame = frameEstimate;
+    
+    // If event has framecount, use it (most accurate)
+    if (event.framecount !== undefined && event.framecount !== null) {
+      eventFrame = event.framecount;
+      // Update frame estimate to match
+      frameEstimate = eventFrame;
+    } else if (event.timestamp) {
+      // Estimate frame from timestamp
+      if (firstTimestamp === null) {
+        firstTimestamp = event.timestamp;
+      }
+      
+      if (lastTimestamp !== null) {
+        // Estimate frame from timestamp difference
+        const timeDiff = event.timestamp - lastTimestamp;
+        const framesDiff = Math.round((timeDiff / 1000) * frameRate);
+        eventFrame = frameEstimate + Math.max(0, framesDiff); // Don't go backwards
+      } else {
+        // First event - estimate from first timestamp
+        const timeFromStart = event.timestamp - firstTimestamp;
+        eventFrame = Math.round((timeFromStart / 1000) * frameRate);
+      }
+    }
+    
+    // Map event to key code
+    let keyCode = null;
+    const eventType = event.type || event.input_type;
+    
+    // Check data object first (for logs.json format with nested data)
+    const eventData = event.data || event;
+    
+    // Try to get keyCode from various sources (data object first, then direct)
+    if (eventData.keyCode !== undefined) {
+      keyCode = eventData.keyCode;
+    } else if (event.keyCode !== undefined) {
+      keyCode = event.keyCode;
+    } else if (eventData.key) {
+      keyCode = KEY_MAP[eventData.key];
+    } else if (event.key) {
+      keyCode = KEY_MAP[event.key];
+    } else if (eventData.code) {
+      keyCode = CODE_MAP[eventData.code];
+    } else if (event.code) {
+      keyCode = CODE_MAP[event.code];
+    }
+    
+    // If we found a keyCode, add it to the frame inputs
+    if (keyCode !== null && keyCode !== undefined) {
+      if (!frameInputs[eventFrame]) {
+        frameInputs[eventFrame] = { pressed: new Set(), released: new Set() };
+      }
+      
+      if (eventType === "keydown" || eventType === "keyPressed" || eventType === "press") {
+        frameInputs[eventFrame].pressed.add(keyCode);
+      } else if (eventType === "keyup" || eventType === "keyReleased" || eventType === "release") {
+        frameInputs[eventFrame].released.add(keyCode);
+      }
+    }
+    
+    if (event.timestamp) {
+      lastTimestamp = event.timestamp;
+    }
+    frameEstimate = eventFrame;
+  }
+}
+
+/**
+ * Check if replay mode is active
+ * @returns {boolean} True if replay is active
+ */
+export function isReplayMode() {
+  return isReplayActive;
+}
+
+/**
+ * Get inputs for the current frame
+ * @param {number} frame - Current frame number
+ * @returns {Object} Object with pressed and released key sets
+ */
+export function getInputsForFrame(frame) {
+  if (!isReplayActive) {
+    return { pressed: new Set(), released: new Set() };
+  }
+  
+  return frameInputs[frame] || { pressed: new Set(), released: new Set() };
+}
+
+/**
+ * Check if game phase should transition at this frame
+ * @param {number} frame - Current frame number
+ * @returns {Object|null} Game info event if transition should occur, null otherwise
+ */
+export function shouldTransitionPhase(frame) {
+  if (!isReplayActive || gameInfoEvents.length === 0) {
+    return null;
+  }
+  
+  // Find the game_info event that matches this frame
+  for (const event of gameInfoEvents) {
+    if (event.framecount === frame) {
+      return event;
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Get logged player position for validation
+ * @param {number} frame - Current frame number
+ * @returns {Object|null} Player info if available
+ */
+export function getLoggedPlayerInfo(frame) {
+  if (!isReplayActive || playerInfoLog.length === 0) {
+    return null;
+  }
+  
+  // Find the closest player_info entry for this frame
+  for (const info of playerInfoLog) {
+    if (info.framecount === frame) {
+      return info;
+    }
+  }
+  
+  // If exact match not found, find closest
+  let closest = null;
+  let minDiff = Infinity;
+  for (const info of playerInfoLog) {
+    const diff = Math.abs(info.framecount - frame);
+    if (diff < minDiff) {
+      minDiff = diff;
+      closest = info;
+    }
+  }
+  
+  return closest;
+}
+
+/**
+ * Update current frame (called from game loop)
+ * @param {number} frame - New frame number
+ */
+export function setCurrentFrame(frame) {
+  currentFrame = frame;
+}
+
+/**
+ * Get current frame
+ * @returns {number} Current frame number
+ */
+export function getCurrentFrame() {
+  return currentFrame;
+}
+
+/**
+ * Set replay speed multiplier
+ * @param {number} speed - Speed multiplier (1.0 = normal, 2.0 = 2x, 0.5 = 0.5x)
+ */
+export function setReplaySpeed(speed) {
+  replaySpeed = Math.max(0.1, Math.min(5.0, speed));
+}
+
+/**
+ * Get replay speed
+ * @returns {number} Current replay speed
+ */
+export function getReplaySpeed() {
+  return replaySpeed;
+}
+
+/**
+ * Pause replay
+ */
+export function pauseReplay() {
+  isPaused = true;
+}
+
+/**
+ * Resume replay
+ */
+export function resumeReplay() {
+  isPaused = false;
+}
+
+/**
+ * Check if replay is paused
+ * @returns {boolean} True if paused
+ */
+export function isReplayPaused() {
+  return isPaused;
+}
+
+/**
+ * Stop replay mode
+ */
+export function stopReplay() {
+  isReplayActive = false;
+  replayData = null;
+  frameInputs = {};
+  gameInfoEvents = [];
+  playerInfoLog = [];
+  currentFrame = 0;
+  
+  // Reset key state
+  if (typeof resetReplayKeyState === 'function') {
+    // Import dynamically to avoid circular dependency
+    import('./input.js').then(module => {
+      if (module.resetReplayKeyState) {
+        module.resetReplayKeyState();
+      }
+    }).catch(() => {
+      // Ignore if import fails
+    });
+  }
+}
+
+/**
+ * Get replay metadata
+ * @returns {Object} Replay metadata
+ */
+export function getReplayMetadata() {
+  if (!replayData) {
+    return null;
+  }
+  
+  return {
+    totalFrames: playerInfoLog.length > 0 ? playerInfoLog[playerInfoLog.length - 1].framecount : 0,
+    gameInfoEvents: gameInfoEvents.length,
+    playerInfoFrames: playerInfoLog.length,
+    inputEvents: replayData.inputs?.events?.length || 0
+  };
+}
+
+</file>
+
+<file name="entities.js">
+import { CANVAS_WIDTH, CANVAS_HEIGHT, PLAYER_SPEED, PLAYER_SPRINT_SPEED, PLAYER_COVER_SPEED, BULLET_SPEED, ENEMY_SPEED, ENEMY_BULLET_SPEED, gameState, WEAPONS } from './globals.js';
+import { random, randomRange } from './rng.js';
+
+export class Player {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.radius = 15;
+    this.health = 100;
+    this.maxHealth = 100;
+    this.currentWeapon = "pistol";
+    this.weapons = {
+      pistol: { ...WEAPONS.pistol },
+      rifle: null,
+      shotgun: null,
+      sniper: null,
+      rocket_launcher: null
+    };
+    // Initialize current weapon stats
+    this.updateCurrentWeaponStats();
+    
+    this.reloading = false;
+    this.reloadStart = 0;
+    this.lastShot = 0;
+    this.isSprinting = false;
+    this.isCrouching = false;
+    this.direction = 0;
+    this.invincibilityTime = 0;
+    this.lastHit = 0;
+  }
+  
+  updateCurrentWeaponStats() {
+    const weapon = this.weapons[this.currentWeapon];
+    this.ammo = weapon.ammo;
+    this.maxAmmo = weapon.maxAmmo;
+    this.reserveAmmo = weapon.reserveAmmo;
+    this.fireRate = weapon.fireRate;
+    this.reloadTime = weapon.reloadTime;
+    this.accuracy = weapon.accuracy;
+    this.sprintAccuracy = weapon.sprintAccuracy;
+    this.crouchAccuracy = weapon.crouchAccuracy;
+  }
+  
+  switchWeapon(weaponType) {
+    if (this.weapons[weaponType] && !this.reloading) {
+      // Save current weapon state
+      this.weapons[this.currentWeapon].ammo = this.ammo;
+      this.weapons[this.currentWeapon].reserveAmmo = this.reserveAmmo;
+      
+      this.currentWeapon = weaponType;
+      this.updateCurrentWeaponStats();
+    }
+  }
+  
+  pickupWeapon(weaponType) {
+    if (!this.weapons[weaponType]) {
+      this.weapons[weaponType] = { ...WEAPONS[weaponType] };
+      this.switchWeapon(weaponType);
+    } else {
+      // If already have weapon, add ammo
+      const weapon = this.weapons[weaponType];
+      weapon.reserveAmmo = Math.min(weapon.maxReserveAmmo, weapon.reserveAmmo + weapon.maxAmmo * 2);
+      if (this.currentWeapon === weaponType) {
+        this.reserveAmmo = weapon.reserveAmmo;
+      }
+    }
+  }
+  
+  // Helper method for collision detection
+  checkCollisionWithRect(circleX, circleY, circleRadius, rectX, rectY, rectWidth, rectHeight) {
+    const closestX = Math.max(rectX, Math.min(circleX, rectX + rectWidth));
+    const closestY = Math.max(rectY, Math.min(circleY, rectY + rectHeight));
+    const distanceX = circleX - closestX;
+    const distanceY = circleY - closestY;
+    return (distanceX * distanceX + distanceY * distanceY) < (circleRadius * circleRadius);
+  }
+
+  update(p, keys) {
+    let dx = 0;
+    let dy = 0;
+    let speed = PLAYER_SPEED;
+    let currentAccuracy = this.accuracy;
+
+    if (keys.up || keys.down || keys.left || keys.right) {
+      if (keys.up) dy -= 1;
+      if (keys.down) dy += 1;
+      if (keys.left) dx -= 1;
+      if (keys.right) dx += 1;
+      
+      if (dx !== 0 || dy !== 0) {
+        this.direction = Math.atan2(dy, dx);
+      }
+    }
+
+    if (keys.sprint && !keys.crouch) {
+      this.isSprinting = true;
+      this.isCrouching = false;
+      speed = PLAYER_SPRINT_SPEED;
+      currentAccuracy = this.sprintAccuracy;
+    } else if (keys.crouch && !keys.sprint) {
+      this.isCrouching = true;
+      this.isSprinting = false;
+      speed = PLAYER_COVER_SPEED;
+      currentAccuracy = this.crouchAccuracy;
+    } else {
+      this.isSprinting = false;
+      this.isCrouching = false;
+    }
+
+    if (dx !== 0 && dy !== 0) {
+      const length = Math.sqrt(dx * dx + dy * dy);
+      dx = dx / length;
+      dy = dy / length;
+    }
+
+    const newX = this.x + dx * speed;
+    const newY = this.y + dy * speed;
+
+    let canMove = true;
+    for (const obstacle of gameState.obstacles) {
+      if (this.checkCollisionWithRect(newX, newY, this.radius, obstacle.x, obstacle.y, obstacle.width, obstacle.height)) {
+        canMove = false;
+        break;
+      }
+    }
+
+    if (newX - this.radius < 0 || newX + this.radius > gameState.level.width ||
+        newY - this.radius < 0 || newY + this.radius > gameState.level.height) {
+      canMove = false;
+    }
+
+    if (canMove) {
+      this.x = newX;
+      this.y = newY;
+    }
+
+    if (keys.shoot && !this.reloading && this.ammo > 0 && p.millis() - this.lastShot > this.fireRate) {
+      this.shoot(p, currentAccuracy);
+      this.lastShot = p.millis();
+      this.ammo--;
+      this.weapons[this.currentWeapon].ammo = this.ammo;
+    }
+
+    // Auto-reload when empty if we have reserve ammo
+    if (this.ammo === 0 && !this.reloading && this.reserveAmmo > 0) {
+      this.reloading = true;
+      this.reloadStart = p.millis();
+    }
+
+    if (this.reloading && p.millis() - this.reloadStart > this.reloadTime) {
+      this.reloading = false;
+      
+      const needed = this.maxAmmo - this.ammo;
+      const amount = Math.min(needed, this.reserveAmmo);
+      
+      this.ammo += amount;
+      this.reserveAmmo -= amount;
+      
+      this.weapons[this.currentWeapon].ammo = this.ammo;
+      this.weapons[this.currentWeapon].reserveAmmo = this.reserveAmmo;
+    }
+
+    if (p.millis() - this.lastHit < this.invincibilityTime) {
+      // Player is invincible
+    }
+
+    gameState.level.cameraX = p.constrain(this.x - CANVAS_WIDTH / 2, 0, gameState.level.width - CANVAS_WIDTH);
+    gameState.level.cameraY = p.constrain(this.y - CANVAS_HEIGHT / 2, 0, gameState.level.height - CANVAS_HEIGHT);
+  }
+
+  shoot(p, accuracy) {
+    const weapon = WEAPONS[this.currentWeapon];
+    
+    // Shotgun fires multiple pellets
+    if (this.currentWeapon === "shotgun") {
+      const pellets = weapon.pellets || 5;
+      for (let i = 0; i < pellets; i++) {
+        const spread = (random() - 0.5) * accuracy;
+        const bulletDirection = this.direction + spread;
+        
+        const bullet = new Bullet(
+          this.x + Math.cos(this.direction) * (this.radius + 5),
+          this.y + Math.sin(this.direction) * (this.radius + 5),
+          bulletDirection,
+          true,
+          weapon.damage,
+          weapon.bulletSpeed,
+          "bullet"
+        );
+        
+        gameState.bullets.push(bullet);
+      }
+    } else if (this.currentWeapon === "rocket_launcher") {
+      const spread = (random() - 0.5) * accuracy;
+      const bulletDirection = this.direction + spread;
+      
+      const bullet = new Bullet(
+        this.x + Math.cos(this.direction) * (this.radius + 5),
+        this.y + Math.sin(this.direction) * (this.radius + 5),
+        bulletDirection,
+        true,
+        weapon.damage,
+        weapon.bulletSpeed,
+        "rocket",
+        weapon.explosionRadius,
+        weapon.explosionDamage
+      );
+      
+      gameState.bullets.push(bullet);
+    } else {
+      const spread = (random() - 0.5) * accuracy;
+      const bulletDirection = this.direction + spread;
+      
+      const bullet = new Bullet(
+        this.x + Math.cos(this.direction) * (this.radius + 5),
+        this.y + Math.sin(this.direction) * (this.radius + 5),
+        bulletDirection,
+        true,
+        weapon.damage,
+        weapon.bulletSpeed,
+        "bullet"
+      );
+      
+      gameState.bullets.push(bullet);
+    }
+  }
+
+  takeDamage(amount) {
+    const now = Date.now();
+    if (now - this.lastHit < this.invincibilityTime) {
+      return;
+    }
+    
+    this.health = Math.max(0, this.health - amount);
+    this.lastHit = now;
+    this.invincibilityTime = 500;
+    
+    if (this.health <= 0) {
+      gameState.gamePhase = "GAME_OVER_LOSE";
+    }
+  }
+
+  draw(p) {
+    p.push();
+    
+    p.fill(0, 100, 255);
+    if (Date.now() - this.lastHit < this.invincibilityTime) {
+      if (Math.floor(Date.now() / 100) % 2 === 0) {
+        p.fill(255, 100, 100);
+      }
+    }
+    
+    if (this.isCrouching) {
+      p.fill(0, 80, 200);
+    }
+    
+    p.circle(this.x - gameState.level.cameraX, this.y - gameState.level.cameraY, this.radius * 2);
+    
+    p.stroke(255);
+    p.strokeWeight(3);
+    p.line(
+      this.x - gameState.level.cameraX,
+      this.y - gameState.level.cameraY,
+      this.x - gameState.level.cameraX + Math.cos(this.direction) * (this.radius + 5),
+      this.y - gameState.level.cameraY + Math.sin(this.direction) * (this.radius + 5)
+    );
+    
+    if (this.reloading) {
+      const reloadProgress = (p.millis() - this.reloadStart) / this.reloadTime;
+      p.noFill();
+      p.stroke(255, 200, 0);
+      p.arc(
+        this.x - gameState.level.cameraX,
+        this.y - gameState.level.cameraY,
+        this.radius * 2.5,
+        this.radius * 2.5,
+        -p.HALF_PI,
+        -p.HALF_PI + p.TWO_PI * reloadProgress
+      );
+    }
+    
+    p.pop();
+  }
+}
+
+export class Enemy {
+  constructor(x, y, type = "regular") {
+    this.x = x;
+    this.y = y;
+    this.type = type;
+    this.radius = 15;
+    
+    // Different stats based on type
+    if (type === "elite") {
+      this.health = 3;
+      this.speed = ENEMY_SPEED * 1.2;
+      this.fireRate = 1500;
+      this.damage = 12;
+      this.detectionRange = 250;
+    } else if (type === "heavy") {
+      this.health = 5;
+      this.speed = ENEMY_SPEED * 0.7;
+      this.fireRate = 2500;
+      this.damage = 20;
+      this.detectionRange = 200;
+      this.radius = 18;
+    } else if (type === "scout") {
+      this.health = 1;
+      this.speed = ENEMY_SPEED * 1.8;
+      this.fireRate = 1800;
+      this.damage = 8;
+      this.detectionRange = 300;
+      this.radius = 12;
+    } else if (type === "sniper") {
+      this.health = 2;
+      this.speed = ENEMY_SPEED * 0.5;
+      this.fireRate = 3000;
+      this.damage = 25;
+      this.detectionRange = 400;
+      this.radius = 15;
+    } else if (type === "tank") {
+      this.health = 10;
+      this.speed = ENEMY_SPEED * 0.4;
+      this.fireRate = 3500;
+      this.damage = 30;
+      this.detectionRange = 250;
+      this.radius = 22;
+      this.armor = true;
+    } else { // regular
+      this.health = 1;
+      this.speed = ENEMY_SPEED;
+      this.fireRate = 2000;
+      this.damage = 10;
+      this.detectionRange = 250;
+    }
+    
+    // Apply level scaling for difficulty progression
+    const level = gameState.currentLevel || 1;
+    let speedMult = 1.0;
+    let healthMult = 1.0;
+    
+    if (level <= 2) {
+      speedMult = 1.0;
+      healthMult = 1.0;
+    } else if (level <= 4) {
+      speedMult = 1.1 + (level - 2) * 0.05;
+      healthMult = 1.2 + (level - 2) * 0.1;
+    } else {
+      // Hard Levels (5+): Slower scaling
+      speedMult = 1.2 + (level - 4) * 0.05; // Reduced from 0.1
+      healthMult = 1.4 + (level - 4) * 0.1; // Reduced from 0.2
+    }
+    
+    this.speed *= speedMult;
+    this.health = Math.ceil(this.health * healthMult);
+    
+    this.direction = random() * Math.PI * 2;
+    this.lastShot = 0;
+    this.state = "patrol";
+    this.patrolTimer = 0;
+    this.patrolDuration = 2000;
+    this.lastStateChange = 0;
+    this.targetX = 0;
+    this.targetY = 0;
+    this.takingCover = false;
+    this.coverTimer = 0;
+    this.avoidanceDirection = 0;
+    this.avoidanceTimer = 0;
+  }
+  
+  checkCollisionWithRect(circleX, circleY, circleRadius, rectX, rectY, rectWidth, rectHeight) {
+    const closestX = Math.max(rectX, Math.min(circleX, rectX + rectWidth));
+    const closestY = Math.max(rectY, Math.min(circleY, rectY + rectHeight));
+    const distanceX = circleX - closestX;
+    const distanceY = circleY - closestY;
+    return (distanceX * distanceX + distanceY * distanceY) < (circleRadius * circleRadius);
+  }
+  
+  hasLineOfSight(player) {
+    const steps = 20;
+    const dx = (player.x - this.x) / steps;
+    const dy = (player.y - this.y) / steps;
+    
+    for (let i = 0; i < steps; i++) {
+      const checkX = this.x + dx * i;
+      const checkY = this.y + dy * i;
+      
+      for (const obstacle of gameState.obstacles) {
+        if (this.checkCollisionWithRect(checkX, checkY, 5, obstacle.x, obstacle.y, obstacle.width, obstacle.height)) {
+          return false;
+        }
+      }
+    }
+    
+    return true;
+  }
+  
+  findPathDirection(targetX, targetY) {
+    const directAngle = Math.atan2(targetY - this.y, targetX - this.x);
+    
+    const checkDist = 50;
+    const checkX = this.x + Math.cos(directAngle) * checkDist;
+    const checkY = this.y + Math.sin(directAngle) * checkDist;
+    
+    let blocked = false;
+    for (const obstacle of gameState.obstacles) {
+      if (this.checkCollisionWithRect(checkX, checkY, this.radius + 10, obstacle.x, obstacle.y, obstacle.width, obstacle.height)) {
+        blocked = true;
+        break;
+      }
+    }
+    
+    if (!blocked) {
+      return directAngle;
+    }
+    
+    const testAngles = [
+      directAngle + Math.PI / 4,
+      directAngle - Math.PI / 4,
+      directAngle + Math.PI / 2,
+      directAngle - Math.PI / 2,
+      directAngle + 3 * Math.PI / 4,
+      directAngle - 3 * Math.PI / 4
+    ];
+    
+    for (const angle of testAngles) {
+      const testX = this.x + Math.cos(angle) * checkDist;
+      const testY = this.y + Math.sin(angle) * checkDist;
+      
+      let clear = true;
+      for (const obstacle of gameState.obstacles) {
+        if (this.checkCollisionWithRect(testX, testY, this.radius + 10, obstacle.x, obstacle.y, obstacle.width, obstacle.height)) {
+          clear = false;
+          break;
+        }
+      }
+      
+      if (clear) {
+        return angle;
+      }
+    }
+    
+    return directAngle;
+  }
+
+  update(p, player) {
+    const now = p.millis();
+    const distToPlayer = p.dist(this.x, this.y, player.x, player.y);
+    const hasLOS = this.hasLineOfSight(player);
+    
+    let effectiveDetectionRange = this.detectionRange;
+    if (player.isCrouching && !hasLOS) {
+      effectiveDetectionRange *= 0.3;
+    } else if (player.isCrouching) {
+      effectiveDetectionRange *= 0.7;
+    }
+    
+    switch (this.state) {
+      case "patrol":
+        if (now - this.patrolTimer > this.patrolDuration) {
+          this.direction = random() * Math.PI * 2;
+          this.patrolTimer = now;
+        }
+        
+        const patrolX = this.x + Math.cos(this.direction) * this.speed * 0.5;
+        const patrolY = this.y + Math.sin(this.direction) * this.speed * 0.5;
+        
+        let patrolBlocked = false;
+        for (const obstacle of gameState.obstacles) {
+          if (this.checkCollisionWithRect(patrolX, patrolY, this.radius, obstacle.x, obstacle.y, obstacle.width, obstacle.height)) {
+            patrolBlocked = true;
+            break;
+          }
+        }
+        
+        if (!patrolBlocked) {
+          this.x = patrolX;
+          this.y = patrolY;
+        } else {
+          this.direction += Math.PI / 2 + (random() - 0.5) * Math.PI / 4;
+          this.patrolTimer = now;
+        }
+        
+        this.handleCollisions(p);
+        
+        if (distToPlayer < effectiveDetectionRange && hasLOS) {
+          this.state = "chase";
+          this.lastStateChange = now;
+        }
+        break;
+        
+      case "chase":
+        if (!hasLOS || distToPlayer > effectiveDetectionRange * 1.8) {
+          this.state = "patrol";
+          this.lastStateChange = now;
+          break;
+        }
+        
+        this.direction = this.findPathDirection(player.x, player.y);
+        
+        if (!this.takingCover && this.type !== "sniper" && this.type !== "tank") {
+          this.x += Math.cos(this.direction) * this.speed;
+          this.y += Math.sin(this.direction) * this.speed;
+        } else if (this.type === "tank") {
+          this.x += Math.cos(this.direction) * this.speed;
+          this.y += Math.sin(this.direction) * this.speed;
+        }
+        
+        this.handleCollisions(p);
+        
+        if (distToPlayer < effectiveDetectionRange * 0.7 && hasLOS) {
+          this.state = "attack";
+          this.lastStateChange = now;
+        }
+        break;
+        
+      case "attack":
+        if (!hasLOS || distToPlayer > effectiveDetectionRange * 1.5) {
+          this.state = "chase";
+          this.lastStateChange = now;
+          break;
+        }
+        
+        this.direction = Math.atan2(player.y - this.y, player.x - this.x);
+        
+        if (!this.takingCover && random() < 0.005 && this.type !== "sniper" && this.type !== "tank") {
+          this.takingCover = true;
+          this.coverTimer = now;
+        }
+        
+        if (this.takingCover && now - this.coverTimer > 1500) {
+          this.takingCover = false;
+        }
+        
+        if (!this.takingCover && this.type !== "sniper" && this.type !== "heavy" && this.type !== "tank") {
+          const strafeAngle = this.direction + (random() > 0.5 ? Math.PI/2 : -Math.PI/2);
+          const strafeX = this.x + Math.cos(strafeAngle) * this.speed * 0.3;
+          const strafeY = this.y + Math.sin(strafeAngle) * this.speed * 0.3;
+          
+          let safeToStrafe = true;
+          for (const obstacle of gameState.obstacles) {
+            if (this.checkCollisionWithRect(strafeX, strafeY, this.radius, obstacle.x, obstacle.y, obstacle.width, obstacle.height)) {
+              safeToStrafe = false;
+              break;
+            }
+          }
+          
+          if (safeToStrafe) {
+            this.x = strafeX;
+            this.y = strafeY;
+          }
+        }
+        
+        this.handleCollisions(p);
+        
+        if (now - this.lastShot > this.fireRate && !this.takingCover && hasLOS) {
+          this.shoot(p);
+          this.lastShot = now;
+        }
+        
+        if (distToPlayer > effectiveDetectionRange * 0.9 && this.type !== "sniper") {
+          this.state = "chase";
+          this.lastStateChange = now;
+        }
+        break;
+    }
+  }
+  
+  handleCollisions(p) {
+    this.x = p.constrain(this.x, this.radius, gameState.level.width - this.radius);
+    this.y = p.constrain(this.y, this.radius, gameState.level.height - this.radius);
+    
+    for (const obstacle of gameState.obstacles) {
+      if (this.checkCollisionWithRect(this.x, this.y, this.radius, obstacle.x, obstacle.y, obstacle.width, obstacle.height)) {
+        this.x -= Math.cos(this.direction) * this.speed * 2;
+        this.y -= Math.sin(this.direction) * this.speed * 2;
+        break;
+      }
+    }
+  }
+
+  shoot(p) {
+    const spread = this.type === "sniper" ? 0.05 : this.type === "tank" ? 0.15 : (random() - 0.5) * 0.2;
+    const bulletDirection = this.direction + spread;
+    
+    // Determine bullet type based on enemy type
+    let bulletType = "bullet";
+    let speed = ENEMY_BULLET_SPEED;
+    
+    if (this.type === "sniper") {
+      bulletType = "sniper_bullet";
+      speed = ENEMY_BULLET_SPEED * 1.5;
+    } else if (this.type === "tank") {
+      bulletType = "heavy_bullet";
+      speed = ENEMY_BULLET_SPEED * 0.8;
+    } else if (this.type === "scout") {
+      bulletType = "fast_bullet";
+      speed = ENEMY_BULLET_SPEED * 1.2;
+    }
+    
+    const bullet = new Bullet(
+      this.x + Math.cos(this.direction) * (this.radius + 5),
+      this.y + Math.sin(this.direction) * (this.radius + 5),
+      bulletDirection,
+      false,
+      this.damage,
+      speed,
+      bulletType
+    );
+    
+    gameState.enemyBullets.push(bullet);
+  }
+
+  takeDamage(amount) {
+    if (this.type === "tank") {
+      amount = Math.ceil(amount * 0.6);
+    }
+    
+    this.health -= amount;
+    if (this.health <= 0) {
+      return true;
+    }
+    return false;
+  }
+
+  draw(p) {
+    p.push();
+    
+    if (this.type === "elite") {
+      p.fill(200, 50, 0);
+    } else if (this.type === "heavy") {
+      p.fill(150, 50, 50);
+    } else if (this.type === "scout") {
+      p.fill(255, 150, 0);
+    } else if (this.type === "sniper") {
+      p.fill(100, 0, 150);
+    } else if (this.type === "tank") {
+      p.fill(80, 80, 80);
+    } else {
+      p.fill(200, 0, 0);
+    }
+    
+    if (this.takingCover) {
+      p.fill(150, 0, 0);
+    }
+    
+    p.circle(this.x - gameState.level.cameraX, this.y - gameState.level.cameraY, this.radius * 2);
+    
+    if (this.type === "tank") {
+      p.noFill();
+      p.stroke(150, 150, 150);
+      p.strokeWeight(2);
+      p.circle(this.x - gameState.level.cameraX, this.y - gameState.level.cameraY, this.radius * 2 + 4);
+    }
+    
+    p.stroke(255);
+    p.strokeWeight(2);
+    p.line(
+      this.x - gameState.level.cameraX,
+      this.y - gameState.level.cameraY,
+      this.x - gameState.level.cameraX + Math.cos(this.direction) * (this.radius + 5),
+      this.y - gameState.level.cameraY + Math.sin(this.direction) * (this.radius + 5)
+    );
+    
+    if (this.health > 1) {
+      for (let i = 0; i < Math.min(this.health, 10); i++) {
+        p.fill(255, 0, 0);
+        p.noStroke();
+        p.circle(
+          this.x - gameState.level.cameraX - 10 + i * 7,
+          this.y - gameState.level.cameraY - 20,
+          5
+        );
+      }
+    }
+    
+    p.pop();
+  }
+}
+
+export class Bullet {
+  constructor(x, y, direction, isPlayerBullet, damage = 1, speed = BULLET_SPEED, type = "bullet", explosionRadius = 0, explosionDamage = 0) {
+    this.x = x;
+    this.y = y;
+    this.direction = direction;
+    this.speed = speed;
+    this.radius = type === "rocket" ? 5 : type === "heavy_bullet" ? 5 : 3;
+    this.isPlayerBullet = isPlayerBullet;
+    this.damage = damage;
+    this.type = type; // "bullet", "rocket", "sniper_bullet", "heavy_bullet", "fast_bullet"
+    this.explosionRadius = explosionRadius;
+    this.explosionDamage = explosionDamage;
+    this.trail = []; // For visual effects
+  }
+
+  update() {
+    this.x += Math.cos(this.direction) * this.speed;
+    this.y += Math.sin(this.direction) * this.speed;
+    
+    // Add trail effect for rockets
+    if (this.type === "rocket" && random() < 0.5) {
+      this.trail.push({x: this.x, y: this.y, life: 10});
+    }
+    
+    if (this.x < 0 || this.x > gameState.level.width ||
+        this.y < 0 || this.y > gameState.level.height) {
+      return true;
+    }
+    
+    return false;
+  }
+
+  draw(p) {
+    p.push();
+    
+    // Draw trail
+    if (this.trail.length > 0) {
+      for (let i = this.trail.length - 1; i >= 0; i--) {
+        const t = this.trail[i];
+        p.fill(200, 200, 200, t.life * 20);
+        p.noStroke();
+        p.circle(t.x - gameState.level.cameraX, t.y - gameState.level.cameraY, 3);
+        t.life--;
+        if (t.life <= 0) this.trail.splice(i, 1);
+      }
+    }
+    
+    if (this.isPlayerBullet) {
+      if (this.type === "rocket") {
+        p.fill(255, 100, 0);
+      } else {
+        p.fill(255, 200, 0);
+      }
+    } else {
+      // Enemy bullet variety
+      if (this.type === "sniper_bullet") {
+        p.fill(200, 0, 255); // Purple
+      } else if (this.type === "heavy_bullet") {
+        p.fill(255, 100, 0); // Orange
+      } else if (this.type === "fast_bullet") {
+        p.fill(255, 255, 0); // Yellow
+      } else {
+        p.fill(255, 200, 0); // Standard
+      }
+    }
+    
+    p.noStroke();
+    p.circle(this.x - gameState.level.cameraX, this.y - gameState.level.cameraY, this.radius * 2);
+    p.pop();
+  }
+}
+
+export class Obstacle {
+  constructor(x, y, width, height) {
+    this.x = x;
+    this.y = y;
+    this.width = width;
+    this.height = height;
+  }
+
+  draw(p) {
+    p.push();
+    p.fill(80);
+    p.rect(this.x - gameState.level.cameraX, this.y - gameState.level.cameraY, this.width, this.height);
+    p.pop();
+  }
+}
+
+export class Pickup {
+  constructor(x, y, type) {
+    this.x = x;
+    this.y = y;
+    this.type = type;
+    this.radius = 10;
+    this.pulseTime = 0;
+  }
+
+  update(p) {
+    this.pulseTime += 0.05;
+  }
+
+  draw(p) {
+    p.push();
+    
+    const pulseSize = Math.sin(this.pulseTime) * 3;
+    
+    if (this.type === "ammo") {
+      p.fill(200, 200, 0);
+      p.rect(
+        this.x - this.radius - gameState.level.cameraX, 
+        this.y - this.radius - gameState.level.cameraY,
+        this.radius * 2 + pulseSize,
+        this.radius * 2 + pulseSize
+      );
+    } else if (this.type === "health") {
+      p.fill(0, 200, 100);
+      p.rect(
+        this.x - this.radius - gameState.level.cameraX,
+        this.y - this.radius - gameState.level.cameraY,
+        this.radius * 2 + pulseSize,
+        this.radius * 2 + pulseSize
+      );
+      
+      p.fill(255);
+      p.rect(
+        this.x - 2 - gameState.level.cameraX,
+        this.y - 6 - gameState.level.cameraY,
+        4,
+        12
+      );
+      p.rect(
+        this.x - 6 - gameState.level.cameraX,
+        this.y - 2 - gameState.level.cameraY,
+        12,
+        4
+      );
+    }
+    
+    p.pop();
+  }
+}
+
+export class WeaponPickup {
+  constructor(x, y, weaponType) {
+    this.x = x;
+    this.y = y;
+    this.weaponType = weaponType;
+    this.radius = 12;
+    this.pulseTime = 0;
+  }
+
+  update(p) {
+    this.pulseTime += 0.05;
+  }
+
+  draw(p) {
+    p.push();
+    
+    const pulseSize = Math.sin(this.pulseTime) * 3;
+    
+    // Different colors for different weapons
+    if (this.weaponType === "rifle") {
+      p.fill(100, 150, 255);
+    } else if (this.weaponType === "shotgun") {
+      p.fill(255, 100, 100);
+    } else if (this.weaponType === "sniper") {
+      p.fill(150, 100, 255);
+    } else if (this.weaponType === "rocket_launcher") {
+      p.fill(255, 150, 50);
+    }
+    
+    p.rect(
+      this.x - this.radius - gameState.level.cameraX,
+      this.y - this.radius - gameState.level.cameraY,
+      this.radius * 2 + pulseSize,
+      this.radius * 2 + pulseSize
+    );
+    
+    // Draw weapon initial
+    p.fill(255);
+    p.textSize(14);
+    p.textAlign(p.CENTER, p.CENTER);
+    let initial = this.weaponType.charAt(0).toUpperCase();
+    if (this.weaponType === "rocket_launcher") initial = "R";
+    p.text(initial, this.x - gameState.level.cameraX, this.y - gameState.level.cameraY);
+    
+    p.pop();
+  }
+}
+
+export class ExtractionPoint {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.radius = 30;
+    this.pulseTime = 0;
+  }
+  
+  update(p) {
+    this.pulseTime += 0.03;
+  }
+  
+  draw(p) {
+    p.push();
+    
+    const pulseSize = Math.sin(this.pulseTime) * 5;
+    
+    p.noFill();
+    p.stroke(0, 255, 200);
+    p.strokeWeight(2);
+    p.circle(
+      this.x - gameState.level.cameraX,
+      this.y - gameState.level.cameraY,
+      this.radius * 2 + pulseSize
+    );
+    
+    p.fill(0, 200, 150, 100);
+    p.noStroke();
+    p.circle(
+      this.x - gameState.level.cameraX,
+      this.y - gameState.level.cameraY,
+      this.radius * 2 - 10
+    );
+    
+    p.fill(255);
+    p.textSize(20);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text("H", this.x - gameState.level.cameraX, this.y - gameState.level.cameraY);
+    
+    p.pop();
+  }
+}
+</file>
+
+<file name="input.js">
+import { KEY, gameState, nextLevel, resetToLevel1 } from './globals.js';
+import { Player } from './entities.js';
+import { generateLevel } from './level.js';
+import { isReplayMode, getInputsForFrame, setCurrentFrame } from './replay_controller.js';
+import { setSeed } from './rng.js'; // Import setSeed for deterministic restarts
+
+export const keys = {
+  up: false,
+  down: false,
+  left: false,
+  right: false,
+  shoot: false,
+  sprint: false,
+  crouch: false
+};
+
+export function setupInputHandlers(p) {
+  p.keyPressed = function() {
+    // In replay mode, ignore keyboard input
+    if (isReplayMode()) {
+      return false;
+    }
+    
+    handleKeyPress(p, p.keyCode);
+    
+    p.logs.inputs.push({
+      "input_type": "keyPressed",
+      "data": { "key": p.key, "keyCode": p.keyCode },
+      "framecount": p.frameCount,
+      "timestamp": Date.now()
+    });
+    
+    return !(Object.values(KEY).includes(p.keyCode));
+  };
+  
+  p.keyReleased = function() {
+    // In replay mode, ignore keyboard input
+    if (isReplayMode()) {
+      return false;
+    }
+    
+    handleKeyRelease(p, p.keyCode);
+    
+    p.logs.inputs.push({
+      "input_type": "keyReleased",
+      "data": { "key": p.key, "keyCode": p.keyCode },
+      "framecount": p.frameCount,
+      "timestamp": Date.now()
+    });
+    
+    return !(Object.values(KEY).includes(p.keyCode));
+  };
+}
+
+// Track which keys are currently pressed in replay mode
+let replayKeyState = {
+  [KEY.UP]: false,
+  [KEY.DOWN]: false,
+  [KEY.LEFT]: false,
+  [KEY.RIGHT]: false,
+  [KEY.Z]: false,
+  [KEY.SPACE]: false,
+  [KEY.SHIFT]: false
+};
+
+/**
+ * Reset replay key state (called when replay stops)
+ */
+export function resetReplayKeyState() {
+  replayKeyState[KEY.UP] = false;
+  replayKeyState[KEY.DOWN] = false;
+  replayKeyState[KEY.LEFT] = false;
+  replayKeyState[KEY.RIGHT] = false;
+  replayKeyState[KEY.Z] = false;
+  replayKeyState[KEY.SPACE] = false;
+  replayKeyState[KEY.SHIFT] = false;
+  
+  keys.up = false;
+  keys.down = false;
+  keys.left = false;
+  keys.right = false;
+  keys.shoot = false;
+  keys.sprint = false;
+  keys.crouch = false;
+}
+
+/**
+ * Apply replay inputs for the current frame
+ * This should be called from the game loop before processing player input
+ * @param {p5} p - p5 instance
+ */
+export function applyReplayInputs(p) {
+  if (!isReplayMode()) {
+    return;
+  }
+  
+  // Update current frame in replay controller
+  setCurrentFrame(p.frameCount);
+  
+  // Get inputs for this frame
+  const frameInputs = getInputsForFrame(p.frameCount);
+  
+  // Apply pressed keys - set key state to true
+  for (const keyCode of frameInputs.pressed) {
+    replayKeyState[keyCode] = true;
+    
+    // Handle special keys that trigger actions
+    switch (keyCode) {
+      case KEY.ENTER:
+        // Handle phase transitions
+        if (gameState.gamePhase === "START") {
+          startGame(p);
+        }
+        break;
+      case KEY.ESC:
+        // Handle pause
+        if (gameState.gamePhase === "PLAYING") {
+          pauseGame(p);
+        } else if (gameState.gamePhase === "PAUSED") {
+          resumeGame(p);
+        }
+        break;
+    }
+  }
+  
+  // Apply released keys - set key state to false
+  for (const keyCode of frameInputs.released) {
+    replayKeyState[keyCode] = false;
+  }
+  
+  // Map replay key state to keys object
+  keys.up = replayKeyState[KEY.UP] || false;
+  keys.down = replayKeyState[KEY.DOWN] || false;
+  keys.left = replayKeyState[KEY.LEFT] || false;
+  keys.right = replayKeyState[KEY.RIGHT] || false;
+  keys.shoot = replayKeyState[KEY.Z] || false;
+  keys.sprint = replayKeyState[KEY.SPACE] || false;
+  keys.crouch = replayKeyState[KEY.SHIFT] || false;
+}
+
+export function handleKeyPress(p, keyCode) {
+  if (gameState.controlMode === "HUMAN") {
+    switch (keyCode) {
+      case KEY.UP:
+        keys.up = true;
+        break;
+      case KEY.DOWN:
+        keys.down = true;
+        break;
+      case KEY.LEFT:
+        keys.left = true;
+        break;
+      case KEY.RIGHT:
+        keys.right = true;
+        break;
+      case KEY.Z:
+        keys.shoot = true;
+        break;
+      case KEY.SPACE:
+        keys.sprint = true;
+        break;
+      case KEY.SHIFT:
+        keys.crouch = true;
+        break;
+      case KEY.KEY_1:
+        if (gameState.player) gameState.player.switchWeapon("pistol");
+        break;
+      case KEY.KEY_2:
+        if (gameState.player) gameState.player.switchWeapon("rifle");
+        break;
+      case KEY.KEY_3:
+        if (gameState.player) gameState.player.switchWeapon("shotgun");
+        break;
+      case KEY.KEY_4:
+        if (gameState.player) gameState.player.switchWeapon("sniper");
+        break;
+      case KEY.ENTER:
+        if (gameState.gamePhase === "START") {
+          startGame(p);
+        } else if (gameState.gamePhase === "GAME_OVER_WIN") {
+          // Progress to next level
+          gameState.autoRestartTimer = null; // Cancel any pending auto-restart
+          nextLevel(); // Increments level, calls resetGame(), sets player=null
+          
+          // Re-initialize level and player
+          setSeed(42); // Ensure deterministic level generation
+          p.randomSeed(42);
+          generateLevel(p);
+          gameState.player = new Player(gameState.level.width / 2, gameState.level.height / 2);
+          gameState.gamePhase = "PLAYING"; // Set phase to PLAYING
+          
+          p.logs.game_info.push({
+            "game_status": gameState.gamePhase,
+            "data": { "level": gameState.currentLevel },
+            "framecount": p.frameCount,
+            "timestamp": Date.now()
+          });
+        }
+        break;
+      case KEY.ESC:
+        if (gameState.gamePhase === "PLAYING") {
+          pauseGame(p);
+        } else if (gameState.gamePhase === "PAUSED") {
+          resumeGame(p);
+        }
+        break;
+      case KEY.R:
+        if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+          gameState.autoRestartTimer = null; // Cancel any pending auto-restart
+          resetToStart(p);
+        }
+        break;
+    }
+  }
+}
+
+export function handleKeyRelease(p, keyCode) {
+  if (gameState.controlMode === "HUMAN") {
+    switch (keyCode) {
+      case KEY.UP:
+        keys.up = false;
+        break;
+      case KEY.DOWN:
+        keys.down = false;
+        break;
+      case KEY.LEFT:
+        keys.left = false;
+        break;
+      case KEY.RIGHT:
+        keys.right = false;
+        break;
+      case KEY.Z:
+        keys.shoot = false;
+        break;
+      case KEY.SPACE:
+        keys.sprint = false;
+        break;
+      case KEY.SHIFT:
+        keys.crouch = false;
+        break;
+    }
+  }
+}
+
+export function handleAutomatedInputs(p) {
+  if (gameState.gamePhase === "PLAYING" && gameState.controlMode !== "HUMAN") {
+    const action = window.game_testing_controller(gameState);
+    
+    keys.up = false;
+    keys.down = false;
+    keys.left = false;
+    keys.right = false;
+    keys.shoot = false;
+    keys.sprint = false;
+    keys.crouch = false;
+    
+    if (action !== null) {
+      switch (action) {
+        case KEY.UP:
+          keys.up = true;
+          break;
+        case KEY.DOWN:
+          keys.down = true;
+          break;
+        case KEY.LEFT:
+          keys.left = true;
+          break;
+        case KEY.RIGHT:
+          keys.right = true;
+          break;
+        case KEY.Z:
+          keys.shoot = true;
+          break;
+        case KEY.SPACE:
+          keys.sprint = true;
+          break;
+        case KEY.SHIFT:
+          keys.crouch = true;
+          break;
+      }
+    }
+  }
+}
+
+export function startGame(p) {
+  gameState.gamePhase = "PLAYING";
+  gameState.autoRestartTimer = null; // Ensure auto-restart timer is cleared on manual start
+  
+  p.logs.game_info.push({
+    "game_status": gameState.gamePhase,
+    "data": {},
+    "framecount": p.frameCount,
+    "timestamp": Date.now()
+  });
+}
+
+export function pauseGame(p) {
+  gameState.gamePhase = "PAUSED";
+  
+  p.logs.game_info.push({
+    "game_status": gameState.gamePhase,
+    "data": {},
+    "framecount": p.frameCount,
+    "timestamp": Date.now()
+  });
+}
+
+export function resumeGame(p) {
+  gameState.gamePhase = "PLAYING";
+  
+  p.logs.game_info.push({
+    "game_status": gameState.gamePhase,
+    "data": {},
+    "framecount": p.frameCount,
+    "timestamp": Date.now()
+  });
+}
+
+export function resetToStart(p) {
+  resetToLevel1(); // Sets currentLevel to 1, calls resetGame(), sets player=null
+  gameState.gamePhase = "START"; // Explicitly sets phase to START
+  gameState.autoRestartTimer = null; // Ensure auto-restart timer is cleared on manual reset
+  
+  p.logs.game_info.push({
+    "game_status": gameState.gamePhase,
+    "data": {},
+    "framecount": p.frameCount,
+    "timestamp": Date.now()
+  });
+}
+</file>
+
+<file name="level.js">
+import { CANVAS_WIDTH, CANVAS_HEIGHT, gameState } from './globals.js';
+import { Obstacle, Pickup, Enemy, ExtractionPoint, WeaponPickup } from './entities.js';
+
+function checkCollisionWithRect(circleX, circleY, circleRadius, rectX, rectY, rectWidth, rectHeight) {
+  const closestX = Math.max(rectX, Math.min(circleX, rectX + rectWidth));
+  const closestY = Math.max(rectY, Math.min(circleY, rectY + rectHeight));
+  const distanceX = circleX - closestX;
+  const distanceY = circleY - closestY;
+  return (distanceX * distanceX + distanceY * distanceY) < (circleRadius * circleRadius);
+}
+
+export function generateLevel(p) {
+  const { level } = gameState;
+  
+  gameState.obstacles = [];
+  gameState.enemies = [];
+  gameState.pickups = [];
+  gameState.weaponPickups = [];
+  
+  // Create outer walls
+  gameState.obstacles.push(new Obstacle(-10, -10, level.width + 20, 10));
+  gameState.obstacles.push(new Obstacle(-10, level.height, level.width + 20, 10));
+  gameState.obstacles.push(new Obstacle(-10, -10, 10, level.height + 20));
+  gameState.obstacles.push(new Obstacle(level.width, -10, 10, level.height + 20));
+  
+  // Generate random obstacles - more obstacles at higher levels
+  const numObstacles = 20 + gameState.currentLevel * 2;
+  for (let i = 0; i < numObstacles; i++) {
+    const obstacleWidth = 40 + Math.floor(p.random(80));
+    const obstacleHeight = 40 + Math.floor(p.random(80));
+    
+    let x, y;
+    let validPosition = false;
+    
+    while (!validPosition) {
+      x = p.random(100, level.width - 100 - obstacleWidth);
+      y = p.random(100, level.height - 100 - obstacleHeight);
+      
+      const centerDist = p.dist(x + obstacleWidth/2, y + obstacleHeight/2, level.width/2, level.height/2);
+      if (centerDist > 150) {
+        validPosition = true;
+      }
+    }
+    
+    gameState.obstacles.push(new Obstacle(x, y, obstacleWidth, obstacleHeight));
+  }
+  
+  // Generate enemies - ensure enough to meet kill requirement plus extras
+  // Reduced the multiplier for high levels to make it less hard
+  const minEnemies = gameState.requiredKills + 2;
+  const extraEnemies = Math.floor(gameState.currentLevel * 1.0); // Reduced from 1.5
+  const numEnemies = minEnemies + extraEnemies;
+  
+  for (let i = 0; i < numEnemies; i++) {
+    let x, y;
+    let validPosition = false;
+    
+    while (!validPosition) {
+      x = p.random(100, level.width - 100);
+      y = p.random(100, level.height - 100);
+      
+      const centerDist = p.dist(x, y, level.width/2, level.height/2);
+      if (centerDist > 300) {
+        let collides = false;
+        for (const obstacle of gameState.obstacles) {
+          if (checkCollisionWithRect(x, y, 15, obstacle.x, obstacle.y, obstacle.width, obstacle.height)) {
+            collides = true;
+            break;
+          }
+        }
+        
+        if (!collides) {
+          validPosition = true;
+        }
+      }
+    }
+    
+    // Enemy type distribution based on 6-level progression
+    let enemyType = "regular";
+    const rand = p.random();
+    const currentLevel = gameState.currentLevel;
+    
+    if (currentLevel === 1) {
+      // Easy 1: Mostly regular, rare scout
+      if (rand < 0.9) enemyType = "regular";
+      else enemyType = "scout"; 
+    } else if (currentLevel === 2) {
+      // Easy 2: Intro Elite
+      if (rand < 0.7) enemyType = "regular";
+      else if (rand < 0.9) enemyType = "scout";
+      else enemyType = "elite";
+    } else if (currentLevel === 3) {
+      // Medium 1: More Elites, Intro Heavy
+      if (rand < 0.5) enemyType = "regular";
+      else if (rand < 0.75) enemyType = "scout";
+      else if (rand < 0.9) enemyType = "elite";
+      else enemyType = "heavy";
+    } else if (currentLevel === 4) {
+      // Medium 2: More Heavies
+      if (rand < 0.4) enemyType = "regular";
+      else if (rand < 0.6) enemyType = "scout";
+      else if (rand < 0.8) enemyType = "elite";
+      else enemyType = "heavy";
+    } else if (currentLevel === 5) {
+      // Hard 1: Intro Sniper
+      if (rand < 0.3) enemyType = "regular";
+      else if (rand < 0.5) enemyType = "scout";
+      else if (rand < 0.7) enemyType = "elite";
+      else if (rand < 0.85) enemyType = "heavy";
+      else enemyType = "sniper";
+    } else {
+      // Hard 2 (Level 6+): Intro Tank, Chaos
+      if (rand < 0.2) enemyType = "regular";
+      else if (rand < 0.4) enemyType = "scout";
+      else if (rand < 0.6) enemyType = "elite";
+      else if (rand < 0.75) enemyType = "heavy";
+      else if (rand < 0.9) enemyType = "sniper";
+      else enemyType = "tank";
+    }
+    
+    gameState.enemies.push(new Enemy(x, y, enemyType));
+  }
+  
+  // Generate health pickups
+  const numHealthPickups = 6 + gameState.currentLevel;
+  for (let i = 0; i < numHealthPickups; i++) {
+    placePickup(p, "health");
+  }
+  
+  // Generate ammo pickups
+  const numAmmoPickups = 4 + Math.floor(gameState.currentLevel);
+  for (let i = 0; i < numAmmoPickups; i++) {
+    placePickup(p, "ammo");
+  }
+  
+  // Generate weapon pickups - more weapons at higher levels
+  const weaponTypes = ["rifle", "shotgun", "sniper", "rocket_launcher"];
+  const numWeaponPickups = Math.min(gameState.currentLevel, 4);
+  for (let i = 0; i < numWeaponPickups; i++) {
+    // Cycle through weapon types
+    const weaponType = weaponTypes[i % weaponTypes.length];
+    placeWeaponPickup(p, weaponType);
+  }
+  
+  // ALWAYS generate extraction point now
+  let x, y;
+  let validPosition = false;
+  
+  while (!validPosition) {
+    x = p.random(100, level.width - 100);
+    y = p.random(100, level.height - 100);
+    
+    const centerDist = p.dist(x, y, level.width/2, level.height/2);
+    if (centerDist > 500) {
+      let collides = false;
+      for (const obstacle of gameState.obstacles) {
+        if (checkCollisionWithRect(x, y, 20, obstacle.x, obstacle.y, obstacle.width, obstacle.height)) {
+          collides = true;
+          break;
+        }
+      }
+      
+      if (!collides) {
+        validPosition = true;
+      }
+    }
+  }
+  
+  gameState.extractionPoint = { x, y };
+  gameState.extractionPointObj = new ExtractionPoint(x, y);
+}
+
+function placePickup(p, type) {
+  let x, y;
+  let validPosition = false;
+  
+  while (!validPosition) {
+    x = p.random(100, gameState.level.width - 100);
+    y = p.random(100, gameState.level.height - 100);
+    
+    let collides = false;
+    for (const obstacle of gameState.obstacles) {
+      if (checkCollisionWithRect(x, y, 10, obstacle.x, obstacle.y, obstacle.width, obstacle.height)) {
+        collides = true;
+        break;
+      }
+    }
+    
+    let tooClose = false;
+    for (const pickup of gameState.pickups) {
+      if (p.dist(x, y, pickup.x, pickup.y) < 60) {
+        tooClose = true;
+        break;
+      }
+    }
+    
+    if (!collides && !tooClose) {
+      validPosition = true;
+    }
+  }
+  
+  gameState.pickups.push(new Pickup(x, y, type));
+}
+
+function placeWeaponPickup(p, weaponType) {
+  let x, y;
+  let validPosition = false;
+  
+  while (!validPosition) {
+    x = p.random(100, gameState.level.width - 100);
+    y = p.random(100, gameState.level.height - 100);
+    
+    let collides = false;
+    for (const obstacle of gameState.obstacles) {
+      if (checkCollisionWithRect(x, y, 12, obstacle.x, obstacle.y, obstacle.width, obstacle.height)) {
+        collides = true;
+        break;
+      }
+    }
+    
+    let tooClose = false;
+    for (const pickup of [...gameState.pickups, ...gameState.weaponPickups]) {
+      if (p.dist(x, y, pickup.x, pickup.y) < 80) {
+        tooClose = true;
+        break;
+      }
+    }
+    
+    if (!collides && !tooClose) {
+      validPosition = true;
+    }
+  }
+  
+  gameState.weaponPickups.push(new WeaponPickup(x, y, weaponType));
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

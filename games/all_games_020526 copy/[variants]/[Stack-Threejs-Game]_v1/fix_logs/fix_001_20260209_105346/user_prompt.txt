@@ -1,0 +1,866 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+when i click pause/esc, I don't want the game to drop in opacity with the word paused, i just want the game to freeze, can you add that for me
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Three.js Game</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      /* Ensure container has exact size and clips overflow */
+      #game-container { 
+        width: 600px; 
+        height: 400px; 
+        position: relative; 
+        overflow: hidden; 
+        background: #000;
+        box-shadow: 0 0 20px rgba(0,0,0,0.5);
+      }
+      canvas { display: block; }
+      /* Removed control-buttons and related styles as they are no longer needed */
+      
+      /* UI Text styling helper */
+      .game-text {
+          font-family: 'Arial', sans-serif;
+          color: #fff;
+          margin-bottom: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <!-- Removed h1#gameTitle as per feedback -->
+      <!-- Removed control-buttons div entirely as there is only one mode and no mode selection is needed -->
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">
+        Build the tallest tower by precisely stacking blocks. Overhangs are sliced off, making the target smaller. Miss too many, and it's game over!
+      </p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">
+        SPACE: Place Block | ENTER: Start Game | ESC: Pause/Unpause | R: Restart Game
+      </p>
+    </div>
+    
+    <!-- Game Container acts as the boundary for the game canvas and UI -->
+    <div id="game-container"></div>
+    
+    <!-- Removed setMode script as it is no longer needed -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/seedrandom/3.0.5/seedrandom.min.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// Game Constants
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const BLOCK_HEIGHT = 1;
+export const ORIGINAL_BOX_SIZE = 5;
+export const MOVE_SPEED_INITIAL = 0.15;
+export const MOVE_SPEED_INCREMENT = 0.005;
+export const MAX_MISSES = 3; // New constant for allowed misses
+
+// Global Game State
+export const gameState = {
+    // Phase
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // Only human mode remains
+    
+    // Core Three.js components
+    scene: null,
+    camera: null,
+    renderer: null,
+    gameContainer: null,
+    
+    // Lighting
+    lights: [],
+    
+    // Game Objects
+    stack: [], // Array of placed blocks
+    activeBlock: null, // The currently moving block
+    debris: [], // Array of falling debris chunks
+    
+    // Game Status
+    score: 0,
+    missCount: 0, // Track number of misses
+    cameraTargetHeight: 0,
+    blockSpeed: MOVE_SPEED_INITIAL,
+    currentHue: 0, // For rainbow effect
+    
+    // Physics/Timing
+    frameCount: 0,
+    deltaTime: 0,
+    lastTime: 0,
+
+    // Auto-restart
+    autoRestartTimeoutId: null,
+    autoRestartScheduled: false,
+};
+</file>
+
+<file name="game.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, ORIGINAL_BOX_SIZE, MOVE_SPEED_INITIAL, MAX_MISSES } from './globals.js';
+import { setupCamera, updateCamera } from './camera.js';
+import { setupLighting } from './lighting.js';
+import { Block } from './entities.js';
+import { placeBlock, spawnNextBlock } from './physics.js';
+import { setupUI, renderUI } from './ui.js';
+import { hslToHex } from './utils.js';
+
+// Setup Game
+function init() {
+    // Container
+    gameState.gameContainer = document.getElementById('game-container');
+    if (!gameState.gameContainer) {
+        gameState.gameContainer = document.createElement('div');
+        gameState.gameContainer.id = 'game-container';
+        gameState.gameContainer.style.width = `${CANVAS_WIDTH}px`;
+        gameState.gameContainer.style.height = `${CANVAS_HEIGHT}px`;
+        gameState.gameContainer.style.position = 'relative';
+        gameState.gameContainer.style.overflow = 'hidden';
+        document.body.appendChild(gameState.gameContainer);
+    }
+
+    // Scene
+    gameState.scene = new THREE.Scene();
+    gameState.scene.background = new THREE.Color(0x8B7355); // Start with ground color (brown)
+    
+    // Renderer
+    gameState.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    gameState.renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+    gameState.renderer.shadowMap.enabled = true;
+    gameState.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    gameState.gameContainer.appendChild(gameState.renderer.domElement);
+    
+    // Setup components
+    setupCamera();
+    setupLighting();
+    setupUI();
+    
+    // Inputs
+    setupInputs();
+    
+    // Setup game loop
+    requestAnimationFrame(gameLoop);
+}
+
+function startGame() {
+    // Clear any pending auto-restart
+    if (gameState.autoRestartTimeoutId) {
+        clearTimeout(gameState.autoRestartTimeoutId);
+        gameState.autoRestartTimeoutId = null;
+        gameState.autoRestartScheduled = false;
+    }
+
+    // Reset State
+    gameState.stack.forEach(b => gameState.scene.remove(b.mesh));
+    gameState.debris.forEach(d => gameState.scene.remove(d.mesh));
+    if (gameState.activeBlock) gameState.scene.remove(gameState.activeBlock.mesh);
+    
+    gameState.stack = [];
+    gameState.debris = [];
+    gameState.activeBlock = null;
+    gameState.score = 0;
+    gameState.missCount = 0; // Reset miss count
+    gameState.blockSpeed = MOVE_SPEED_INITIAL;
+    gameState.currentHue = 0;
+    
+    // Reset Camera
+    gameState.camera.position.set(20, 20, 20);
+    gameState.camera.lookAt(0, 0, 0);
+    
+    // Reset background to ground color
+    gameState.scene.background = new THREE.Color(0x8B7355);
+    
+    // Create Base Block
+    const baseBlock = new Block(0, 0, 0, ORIGINAL_BOX_SIZE, ORIGINAL_BOX_SIZE, hslToHex(0, 0.8, 0.6));
+    gameState.stack.push(baseBlock);
+    gameState.scene.add(baseBlock.mesh);
+    
+    // Spawn first moving block
+    spawnNextBlock();
+    
+    gameState.gamePhase = "PLAYING";
+}
+
+function setupInputs() {
+    window.addEventListener('keydown', (e) => {
+        switch (e.keyCode) {
+            case 13: // ENTER
+                if (gameState.gamePhase === "START") {
+                    startGame();
+                }
+                break;
+            case 32: // SPACE
+                if (gameState.gamePhase === "PLAYING") {
+                    handleAction();
+                }
+                break;
+            case 27: // ESC
+                if (gameState.gamePhase === "PLAYING") gameState.gamePhase = "PAUSED";
+                else if (gameState.gamePhase === "PAUSED") gameState.gamePhase = "PLAYING";
+                break;
+            case 82: // R
+                if (gameState.gamePhase === "GAME_OVER_LOSE" || gameState.gamePhase === "GAME_OVER_WIN") {
+                    // Clear any pending auto-restart before manual restart
+                    if (gameState.autoRestartTimeoutId) {
+                        clearTimeout(gameState.autoRestartTimeoutId);
+                        gameState.autoRestartTimeoutId = null;
+                        gameState.autoRestartScheduled = false;
+                    }
+                    startGame();
+                }
+                break;
+        }
+    });
+}
+
+function handleAction() {
+    if (gameState.gamePhase !== "PLAYING") return;
+    
+    const success = placeBlock();
+    
+    if (success) {
+        gameState.score++;
+        spawnNextBlock();
+    } else {
+        // Game Over condition (missed MAX_MISSES times)
+        gameState.gamePhase = "GAME_OVER_LOSE";
+        
+        // Schedule auto-restart if not already scheduled
+        if (!gameState.autoRestartScheduled) {
+            gameState.autoRestartScheduled = true;
+            gameState.autoRestartTimeoutId = setTimeout(() => {
+                startGame();
+            }, 1000); // 1 second delay
+        }
+    }
+}
+
+// Update background color based on height - transition from ground to sky
+function updateBackground() {
+    // Calculate progress based on stack height
+    // Start: brown ground color (0x8B7355)
+    // Mid: green/grass (0x90EE90) 
+    // High: light blue sky (0x87CEEB)
+    // Very high: deep blue sky (0x4682B4)
+    
+    const height = gameState.stack.length;
+    
+    // Define color transitions
+    const groundColor = new THREE.Color(0x8B7355); // Brown
+    const grassColor = new THREE.Color(0x90EE90);  // Light green
+    const skyColor = new THREE.Color(0x87CEEB);    // Sky blue
+    const deepSkyColor = new THREE.Color(0x4682B4); // Deep blue
+    
+    let targetColor;
+    
+    if (height <= 5) {
+        // Ground to grass (0-5 blocks)
+        const t = height / 5;
+        targetColor = groundColor.clone().lerp(grassColor, t);
+    } else if (height <= 15) {
+        // Grass to sky (5-15 blocks)
+        const t = (height - 5) / 10;
+        targetColor = grassColor.clone().lerp(skyColor, t);
+    } else {
+        // Sky to deep sky (15+ blocks)
+        const t = Math.min((height - 15) / 20, 1);
+        targetColor = skyColor.clone().lerp(deepSkyColor, t);
+    }
+    
+    gameState.scene.background = targetColor;
+}
+
+// Logic update
+function update(dt) {
+    if (gameState.gamePhase === "PLAYING") {
+        // Update Active Block
+        if (gameState.activeBlock) {
+            gameState.activeBlock.update(dt);
+        }
+        
+        // Update Debris
+        for (let i = gameState.debris.length - 1; i >= 0; i--) {
+            const d = gameState.debris[i];
+            const remove = d.update(dt);
+            if (remove) {
+                gameState.scene.remove(d.mesh);
+                gameState.debris.splice(i, 1);
+            }
+        }
+        
+        // Update Camera
+        updateCamera();
+        
+        // Update Background Color based on height
+        updateBackground();
+    }
+}
+
+// Render loop
+let lastTime = 0;
+function gameLoop(time) {
+    requestAnimationFrame(gameLoop);
+    
+    const dt = Math.min((time - lastTime) / 1000, 0.1); // Cap dt
+    lastTime = time;
+    gameState.deltaTime = dt;
+    gameState.frameCount++;
+    
+    update(dt);
+    gameState.renderer.render(gameState.scene, gameState.camera);
+    renderUI();
+}
+
+// Start
+init();
+</file>
+
+<file name="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, MAX_MISSES } from './globals.js';
+
+let uiCanvas = null;
+let uiContext = null;
+
+export function setupUI() {
+    uiCanvas = document.createElement('canvas');
+    uiCanvas.width = CANVAS_WIDTH;
+    uiCanvas.height = CANVAS_HEIGHT;
+    uiCanvas.style.position = 'absolute';
+    uiCanvas.style.top = '0';
+    uiCanvas.style.left = '0';
+    uiCanvas.style.pointerEvents = 'none';
+    uiCanvas.style.zIndex = '100'; // Above renderer
+    
+    if (gameState.gameContainer) {
+        gameState.gameContainer.appendChild(uiCanvas);
+    } else {
+        // Fallback
+        document.body.appendChild(uiCanvas);
+    }
+    
+    uiContext = uiCanvas.getContext('2d');
+}
+
+export function renderUI() {
+    if (!uiContext) return;
+    
+    // Clear
+    uiContext.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    // Common settings
+    uiContext.textAlign = 'center';
+    uiContext.fillStyle = 'white';
+    
+    if (gameState.gamePhase === "START") {
+        // Dim background
+        uiContext.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        
+        uiContext.fillStyle = 'white';
+        uiContext.font = 'bold 36px Arial'; // Adjusted font size for new title
+        uiContext.fillText('press enter to begin', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2); // Centered title
+        
+        // Removed previous title and instruction texts as per feedback
+        
+    } else if (gameState.gamePhase === "PLAYING") {
+        // Score (Large number at top)
+        uiContext.font = 'bold 60px Arial';
+        uiContext.fillStyle = 'rgba(255, 255, 255, 0.8)';
+        uiContext.fillText(gameState.score.toString(), CANVAS_WIDTH / 2, 80);
+        
+        // Lives remaining (top right)
+        const livesRemaining = MAX_MISSES - gameState.missCount;
+        uiContext.font = 'bold 24px Arial';
+        uiContext.textAlign = 'right';
+        
+        // Color based on lives
+        if (livesRemaining === 3) {
+            uiContext.fillStyle = 'rgba(100, 255, 100, 0.9)'; // Green
+        } else if (livesRemaining === 2) {
+            uiContext.fillStyle = 'rgba(255, 255, 100, 0.9)'; // Yellow
+        } else if (livesRemaining === 1) {
+            uiContext.fillStyle = 'rgba(255, 100, 100, 0.9)'; // Red
+        }
+        
+        uiContext.fillText(`Lives: ${livesRemaining}`, CANVAS_WIDTH - 20, 40);
+        uiContext.textAlign = 'center'; // Reset
+        
+    } else if (gameState.gamePhase === "PAUSED") {
+        uiContext.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        
+        uiContext.fillStyle = 'white';
+        uiContext.font = 'bold 32px Arial';
+        uiContext.fillText('PAUSED', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+        
+    } else if (gameState.gamePhase === "GAME_OVER_LOSE") {
+        uiContext.fillStyle = 'rgba(0, 0, 0, 0.6)';
+        uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        
+        uiContext.fillStyle = 'white';
+        uiContext.font = 'bold 40px Arial';
+        uiContext.fillText('GAME OVER', CANVAS_WIDTH / 2, 150);
+        
+        uiContext.font = '24px Arial';
+        uiContext.fillText(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 200);
+        
+        uiContext.font = '18px Arial';
+        uiContext.fillStyle = '#cccccc';
+        uiContext.fillText('Press R to Restart', CANVAS_WIDTH / 2, 250);
+    }
+}
+</file>
+
+<file name="lighting.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+
+export function setupLighting() {
+    // Ambient light
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    gameState.scene.add(ambientLight);
+    gameState.lights.push(ambientLight);
+    
+    // Directional Light (Sun)
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(10, 20, 10);
+    dirLight.castShadow = true;
+    
+    // Optimize shadow map
+    dirLight.shadow.mapSize.width = 1024;
+    dirLight.shadow.mapSize.height = 1024;
+    const d = 15;
+    dirLight.shadow.camera.left = -d;
+    dirLight.shadow.camera.right = d;
+    dirLight.shadow.camera.top = d;
+    dirLight.shadow.camera.bottom = -d;
+    
+    gameState.scene.add(dirLight);
+    gameState.lights.push(dirLight);
+    
+    // Fill light
+    const fillLight = new THREE.DirectionalLight(0x8888ff, 0.3);
+    fillLight.position.set(-10, 10, -10);
+    gameState.scene.add(fillLight);
+    gameState.lights.push(fillLight);
+}
+</file>
+
+<file name="entities.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, BLOCK_HEIGHT, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { hslToHex } from './utils.js';
+
+export class Block {
+    constructor(x, y, z, width, depth, color) {
+        this.width = width;
+        this.depth = depth;
+        this.height = BLOCK_HEIGHT;
+        
+        // Visual Mesh
+        const geometry = new THREE.BoxGeometry(width, this.height, depth);
+        const material = new THREE.MeshStandardMaterial({ 
+            color: color,
+            flatShading: true
+        });
+        
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.set(x, y, z);
+        this.mesh.castShadow = true;
+        this.mesh.receiveShadow = true;
+        
+        // Movement Logic for Active Block
+        this.isMoving = false;
+        this.moveAxis = 'x'; // 'x' or 'z'
+        this.moveDirection = 1; // 1 or -1
+        this.moveSpeed = 0;
+    }
+    
+    startMoving(axis, speed, startPos) {
+        this.isMoving = true;
+        this.moveAxis = axis;
+        this.moveSpeed = speed;
+        this.moveDirection = 1;
+        
+        // Set initial position based on axis
+        // We start far out and move inwards
+        const limit = 15; // Starting distance
+        if (axis === 'x') {
+            this.mesh.position.x = -limit; // Start from left
+        } else {
+            this.mesh.position.z = -limit; // Start from back
+        }
+    }
+
+    update(deltaTime) {
+        if (!this.isMoving) return;
+
+        const limit = 15;
+        
+        if (this.moveAxis === 'x') {
+            this.mesh.position.x += this.moveSpeed * this.moveDirection * (deltaTime * 60); // Normalize to approx 60fps
+            
+            // Bounce
+            if (this.mesh.position.x > limit) {
+                this.mesh.position.x = limit;
+                this.moveDirection = -1;
+            } else if (this.mesh.position.x < -limit) {
+                this.mesh.position.x = -limit;
+                this.moveDirection = 1;
+            }
+        } else {
+            this.mesh.position.z += this.moveSpeed * this.moveDirection * (deltaTime * 60);
+            
+            if (this.mesh.position.z > limit) {
+                this.mesh.position.z = limit;
+                this.moveDirection = -1;
+            } else if (this.mesh.position.z < -limit) {
+                this.mesh.position.z = -limit;
+                this.moveDirection = 1;
+            }
+        }
+    }
+    
+    stop() {
+        this.isMoving = false;
+    }
+}
+
+export class Debris {
+    constructor(x, y, z, width, depth, color) {
+        const geometry = new THREE.BoxGeometry(width, BLOCK_HEIGHT, depth);
+        const material = new THREE.MeshStandardMaterial({ 
+            color: color,
+            flatShading: true
+        });
+        
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.set(x, y, z);
+        this.mesh.castShadow = true;
+        this.mesh.receiveShadow = true;
+        
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        this.rotationSpeed = new THREE.Vector3(
+            (Math.random() - 0.5) * 0.2,
+            (Math.random() - 0.5) * 0.2,
+            (Math.random() - 0.5) * 0.2
+        );
+        
+        gameState.scene.add(this.mesh);
+    }
+    
+    update(deltaTime) {
+        // Gravity
+        this.velocity.y -= 0.02 * (deltaTime * 60);
+        
+        // Move
+        this.mesh.position.add(this.velocity.clone().multiplyScalar(deltaTime * 60));
+        
+        // Rotate
+        this.mesh.rotation.x += this.rotationSpeed.x * (deltaTime * 60);
+        this.mesh.rotation.y += this.rotationSpeed.y * (deltaTime * 60);
+        this.mesh.rotation.z += this.rotationSpeed.z * (deltaTime * 60);
+        
+        // Remove if too low
+        if (this.mesh.position.y < -20) {
+            return true; // Return true to signal removal
+        }
+        return false;
+    }
+}
+</file>
+
+<file name="utils.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+export function hslToHex(h, s, l) {
+    const color = new THREE.Color();
+    color.setHSL(h, s, l);
+    return color;
+}
+
+export function disposeMesh(mesh) {
+    if (!mesh) return;
+    if (mesh.geometry) mesh.geometry.dispose();
+    if (mesh.material) {
+        if (Array.isArray(mesh.material)) {
+            mesh.material.forEach(m => m.dispose());
+        } else {
+            mesh.material.dispose();
+        }
+    }
+}
+</file>
+
+<file name="camera.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, BLOCK_HEIGHT } from './globals.js';
+
+export function setupCamera() {
+    // Orthographic camera for isometric view
+    const aspect = 600 / 400;
+    const d = 10;
+    
+    gameState.camera = new THREE.OrthographicCamera(
+        -d * aspect, d * aspect, 
+        d, -d, 
+        1, 1000
+    );
+    
+    // Isometric position
+    gameState.camera.position.set(20, 20, 20);
+    gameState.camera.lookAt(0, 0, 0);
+}
+
+export function updateCamera() {
+    if (gameState.gamePhase !== "PLAYING" && gameState.gamePhase !== "GAME_OVER_LOSE") return;
+
+    // Smoothly follow the stack height
+    // We want the camera to rise as blocks are stacked
+    
+    // Calculate desired Y position based on stack height
+    // Base Y is 20. For each block, we want to go up 1 unit.
+    const targetY = 20 + (gameState.stack.length * BLOCK_HEIGHT);
+    
+    // Smooth lerp
+    const lerpFactor = 0.05;
+    if (Math.abs(gameState.camera.position.y - targetY) > 0.01) {
+        gameState.camera.position.y += (targetY - gameState.camera.position.y) * lerpFactor;
+        
+        // Maintain isometric angle means adjusting X and Z as well if we were orbiting,
+        // but for a simple "rise", we just need to move the camera UP.
+        // However, for an isometric camera looking at (0, y, 0), we need to shift the camera position
+        // AND the lookAt target.
+        
+        // Actually, easiest way for orthographic "scroll" is to just move the camera Y 
+        // and keep looking at the new center Y.
+        
+        // Target focus point
+        const currentLookAtY = (gameState.stack.length - 2) * BLOCK_HEIGHT; 
+        // We look slightly below the top
+        
+        // Current camera height relative to focus
+        // We want to maintain relative offset (20, 20, 20) -> looking at (0, 0, 0)
+        // New pos -> (20, 20 + offset, 20) -> looking at (0, offset, 0)
+        
+        const offset = Math.max(0, (gameState.stack.length - 3) * BLOCK_HEIGHT);
+        
+        const targetCamY = 20 + offset;
+        const targetCamX = 20;
+        const targetCamZ = 20;
+        
+        gameState.camera.position.lerp(new THREE.Vector3(targetCamX, targetCamY, targetCamZ), 0.1);
+        
+        // IMPORTANT: Orthographic camera doesn't need to change rotation if we move it parallel
+        // But we usually want to keep the "top" block in the center.
+        // So we look at (0, offset, 0).
+        // BUT, simply moving position is enough if rotation is fixed? 
+        // No, lookAt updates rotation.
+        // Let's manually manage position and lookAt.
+        
+        // Actually, just maintain the offset vector.
+        // If initial is (20, 20, 20) looking at (0, 0, 0).
+        // New is (20, 20+H, 20) looking at (0, H, 0).
+        // This is pure translation.
+    }
+}
+</file>
+
+<file name="physics.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, BLOCK_HEIGHT, MAX_MISSES } from './globals.js';
+import { Block, Debris } from './entities.js';
+import { hslToHex } from './utils.js';
+
+// Places the current block and returns true if successful, false if game over
+export function placeBlock() {
+    if (!gameState.activeBlock) return false;
+    
+    const active = gameState.activeBlock;
+    const prev = gameState.stack[gameState.stack.length - 1];
+    
+    active.stop();
+    
+    // Calculate overlap
+    // We only care about the axis of movement
+    const isX = active.moveAxis === 'x';
+    
+    const activePos = isX ? active.mesh.position.x : active.mesh.position.z;
+    const prevPos = isX ? prev.mesh.position.x : prev.mesh.position.z;
+    
+    const activeSize = isX ? active.width : active.depth;
+    // prev block might have different dimensions if we cut it? No, prev block defines the "target" base.
+    // The previous block's relevant dimension is what we compare against.
+    const prevSize = isX ? prev.width : prev.depth;
+    
+    // Delta
+    const delta = activePos - prevPos;
+    const absDelta = Math.abs(delta);
+    const overlap = prevSize - absDelta;
+    
+    // LOGIC:
+    // If overlap <= 0, we missed completely.
+    if (overlap <= 0) {
+        // Make the whole block fall as debris
+        const debris = new Debris(
+            active.mesh.position.x,
+            active.mesh.position.y,
+            active.mesh.position.z,
+            active.width,
+            active.depth,
+            active.mesh.material.color
+        );
+        debris.velocity.set(0, 0.1, 0); // slight pop up
+        gameState.debris.push(debris);
+        
+        gameState.scene.remove(active.mesh);
+        gameState.activeBlock = null;
+        
+        // Increment miss count
+        gameState.missCount++;
+        
+        // Only game over if we've missed 3 times
+        if (gameState.missCount >= MAX_MISSES) {
+            return false; // Game Over
+        }
+        
+        // Still alive, continue with a miss
+        return true; // Continue playing
+    }
+    
+    // If we have overlap, we cut.
+    // Cut logic:
+    // New block size = overlap
+    // New block position = prevPos + delta / 2
+    
+    let newWidth = active.width;
+    let newDepth = active.depth;
+    let newX = active.mesh.position.x;
+    let newZ = active.mesh.position.z;
+    
+    // Debris params
+    let debrisX, debrisZ, debrisW, debrisD;
+    
+    if (isX) {
+        newWidth = overlap;
+        newX = prevPos + delta / 2;
+        
+        // Determine debris
+        debrisW = absDelta;
+        debrisD = newDepth;
+        debrisZ = newZ;
+        
+        if (activePos > prevPos) {
+            // Overhang on positive side
+            debrisX = prevPos + prevSize / 2 + debrisW / 2;
+        } else {
+            // Overhang on negative side
+            debrisX = prevPos - prevSize / 2 - debrisW / 2;
+        }
+    } else {
+        newDepth = overlap;
+        newZ = prevPos + delta / 2;
+        
+        // Determine debris
+        debrisW = newWidth;
+        debrisD = absDelta;
+        debrisX = newX;
+        
+        if (activePos > prevPos) {
+            debrisZ = prevPos + prevSize / 2 + debrisD / 2;
+        } else {
+            debrisZ = prevPos - prevSize / 2 - debrisD / 2;
+        }
+    }
+    
+    // Replace active block with a trimmed static block
+    gameState.scene.remove(active.mesh);
+    
+    const placedBlock = new Block(newX, active.mesh.position.y, newZ, newWidth, newDepth, active.mesh.material.color);
+    gameState.stack.push(placedBlock);
+    gameState.scene.add(placedBlock.mesh);
+    
+    // Create debris
+    const debris = new Debris(debrisX, active.mesh.position.y, debrisZ, debrisW, debrisD, active.mesh.material.color);
+    // Add velocity away from center slightly?
+    // debris.velocity.y = 0.1;
+    gameState.debris.push(debris);
+    
+    return true; // Success
+}
+
+export function spawnNextBlock() {
+    const prevBlock = gameState.stack[gameState.stack.length - 1];
+    
+    // Increment Hue
+    gameState.currentHue += 0.02; // Change color slightly
+    if (gameState.currentHue > 1) gameState.currentHue -= 1;
+    
+    const color = hslToHex(gameState.currentHue, 0.8, 0.6);
+    
+    // New block spawns at next height
+    const y = prevBlock.mesh.position.y + BLOCK_HEIGHT;
+    
+    // New block inherits dimensions from the top of the stack
+    const newBlock = new Block(0, y, 0, prevBlock.width, prevBlock.depth, color);
+    
+    // Determine axis: alternate
+    const lastAxis = gameState.stack.length % 2 === 0 ? 'z' : 'x'; // 1st moved X, 2nd Z, etc.
+    const axis = lastAxis === 'x' ? 'z' : 'x';
+    
+    // Set position to align with previous block on the non-moving axis
+    if (axis === 'x') {
+        newBlock.mesh.position.z = prevBlock.mesh.position.z;
+    } else {
+        newBlock.mesh.position.x = prevBlock.mesh.position.x;
+    }
+    
+    // Increase speed slightly
+    gameState.blockSpeed += 0.002;
+    
+    newBlock.startMoving(axis, gameState.blockSpeed);
+    
+    gameState.activeBlock = newBlock;
+    gameState.scene.add(newBlock.mesh);
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

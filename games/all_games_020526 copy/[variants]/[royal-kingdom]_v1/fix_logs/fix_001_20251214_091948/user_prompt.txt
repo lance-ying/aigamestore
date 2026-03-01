@@ -1,0 +1,1540 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+the auto restart should not put me back to the enter start screen, can you fix that
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Match colorful tiles! Swap adjacent tiles to create matches of 3+ and clear objectives across 5 levels. Form Rockets (4 tiles) or Bombs (5+ tiles) to clear obstacles and collect items before moves run out.</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Keys: Move cursor to select tiles | Space: Select tile / Swap with selected tile / Activate special piece | WASD: Alternative movement keys | Enter: Start game from menu | Esc: Pause / Unpause game | R: Return to start screen (from game over)</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+// globals.js - Global game state and constants
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const GRID_SIZE = 8; // Will vary by level
+export const TILE_SIZE = 40;
+export const GRID_OFFSET_X = 150;
+export const GRID_OFFSET_Y = 50;
+
+export const COLORS = {
+  RED: [220, 50, 50],
+  BLUE: [50, 120, 220],
+  GREEN: [50, 200, 80],
+  YELLOW: [240, 220, 50],
+  PURPLE: [180, 50, 200],
+  ORANGE: [255, 140, 50]
+};
+
+export const COLOR_NAMES = ['RED', 'BLUE', 'GREEN', 'YELLOW', 'PURPLE', 'ORANGE'];
+
+export const gameState = {
+  player: null, // Not used in match-3, but required by spec
+  entities: [], // All tiles
+  score: 0,
+  gamePhase: "START", // "START", "PLAYING", "GAME_OVER_WIN", "GAME_OVER_LOSE", "PAUSED"
+  controlMode: "HUMAN",
+  currentLevel: 1,
+  movesRemaining: 0,
+  cursorX: 0,
+  cursorY: 0,
+  selectedTile: null,
+  board: [],
+  objectives: [],
+  isAnimating: false,
+  animationQueue: [],
+  comboCounting: 0,
+  comboMultiplier: 1.0,
+  totalScore: 0,
+  hintsRemaining: 0,
+  hintedTiles: [],
+  autoRestartScheduled: false, // New: Flag to prevent multiple auto-restarts
+  autoRestartTimeoutId: null   // New: Store timeout ID to allow cancellation
+};
+
+// Level definitions
+export const LEVELS = [
+  {
+    level: 1,
+    gridSize: 8,
+    colors: 4,
+    moves: 25,
+    objectives: [
+      { type: 'CLEAR_COLOR', color: 'RED', target: 20, current: 0, display: 'Clear 20 Red tiles' },
+      { type: 'CLEAR_COLOR', color: 'BLUE', target: 15, current: 0, display: 'Clear 15 Blue tiles' }
+    ],
+    iceBlocks: 0,
+    chainedTiles: 0,
+    targetItems: 0
+  },
+  {
+    level: 2,
+    gridSize: 8,
+    colors: 5,
+    moves: 30,
+    objectives: [
+      { type: 'CLEAR_ICE', target: 15, current: 0, display: 'Clear 15 Ice Blocks' },
+      { type: 'CLEAR_COLOR', color: 'GREEN', target: 25, current: 0, display: 'Clear 25 Green tiles' }
+    ],
+    iceBlocks: 15,
+    chainedTiles: 0,
+    targetItems: 0
+  },
+  {
+    level: 3,
+    gridSize: 9,
+    colors: 5,
+    moves: 35,
+    objectives: [
+      { type: 'COLLECT_ITEMS', target: 3, current: 0, display: 'Collect 3 Keys' },
+      { type: 'CLEAR_CHAINS', target: 10, current: 0, display: 'Clear 10 Chained Tiles' },
+      { type: 'CLEAR_ICE', target: 10, current: 0, display: 'Clear 10 Ice Blocks' }
+    ],
+    iceBlocks: 12,
+    chainedTiles: 10,
+    targetItems: 3
+  },
+  {
+    level: 4,
+    gridSize: 9,
+    colors: 6,
+    moves: 40,
+    objectives: [
+      { type: 'ACTIVATE_ROCKET', target: 4, current: 0, display: 'Activate 4 Rockets' },
+      { type: 'ACTIVATE_BOMB', target: 2, current: 0, display: 'Activate 2 Bombs' },
+      { type: 'CLEAR_COLOR', color: 'YELLOW', target: 30, current: 0, display: 'Clear 30 Yellow tiles' }
+    ],
+    iceBlocks: 5,
+    chainedTiles: 0,
+    targetItems: 0
+  },
+  {
+    level: 5,
+    gridSize: 10,
+    colors: 6,
+    moves: 40,
+    objectives: [
+      { type: 'CLEAR_ICE', target: 20, current: 0, display: 'Clear 20 Ice Blocks' },
+      { type: 'CLEAR_CHAINS', target: 15, current: 0, display: 'Clear 15 Chained Tiles' },
+      { type: 'COLLECT_ITEMS', target: 4, current: 0, display: 'Collect 4 Crowns' },
+      { type: 'SCORE', target: 15000, current: 0, display: 'Score 15,000 points' }
+    ],
+    iceBlocks: 20,
+    chainedTiles: 15,
+    targetItems: 4
+  }
+];
+// Expose gameState to window for debugging and recording scripts
+if (typeof window !== 'undefined') {
+  window.getGameState = () => gameState;
+}
+</file>
+
+<file name="game.js">
+// game.js - Main game file
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { initializeLevel, findMatches, clearMatches, applyGravity, refillBoard, 
+         removeMarkedTiles, checkObjectivesComplete, isStable } from './boardLogic.js';
+import { handleKeyPressed, setupControlMode } from './input.js';
+import { renderStartScreen, renderGame, renderGameOver } from './rendering.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Initialize logs
+  p.logs = {
+    game_info: [],
+    inputs: [],
+    player_info: []
+  };
+
+  // New: Function to fully reset the game to the start screen
+  p.resetGameToStart = function() {
+    // Clear any pending auto-restart
+    clearTimeout(gameState.autoRestartTimeoutId);
+    gameState.autoRestartScheduled = false;
+    gameState.autoRestartTimeoutId = null;
+
+    gameState.gamePhase = 'START';
+    gameState.currentLevel = 1; // Reset to level 1 for full restart
+    gameState.totalScore = 0; // Reset total score for full restart
+    initializeLevel(gameState.currentLevel, p); // Re-initialize level 1
+    
+    p.logs.game_info.push({
+      data: { phase: 'START', action: 'game_reset' },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.randomSeed(42);
+    p.frameRate(60);
+    
+    // Initialize control mode
+    setupControlMode();
+    
+    // Initialize first level
+    initializeLevel(1, p);
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: { phase: 'START', level: 1 },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+
+  p.draw = function() {
+    // Render based on phase
+    if (gameState.gamePhase === 'START') {
+      renderStartScreen(p);
+    } else if (gameState.gamePhase === 'PLAYING' || gameState.gamePhase === 'PAUSED') {
+      // Update entities
+      gameState.entities.forEach(tile => tile.update());
+      
+      // Handle animations and cascades
+      if (gameState.isAnimating) {
+        handleAnimations(p);
+      }
+      
+      // Check win/lose conditions
+      if (!gameState.isAnimating && gameState.movesRemaining === 0 && !checkObjectivesComplete()) {
+        gameState.gamePhase = 'GAME_OVER_LOSE';
+        p.logs.game_info.push({
+          data: { phase: 'GAME_OVER_LOSE', finalScore: gameState.score },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      } else if (!gameState.isAnimating && checkObjectivesComplete() && gameState.movesRemaining >= 0) {
+        // Add bonus
+        const bonus = gameState.movesRemaining * 20;
+        gameState.score += bonus;
+        
+        if (gameState.currentLevel < 5) {
+          gameState.gamePhase = 'GAME_OVER_WIN';
+          p.logs.game_info.push({
+            data: { phase: 'GAME_OVER_WIN', finalScore: gameState.score, level: gameState.currentLevel },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+        } else {
+          gameState.gamePhase = 'GAME_OVER_WIN';
+          gameState.totalScore += gameState.score;
+          p.logs.game_info.push({
+            data: { phase: 'GAME_OVER_WIN', finalScore: gameState.score, totalScore: gameState.totalScore },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+        }
+      }
+      
+      renderGame(p);
+    } else if (gameState.gamePhase === 'GAME_OVER_WIN' || gameState.gamePhase === 'GAME_OVER_LOSE') {
+      renderGameOver(p);
+
+      // New: Auto-restart logic
+      if (!gameState.autoRestartScheduled) {
+        gameState.autoRestartScheduled = true;
+        gameState.autoRestartTimeoutId = setTimeout(() => {
+          p.resetGameToStart(); // Call the reset function after 1 second
+        }, 1000); // 1 second delay
+      }
+    }
+    
+    // Log player info periodically
+    if (p.frameCount % 60 === 0 && gameState.gamePhase === 'PLAYING') {
+      p.logs.player_info.push({
+        screen_x: gameState.cursorX,
+        screen_y: gameState.cursorY,
+        game_x: gameState.cursorX,
+        game_y: gameState.cursorY,
+        framecount: p.frameCount
+      });
+    }
+  };
+
+  function handleAnimations(p) {
+    // Remove marked tiles that are fully faded
+    removeMarkedTiles();
+    
+    // Check if all animations are done
+    if (isStable()) {
+      // Apply gravity
+      const moved = applyGravity();
+      if (moved) {
+        return; // Wait for gravity to settle
+      }
+      
+      // Refill board
+      const refilled = refillBoard(p);
+      if (refilled) {
+        return; // Wait for new tiles to settle
+      }
+      
+      // Check for new matches (cascades)
+      const matches = findMatches();
+      if (matches.length > 0) {
+        gameState.comboMultiplier += 0.25;
+        clearMatches(matches, p);
+        return;
+      }
+      
+      // No more matches, animation complete
+      gameState.isAnimating = false;
+      gameState.comboMultiplier = 1.0;
+    }
+  }
+
+  p.keyPressed = function() {
+    handleKeyPressed(p);
+    return false; // Prevent default
+  };
+}, document.body);
+
+// Expose game instance and state getter
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof gameInstance.resetGameToStart === 'function') { // Use the new reset function
+      gameInstance.resetGameToStart();
+      state.gamePhase = "PLAYING"; // Immediately go to playing for dev mode level load
+    } else if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+window.getGameState = function() {
+  return gameState;
+};
+
+// Handle game over for level progression
+document.addEventListener('keydown', (e) => {
+  if (gameState.gamePhase === 'GAME_OVER_WIN' && e.keyCode === 13 && gameState.currentLevel < 5) {
+    // New: Clear any pending auto-restart if user presses ENTER to go to next level
+    clearTimeout(gameState.autoRestartTimeoutId);
+    gameState.autoRestartScheduled = false;
+    gameState.autoRestartTimeoutId = null;
+
+    // ENTER to next level
+    gameState.currentLevel++;
+    initializeLevel(gameState.currentLevel, gameInstance);
+    gameState.gamePhase = 'PLAYING';
+    gameInstance.logs.game_info.push({
+      data: { phase: 'PLAYING', level: gameState.currentLevel },
+      framecount: gameInstance.frameCount,
+      timestamp: Date.now()
+    });
+  }
+});
+</file>
+
+<file name="tile.js">
+// tile.js - Tile class definition
+import { TILE_SIZE, COLORS, COLOR_NAMES } from './globals.js';
+
+export class Tile {
+  constructor(gridX, gridY, color, p, texture = null) {
+    this.gridX = gridX;
+    this.gridY = gridY;
+    this.x = gridX;
+    this.y = gridY;
+    this.targetX = gridX;
+    this.targetY = gridY;
+    this.color = color;
+    this.p = p;
+    this.markedForClear = false;
+    this.specialType = null; // 'ROCKET', 'BOMB'
+    this.rocketDirection = null; // 'HORIZONTAL', 'VERTICAL'
+    this.iceLayer = 0;
+    this.chainLayer = 0;
+    this.hasTargetItem = false;
+    this.targetItemType = null; // 'KEY', 'CROWN'
+    this.alpha = 255;
+    this.scale = 1.0;
+    this.animating = false;
+    
+    // Assign texture if not provided
+    if (texture === null) {
+      const textures = ['crystal', 'solid', 'fuzzy', 'wood'];
+      this.texture = textures[Math.floor(p.random() * textures.length)];
+    } else {
+      this.texture = texture;
+    }
+    
+    // Assign random background shape
+    const shapes = ['square', 'circle', 'diamond', 'cross', 'x', 'hexagon'];
+    this.shape = shapes[Math.floor(p.random() * shapes.length)];
+  }
+
+  update() {
+    // Smooth position interpolation
+    if (Math.abs(this.x - this.targetX) > 0.01) {
+      this.x = this.p.lerp(this.x, this.targetX, 0.3);
+    } else {
+      this.x = this.targetX;
+    }
+    
+    if (Math.abs(this.y - this.targetY) > 0.01) {
+      this.y = this.p.lerp(this.y, this.targetY, 0.3);
+    } else {
+      this.y = this.targetY;
+    }
+
+    // Fade out animation
+    if (this.markedForClear && this.alpha > 0) {
+      this.alpha -= 25;
+      this.scale -= 0.05;
+      if (this.alpha < 0) this.alpha = 0;
+      if (this.scale < 0.1) this.scale = 0.1;
+    }
+  }
+
+  isAtTarget() {
+    return Math.abs(this.x - this.targetX) < 0.01 && Math.abs(this.y - this.targetY) < 0.01;
+  }
+
+  render(offsetX, offsetY, isSelected, isCursor, isHinted, p) {
+    const screenX = offsetX + this.x * TILE_SIZE;
+    const screenY = offsetY + this.y * TILE_SIZE;
+
+    p.push();
+    p.translate(screenX + TILE_SIZE / 2, screenY + TILE_SIZE / 2);
+    p.scale(this.scale);
+
+    // Tile background with different shapes
+    const colorArray = COLORS[this.color];
+    p.fill(...colorArray, this.alpha);
+    p.stroke(40, 30, 20, this.alpha);
+    p.strokeWeight(2);
+
+    const halfSize = TILE_SIZE / 2 - 2; // Leave 2px margin
+
+    switch (this.shape) {
+      case 'square':
+        p.rect(-halfSize, -halfSize, halfSize * 2, halfSize * 2, 4);
+        break;
+        
+      case 'circle':
+        p.circle(0, 0, halfSize * 2);
+        break;
+        
+      case 'diamond':
+        p.push();
+        p.rotate(p.QUARTER_PI);
+        const diamondSize = halfSize * 1.35;
+        p.rect(-diamondSize / 2, -diamondSize / 2, diamondSize, diamondSize);
+        p.pop();
+        break;
+        
+      case 'cross':
+        // Draw a plus/cross shape
+        const crossWidth = halfSize * 0.65;
+        p.rect(-crossWidth / 2, -halfSize, crossWidth, halfSize * 2, 2);
+        p.rect(-halfSize, -crossWidth / 2, halfSize * 2, crossWidth, 2);
+        break;
+        
+      case 'x':
+        // Draw an X shape using rotated rectangles
+        p.push();
+        p.rotate(p.QUARTER_PI);
+        const xWidth = halfSize * 0.65;
+        const xLength = halfSize * 1.75;
+        p.rect(-xWidth / 2, -xLength / 2, xWidth, xLength, 2);
+        p.rect(-xLength / 2, -xWidth / 2, xLength, xWidth, 2);
+        p.pop();
+        break;
+        
+      case 'hexagon':
+        // Draw a hexagon
+        p.beginShape();
+        for (let i = 0; i < 6; i++) {
+          const angle = p.TWO_PI / 6 * i - p.HALF_PI; // Start from top
+          const x = halfSize * p.cos(angle);
+          const y = halfSize * p.sin(angle);
+          p.vertex(x, y);
+        }
+        p.endShape(p.CLOSE);
+        break;
+    }
+
+    // Apply texture overlay
+    this.renderTexture(p);
+
+    // Special piece overlay
+    if (this.specialType === 'ROCKET' && this.alpha > 100) {
+      p.fill(255, 255, 255, this.alpha);
+      p.noStroke();
+      if (this.rocketDirection === 'HORIZONTAL') {
+        p.triangle(-8, 0, 8, -6, 8, 6);
+        p.rect(0, -4, 10, 8);
+      } else {
+        p.triangle(0, -8, -6, 8, 6, 8);
+        p.rect(-4, 0, 8, 10);
+      }
+    } else if (this.specialType === 'BOMB' && this.alpha > 100) {
+      p.fill(40, 40, 40, this.alpha);
+      p.noStroke();
+      p.circle(0, 0, 16);
+      p.fill(255, 200, 100, this.alpha);
+      p.rect(-2, -12, 4, 8);
+    }
+
+    // Target item overlay
+    if (this.hasTargetItem && this.alpha > 100) {
+      p.push();
+      p.scale(0.8);
+      if (this.targetItemType === 'KEY') {
+        p.fill(255, 215, 0, this.alpha);
+        p.noStroke();
+        p.circle(-5, 0, 8);
+        p.rect(-5, 0, 12, 4);
+        p.rect(4, -2, 3, 8);
+      } else if (this.targetItemType === 'CROWN') {
+        p.fill(255, 215, 0, this.alpha);
+        p.noStroke();
+        p.triangle(-8, 4, 0, -8, 8, 4);
+        p.rect(-10, 4, 20, 6);
+        p.fill(200, 50, 50, this.alpha);
+        p.circle(0, -4, 4);
+      }
+      p.pop();
+    }
+
+    p.pop();
+
+    // Ice overlay
+    if (this.iceLayer > 0) {
+      p.fill(180, 220, 255, 150);
+      p.noStroke();
+      p.rect(screenX + 2, screenY + 2, TILE_SIZE - 4, TILE_SIZE - 4, 4);
+      p.stroke(200, 240, 255, 200);
+      p.strokeWeight(2);
+      p.line(screenX + 5, screenY + 5, screenX + TILE_SIZE - 5, screenY + TILE_SIZE - 5);
+      p.line(screenX + TILE_SIZE - 5, screenY + 5, screenX + 5, screenY + TILE_SIZE - 5);
+    }
+
+    // Chain overlay
+    if (this.chainLayer > 0) {
+      p.stroke(100, 100, 100);
+      p.strokeWeight(3);
+      p.noFill();
+      p.circle(screenX + TILE_SIZE / 4, screenY + TILE_SIZE / 2, 8);
+      p.circle(screenX + 3 * TILE_SIZE / 4, screenY + TILE_SIZE / 2, 8);
+      p.line(screenX + TILE_SIZE / 4 + 4, screenY + TILE_SIZE / 2, 
+             screenX + 3 * TILE_SIZE / 4 - 4, screenY + TILE_SIZE / 2);
+    }
+
+    // Hint highlight (pulsing yellow)
+    if (isHinted) {
+      const pulse = Math.sin(p.frameCount * 0.2) * 0.5 + 0.5;
+      p.noFill();
+      p.stroke(255, 255, 0, 150 + pulse * 105);
+      p.strokeWeight(4);
+      p.rect(screenX - 2, screenY - 2, TILE_SIZE + 4, TILE_SIZE + 4, 6);
+    }
+
+    // Selection highlight
+    if (isSelected) {
+      p.noFill();
+      p.stroke(255, 255, 100);
+      p.strokeWeight(3);
+      p.rect(screenX + 2, screenY + 2, TILE_SIZE - 4, TILE_SIZE - 4, 4);
+    }
+
+    // Cursor highlight
+    if (isCursor) {
+      p.noFill();
+      p.stroke(255, 255, 255, 200);
+      p.strokeWeight(2);
+      p.rect(screenX, screenY, TILE_SIZE, TILE_SIZE, 4);
+    }
+  }
+
+  renderTexture(p) {
+    const halfSize = TILE_SIZE / 2;
+    const textureAlpha = this.alpha * 0.4; // Make textures semi-transparent
+    
+    switch (this.texture) {
+      case 'crystal':
+        // Crystal: diagonal lines and sparkle effect
+        p.stroke(255, 255, 255, textureAlpha * 0.8);
+        p.strokeWeight(1);
+        for (let i = -halfSize; i < halfSize; i += 8) {
+          p.line(i, -halfSize + 2, i + halfSize - 4, halfSize - 2);
+        }
+        // Add sparkles
+        p.noStroke();
+        p.fill(255, 255, 255, textureAlpha);
+        p.circle(-10, -10, 3);
+        p.circle(8, 6, 2);
+        p.circle(-6, 12, 2);
+        break;
+        
+      case 'solid':
+        // Solid: subtle gradient effect
+        p.noStroke();
+        p.fill(255, 255, 255, textureAlpha * 0.3);
+        p.rect(-halfSize + 2, -halfSize + 2, (TILE_SIZE - 4) / 2, TILE_SIZE - 4);
+        break;
+        
+      case 'fuzzy':
+        // Fuzzy: small dots pattern
+        p.noStroke();
+        p.fill(255, 255, 255, textureAlpha * 0.6);
+        for (let y = -halfSize + 4; y < halfSize - 4; y += 6) {
+          for (let x = -halfSize + 4; x < halfSize - 4; x += 6) {
+            const offsetX = (p.noise(x * 0.1, y * 0.1) - 0.5) * 3;
+            const offsetY = (p.noise(x * 0.1 + 100, y * 0.1) - 0.5) * 3;
+            p.circle(x + offsetX, y + offsetY, 2);
+          }
+        }
+        break;
+        
+      case 'wood':
+        // Wood: horizontal grain lines
+        p.stroke(80, 50, 20, textureAlpha * 0.7);
+        p.strokeWeight(1);
+        for (let y = -halfSize + 4; y < halfSize - 4; y += 4) {
+          const waveOffset = p.sin(y * 0.3) * 3;
+          p.line(-halfSize + 4 + waveOffset, y, halfSize - 4 + waveOffset, y);
+        }
+        // Add some darker knots
+        p.noStroke();
+        p.fill(60, 40, 10, textureAlpha * 0.5);
+        p.ellipse(-8, 0, 6, 4);
+        p.ellipse(10, -8, 4, 3);
+        break;
+    }
+  }
+}
+</file>
+
+<file name="rendering.js">
+// rendering.js - Rendering functions
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, GRID_OFFSET_X, GRID_OFFSET_Y, TILE_SIZE } from './globals.js';
+
+export function renderStartScreen(p) {
+  p.background(30, 20, 50);
+  
+  // Start prompt - now the main title
+  p.noStroke();
+  p.textSize(36); // Make it larger to act as a title
+  p.textAlign(p.CENTER, p.CENTER);
+  const flash = Math.sin(p.frameCount * 0.1) * 0.5 + 0.5;
+  p.fill(255, 255, 100, 150 + flash * 105);
+  p.text('press enter to begin', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2); // Center it in the canvas
+}
+
+export function renderGame(p) {
+  p.background(40, 30, 60);
+  
+  // UI
+  renderUI(p);
+  
+  // Board
+  renderBoard(p);
+  
+  // Paused indicator
+  if (gameState.gamePhase === 'PAUSED') {
+    p.fill(255, 255, 255);
+    p.noStroke();
+    p.textAlign(p.RIGHT, p.TOP);
+    p.textSize(16);
+    p.text('PAUSED', CANVAS_WIDTH - 10, 10);
+  }
+}
+
+function renderUI(p) {
+  // Score
+  p.fill(255, 215, 0);
+  p.noStroke();
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(18);
+  p.text(`Score: ${gameState.score}`, 10, 10);
+  
+  // Moves
+  p.fill(gameState.movesRemaining < 10 ? [255, 100, 100] : [100, 255, 100]);
+  p.noStroke();
+  p.textAlign(p.RIGHT, p.TOP);
+  p.text(`Moves: ${gameState.movesRemaining}`, CANVAS_WIDTH - 10, 10);
+  
+  // Hints
+  p.fill(gameState.hintsRemaining > 0 ? [100, 200, 255] : [150, 150, 150]);
+  p.noStroke();
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(16);
+  p.text(`Hints: ${gameState.hintsRemaining}`, CANVAS_WIDTH - 10, 35);
+  
+  // Level
+  p.fill(200, 200, 255);
+  p.noStroke();
+  p.textAlign(p.CENTER, p.TOP);
+  p.textSize(18);
+  p.text(`Level ${gameState.currentLevel}`, CANVAS_WIDTH / 2, 10);
+  
+  // Objectives
+  p.fill(220, 220, 220);
+  p.noStroke();
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(12);
+  p.text('Objectives:', 10, 40);
+  
+  gameState.objectives.forEach((obj, i) => {
+    const complete = obj.current >= obj.target;
+    p.fill(...(complete ? [100, 255, 100] : [200, 200, 200]));
+    p.noStroke();
+    const progress = complete ? '✓' : `${Math.min(obj.current, obj.target)}/${obj.target}`;
+    p.text(`${obj.display}: ${progress}`, 10, 60 + i * 18);
+  });
+}
+
+function renderBoard(p) {
+  const size = gameState.board.length;
+  
+  // Board background
+  p.fill(50, 40, 70);
+  p.noStroke();
+  p.rect(GRID_OFFSET_X - 5, GRID_OFFSET_Y - 5, 
+         size * TILE_SIZE + 10, size * TILE_SIZE + 10, 8);
+  
+  // Grid
+  p.stroke(70, 60, 90);
+  p.strokeWeight(1);
+  for (let i = 0; i <= size; i++) {
+    p.line(GRID_OFFSET_X, GRID_OFFSET_Y + i * TILE_SIZE,
+           GRID_OFFSET_X + size * TILE_SIZE, GRID_OFFSET_Y + i * TILE_SIZE);
+    p.line(GRID_OFFSET_X + i * TILE_SIZE, GRID_OFFSET_Y,
+           GRID_OFFSET_X + i * TILE_SIZE, GRID_OFFSET_Y + size * TILE_SIZE);
+  }
+  
+  // Tiles
+  gameState.entities.forEach(tile => {
+    const isSelected = gameState.selectedTile === tile;
+    const isCursor = tile.gridX === gameState.cursorX && tile.gridY === gameState.cursorY;
+    const isHinted = gameState.hintedTiles.includes(tile);
+    tile.render(GRID_OFFSET_X, GRID_OFFSET_Y, isSelected, isCursor, isHinted, p);
+  });
+}
+
+export function renderGameOver(p) {
+  p.background(20, 15, 35);
+  
+  const isWin = gameState.gamePhase === 'GAME_OVER_WIN';
+  
+  // Title
+  p.fill(...(isWin ? [100, 255, 100] : [255, 100, 100]));
+  p.noStroke();
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text(isWin ? 'LEVEL COMPLETE!' : 'LEVEL FAILED!', CANVAS_WIDTH / 2, 100);
+  
+  // Score
+  p.fill(255, 215, 0);
+  p.noStroke();
+  p.textSize(24);
+  p.text(`Level Score: ${gameState.score}`, CANVAS_WIDTH / 2, 160);
+  
+  if (isWin) {
+    // Bonus points
+    const bonus = gameState.movesRemaining * 20;
+    if (bonus > 0) {
+      p.fill(200, 255, 200);
+      p.noStroke();
+      p.textSize(18);
+      p.text(`Moves Bonus: +${bonus}`, CANVAS_WIDTH / 2, 200);
+    }
+    
+    // Next level info
+    if (gameState.currentLevel < 5) {
+      p.fill(200, 200, 255);
+      p.noStroke();
+      p.textSize(16);
+      p.text(`Next: Level ${gameState.currentLevel + 1}`, CANVAS_WIDTH / 2, 240);
+    } else {
+      p.fill(255, 215, 0);
+      p.noStroke();
+      p.textSize(20);
+      p.text('ALL LEVELS COMPLETE!', CANVAS_WIDTH / 2, 240);
+      p.fill(200, 255, 200);
+      p.noStroke();
+      p.textSize(18);
+      p.text(`Total Score: ${gameState.totalScore + gameState.score}`, CANVAS_WIDTH / 2, 270);
+    }
+  } else {
+    // Failed message
+    p.fill(220, 220, 220);
+    p.noStroke();
+    p.textSize(16);
+    p.text('Try again!', CANVAS_WIDTH / 2, 200);
+  }
+  
+  // Instructions
+  p.noStroke();
+  p.textSize(20);
+  const flash = Math.sin(p.frameCount * 0.1) * 0.5 + 0.5;
+  p.fill(255, 255, 100, 150 + flash * 105);
+  p.text('PRESS R TO RESTART', CANVAS_WIDTH / 2, 340);
+}
+</file>
+
+<file name="boardLogic.js">
+// boardLogic.js - Board management and game logic
+import { gameState, LEVELS, COLOR_NAMES, GRID_OFFSET_X, GRID_OFFSET_Y, TILE_SIZE } from './globals.js';
+import { Tile } from './tile.js';
+
+export function initializeLevel(levelNum, p) {
+  const levelData = LEVELS[levelNum - 1];
+  gameState.currentLevel = levelNum;
+  gameState.movesRemaining = levelData.moves;
+  gameState.score = 0;
+  gameState.cursorX = 0;
+  gameState.cursorY = 0;
+  gameState.selectedTile = null;
+  gameState.isAnimating = false;
+  gameState.comboCounting = 0;
+  gameState.comboMultiplier = 1.0;
+  gameState.hintsRemaining = 1; // One hint per level
+  gameState.hintedTiles = [];
+
+  // Deep copy objectives
+  gameState.objectives = levelData.objectives.map(obj => ({ ...obj, current: 0 }));
+
+  // Create board
+  const size = levelData.gridSize;
+  gameState.board = [];
+  gameState.entities = [];
+
+  for (let y = 0; y < size; y++) {
+    gameState.board[y] = [];
+    for (let x = 0; x < size; x++) {
+      const colorIndex = Math.floor(p.random() * levelData.colors);
+      const tile = new Tile(x, y, COLOR_NAMES[colorIndex], p);
+      gameState.board[y][x] = tile;
+      gameState.entities.push(tile);
+    }
+  }
+
+  // Add obstacles and items
+  addObstacles(levelData, p);
+  
+  // Ensure no initial matches
+  removeInitialMatches(p);
+}
+
+function addObstacles(levelData, p) {
+  const size = levelData.gridSize;
+  
+  // Add ice blocks
+  let iceCount = 0;
+  while (iceCount < levelData.iceBlocks) {
+    const x = Math.floor(p.random() * size);
+    const y = Math.floor(p.random() * size);
+    const tile = gameState.board[y][x];
+    if (tile && tile.iceLayer === 0) {
+      tile.iceLayer = 1;
+      iceCount++;
+    }
+  }
+
+  // Add chained tiles
+  let chainCount = 0;
+  while (chainCount < levelData.chainedTiles) {
+    const x = Math.floor(p.random() * size);
+    const y = Math.floor(p.random() * size);
+    const tile = gameState.board[y][x];
+    if (tile && tile.chainLayer === 0 && tile.iceLayer === 0) {
+      tile.chainLayer = 2;
+      chainCount++;
+    }
+  }
+
+  // Add target items
+  let itemCount = 0;
+  const itemType = levelData.level === 3 ? 'KEY' : 'CROWN';
+  while (itemCount < levelData.targetItems) {
+    const x = Math.floor(p.random() * size);
+    const y = Math.floor(p.random() * size / 2); // Place in upper half
+    const tile = gameState.board[y][x];
+    if (tile && !tile.hasTargetItem) {
+      tile.hasTargetItem = true;
+      tile.targetItemType = itemType;
+      itemCount++;
+    }
+  }
+}
+
+function removeInitialMatches(p) {
+  const size = gameState.board.length;
+  let changed = true;
+  
+  while (changed) {
+    changed = false;
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const tile = gameState.board[y][x];
+        if (!tile) continue;
+
+        // Check horizontal
+        if (x + 2 < size) {
+          const t1 = gameState.board[y][x + 1];
+          const t2 = gameState.board[y][x + 2];
+          if (t1 && t2 && tile.color === t1.color && tile.color === t2.color) {
+            const colorIndex = Math.floor(p.random() * LEVELS[gameState.currentLevel - 1].colors);
+            tile.color = COLOR_NAMES[colorIndex];
+            changed = true;
+          }
+        }
+
+        // Check vertical
+        if (y + 2 < size) {
+          const t1 = gameState.board[y + 1][x];
+          const t2 = gameState.board[y + 2][x];
+          if (t1 && t2 && tile.color === t1.color && tile.color === t2.color) {
+            const colorIndex = Math.floor(p.random() * LEVELS[gameState.currentLevel - 1].colors);
+            tile.color = COLOR_NAMES[colorIndex];
+            changed = true;
+          }
+        }
+      }
+    }
+  }
+}
+
+export function canSwapTiles(tile1, tile2) {
+  if (!tile1 || !tile2) return false;
+  if (tile1.chainLayer > 0 || tile2.chainLayer > 0) return false;
+  
+  const dx = Math.abs(tile1.gridX - tile2.gridX);
+  const dy = Math.abs(tile1.gridY - tile2.gridY);
+  
+  return (dx === 1 && dy === 0) || (dx === 0 && dy === 1);
+}
+
+export function swapTiles(tile1, tile2) {
+  // Swap grid positions
+  const tempGridX = tile1.gridX;
+  const tempGridY = tile1.gridY;
+  
+  tile1.gridX = tile2.gridX;
+  tile1.gridY = tile2.gridY;
+  tile2.gridX = tempGridX;
+  tile2.gridY = tempGridY;
+
+  // Swap in board array
+  gameState.board[tile1.gridY][tile1.gridX] = tile1;
+  gameState.board[tile2.gridY][tile2.gridX] = tile2;
+
+  // Set target positions for animation
+  tile1.targetX = tile1.gridX;
+  tile1.targetY = tile1.gridY;
+  tile2.targetX = tile2.gridX;
+  tile2.targetY = tile2.gridY;
+}
+
+export function findMatches() {
+  const size = gameState.board.length;
+  const matches = [];
+
+  // Horizontal matches
+  for (let y = 0; y < size; y++) {
+    let matchStart = 0;
+    for (let x = 1; x <= size; x++) {
+      const current = x < size ? gameState.board[y][x] : null;
+      const prev = gameState.board[y][x - 1];
+      
+      if (!current || !prev || current.color !== prev.color) {
+        if (x - matchStart >= 3) {
+          const matchTiles = [];
+          for (let i = matchStart; i < x; i++) {
+            matchTiles.push(gameState.board[y][i]);
+          }
+          matches.push(matchTiles);
+        }
+        matchStart = x;
+      }
+    }
+  }
+
+  // Vertical matches
+  for (let x = 0; x < size; x++) {
+    let matchStart = 0;
+    for (let y = 1; y <= size; y++) {
+      const current = y < size ? gameState.board[y][x] : null;
+      const prev = gameState.board[y - 1][x];
+      
+      if (!current || !prev || current.color !== prev.color) {
+        if (y - matchStart >= 3) {
+          const matchTiles = [];
+          for (let i = matchStart; i < y; i++) {
+            matchTiles.push(gameState.board[i][x]);
+          }
+          matches.push(matchTiles);
+        }
+        matchStart = y;
+      }
+    }
+  }
+
+  return matches;
+}
+
+export function findBestMove() {
+  const size = gameState.board.length;
+  let bestMove = null;
+  let bestScore = 0;
+
+  // Try all possible swaps
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const tile1 = gameState.board[y][x];
+      if (!tile1 || tile1.chainLayer > 0) continue;
+
+      // Try swapping with adjacent tiles (right and down only to avoid duplicates)
+      const directions = [[0, 1], [1, 0]];
+      
+      for (const [dx, dy] of directions) {
+        const nx = x + dx;
+        const ny = y + dy;
+        
+        if (nx >= 0 && nx < size && ny >= 0 && ny < size) {
+          const tile2 = gameState.board[ny][nx];
+          if (!tile2 || tile2.chainLayer > 0) continue;
+
+          // Simulate swap
+          swapTiles(tile1, tile2);
+          
+          // Check for matches
+          const matches = findMatches();
+          let score = 0;
+          
+          matches.forEach(matchTiles => {
+            const matchLength = matchTiles.length;
+            if (matchLength === 3) {
+              score += 50;
+            } else if (matchLength === 4) {
+              score += 100;
+            } else if (matchLength >= 5) {
+              score += 200;
+            }
+          });
+          
+          // Swap back
+          swapTiles(tile1, tile2);
+          
+          // Track best move
+          if (score > bestScore) {
+            bestScore = score;
+            bestMove = { tile1, tile2, score };
+          }
+        }
+      }
+    }
+  }
+
+  return bestMove;
+}
+
+export function clearMatches(matches, p) {
+  let pointsEarned = 0;
+  const clearedTiles = new Set();
+
+  matches.forEach(matchTiles => {
+    const matchLength = matchTiles.length;
+    let basePoints = 0;
+    let specialType = null;
+    let specialTile = null;
+
+    if (matchLength === 3) {
+      basePoints = 50;
+    } else if (matchLength === 4) {
+      basePoints = 100;
+      specialType = 'ROCKET';
+      specialTile = matchTiles[Math.floor(matchTiles.length / 2)];
+    } else if (matchLength >= 5) {
+      basePoints = 200;
+      specialType = 'BOMB';
+      specialTile = matchTiles[Math.floor(matchTiles.length / 2)];
+    }
+
+    pointsEarned += Math.floor(basePoints * gameState.comboMultiplier);
+
+    matchTiles.forEach(tile => {
+      if (!tile || clearedTiles.has(tile)) return;
+      clearedTiles.add(tile);
+
+      // Update objectives
+      updateObjectivesForClear(tile);
+
+      // Handle obstacles
+      damageAdjacentIce(tile.gridX, tile.gridY);
+      if (tile.chainLayer > 0) {
+        tile.chainLayer--;
+        updateObjective('CLEAR_CHAINS', 1);
+      }
+
+      // Mark for clearing unless it's the special tile
+      if (tile !== specialTile) {
+        tile.markedForClear = true;
+      }
+    });
+
+    // Create special piece
+    if (specialType && specialTile && !specialTile.markedForClear) {
+      specialTile.specialType = specialType;
+      if (specialType === 'ROCKET') {
+        specialTile.rocketDirection = p.random() > 0.5 ? 'HORIZONTAL' : 'VERTICAL';
+      }
+    }
+  });
+
+  gameState.score += pointsEarned;
+  updateObjective('SCORE', pointsEarned);
+
+  return clearedTiles.size > 0;
+}
+
+function updateObjectivesForClear(tile) {
+  // Color clearing
+  updateObjective('CLEAR_COLOR', 1, tile.color);
+  
+  // Ice clearing
+  if (tile.iceLayer > 0) {
+    tile.iceLayer = 0;
+    updateObjective('CLEAR_ICE', 1);
+  }
+  
+  // Target item collection
+  if (tile.hasTargetItem) {
+    tile.hasTargetItem = false;
+    updateObjective('COLLECT_ITEMS', 1);
+  }
+}
+
+function damageAdjacentIce(x, y) {
+  const directions = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+  directions.forEach(([dx, dy]) => {
+    const nx = x + dx;
+    const ny = y + dy;
+    if (ny >= 0 && ny < gameState.board.length && nx >= 0 && nx < gameState.board[0].length) {
+      const tile = gameState.board[ny][nx];
+      if (tile && tile.iceLayer > 0) {
+        tile.iceLayer--;
+        if (tile.iceLayer === 0) {
+          updateObjective('CLEAR_ICE', 1);
+        }
+      }
+    }
+  });
+}
+
+function updateObjective(type, amount, color = null) {
+  gameState.objectives.forEach(obj => {
+    if (obj.type === type) {
+      if (type === 'CLEAR_COLOR' && obj.color === color) {
+        obj.current += amount;
+      } else if (type !== 'CLEAR_COLOR') {
+        obj.current += amount;
+      }
+    }
+  });
+}
+
+export function activateSpecialPiece(tile, p) {
+  if (!tile || !tile.specialType) return 0;
+
+  let pointsEarned = 0;
+  const tilesToClear = [];
+
+  if (tile.specialType === 'ROCKET') {
+    pointsEarned = 150;
+    updateObjective('ACTIVATE_ROCKET', 1);
+    
+    if (tile.rocketDirection === 'HORIZONTAL') {
+      for (let x = 0; x < gameState.board[0].length; x++) {
+        const t = gameState.board[tile.gridY][x];
+        if (t && !t.markedForClear) {
+          tilesToClear.push(t);
+        }
+      }
+    } else {
+      for (let y = 0; y < gameState.board.length; y++) {
+        const t = gameState.board[y][tile.gridX];
+        if (t && !t.markedForClear) {
+          tilesToClear.push(t);
+        }
+      }
+    }
+  } else if (tile.specialType === 'BOMB') {
+    pointsEarned = 300;
+    updateObjective('ACTIVATE_BOMB', 1);
+    
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const ny = tile.gridY + dy;
+        const nx = tile.gridX + dx;
+        if (ny >= 0 && ny < gameState.board.length && 
+            nx >= 0 && nx < gameState.board[0].length) {
+          const t = gameState.board[ny][nx];
+          if (t && !t.markedForClear) {
+            tilesToClear.push(t);
+          }
+        }
+      }
+    }
+  }
+
+  // Clear tiles and update objectives
+  tilesToClear.forEach(t => {
+    updateObjectivesForClear(t);
+    damageAdjacentIce(t.gridX, t.gridY);
+    if (t.chainLayer > 0) {
+      t.chainLayer--;
+      updateObjective('CLEAR_CHAINS', 1);
+    }
+    t.markedForClear = true;
+    pointsEarned += 10;
+  });
+
+  gameState.score += Math.floor(pointsEarned * gameState.comboMultiplier);
+  updateObjective('SCORE', Math.floor(pointsEarned * gameState.comboMultiplier));
+
+  return tilesToClear.length;
+}
+
+export function applyGravity() {
+  const size = gameState.board.length;
+  let moved = false;
+
+  for (let x = 0; x < size; x++) {
+    let writePos = size - 1;
+    
+    for (let y = size - 1; y >= 0; y--) {
+      const tile = gameState.board[y][x];
+      if (tile && !tile.markedForClear) {
+        if (y !== writePos) {
+          gameState.board[writePos][x] = tile;
+          gameState.board[y][x] = null;
+          tile.gridY = writePos;
+          tile.targetY = writePos;
+          moved = true;
+        }
+        writePos--;
+      }
+    }
+  }
+
+  return moved;
+}
+
+export function refillBoard(p) {
+  const size = gameState.board.length;
+  const levelData = LEVELS[gameState.currentLevel - 1];
+  let added = false;
+
+  for (let x = 0; x < size; x++) {
+    for (let y = 0; y < size; y++) {
+      if (!gameState.board[y][x]) {
+        const colorIndex = Math.floor(p.random() * levelData.colors);
+        const tile = new Tile(x, y, COLOR_NAMES[colorIndex], p);
+        tile.y = -1;
+        tile.targetY = y;
+        gameState.board[y][x] = tile;
+        gameState.entities.push(tile);
+        added = true;
+      }
+    }
+  }
+
+  return added;
+}
+
+export function removeMarkedTiles() {
+  gameState.entities = gameState.entities.filter(tile => {
+    if (tile.markedForClear && tile.alpha <= 0) {
+      const y = tile.gridY;
+      const x = tile.gridX;
+      if (gameState.board[y] && gameState.board[y][x] === tile) {
+        gameState.board[y][x] = null;
+      }
+      return false;
+    }
+    return true;
+  });
+}
+
+export function checkObjectivesComplete() {
+  return gameState.objectives.every(obj => obj.current >= obj.target);
+}
+
+export function isStable() {
+  return gameState.entities.every(tile => tile.isAtTarget() && !tile.markedForClear);
+}
+</file>
+
+<file name="input.js">
+// input.js - Input handling
+import { gameState, TILE_SIZE, GRID_OFFSET_X, GRID_OFFSET_Y } from './globals.js';
+import { canSwapTiles, swapTiles, findMatches, clearMatches, activateSpecialPiece, findBestMove } from './boardLogic.js';
+
+export function handleKeyPressed(p) { // 'p' (the p5 instance) is now passed to access p.resetGameToStart
+  const key = p.key;
+  const keyCode = p.keyCode;
+
+  // Log input
+  p.logs.inputs.push({
+    input_type: 'keyPressed',
+    data: { key, keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+
+  if (gameState.gamePhase === 'START') {
+    if (keyCode === 13) { // ENTER
+      gameState.gamePhase = 'PLAYING';
+      p.logs.game_info.push({
+        data: { phase: 'PLAYING' },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  } else if (gameState.gamePhase === 'PLAYING') {
+    if (keyCode === 27) { // ESC
+      gameState.gamePhase = 'PAUSED';
+      p.logs.game_info.push({
+        data: { phase: 'PAUSED' },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    } else if (!gameState.isAnimating) {
+      handleGameplayInput(keyCode, p);
+    }
+  } else if (gameState.gamePhase === 'PAUSED') {
+    if (keyCode === 27) { // ESC
+      gameState.gamePhase = 'PLAYING';
+      p.logs.game_info.push({
+        data: { phase: 'PLAYING' },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  } else if (gameState.gamePhase === 'GAME_OVER_WIN' || gameState.gamePhase === 'GAME_OVER_LOSE') {
+    if (keyCode === 82) { // R
+      // New: Call the comprehensive reset function, which also cancels auto-restart
+      if (p && typeof p.resetGameToStart === 'function') {
+        p.resetGameToStart();
+      } else {
+        // Fallback for manual restart if resetGameToStart isn't available (should not happen)
+        // Note: This fallback doesn't fully reset all game state variables as per the new requirement,
+        // but it maintains existing 'R' key behavior if the new function is somehow missing.
+        clearTimeout(gameState.autoRestartTimeoutId); // Still try to clear auto-restart
+        gameState.autoRestartScheduled = false;
+        gameState.autoRestartTimeoutId = null;
+
+        gameState.gamePhase = 'START';
+        gameState.totalScore += gameState.score; // This specific line of old logic is kept for fallback consistency
+        p.logs.game_info.push({
+          data: { phase: 'START', action: 'manual_restart_fallback' },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+  }
+}
+
+function handleGameplayInput(keyCode, p) {
+  const size = gameState.board.length;
+
+  // Arrow keys and WASD
+  if (keyCode === 37 || keyCode === 65) { // LEFT or A
+    gameState.cursorX = Math.max(0, gameState.cursorX - 1);
+  } else if (keyCode === 39 || keyCode === 68) { // RIGHT or D
+    gameState.cursorX = Math.min(size - 1, gameState.cursorX + 1);
+  } else if (keyCode === 38 || keyCode === 87) { // UP or W
+    gameState.cursorY = Math.max(0, gameState.cursorY - 1);
+  } else if (keyCode === 40 || keyCode === 83) { // DOWN or S
+    gameState.cursorY = Math.min(size - 1, gameState.cursorY + 1);
+  } else if (keyCode === 32) { // SPACE
+    handleSpacePress(p);
+  } else if (keyCode === 72) { // H for hint
+    handleHintPress(p);
+  }
+}
+
+function handleHintPress(p) {
+  if (gameState.hintsRemaining > 0) {
+    const bestMove = findBestMove();
+    if (bestMove) {
+      gameState.hintedTiles = [bestMove.tile1, bestMove.tile2];
+      gameState.hintsRemaining--;
+      
+      // Log hint usage
+      p.logs.game_info.push({
+        data: { 
+          action: 'hint_used', 
+          expectedScore: bestMove.score,
+          tile1: { x: bestMove.tile1.gridX, y: bestMove.tile1.gridY },
+          tile2: { x: bestMove.tile2.gridX, y: bestMove.tile2.gridY }
+        },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+      
+      // Clear hint after 3 seconds
+      setTimeout(() => {
+        gameState.hintedTiles = [];
+      }, 3000);
+    }
+  }
+}
+
+function handleSpacePress(p) {
+  const currentTile = gameState.board[gameState.cursorY][gameState.cursorX];
+  
+  if (!currentTile) return;
+
+  // Clear hint visualization when player makes a move
+  gameState.hintedTiles = [];
+
+  // If no tile selected, select current
+  if (!gameState.selectedTile) {
+    gameState.selectedTile = currentTile;
+  } else {
+    // Try to swap or activate
+    if (gameState.selectedTile === currentTile) {
+      // Same tile - activate if special
+      if (currentTile.specialType) {
+        executeMove(() => {
+          activateSpecialPiece(currentTile, p);
+          currentTile.markedForClear = true;
+          gameState.isAnimating = true;
+          gameState.comboMultiplier = 1.0;
+        }, p);
+        gameState.selectedTile = null;
+      } else {
+        // Deselect
+        gameState.selectedTile = null;
+      }
+    } else if (canSwapTiles(gameState.selectedTile, currentTile)) {
+      // Valid swap
+      const tile1 = gameState.selectedTile;
+      const tile2 = currentTile;
+      
+      executeMove(() => {
+        swapTiles(tile1, tile2);
+        
+        // Check for matches after a brief delay
+        setTimeout(() => {
+          const matches = findMatches();
+          if (matches.length === 0) {
+            // No matches, swap back
+            swapTiles(tile1, tile2);
+          } else {
+            // Valid move
+            gameState.comboMultiplier = 1.0;
+            clearMatches(matches, p);
+            gameState.isAnimating = true;
+          }
+        }, 200);
+      }, p);
+      
+      gameState.selectedTile = null;
+    } else {
+      // Invalid swap, just select new tile
+      gameState.selectedTile = currentTile;
+    }
+  }
+}
+
+function executeMove(action, p) {
+  if (gameState.movesRemaining > 0) {
+    gameState.movesRemaining--;
+    action();
+  }
+}
+
+export function setupControlMode() {
+  // Expose setControlMode globally for HTML buttons
+  // This function will only be called for 'HUMAN' mode now.
+  window.setControlMode = (mode) => {
+    if (mode === 'HUMAN') {
+      gameState.controlMode = 'HUMAN'; // Ensure it's always human
+      
+      // Update button states: only 'humanModeBtn' exists and should be active
+      const humanBtn = document.getElementById('humanModeBtn');
+      if (humanBtn) {
+        humanBtn.classList.add('active');
+      }
+    }
+  };
+
+  // Ensure the 'Human Mode' button is active on initial load
+  const humanBtn = document.getElementById('humanModeBtn');
+  if (humanBtn) {
+    humanBtn.classList.add('active');
+  }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

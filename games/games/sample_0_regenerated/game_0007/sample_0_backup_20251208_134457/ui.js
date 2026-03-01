@@ -1,0 +1,91 @@
+/**
+ * User Interface rendering.
+ * Start Screen, HUD, Game Over, Paused.
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderStartScreen(p) {
+    p.background(20, 30, 40);
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    // Title
+    p.fill(255, 215, 0);
+    p.textSize(48);
+    p.text("JETPACK", CANVAS_WIDTH/2, CANVAS_HEIGHT/3 - 20);
+    p.fill(255);
+    p.text("JOYRIDE CLONE", CANVAS_WIDTH/2, CANVAS_HEIGHT/3 + 30);
+    
+    // Instructions
+    p.fill(200);
+    p.textSize(18);
+    p.text("PRESS ENTER TO START", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 20);
+    
+    p.textSize(14);
+    p.text("SPACE / UP ARROW to Fly", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60);
+    p.text("Avoid Zappers & Missiles!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 80);
+}
+
+export function renderHUD(p) {
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(20);
+    
+    // Distance as Score
+    p.fill(255);
+    p.text(`Score: ${Math.floor(gameState.distanceTraveled)}m`, 20, 20);
+    
+    // Coins
+    p.fill(255, 215, 0);
+    p.text(`Coins: ${gameState.coinsCollected}`, 20, 50);
+    
+    // Debug info if needed
+    if (gameState.controlMode !== 'HUMAN') {
+        p.fill(255, 100, 100);
+        p.textSize(12);
+        // p.text(`AUTO: ${gameState.controlMode}`, 20, 80); // Do not display as per instructions? 
+        // Instructions said: "Never display controlMode" -> "Do not show HUMAN/TESTING mode on canvas"
+        // So we skip this.
+    }
+}
+
+export function renderPausedScreen(p) {
+    p.push();
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    p.textSize(16);
+    p.text("Press ESC to Resume", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+    p.pop();
+}
+
+export function renderGameOverScreen(p) {
+    p.push();
+    p.fill(0, 0, 0, 200);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    if (gameState.gamePhase === 'GAME_OVER_LOSE') {
+        p.fill(255, 50, 50);
+        p.textSize(40);
+        p.text("YOU DIED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+    } else {
+        p.fill(50, 255, 50);
+        p.textSize(40);
+        p.text("MISSION COMPLETE", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+    }
+    
+    p.fill(255);
+    p.textSize(24);
+    p.text(`Final Score: ${Math.floor(gameState.distanceTraveled)}m`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 10);
+    p.text(`Coins Collected: ${gameState.coinsCollected}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+    
+    p.fill(200);
+    p.textSize(16);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 80);
+    p.pop();
+}

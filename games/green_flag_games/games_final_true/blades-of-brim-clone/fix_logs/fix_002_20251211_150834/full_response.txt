@@ -1,0 +1,709 @@
+<analysis>
+- Issue identified:
+    1. Jump physics are frame-rate dependent, causing "too fast" behavior on high refresh rate screens (MacBook Pro).
+    2. Gravity and Jump Force are too high, making jumps quick and sharp rather than "floaty".
+    3. Wall obstacles are too tall relative to the jump arc, making them hard to clear.
+    4. Collision logic kills the player even if they land on top of a wall.
+- Files affected:
+    - `globals.js`: Physics constants.
+    - `graphics.js`: Obstacle geometry.
+    - `entities.js`: Physics integration (adding delta time scaling).
+    - `game.js`: Collision resolution logic.
+- Changes needed:
+    - `globals.js`: Reduce `GRAVITY` (-0.025), `JUMP_FORCE` (0.55), and `GAME_SPEED_START` (0.6).
+    - `graphics.js`: Reduce wall height to 2.0 and adjust Y position to 1.0.
+    - `entities.js`: Multiply gravity and vertical movement by `dt * 60` to normalize physics across framerates.
+    - `game.js`: Modify collision check to allow landing on top of obstacles if falling and positioned correctly.
+</analysis>
+
+<code filename="globals.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// Game Configuration
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+export const GRAVITY = -0.025; // Reduced for floatier jump
+export const JUMP_FORCE = 0.55; // Adjusted for new gravity
+export const LANE_WIDTH = 3.0;
+export const GAME_SPEED_START = 0.6; // Slightly slower start
+export const GAME_SPEED_MAX = 1.8;
+export const CHUNK_LENGTH = 20;
+export const VISIBLE_CHUNKS = 10;
+export const RENDER_DISTANCE = CHUNK_LENGTH * VISIBLE_CHUNKS;
+
+// Game State Object
+export const gameState = {
+    // Core Status
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    frameCount: 0,
+    deltaTime: 0,
+    lastFrameTime: 0,
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2
+
+    // Game Objects
+    player: null,
+    entities: [], // Enemies, Collectibles
+    worldChunks: [], // Ground segments
+    
+    // Systems
+    scene: null,
+    camera: null,
+    renderer: null,
+    gameContainer: null,
+    
+    // Lighting
+    lights: [],
+    ambientLight: null,
+    directionalLight: null,
+
+    // Progression
+    score: 0,
+    distance: 0,
+    gameSpeed: GAME_SPEED_START,
+    difficultyMultiplier: 1.0,
+    
+    // Input State (Global Access for Test Agents)
+    input: {
+        left: false,
+        right: false,
+        up: false,
+        down: false,
+        attack: false,
+        pause: false,
+        start: false,
+        restart: false
+    }
+};
+
+// Global Logs
+export const logs = {
+    game_info: [],
+    player_info: [],
+    inputs: []
+};
+
+// Expose globally
+window.gameState = gameState;
+window.logs = logs;
+window.getGameState = () => gameState;
+
+// Initialization Helper
+export function resetGameState() {
+    gameState.score = 0;
+    gameState.distance = 0;
+    gameState.gameSpeed = GAME_SPEED_START;
+    gameState.entities = [];
+    gameState.worldChunks = [];
+    gameState.frameCount = 0;
+    
+    // Clear logs for new session if desired, or keep history
+    // Keeping history is safer for analysis
+}
+</code>
+
+<code filename="graphics.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// Procedural Geometry Generators
+
+export function createPlayerMesh() {
+    const group = new THREE.Group();
+
+    // Body
+    const bodyGeo = new THREE.BoxGeometry(0.8, 1.2, 0.5);
+    const bodyMat = new THREE.MeshStandardMaterial({ color: 0x3366cc, roughness: 0.2 });
+    const body = new THREE.Mesh(bodyGeo, bodyMat);
+    body.position.y = 0.6;
+    body.castShadow = true;
+    group.add(body);
+
+    // Head
+    const headGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+    const headMat = new THREE.MeshStandardMaterial({ color: 0xffccaa });
+    const head = new THREE.Mesh(headGeo, headMat);
+    head.position.y = 1.45;
+    head.castShadow = true;
+    group.add(head);
+    
+    // Bandana (Hero flair)
+    const bandanaGeo = new THREE.BoxGeometry(0.55, 0.1, 0.55);
+    const bandanaMat = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+    const bandana = new THREE.Mesh(bandanaGeo, bandanaMat);
+    bandana.position.y = 1.55;
+    group.add(bandana);
+
+    // Sword Arm
+    const armGeo = new THREE.BoxGeometry(0.2, 0.6, 0.2);
+    const arm = new THREE.Mesh(armGeo, headMat);
+    arm.position.set(0.5, 0.8, 0.2);
+    group.add(arm);
+
+    // Sword
+    const hiltGeo = new THREE.BoxGeometry(0.1, 0.1, 0.4);
+    const hiltMat = new THREE.MeshStandardMaterial({ color: 0x444444 });
+    const hilt = new THREE.Mesh(hiltGeo, hiltMat);
+    hilt.position.set(0, -0.3, 0.2);
+    arm.add(hilt);
+
+    const bladeGeo = new THREE.BoxGeometry(0.05, 1.2, 0.2);
+    const bladeMat = new THREE.MeshStandardMaterial({ 
+        color: 0x00ffff, 
+        emissive: 0x004444, 
+        metalness: 0.8, 
+        roughness: 0.2 
+    });
+    const blade = new THREE.Mesh(bladeGeo, bladeMat);
+    blade.position.set(0, 0.6, 0);
+    hilt.add(blade);
+
+    // Store references for animation
+    group.userData = { arm, blade };
+
+    return group;
+}
+
+export function createEnemyMesh() {
+    const group = new THREE.Group();
+
+    // Main Body
+    const bodyGeo = new THREE.DodecahedronGeometry(0.6);
+    const bodyMat = new THREE.MeshStandardMaterial({ color: 0xcc3333, roughness: 0.8 });
+    const body = new THREE.Mesh(bodyGeo, bodyMat);
+    body.position.y = 0.6;
+    body.castShadow = true;
+    group.add(body);
+
+    // Spikes
+    const spikeGeo = new THREE.ConeGeometry(0.1, 0.4, 4);
+    const spikeMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
+    
+    const positions = [
+        [0, 1.2, 0], [0.5, 1, 0], [-0.5, 1, 0], [0, 1, 0.5], [0, 1, -0.5]
+    ];
+
+    positions.forEach(pos => {
+        const spike = new THREE.Mesh(spikeGeo, spikeMat);
+        spike.position.set(...pos);
+        group.add(spike);
+    });
+
+    // Eyes
+    const eyeGeo = new THREE.BoxGeometry(0.15, 0.1, 0.1);
+    const eyeMat = new THREE.MeshStandardMaterial({ color: 0xffff00, emissive: 0xaaaa00 });
+    
+    const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
+    leftEye.position.set(-0.2, 0.7, 0.5);
+    group.add(leftEye);
+
+    const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
+    rightEye.position.set(0.2, 0.7, 0.5);
+    group.add(rightEye);
+
+    return group;
+}
+
+export function createCoinMesh() {
+    const group = new THREE.Group();
+    
+    // Coin
+    const geo = new THREE.CylinderGeometry(0.4, 0.4, 0.1, 16);
+    const mat = new THREE.MeshStandardMaterial({ 
+        color: 0xffd700, 
+        metalness: 1.0, 
+        roughness: 0.3,
+        emissive: 0x443300
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.rotation.x = Math.PI / 2; // Face camera roughly
+    mesh.castShadow = true;
+    group.add(mesh);
+    
+    return group;
+}
+
+export function createObstacleMesh(type) {
+    if (type === 'wall') {
+        // Shortened wall: Height 2.0 (was 3.0), Y position 1.0 (was 1.5)
+        const geo = new THREE.BoxGeometry(2.5, 2.0, 1);
+        const mat = new THREE.MeshStandardMaterial({ color: 0x555555 });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.y = 1.0;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        return mesh;
+    } else if (type === 'rock') {
+        const geo = new THREE.DodecahedronGeometry(0.8);
+        const mat = new THREE.MeshStandardMaterial({ color: 0x665544 });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.y = 0.8;
+        mesh.castShadow = true;
+        return mesh;
+    }
+    return new THREE.Group();
+}
+</code>
+
+<code filename="entities.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, LANE_WIDTH, GRAVITY, JUMP_FORCE, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { createPlayerMesh, createEnemyMesh, createCoinMesh, createObstacleMesh } from './graphics.js';
+import { checkAABB, disposeObject } from './utils.js';
+
+// Base Entity Class
+class Entity {
+    constructor() {
+        this.mesh = null;
+        this.active = true;
+        this.bbox = new THREE.Box3();
+    }
+
+    update(dt) {
+        // Base update
+    }
+
+    updateBBox() {
+        if (this.mesh) {
+            this.bbox.setFromObject(this.mesh);
+        }
+    }
+
+    destroy() {
+        this.active = false;
+        if (this.mesh) {
+            disposeObject(this.mesh);
+            if (gameState.scene) gameState.scene.remove(this.mesh);
+        }
+    }
+}
+
+// Player Class
+export class Player extends Entity {
+    constructor() {
+        super();
+        this.mesh = createPlayerMesh();
+        gameState.scene.add(this.mesh);
+
+        // State
+        this.currentLane = 0; // -1 (Left), 0 (Center), 1 (Right)
+        this.targetX = 0;
+        
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        this.isJumping = false;
+        this.isRolling = false;
+        this.isAttacking = false;
+        this.attackTimer = 0;
+        this.rollTimer = 0;
+        
+        this.health = 100;
+        this.maxHealth = 100;
+        
+        this.invulnerableTime = 0;
+
+        // Visuals
+        this.mesh.position.set(0, 0, 0);
+    }
+
+    update(dt) {
+        // Time scaling for frame-independent physics (Target 60 FPS)
+        const timeScale = dt * 60;
+
+        // Lane Movement (Smooth Lerp)
+        this.targetX = this.currentLane * LANE_WIDTH;
+        this.mesh.position.x += (this.targetX - this.mesh.position.x) * 10 * dt;
+
+        // Gravity and Jumping
+        if (this.mesh.position.y > 0 || this.isJumping) {
+            this.velocity.y += GRAVITY * timeScale; 
+            this.mesh.position.y += this.velocity.y * timeScale;
+        }
+
+        // Ground Collision
+        if (this.mesh.position.y <= 0) {
+            // Check if over a pit (no ground)
+            if (this.isOverPit()) {
+                // Fall
+            } else {
+                this.mesh.position.y = 0;
+                this.velocity.y = 0;
+                this.isJumping = false;
+            }
+        }
+        
+        // Rolling Logic
+        if (this.isRolling) {
+            this.rollTimer -= dt;
+            this.mesh.scale.set(1, 0.5, 1); // Squish
+            if (this.rollTimer <= 0) {
+                this.isRolling = false;
+                this.mesh.scale.set(1, 1, 1);
+                // Reset position slightly to avoid clipping floor when un-squishing
+                if (this.mesh.position.y < 0.1) this.mesh.position.y = 0; 
+            }
+        }
+
+        // Attack Logic
+        if (this.isAttacking) {
+            this.attackTimer -= dt;
+            // Animate sword arm
+            const arm = this.mesh.userData.arm;
+            arm.rotation.x = -Math.PI / 2 + Math.sin(this.attackTimer * 20) * 1.5;
+            
+            if (this.attackTimer <= 0) {
+                this.isAttacking = false;
+                arm.rotation.x = 0;
+            }
+        }
+
+        // Invulnerability
+        if (this.invulnerableTime > 0) {
+            this.invulnerableTime -= dt;
+            this.mesh.visible = Math.floor(gameState.frameCount / 4) % 2 === 0; // Blink
+        } else {
+            this.mesh.visible = true;
+        }
+
+        // Check falling death
+        if (this.mesh.position.y < -10) {
+            this.die();
+        }
+
+        this.updateBBox();
+        this.logPosition();
+    }
+
+    isOverPit() {
+        // Simplified: Pit logic handled by collision with "Pit" objects or lack of "Ground"
+        // For this implementation, we will assume continuous ground unless logic says otherwise
+        return false;
+    }
+
+    changeLane(dir) {
+        const newLane = this.currentLane + dir;
+        if (newLane >= -1 && newLane <= 1) {
+            this.currentLane = newLane;
+        }
+    }
+
+    jump() {
+        // Allow jump if on ground or slightly above (coyote time/tolerance)
+        if (!this.isJumping && this.mesh.position.y < 0.2) {
+            this.velocity.y = JUMP_FORCE;
+            this.isJumping = true;
+            this.isRolling = false; // Cancel roll
+            this.mesh.scale.set(1, 1, 1);
+        }
+    }
+
+    roll() {
+        if (!this.isJumping && !this.isRolling) {
+            this.isRolling = true;
+            this.rollTimer = 0.8; // Seconds
+        }
+    }
+
+    attack() {
+        if (!this.isAttacking) {
+            this.isAttacking = true;
+            this.attackTimer = 0.3; // Duration
+            
+            // Check hit immediately
+            this.checkAttackHit();
+        }
+    }
+
+    checkAttackHit() {
+        // Simple hitbox in front
+        const attackBox = new THREE.Box3().setFromObject(this.mesh);
+        attackBox.min.z -= 3.0; // Extend forward
+        attackBox.max.z -= 0.5;
+        // Expand width for lane forgiveness
+        attackBox.min.x -= 1.0; 
+        attackBox.max.x += 1.0;
+
+        gameState.entities.forEach(entity => {
+            if (entity instanceof Enemy && entity.active) {
+                entity.updateBBox();
+                if (attackBox.intersectsBox(entity.bbox)) {
+                    entity.die();
+                    gameState.score += 50;
+                }
+            }
+        });
+    }
+
+    takeDamage(amount) {
+        if (this.invulnerableTime > 0) return;
+        
+        this.health -= amount;
+        this.invulnerableTime = 2.0;
+        
+        if (this.health <= 0) {
+            this.die();
+        }
+    }
+
+    die() {
+        gameState.gamePhase = "GAME_OVER_LOSE";
+    }
+    
+    logPosition() {
+         if (window.logs && window.logs.player_info) {
+            // Project 3D position to 2D screen space for logs
+            const vector = this.mesh.position.clone();
+            vector.project(gameState.camera);
+            
+            window.logs.player_info.push({
+                screen_x: (vector.x + 1) * CANVAS_WIDTH / 2,
+                screen_y: -(vector.y - 1) * CANVAS_HEIGHT / 2,
+                game_x: this.mesh.position.x,
+                game_y: this.mesh.position.y,
+                game_z: this.mesh.position.z,
+                framecount: gameState.frameCount,
+                timestamp: Date.now()
+            });
+         }
+    }
+}
+
+// Enemy Class (Goon)
+export class Enemy extends Entity {
+    constructor(x, z) {
+        super();
+        this.mesh = createEnemyMesh();
+        this.mesh.position.set(x, 0, z);
+        gameState.scene.add(this.mesh);
+    }
+
+    update(dt) {
+        // Enemies might move slowly towards player or stand still
+        // For runner, static or patrolling enemies are common
+        
+        // Simple bobbing animation
+        this.mesh.position.y = 0.6 + Math.sin(gameState.frameCount * 0.1) * 0.1;
+        
+        this.updateBBox();
+    }
+    
+    die() {
+        this.destroy();
+        // Visual effect could spawn here
+    }
+}
+
+// Collectible Class (Coin)
+export class Collectible extends Entity {
+    constructor(x, y, z) {
+        super();
+        this.mesh = createCoinMesh();
+        this.mesh.position.set(x, y, z);
+        gameState.scene.add(this.mesh);
+        this.baseY = y;
+    }
+
+    update(dt) {
+        this.mesh.rotation.y += 3 * dt;
+        this.mesh.position.y = this.baseY + Math.sin(gameState.frameCount * 0.1) * 0.2;
+        this.updateBBox();
+    }
+    
+    collect() {
+        this.destroy();
+        gameState.score += 10;
+        // Particle effect here
+    }
+}
+
+// Obstacle Class
+export class Obstacle extends Entity {
+    constructor(x, z, type) {
+        super();
+        this.mesh = createObstacleMesh(type);
+        this.mesh.position.set(x, this.mesh.position.y, z);
+        gameState.scene.add(this.mesh);
+    }
+    
+    update(dt) {
+        this.updateBBox();
+    }
+}
+</code>
+
+<code filename="game.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, resetGameState, GAME_SPEED_MAX } from './globals.js';
+import { setupInput, processInput } from './input.js';
+import { Player, Collectible, Enemy, Obstacle } from './entities.js';
+import { updateWorld } from './world.js';
+import { setupUI, renderUI } from './ui.js';
+import { checkAABB } from './utils.js';
+import { updateTestAgent } from './test_agent.js';
+
+// Setup Three.js
+function init() {
+    // Container
+    const container = document.getElementById('game-container') || document.body;
+    gameState.gameContainer = container;
+    if (!document.getElementById('game-container')) {
+        // Create if missing (fallback)
+        const div = document.createElement('div');
+        div.id = 'game-container';
+        div.style.width = `${CANVAS_WIDTH}px`;
+        div.style.height = `${CANVAS_HEIGHT}px`;
+        div.style.position = 'relative';
+        div.style.overflow = 'hidden';
+        document.body.appendChild(div);
+        gameState.gameContainer = div;
+    }
+
+    // Renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    gameState.gameContainer.appendChild(renderer.domElement);
+    gameState.renderer = renderer;
+
+    // Scene
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87CEEB); // Sky Blue
+    scene.fog = new THREE.Fog(0x87CEEB, 20, 50);
+    gameState.scene = scene;
+
+    // Camera
+    const camera = new THREE.PerspectiveCamera(60, CANVAS_WIDTH / CANVAS_HEIGHT, 0.1, 100);
+    camera.position.set(0, 5, 8);
+    camera.lookAt(0, 0, -5);
+    gameState.camera = camera;
+
+    // Lights
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(10, 20, 10);
+    dirLight.castShadow = true;
+    dirLight.shadow.camera.top = 20;
+    dirLight.shadow.camera.bottom = -20;
+    dirLight.shadow.camera.left = -20;
+    dirLight.shadow.camera.right = 20;
+    scene.add(dirLight);
+
+    // Setup Systems
+    setupInput();
+    setupUI();
+    
+    // Seed RNG
+    Math.seedrandom('42');
+
+    // Start Loop
+    requestAnimationFrame(gameLoop);
+}
+
+// Main Loop
+function gameLoop(time) {
+    requestAnimationFrame(gameLoop);
+
+    const dt = Math.min((time - gameState.lastFrameTime) / 1000, 0.1); // Cap dt
+    gameState.lastFrameTime = time;
+    gameState.deltaTime = dt;
+    gameState.frameCount++;
+
+    processInput();
+    updateTestAgent(); // AI Override if enabled
+
+    if (gameState.gamePhase === 'PLAYING') {
+        updateGame(dt);
+    }
+    
+    // Camera follow
+    if (gameState.player && gameState.player.mesh) {
+        const pPos = gameState.player.mesh.position;
+        // Smooth follow X
+        gameState.camera.position.x += (pPos.x * 0.5 - gameState.camera.position.x) * 5 * dt;
+        gameState.camera.position.z = pPos.z + 8;
+        gameState.camera.lookAt(pPos.x * 0.2, pPos.y + 1, pPos.z - 5);
+    }
+
+    gameState.renderer.render(gameState.scene, gameState.camera);
+    renderUI();
+}
+
+function updateGame(dt) {
+    // Initialize Player if needed
+    if (!gameState.player) {
+        resetGameState();
+        gameState.player = new Player();
+    }
+
+    // Move Player Forward (World Space)
+    gameState.player.mesh.position.z -= gameState.gameSpeed * 10 * dt;
+    gameState.distance = -gameState.player.mesh.position.z;
+    
+    // Increase speed over time
+    if (gameState.gameSpeed < GAME_SPEED_MAX) {
+        gameState.gameSpeed += 0.005 * dt;
+    }
+
+    // World Generation
+    updateWorld(gameState.player.mesh.position.z);
+
+    // Update Entities
+    gameState.player.update(dt);
+    
+    // Filter dead entities
+    gameState.entities = gameState.entities.filter(e => e.active);
+
+    gameState.entities.forEach(entity => {
+        entity.update(dt);
+        
+        // Check collision with player
+        if (entity.active && checkAABB(gameState.player.bbox, entity.bbox)) {
+            if (entity instanceof Collectible) {
+                entity.collect();
+            } else if (entity instanceof Obstacle) {
+                // Check for landing on top
+                const pMinY = gameState.player.bbox.min.y;
+                const eMaxY = entity.bbox.max.y;
+                const isFalling = gameState.player.velocity.y <= 0;
+                
+                // If player is falling and their feet are near the top of the obstacle
+                if (isFalling && pMinY > eMaxY - 0.5) {
+                    // Safe landing
+                    gameState.player.mesh.position.y = eMaxY;
+                    gameState.player.velocity.y = 0;
+                    gameState.player.isJumping = false;
+                } else {
+                    gameState.player.takeDamage(100); // Instant kill for walls if hit side/bottom
+                }
+            } else if (entity instanceof Enemy) {
+                if (!gameState.player.isAttacking) {
+                    gameState.player.takeDamage(30);
+                    entity.die(); // Enemy dies on impact but hurts player
+                }
+            }
+        }
+    });
+}
+
+// Start
+init();
+
+// Global hooks for buttons
+window.setControlMode = (mode) => {
+    gameState.controlMode = mode;
+    console.log(`Control Mode set to: ${mode}`);
+    // Restart game to apply clean state
+    gameState.gamePhase = 'START';
+    resetGameState();
+    if (gameState.player) {
+        gameState.scene.remove(gameState.player.mesh);
+        gameState.player = null;
+    }
+    // Remove all entities
+    gameState.entities.forEach(e => e.destroy());
+    gameState.entities = [];
+    gameState.worldChunks.forEach(c => c.destroy());
+    gameState.worldChunks = [];
+};
+</code>

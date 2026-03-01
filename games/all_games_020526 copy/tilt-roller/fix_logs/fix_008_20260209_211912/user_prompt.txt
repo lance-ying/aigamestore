@@ -1,0 +1,1248 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+when the game is paused, I dont want to see paused press ESC to resume, and I don't want the game to be grayed out, but I also don't want the HUD to be hidden, 
+
+and can you also make sure the ball is an actual 3d ball, right now its just a rotating 2d circle in 3d space
+
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Game</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      #game-container { 
+          width: 600px !important; 
+          height: 400px !important; 
+          position: relative; 
+          overflow: hidden; 
+          box-shadow: 0 0 20px rgba(0,0,0,0.5);
+      }
+      canvas { width: 100%; height: 100%; display: block; }
+      /* .control-buttons and .control-button styles are no longer needed but kept for minimal change */
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+      .control-button:hover { background: #555; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">
+        Tilt the world to guide the ball through 3D mazes. Reach the goal zone to advance to the next level. Be careful not to fall off the edges!
+      </p>
+    </div>
+
+    <div style="text-align: center; margin-bottom: 20px;">
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">
+        ARROWS/WASD: Tilt Stage | SPACE: Brake | R: Restart | ESC: Pause | ENTER: Start
+      </p>
+    </div>
+    
+    <!-- Game Container created by script, but we can put a placeholder -->
+    <div id="game-placeholder"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/seedrandom@3.0.5/seedrandom.min.js"></script>
+    
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// Global Game Configuration
+export const CONFIG = {
+    CANVAS_WIDTH: 600,
+    CANVAS_HEIGHT: 400,
+    GRAVITY_STRENGTH: 0.15, // Strength of gravity (Reduced from 0.25)
+    MAX_TILT: Math.PI / 8, // Maximum tilt angle (22.5 degrees)
+    TILT_SPEED: 0.02, // How fast the stage tilts (Reduced from 0.05 for damping)
+    TILT_RETURN_SPEED: 0.03, // How fast stage returns to neutral
+    BALL_RADIUS: 0.5,
+    BALL_MASS: 1.0,
+    WALL_HEIGHT: 1.0,
+    LEVEL_SEGMENT_SIZE: 10,
+    SHADOW_MAP_SIZE: 2048,
+    COLORS: {
+        BACKGROUND: 0x87CEEB, // Sky Blue
+        BALL: 0xFF5722, // Deep Orange
+        FLOOR: 0xEEEEEE, // Off White
+        WALL: 0x607D8B, // Blue Grey
+        GOAL: 0x4CAF50, // Green
+        HOLE: 0x212121  // Dark Grey
+    }
+};
+
+// Global Game State
+export const gameState = {
+    // Phase Management
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // Game will only operate in HUMAN mode
+    
+    // Core Systems
+    scene: null,
+    camera: null,
+    renderer: null,
+    gameContainer: null,
+    
+    // Level & Entities
+    worldContainer: null, // The object that tilts
+    player: null,
+    levelObjects: [], // Array of collision boxes (floors, walls)
+    goal: null, // Goal zone definition
+    
+    // Physics State
+    currentTilt: new THREE.Vector2(0, 0), // X (Pitch), Y (Roll)
+    gravityVector: new THREE.Vector3(0, -1, 0),
+    
+    // Game Progress
+    levelIndex: 1,
+    score: 0,
+    
+    // Time
+    deltaTime: 0,
+    frameCount: 0,
+    timeElapsed: 0
+};
+
+// Logging System
+export const logs = {
+    game_info: [],
+    player_info: [],
+    inputs: []
+};
+
+// Expose to window for constraints
+window.gameState = gameState; // Added for direct window.gameState access
+window.getGameState = () => gameState;
+window.gameInstance = gameState;
+window.logs = logs;
+
+// Helper to push game info logs
+export function logGameInfo(status, data = {}) {
+    logs.game_info.push({
+        game_status: status,
+        data: data,
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+}
+</file>
+
+<file name="game.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, logGameInfo, logs } from './globals.js';
+import { setupInput, updateInput } from './input.js';
+import { setupRenderer, setupLighting } from './renderer.js';
+import { setupUI, renderUI } from './ui.js';
+import { LevelGenerator } from './level_gen.js';
+import { PhysicsSystem } from './physics.js';
+import { CameraController } from './camera.js';
+import { PlayerBall } from './entities.js';
+
+// Systems
+const levelGenerator = new LevelGenerator();
+const physicsSystem = new PhysicsSystem();
+const cameraController = new CameraController();
+
+function init() {
+    setupRenderer();
+    setupLighting();
+    setupUI();
+    setupInput();
+    
+    cameraController.setup();
+    
+    // Create initial dummy level or wait for start?
+    // Let's create level 1
+    startLevel(1);
+    
+    // Start Loop
+    requestAnimationFrame(gameLoop);
+    
+    logGameInfo("INIT_COMPLETE");
+}
+
+function startLevel(index) {
+    gameState.levelIndex = index;
+    gameState.currentTilt.set(0, 0);
+    gameState.shouldReset = false;
+    
+    // Generate Geometry
+    levelGenerator.generate(index);
+    
+    // Create Player
+    if (gameState.player) {
+        // Cleanup old player mesh if exists (should be handled by level clear technically, but player is separate)
+        gameState.worldContainer.remove(gameState.player.mesh);
+    }
+    gameState.player = new PlayerBall(gameState.playerSpawn);
+    gameState.worldContainer.add(gameState.player.mesh);
+    
+    // Camera Reset
+    cameraController.setup();
+}
+
+function resetGame() {
+    if (gameState.gamePhase === "GAME_OVER_WIN") {
+        startLevel(gameState.levelIndex + 1);
+    } else {
+        startLevel(gameState.levelIndex);
+    }
+    gameState.gamePhase = "PLAYING"; // Always auto-start after restart/next level
+    gameState.shouldReset = false;
+}
+
+let lastTime = 0;
+
+function gameLoop(timestamp) {
+    requestAnimationFrame(gameLoop);
+    
+    const deltaTime = Math.min((timestamp - lastTime) / 1000, 0.1); // Cap dt
+    lastTime = timestamp;
+    
+    gameState.deltaTime = deltaTime;
+    gameState.frameCount++;
+    
+    // Logic
+    if (gameState.shouldReset) {
+        resetGame();
+    }
+    
+    updateInput();
+    
+    if (gameState.gamePhase === "PLAYING") {
+        physicsSystem.update(deltaTime);
+        cameraController.update();
+        
+        if (gameState.goal) gameState.goal.update(timestamp / 1000);
+        
+        // Log player position periodically
+        if (gameState.frameCount % 60 === 0 && gameState.player) {
+            logs.player_info.push({
+                x: gameState.player.position.x,
+                y: gameState.player.position.y,
+                z: gameState.player.position.z,
+                tiltX: gameState.currentTilt.x,
+                tiltZ: gameState.currentTilt.y,
+                frame: gameState.frameCount
+            });
+        }
+    } else if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+         // Freeze is fine.
+    }
+    
+    // Render
+    gameState.renderer.render(gameState.scene, gameState.camera);
+    renderUI();
+}
+
+// Start
+init();
+</file>
+
+<file name="renderer.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CONFIG } from './globals.js';
+
+export function setupRenderer() {
+    // Scene
+    gameState.scene = new THREE.Scene();
+    gameState.scene.background = new THREE.Color(CONFIG.COLORS.BACKGROUND);
+    gameState.scene.fog = new THREE.Fog(CONFIG.COLORS.BACKGROUND, 20, 60);
+    
+    // Camera
+    gameState.camera = new THREE.PerspectiveCamera(
+        60,
+        CONFIG.CANVAS_WIDTH / CONFIG.CANVAS_HEIGHT,
+        0.1,
+        1000
+    );
+    
+    // Renderer
+    gameState.renderer = new THREE.WebGLRenderer({ antialias: true });
+    gameState.renderer.setSize(CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
+    gameState.renderer.shadowMap.enabled = true;
+    gameState.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    
+    // DOM
+    gameState.gameContainer = document.getElementById('game-container');
+    // Ensure container exists if not present in HTML (fallback)
+    if (!gameState.gameContainer) {
+        gameState.gameContainer = document.createElement('div');
+        gameState.gameContainer.id = 'game-container';
+        gameState.gameContainer.style.width = CONFIG.CANVAS_WIDTH + 'px';
+        gameState.gameContainer.style.height = CONFIG.CANVAS_HEIGHT + 'px';
+        gameState.gameContainer.style.position = 'relative';
+        gameState.gameContainer.style.overflow = 'hidden';
+        document.body.appendChild(gameState.gameContainer);
+    }
+    
+    gameState.gameContainer.appendChild(gameState.renderer.domElement);
+}
+
+export function setupLighting() {
+    // Ambient - Reduced intensity to increase contrast and volume perception
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+    gameState.scene.add(ambientLight);
+    
+    // Directional (Sun)
+    const sunLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    sunLight.position.set(20, 50, 20);
+    sunLight.castShadow = true;
+    
+    // Shadow config
+    sunLight.shadow.mapSize.width = CONFIG.SHADOW_MAP_SIZE;
+    sunLight.shadow.mapSize.height = CONFIG.SHADOW_MAP_SIZE;
+    sunLight.shadow.camera.near = 0.5;
+    sunLight.shadow.camera.far = 100;
+    sunLight.shadow.camera.left = -30;
+    sunLight.shadow.camera.right = 30;
+    sunLight.shadow.camera.top = 30;
+    sunLight.shadow.camera.bottom = -30;
+    
+    gameState.scene.add(sunLight);
+}
+</file>
+
+<file name="ui.js">
+import { gameState, CONFIG } from './globals.js';
+
+let uiCanvas, uiContext;
+
+export function setupUI() {
+    uiCanvas = document.createElement('canvas');
+    uiCanvas.width = CONFIG.CANVAS_WIDTH;
+    uiCanvas.height = CONFIG.CANVAS_HEIGHT;
+    uiCanvas.style.position = 'absolute';
+    uiCanvas.style.top = '0';
+    uiCanvas.style.left = '0';
+    uiCanvas.style.pointerEvents = 'none';
+    
+    // Append to container
+    if (gameState.gameContainer) {
+        gameState.gameContainer.appendChild(uiCanvas);
+    } else {
+        document.body.appendChild(uiCanvas);
+    }
+    
+    uiContext = uiCanvas.getContext('2d');
+}
+
+export function renderUI() {
+    // Clear
+    uiContext.clearRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
+    
+    const w = CONFIG.CANVAS_WIDTH;
+    const h = CONFIG.CANVAS_HEIGHT;
+
+    // Common Text Settings
+    uiContext.fillStyle = 'white';
+    uiContext.textAlign = 'center';
+    
+    if (gameState.gamePhase === "START") {
+        // Overlay
+        uiContext.fillStyle = 'rgba(0,0,0,0.6)';
+        uiContext.fillRect(0, 0, w, h);
+        
+        uiContext.fillStyle = 'white';
+        uiContext.font = 'bold 30px Arial'; // Adjusted font size for single line
+        uiContext.fillText("press enter to begin", w/2, h/2); // Centered message
+        
+    } else if (gameState.gamePhase === "PLAYING") {
+        // HUD
+        uiContext.font = '20px Arial';
+        uiContext.textAlign = 'left';
+        uiContext.fillText(`Level: ${gameState.levelIndex}`, 20, 30);
+        
+        // Show Brake indicator
+        if (gameState.player && gameState.player.velocity.length() > 0.1) {
+           // uiContext.fillText(`Speed: ${gameState.player.velocity.length().toFixed(2)}`, 20, 60);
+        }
+
+    } else if (gameState.gamePhase === "GAME_OVER_WIN") {
+        uiContext.fillStyle = 'rgba(0,0,0,0.7)';
+        uiContext.fillRect(0, 0, w, h);
+        
+        uiContext.fillStyle = '#4CAF50';
+        uiContext.font = 'bold 40px Arial';
+        uiContext.textAlign = 'center';
+        uiContext.fillText("LEVEL COMPLETED!", w/2, h/2 - 20);
+        
+        uiContext.fillStyle = 'white';
+        uiContext.font = '20px Arial';
+        uiContext.fillText("Press R for Next Level", w/2, h/2 + 30);
+        
+    } else if (gameState.gamePhase === "GAME_OVER_LOSE") {
+        uiContext.fillStyle = 'rgba(0,0,0,0.7)';
+        uiContext.fillRect(0, 0, w, h);
+        
+        uiContext.fillStyle = '#FF5722';
+        uiContext.font = 'bold 40px Arial';
+        uiContext.textAlign = 'center';
+        uiContext.fillText("FALLEN!", w/2, h/2 - 20);
+        
+        uiContext.fillStyle = 'white';
+        uiContext.font = '20px Arial';
+        uiContext.fillText("Press R to Try Again", w/2, h/2 + 30);
+    }
+
+    // Score Display (Always visible)
+    uiContext.textAlign = 'right';
+    uiContext.font = 'bold 24px Arial';
+    uiContext.fillStyle = 'white';
+    uiContext.shadowColor = 'rgba(0,0,0,0.5)';
+    uiContext.shadowBlur = 4;
+    uiContext.fillText(`Score: ${gameState.score}`, w - 20, 40);
+    uiContext.shadowBlur = 0; // Reset
+    uiContext.shadowColor = 'transparent';
+}
+</file>
+
+<file name="entities.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CONFIG } from './globals.js';
+import { AABB } from './utils.js';
+
+// Helper to create a texture for the ball
+function createBallTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    
+    // Background Color (Base)
+    ctx.fillStyle = '#' + new THREE.Color(CONFIG.COLORS.BALL).getHexString();
+    ctx.fillRect(0, 0, 512, 256);
+    
+    // Checkerboard Pattern
+    const rows = 4;
+    const cols = 8;
+    const cellW = 512 / cols;
+    const cellH = 256 / rows;
+    
+    ctx.fillStyle = '#FFFFFF';
+    
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            // Checker pattern logic
+            if ((x + y) % 2 === 0) {
+                ctx.fillRect(x * cellW, y * cellH, cellW, cellH);
+            }
+        }
+    }
+    
+    // Add numbers/text to make orientation obvious
+    ctx.fillStyle = '#222222';
+    ctx.font = 'bold 30px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    
+    // Draw numbers on the white squares
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            if ((x + y) % 2 === 0) {
+                ctx.fillText(`${x}-${y}`, x * cellW + cellW/2, y * cellH + cellH/2);
+            }
+        }
+    }
+    
+    // Add a distinct equator line
+    ctx.strokeStyle = '#222222';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(0, 128);
+    ctx.lineTo(512, 128);
+    ctx.stroke();
+    
+    const texture = new THREE.CanvasTexture(canvas);
+    return texture;
+}
+
+export class PlayerBall {
+    constructor(startPos) {
+        this.position = startPos.clone();
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        this.onGround = false;
+        
+        // Mesh - Increased segments for smoother sphere
+        const geometry = new THREE.SphereGeometry(CONFIG.BALL_RADIUS, 64, 64);
+        
+        // Use texture with checkerboard
+        const texture = createBallTexture();
+        
+        const material = new THREE.MeshStandardMaterial({ 
+            map: texture,
+            roughness: 0.2, // Shinier to show curvature
+            metalness: 0.1,
+            color: 0xffffff
+        });
+        
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.copy(this.position);
+        this.mesh.castShadow = true;
+        this.mesh.receiveShadow = true;
+    }
+}
+
+export class LevelBlock {
+    constructor(pos, size, type = 'FLOOR') {
+        this.position = pos.clone();
+        this.size = size.clone();
+        this.type = 'BOX'; // Physics type
+        
+        // AABB
+        this.aabb = new AABB(pos, size);
+        
+        // Mesh
+        const geometry = new THREE.BoxGeometry(size.x, size.y, size.z);
+        const color = type === 'FLOOR' ? CONFIG.COLORS.FLOOR : CONFIG.COLORS.WALL;
+        const material = new THREE.MeshStandardMaterial({ 
+            color: color,
+            roughness: 0.8 
+        });
+        
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.copy(pos);
+        this.mesh.receiveShadow = true;
+        this.mesh.castShadow = true;
+    }
+}
+
+export class GoalZone {
+    constructor(pos, radius) {
+        this.position = pos.clone();
+        this.radius = radius;
+        
+        // Visuals
+        const geometry = new THREE.CylinderGeometry(radius, radius, 0.2, 32);
+        const material = new THREE.MeshStandardMaterial({ 
+            color: CONFIG.COLORS.GOAL,
+            emissive: 0x2E7D32,
+            emissiveIntensity: 0.5,
+            transparent: true,
+            opacity: 0.8
+        });
+        
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.copy(pos);
+        
+        // Particle effect beam
+        const beamGeo = new THREE.CylinderGeometry(radius * 0.8, radius * 0.8, 10, 32, 1, true);
+        const beamMat = new THREE.MeshBasicMaterial({
+            color: CONFIG.COLORS.GOAL,
+            transparent: true,
+            opacity: 0.2,
+            side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending
+        });
+        this.beam = new THREE.Mesh(beamGeo, beamMat);
+        this.beam.position.y = 5;
+        this.mesh.add(this.beam);
+    }
+    
+    update(time) {
+        // Pulse effect
+        this.mesh.material.opacity = 0.6 + Math.sin(time * 3) * 0.2;
+        this.beam.material.opacity = 0.15 + Math.sin(time * 2) * 0.05;
+    }
+}
+</file>
+
+<file name="utils.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// Math Utilities
+
+export function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+}
+
+export function lerp(start, end, t) {
+    return start * (1 - t) + end * t;
+}
+
+// Axis Aligned Bounding Box for Physics
+export class AABB {
+    constructor(center, size) {
+        this.center = center.clone();
+        this.size = size.clone();
+        this.min = new THREE.Vector3().subVectors(this.center, this.size.clone().multiplyScalar(0.5));
+        this.max = new THREE.Vector3().addVectors(this.center, this.size.clone().multiplyScalar(0.5));
+    }
+
+    update(position) {
+        this.center.copy(position);
+        this.min.set(
+            this.center.x - this.size.x / 2,
+            this.center.y - this.size.y / 2,
+            this.center.z - this.size.z / 2
+        );
+        this.max.set(
+            this.center.x + this.size.x / 2,
+            this.center.y + this.size.y / 2,
+            this.center.z + this.size.z / 2
+        );
+    }
+    
+    // Check intersection with another AABB
+    intersects(other) {
+        return (
+            this.min.x <= other.max.x && this.max.x >= other.min.x &&
+            this.min.y <= other.max.y && this.max.y >= other.min.y &&
+            this.min.z <= other.max.z && this.max.z >= other.min.z
+        );
+    }
+    
+    // Closest point on this AABB to a point p
+    closestPointToPoint(p) {
+        return new THREE.Vector3(
+            clamp(p.x, this.min.x, this.max.x),
+            clamp(p.y, this.min.y, this.max.y),
+            clamp(p.z, this.min.z, this.max.z)
+        );
+    }
+}
+
+// Random Number Generator Wrapper
+export class RNG {
+    constructor(seed) {
+        // Use the global seeded math if available, else fallback
+        this.rng = new Math.seedrandom(seed);
+    }
+    
+    // Float between 0 and 1
+    random() {
+        return this.rng();
+    }
+    
+    // Float between min and max
+    range(min, max) {
+        return min + this.random() * (max - min);
+    }
+    
+    // Integer between min and max (inclusive min, exclusive max)
+    rangeInt(min, max) {
+        return Math.floor(this.range(min, max));
+    }
+    
+    // Pick random element from array
+    pick(array) {
+        return array[this.rangeInt(0, array.length)];
+    }
+}
+</file>
+
+<file name="camera.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+
+export class CameraController {
+    constructor() {
+        this.offset = new THREE.Vector3(0, 15, 12); // High angle view
+        this.lookAtTarget = new THREE.Vector3();
+        this.smoothSpeed = 0.1;
+    }
+
+    setup() {
+        gameState.camera.position.copy(this.offset);
+        gameState.camera.lookAt(0, 0, 0);
+    }
+
+    update() {
+        if (!gameState.player) return;
+
+        // Follow player position x/z, but stay somewhat fixed
+        // In "Tenkyu", camera follows the ball as it moves through the level
+        
+        const playerPos = gameState.player.position;
+        
+        // Calculate target position
+        const targetPos = playerPos.clone().add(this.offset);
+        
+        // Smoothly interpolate camera position
+        gameState.camera.position.lerp(targetPos, this.smoothSpeed);
+        
+        // Look at player
+        // Smooth lookAt point
+        this.lookAtTarget.lerp(playerPos, this.smoothSpeed);
+        gameState.camera.lookAt(this.lookAtTarget);
+    }
+}
+</file>
+
+<file name="physics.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CONFIG } from './globals.js';
+import { clamp, AABB } from './utils.js';
+import { inputState } from './input.js';
+
+export class PhysicsSystem {
+    constructor() {
+        this.gravity = new THREE.Vector3(0, -CONFIG.GRAVITY_STRENGTH, 0);
+        this.tempVector = new THREE.Vector3();
+        this.timeAccumulator = 0;
+        this.fixedTimeStep = 1/60;
+    }
+
+    update(deltaTime) {
+        if (!gameState.player || !gameState.worldContainer) return;
+
+        // Accumulate time buffer
+        this.timeAccumulator += deltaTime;
+        
+        // Cap accumulator to prevent spiral of death if lag is huge (max ~6 steps)
+        if (this.timeAccumulator > 0.1) this.timeAccumulator = 0.1;
+
+        // Run fixed physics steps
+        while (this.timeAccumulator >= this.fixedTimeStep) {
+            this.step(this.fixedTimeStep);
+            this.timeAccumulator -= this.fixedTimeStep;
+        }
+    }
+
+    step(dt) {
+        // 1. Update Stage Tilt based on Input
+        this.updateTilt();
+
+        // 2. Calculate Local Gravity Vector
+        // Visual Rotation (Stage)
+        const tiltX = gameState.currentTilt.x; // Pitch
+        const tiltZ = gameState.currentTilt.y; // Roll
+
+        // Calculate Gravity in Local Space
+        const localGravity = new THREE.Vector3(0, -1, 0);
+        localGravity.applyAxisAngle(new THREE.Vector3(1, 0, 0), -tiltX); // Counter-pitch
+        localGravity.applyAxisAngle(new THREE.Vector3(0, 0, 1), -tiltZ); // Counter-roll
+        
+        localGravity.multiplyScalar(CONFIG.GRAVITY_STRENGTH);
+        gameState.gravityVector.copy(localGravity);
+
+        // 3. Integrate Player Physics
+        this.integrateBall(dt);
+        
+        // 4. Collision Detection
+        this.handleCollisions();
+        
+        // 5. Check Triggers (Win/Loss)
+        this.checkTriggers();
+    }
+
+    updateTilt() {
+        const targetX = inputState.axis.y * CONFIG.MAX_TILT; // Up key = Negative Tilt (Forward)
+        const targetZ = -inputState.axis.x * CONFIG.MAX_TILT; // Right key = Negative Z Tilt (Right down)
+        
+        // Interpolate current tilt towards target
+        gameState.currentTilt.x += (targetX - gameState.currentTilt.x) * CONFIG.TILT_SPEED;
+        gameState.currentTilt.y += (targetZ - gameState.currentTilt.y) * CONFIG.TILT_SPEED;
+        
+        // Apply to visual container
+        gameState.worldContainer.rotation.x = gameState.currentTilt.x;
+        gameState.worldContainer.rotation.z = gameState.currentTilt.y;
+    }
+
+    integrateBall(dt) {
+        const player = gameState.player;
+        
+        // Normalize time scaling to 60fps base for existing tuning
+        const timeScale = dt * 60;
+        
+        // Apply Gravity
+        player.velocity.add(gameState.gravityVector.clone().multiplyScalar(timeScale)); 
+        
+        // Apply Brake (Friction)
+        if (inputState.brake) {
+            player.velocity.multiplyScalar(0.85); // Stronger brake
+        } else {
+            // Natural rolling friction
+            player.velocity.multiplyScalar(0.92);
+        }
+        
+        // Update Position
+        player.position.add(player.velocity.clone().multiplyScalar(timeScale));
+        
+        // Update Mesh Position
+        player.mesh.position.copy(player.position);
+        
+        // Update Ball Rotation (Visual Rolling)
+        const speed = player.velocity.length();
+        if (speed > 0.001) {
+            const axis = new THREE.Vector3()
+                .crossVectors(new THREE.Vector3(0, 1, 0), player.velocity)
+                .normalize();
+            
+            // Fix: include timeScale so rotation matches distance traveled
+            const angle = (speed * timeScale) / CONFIG.BALL_RADIUS;
+            
+            const q = new THREE.Quaternion().setFromAxisAngle(axis, angle);
+            player.mesh.quaternion.multiplyQuaternions(q, player.mesh.quaternion);
+        }
+    }
+
+    handleCollisions() {
+        const player = gameState.player;
+        
+        // Reset ground flag
+        player.onGround = false;
+
+        // Check against all level objects
+        for (const obj of gameState.levelObjects) {
+            if (obj.type === 'BOX') {
+                this.resolveSphereBox(player, obj);
+            }
+        }
+    }
+
+    resolveSphereBox(player, box) {
+        // Get box AABB
+        const boxAABB = box.aabb;
+        
+        // Find closest point on box to sphere center
+        const closest = boxAABB.closestPointToPoint(player.position);
+        
+        // Distance
+        const distance = player.position.distanceTo(closest);
+        
+        if (distance < CONFIG.BALL_RADIUS) {
+            // Collision detected
+            let normal = new THREE.Vector3();
+            let penetration = 0;
+
+            // Robust check for inside or very close to surface
+            // If distance is near 0, closestPointToPoint returns the point itself (inside)
+            if (distance < 0.0001) {
+                // Find closest face to push out
+                const p = player.position;
+                const min = boxAABB.min;
+                const max = boxAABB.max;
+                
+                const dists = [
+                    Math.abs(p.x - min.x), Math.abs(max.x - p.x),
+                    Math.abs(p.y - min.y), Math.abs(max.y - p.y),
+                    Math.abs(p.z - min.z), Math.abs(max.z - p.z)
+                ];
+                
+                let minIndex = 0;
+                let minD = dists[0];
+                for(let i=1; i<6; i++) {
+                    if(dists[i] < minD) {
+                        minD = dists[i];
+                        minIndex = i;
+                    }
+                }
+                
+                // Set normal based on closest face
+                if(minIndex === 0) normal.set(-1, 0, 0);
+                else if(minIndex === 1) normal.set(1, 0, 0);
+                else if(minIndex === 2) normal.set(0, -1, 0);
+                else if(minIndex === 3) normal.set(0, 1, 0);
+                else if(minIndex === 4) normal.set(0, 0, -1);
+                else if(minIndex === 5) normal.set(0, 0, 1);
+                
+                // Penetration is distance to face + radius (to bring sphere surface to face)
+                penetration = minD + CONFIG.BALL_RADIUS;
+                
+            } else {
+                // Standard collision
+                normal.subVectors(player.position, closest).normalize();
+                penetration = CONFIG.BALL_RADIUS - distance;
+            }
+            
+            // Position Correction
+            player.position.add(normal.clone().multiplyScalar(penetration));
+            
+            // Velocity Correction (Bounce + Slide)
+            const velocityDot = player.velocity.dot(normal);
+            
+            if (velocityDot < 0) {
+                // Remove velocity component along normal (Slide)
+                const restitution = 0.3; // Bounciness
+                const j = -(1 + restitution) * velocityDot;
+                
+                const impulse = normal.multiplyScalar(j);
+                player.velocity.add(impulse);
+                
+                // If normal is roughly up, we are on ground
+                if (normal.y > 0.7) {
+                    player.onGround = true;
+                }
+            }
+        }
+    }
+
+    checkTriggers() {
+        const player = gameState.player;
+        
+        // 1. Loss Condition: Fallen too far down
+        if (player.position.y < -20) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+        }
+        
+        // 2. Win Condition: Reached Goal
+        if (gameState.goal) {
+            const distToGoal = new THREE.Vector2(player.position.x, player.position.z)
+                .distanceTo(new THREE.Vector2(gameState.goal.position.x, gameState.goal.position.z));
+                
+            if (distToGoal < (gameState.goal.radius + CONFIG.BALL_RADIUS)) {
+                // Ensure we are somewhat vertically aligned too
+                if (Math.abs(player.position.y - gameState.goal.position.y) < 2.0) {
+                    if (gameState.gamePhase === "PLAYING") {
+                        gameState.score += 1000;
+                        gameState.gamePhase = "GAME_OVER_WIN";
+                    }
+                }
+            }
+        }
+    }
+}
+</file>
+
+<file name="level_gen.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CONFIG } from './globals.js';
+import { LevelBlock, GoalZone } from './entities.js';
+import { RNG } from './utils.js';
+
+export class LevelGenerator {
+    constructor() {
+        this.rng = null;
+    }
+
+    generate(levelIndex) {
+        this.rng = new RNG(levelIndex * 42); // Seed based on level
+        
+        // Cleanup existing
+        this.clearLevel();
+        
+        // Init world container
+        gameState.worldContainer = new THREE.Group();
+        gameState.scene.add(gameState.worldContainer);
+        
+        // Level parameters
+        const segmentCount = 5 + Math.floor(levelIndex * 1.5);
+        let currentPos = new THREE.Vector3(0, 0, 0);
+        let direction = new THREE.Vector3(0, 0, -1); // Forward
+        
+        // Start Platform
+        this.createPlatform(currentPos, 12, 12, true); // Increased from 6,6 to 12,12
+        gameState.playerSpawn = currentPos.clone().add(new THREE.Vector3(0, 2, 0));
+        
+        // Generate path
+        for (let i = 0; i < segmentCount; i++) {
+            // Move forward
+            const length = this.rng.rangeInt(15, 25); // Increased length from 8-14 to 15-25
+            
+            // For Level 3, we pre-calculate the turn to avoid blocking walls
+            let turnDir = null;
+            if (levelIndex === 3 && i < segmentCount - 1) {
+                const r = this.rng.random();
+                if (r < 0.4) turnDir = 'LEFT';
+                else if (r < 0.8) turnDir = 'RIGHT';
+                else turnDir = 'NONE';
+            }
+
+            const nextPos = currentPos.clone().add(direction.clone().multiplyScalar(length));
+            const midPos = currentPos.clone().lerp(nextPos, 0.5);
+            
+            // Create Corridor
+            const width = 12; // Increased width from 6 to 12
+            
+            // Adjust midPos based on orientation to align boxes correctly
+            if (Math.abs(direction.z) > 0.5) {
+                // Moving Z
+                // Passing turnDir and direction ONLY for Level 3 fixes
+                this.createPlatform(midPos, width, length, false, turnDir, direction);
+            } else {
+                // Moving X
+                this.createPlatform(midPos, length, width, false, turnDir, direction);
+            }
+            
+            currentPos = nextPos;
+            
+            // Turn?
+            if (i < segmentCount - 1) {
+                if (levelIndex === 3) {
+                    // Use pre-calculated turn
+                    if (turnDir === 'LEFT') {
+                        const temp = direction.x; direction.x = direction.z; direction.z = -temp;
+                    } else if (turnDir === 'RIGHT') {
+                        const temp = direction.x; direction.x = -direction.z; direction.z = temp;
+                    }
+                } else {
+                    // Original Logic for other levels (preserves seed sequence)
+                    const turn = this.rng.random();
+                    if (turn < 0.4) {
+                        // Turn Left
+                        const temp = direction.x;
+                        direction.x = direction.z;
+                        direction.z = -temp;
+                    } else if (turn < 0.8) {
+                        // Turn Right
+                        const temp = direction.x;
+                        direction.x = -direction.z;
+                        direction.z = temp;
+                    }
+                }
+            }
+        }
+        
+        // End Platform
+        this.createPlatform(currentPos, 14, 14, true); // Increased from 8,8 to 14,14
+        
+        // Goal
+        gameState.goal = new GoalZone(currentPos.clone().add(new THREE.Vector3(0, 0.6, 0)), 1.5);
+        gameState.worldContainer.add(gameState.goal.mesh);
+    }
+    
+    createPlatform(center, width, depth, isSafeZone, turnDir = null, moveDir = null) {
+        const thickness = 1;
+        
+        // Floor
+        const floor = new LevelBlock(
+            center, 
+            new THREE.Vector3(width, thickness, depth), 
+            'FLOOR'
+        );
+        this.addToLevel(floor);
+        
+        // Walls
+        const wallHeight = 1.5;
+        const wallThickness = 0.5;
+        
+        const isLevel3 = (gameState.levelIndex === 3);
+
+        // For Level 3, fix wall generation for X-aligned segments and turns
+        if (isLevel3 && width > depth) {
+            // X-Aligned Segment (Moving along X axis)
+            // Walls should be at +/- Z (sides), not +/- X (ends)
+            
+            let skipPosZ = false; // Skip wall at +Z
+            let skipNegZ = false; // Skip wall at -Z
+            
+            if (turnDir && moveDir) {
+                if (moveDir.x > 0.5) { // Moving +X
+                    // Left is -Z, Right is +Z
+                    if (turnDir === 'LEFT') skipNegZ = true;
+                    if (turnDir === 'RIGHT') skipPosZ = true;
+                } else if (moveDir.x < -0.5) { // Moving -X
+                    // Left is +Z, Right is -Z
+                    if (turnDir === 'LEFT') skipPosZ = true;
+                    if (turnDir === 'RIGHT') skipNegZ = true;
+                }
+            }
+
+            // Increased wall probability: random() > 0.1 (90% chance) instead of 0.3
+            const hasNegZ = !skipNegZ && (isSafeZone || this.rng.random() > 0.1);
+            if (hasNegZ) {
+                const pos = center.clone().add(new THREE.Vector3(0, wallHeight/2, -depth/2 - wallThickness/2));
+                const wall = new LevelBlock(pos, new THREE.Vector3(width, wallHeight + thickness, wallThickness), 'WALL');
+                this.addToLevel(wall);
+            }
+
+            const hasPosZ = !skipPosZ && (isSafeZone || this.rng.random() > 0.1);
+            if (hasPosZ) {
+                const pos = center.clone().add(new THREE.Vector3(0, wallHeight/2, depth/2 + wallThickness/2));
+                const wall = new LevelBlock(pos, new THREE.Vector3(width, wallHeight + thickness, wallThickness), 'WALL');
+                this.addToLevel(wall);
+            }
+
+        } else {
+            // Standard Logic (Z-Aligned or Legacy behavior for other levels)
+            // Walls are at +/- X
+            
+            let skipPosX = false; // Skip wall at +X
+            let skipNegX = false; // Skip wall at -X
+            
+            if (isLevel3 && turnDir && moveDir) {
+                // Moving Z
+                if (moveDir.z < -0.5) { // North (-Z)
+                    // Left is -X, Right is +X
+                    if (turnDir === 'LEFT') skipNegX = true;
+                    if (turnDir === 'RIGHT') skipPosX = true;
+                } else if (moveDir.z > 0.5) { // South (+Z)
+                    // Left is +X, Right is -X
+                    if (turnDir === 'LEFT') skipPosX = true;
+                    if (turnDir === 'RIGHT') skipNegX = true;
+                }
+            }
+
+            // Increased wall probability: random() > 0.1 (90% chance) instead of 0.3
+            const hasLeftWall = !skipNegX && (isSafeZone || this.rng.random() > 0.1);
+            const hasRightWall = !skipPosX && (isSafeZone || this.rng.random() > 0.1);
+            
+            if (hasLeftWall) {
+                const leftPos = center.clone().add(new THREE.Vector3(-width/2 - wallThickness/2, wallHeight/2, 0));
+                const leftWall = new LevelBlock(
+                    leftPos,
+                    new THREE.Vector3(wallThickness, wallHeight + thickness, depth),
+                    'WALL'
+                );
+                this.addToLevel(leftWall);
+            }
+            
+            if (hasRightWall) {
+                const rightPos = center.clone().add(new THREE.Vector3(width/2 + wallThickness/2, wallHeight/2, 0));
+                const rightWall = new LevelBlock(
+                    rightPos,
+                    new THREE.Vector3(wallThickness, wallHeight + thickness, depth),
+                    'WALL'
+                );
+                this.addToLevel(rightWall);
+            }
+        }
+    }
+
+    addToLevel(block) {
+        gameState.levelObjects.push(block);
+        gameState.worldContainer.add(block.mesh);
+    }
+
+    clearLevel() {
+        if (gameState.worldContainer) {
+            gameState.scene.remove(gameState.worldContainer);
+            // Dispose logic ideally here
+        }
+        gameState.levelObjects = [];
+        gameState.goal = null;
+    }
+}
+</file>
+
+<file name="input.js">
+import { gameState, logs } from './globals.js';
+
+// Input State
+export const inputState = {
+    keys: {},
+    axis: {
+        x: 0, // -1 (Left) to 1 (Right)
+        y: 0  // -1 (Forward/Up) to 1 (Backward/Down)
+    },
+    brake: false
+};
+
+// Input Handling Setup
+export function setupInput() {
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+}
+
+function handleKeyDown(event) {
+    const code = event.keyCode;
+    inputState.keys[code] = true;
+    
+    // Logging
+    logs.inputs.push({
+        input_type: 'keydown',
+        data: { key: event.key, keyCode: code },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+    
+    // Global State Controls
+    handleGlobalControls(code);
+}
+
+function handleKeyUp(event) {
+    const code = event.keyCode;
+    inputState.keys[code] = false;
+    
+    logs.inputs.push({
+        input_type: 'keyup',
+        data: { key: event.key, keyCode: code },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+}
+
+function handleGlobalControls(code) {
+    // ENTER - Start Game
+    if (code === 13 && gameState.gamePhase === "START") {
+        gameState.gamePhase = "PLAYING";
+    }
+    
+    // ESC - Pause / Unpause
+    if (code === 27) {
+        if (gameState.gamePhase === "PLAYING") {
+            gameState.gamePhase = "PAUSED";
+        } else if (gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = "PLAYING";
+        }
+    }
+    
+    // R - Restart
+    if (code === 82) {
+        if (gameState.gamePhase === "GAME_OVER_WIN" || 
+            gameState.gamePhase === "GAME_OVER_LOSE" ||
+            gameState.gamePhase === "PLAYING") {
+            // Signal main loop to reset
+            gameState.shouldReset = true;
+        }
+    }
+}
+
+// Update Input Axis per frame
+export function updateInput() {
+    // Reset axis
+    inputState.axis.x = 0;
+    inputState.axis.y = 0;
+    inputState.brake = false;
+    
+    // Human Controls (only mode available)
+    // Up / W
+    if (inputState.keys[38] || inputState.keys[87]) {
+        inputState.axis.y = -1;
+    }
+    // Down / S
+    if (inputState.keys[40] || inputState.keys[83]) {
+        inputState.axis.y = 1;
+    }
+    // Left / A
+    if (inputState.keys[37] || inputState.keys[65]) {
+        inputState.axis.x = -1;
+    }
+    // Right / D
+    if (inputState.keys[39] || inputState.keys[68]) {
+        inputState.axis.x = 1;
+    }
+    // Space (Brake)
+    if (inputState.keys[32]) {
+        inputState.brake = true;
+    }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

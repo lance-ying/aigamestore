@@ -1,0 +1,804 @@
+<analysis>
+- Issue identified: The user wants to fit the existing 400x600 game into a 600x400 viewing area by adding borders, while preserving the game's original look and aspect ratio. This requires separating the logical game resolution from the display canvas resolution and applying scaling.
+- Files affected: `index.html`, `globals.js`, `player.js`, `rendering.js`, `game.js`.
+- Changes needed:
+    1.  `globals.js`: Introduce `GAME_WIDTH` (400) and `GAME_HEIGHT` (600) for internal logic. Update `CANVAS_WIDTH` (600) and `CANVAS_HEIGHT` (400) for the display element.
+    2.  `index.html`: Resize the canvas element to 600x400 via CSS.
+    3.  `player.js`: Update boundary checks to use `GAME_WIDTH` and `GAME_HEIGHT` instead of canvas dimensions.
+    4.  `rendering.js`: Update drawing functions to use `GAME_WIDTH` and `GAME_HEIGHT`. Replace full-canvas `background()` calls with `rect()` to ensure they only clear the game area within the borders.
+    5.  `game.js`: In the main `draw` loop, clear the entire canvas to black (borders), then apply a translation and scale transformation to center the 400x600 game content within the 600x400 canvas.
+</analysis>
+
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">press enter to begin</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Help Madeline climb. Navigate challenging platforming levels by jumping, dashing, and wall climbing. Avoid spikes, collect strawberries, and reach the summit in this precision platformer.</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Keys: Move left/right, climb up/down on walls | Space: Jump (press again in air for double jump) | Z: Air dash in the direction you're moving (limited uses, recharges on landing) | Enter: Start game | ESC: Pause/Unpause | R: Restart to main menu</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</code>
+
+<code filename="globals.js">
+// globals.js - Global constants and game state
+
+// Display dimensions (Canvas size)
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Internal Game dimensions (Logic size)
+export const GAME_WIDTH = 400;
+export const GAME_HEIGHT = 600;
+
+export const TARGET_FPS = 60;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const CONTROL_MODES = {
+  HUMAN: "HUMAN",
+};
+
+// Player constants
+export const PLAYER_SIZE = 12;
+export const PLAYER_SPEED = 3;
+export const JUMP_STRENGTH = -8;
+export const GRAVITY = 0.4;
+export const MAX_FALL_SPEED = 10;
+export const DASH_SPEED = 8;
+export const DASH_DURATION = 10;
+export const WALL_SLIDE_SPEED = 2;
+export const WALL_JUMP_X = 5;
+export const WALL_JUMP_Y = -7;
+
+// Game constants
+export const TILE_SIZE = 20;
+export const SCREEN_COLS = GAME_WIDTH / TILE_SIZE;
+export const SCREEN_ROWS = GAME_HEIGHT / TILE_SIZE;
+export const STARTING_LIVES = 5;
+
+// Game state
+export const gameState = {
+  player: null,
+  entities: [],
+  currentLevel: 0,
+  score: 0,
+  lives: STARTING_LIVES,
+  gamePhase: GAME_PHASES.START,
+  controlMode: CONTROL_MODES.HUMAN,
+  collectedStrawberries: new Set(),
+  levelStartPosition: { x: 0, y: 0 },
+  autoRestartTimer: null, // New: Stores frameCount when game over occurs
+  autoRestartDelayFrames: TARGET_FPS // New: 1 second delay (e.g., 60 frames at 60fps)
+};
+
+// Make getGameState available globally
+window.getGameState = function() {
+  return gameState;
+};
+</code>
+
+<code filename="player.js">
+// player.js - Player character implementation
+
+import { 
+  PLAYER_SIZE, PLAYER_SPEED, JUMP_STRENGTH, GRAVITY, MAX_FALL_SPEED,
+  DASH_SPEED, DASH_DURATION, WALL_SLIDE_SPEED, WALL_JUMP_X, WALL_JUMP_Y,
+  TILE_SIZE, GAME_WIDTH, GAME_HEIGHT
+} from './globals.js';
+import { getTileAt, isSolidTile, isWallTile, isSpikeTile, isGoalTile, isStrawberryTile } from './levels.js';
+
+export class Player {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.vx = 0;
+    this.vy = 0;
+    this.size = PLAYER_SIZE;
+    this.onGround = false;
+    this.canJump = true;
+    this.dashesRemaining = 1;
+    this.isDashing = false;
+    this.dashTimer = 0;
+    this.dashDirX = 0;
+    this.dashDirY = 0;
+    this.isClimbing = false;
+    this.onWall = 0; // -1 left, 1 right, 0 none
+    this.dead = false;
+    this.reachedGoal = false;
+  }
+
+  update(p, level, inputs) {
+    if (this.dead || this.reachedGoal) {
+      return;
+    }
+
+    // Handle dashing
+    if (this.isDashing) {
+      this.dashTimer--;
+      if (this.dashTimer <= 0) {
+        this.isDashing = false;
+        this.vx = this.dashDirX * 2;
+        this.vy = this.dashDirY * 2;
+      } else {
+        this.x += this.dashDirX * DASH_SPEED;
+        this.y += this.dashDirY * DASH_SPEED;
+        return; // Skip normal physics during dash
+      }
+    }
+
+    // Apply gravity
+    if (!this.isClimbing) {
+      this.vy += GRAVITY;
+      if (this.vy > MAX_FALL_SPEED) {
+        this.vy = MAX_FALL_SPEED;
+      }
+    }
+
+    // Horizontal movement
+    if (inputs.left && !inputs.right) {
+      this.vx = -PLAYER_SPEED;
+    } else if (inputs.right && !inputs.left) {
+      this.vx = PLAYER_SPEED;
+    } else {
+      this.vx *= 0.8; // Friction
+    }
+
+    // Wall sliding
+    this.checkWalls(level);
+    if (this.onWall !== 0 && !this.onGround && this.vy > 0) {
+      this.vy = WALL_SLIDE_SPEED;
+      this.isClimbing = true;
+      // Restore dash on wall
+      this.dashesRemaining = 1;
+    } else {
+      this.isClimbing = false;
+    }
+
+    // Climbing movement on walls
+    if (this.isClimbing && this.onWall !== 0) {
+      if (inputs.up) {
+        this.vy = -PLAYER_SPEED;
+      } else if (inputs.down) {
+        this.vy = PLAYER_SPEED;
+      } else {
+        this.vy = 0;
+      }
+    }
+
+    // Jumping
+    if (inputs.jump && !inputs.jumpHeld) {
+      if (this.onGround || this.canJump) {
+        this.vy = JUMP_STRENGTH;
+        this.onGround = false;
+        this.canJump = false;
+      } else if (this.isClimbing && this.onWall !== 0) {
+        // Wall jump
+        this.vx = -this.onWall * WALL_JUMP_X;
+        this.vy = WALL_JUMP_Y;
+        this.isClimbing = false;
+        this.onWall = 0;
+      }
+      inputs.jumpHeld = true;
+    }
+    if (!inputs.jump) {
+      inputs.jumpHeld = false;
+    }
+
+    // Dashing
+    if (inputs.dash && !inputs.dashHeld && this.dashesRemaining > 0) {
+      this.startDash(inputs);
+      inputs.dashHeld = true;
+    }
+    if (!inputs.dash) {
+      inputs.dashHeld = false;
+    }
+
+    // Move and check collisions
+    this.x += this.vx;
+    this.handleCollisions(p, level, true, false);
+    
+    this.y += this.vy;
+    this.handleCollisions(p, level, false, true);
+
+    // Check if on ground
+    this.checkGround(level);
+    if (this.onGround) {
+      this.dashesRemaining = 1;
+      this.canJump = true;
+    }
+
+    // Keep player in bounds
+    if (this.x < this.size / 2) this.x = this.size / 2;
+    if (this.x > GAME_WIDTH - this.size / 2) this.x = GAME_WIDTH - this.size / 2;
+    if (this.y > GAME_HEIGHT + 50) {
+      this.dead = true;
+    }
+
+    // Check hazards and goals
+    this.checkTileInteractions(p, level);
+  }
+
+  startDash(inputs) {
+    let dirX = 0;
+    let dirY = 0;
+
+    if (inputs.left) dirX = -1;
+    if (inputs.right) dirX = 1;
+    if (inputs.up) dirY = -1;
+    if (inputs.down) dirY = 1;
+
+    // Default to right if no direction
+    if (dirX === 0 && dirY === 0) {
+      dirX = 1;
+    }
+
+    // Normalize diagonal
+    if (dirX !== 0 && dirY !== 0) {
+      const len = Math.sqrt(dirX * dirX + dirY * dirY);
+      dirX /= len;
+      dirY /= len;
+    }
+
+    this.isDashing = true;
+    this.dashTimer = DASH_DURATION;
+    this.dashDirX = dirX;
+    this.dashDirY = dirY;
+    this.dashesRemaining--;
+    this.vx = 0;
+    this.vy = 0;
+  }
+
+  handleCollisions(p, level, horizontal, vertical) {
+    // Inset collision points to prevent catching on adjacent tiles
+    // This prevents "tripping" on the floor when moving horizontally
+    // and catching on walls when moving vertically
+    const padding = 2;
+    
+    const corners = [
+      { 
+        x: this.x - this.size / 2 + (vertical ? padding : 0), 
+        y: this.y - this.size / 2 + (horizontal ? padding : 0) 
+      },
+      { 
+        x: this.x + this.size / 2 - (vertical ? padding : 0), 
+        y: this.y - this.size / 2 + (horizontal ? padding : 0) 
+      },
+      { 
+        x: this.x - this.size / 2 + (vertical ? padding : 0), 
+        y: this.y + this.size / 2 - (horizontal ? padding : 0) 
+      },
+      { 
+        x: this.x + this.size / 2 - (vertical ? padding : 0), 
+        y: this.y + this.size / 2 - (horizontal ? padding : 0) 
+      }
+    ];
+
+    for (let corner of corners) {
+      const tile = getTileAt(level, corner.x, corner.y);
+      if (isSolidTile(tile)) {
+        if (horizontal) {
+          if (this.vx > 0) {
+            this.x = Math.floor(corner.x / TILE_SIZE) * TILE_SIZE - this.size / 2;
+          } else if (this.vx < 0) {
+            this.x = Math.ceil(corner.x / TILE_SIZE) * TILE_SIZE + this.size / 2;
+          }
+          this.vx = 0;
+        }
+        if (vertical) {
+          if (this.vy > 0) {
+            this.y = Math.floor(corner.y / TILE_SIZE) * TILE_SIZE - this.size / 2;
+            this.onGround = true;
+          } else if (this.vy < 0) {
+            this.y = Math.ceil(corner.y / TILE_SIZE) * TILE_SIZE + this.size / 2;
+          }
+          this.vy = 0;
+        }
+      }
+    }
+  }
+
+  checkGround(level) {
+    const checkY = this.y + this.size / 2 + 1;
+    const leftTile = getTileAt(level, this.x - this.size / 2 + 2, checkY);
+    const rightTile = getTileAt(level, this.x + this.size / 2 - 2, checkY);
+    this.onGround = isSolidTile(leftTile) || isSolidTile(rightTile);
+  }
+
+  checkWalls(level) {
+    const checkLeft = this.x - this.size / 2 - 1;
+    const checkRight = this.x + this.size / 2 + 1;
+    const midY = this.y;
+    
+    const leftTile = getTileAt(level, checkLeft, midY);
+    const rightTile = getTileAt(level, checkRight, midY);
+    
+    if (isWallTile(leftTile) || isSolidTile(leftTile)) {
+      this.onWall = -1;
+    } else if (isWallTile(rightTile) || isSolidTile(rightTile)) {
+      this.onWall = 1;
+    } else {
+      this.onWall = 0;
+    }
+  }
+
+  checkTileInteractions(p, level) {
+    const col = Math.floor(this.x / TILE_SIZE);
+    const row = Math.floor(this.y / TILE_SIZE);
+    
+    // Check surrounding tiles
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        const r = row + dr;
+        const c = col + dc;
+        if (r >= 0 && r < level.tiles.length && c >= 0 && c < level.tiles[0].length) {
+          const tile = level.tiles[r][c];
+          const tileX = c * TILE_SIZE + TILE_SIZE / 2;
+          const tileY = r * TILE_SIZE + TILE_SIZE / 2;
+          
+          if (isSpikeTile(tile)) {
+            const dist = p.dist(this.x, this.y, tileX, tileY);
+            if (dist < this.size / 2 + TILE_SIZE / 2) {
+              this.dead = true;
+            }
+          } else if (isGoalTile(tile)) {
+            const dist = p.dist(this.x, this.y, tileX, tileY);
+            if (dist < this.size / 2 + TILE_SIZE / 2) {
+              this.reachedGoal = true;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  draw(p) {
+    p.push();
+    
+    // Draw player body (pink/red hair)
+    if (this.isDashing) {
+      p.fill(255, 100, 100, 150);
+    } else {
+      p.fill(255, 150, 150);
+    }
+    p.noStroke();
+    p.circle(this.x, this.y, this.size);
+    
+    // Draw face details
+    p.fill(50);
+    p.circle(this.x - 3, this.y - 2, 2); // Left eye
+    p.circle(this.x + 3, this.y - 2, 2); // Right eye
+    
+    // Show climbing state
+    if (this.isClimbing) {
+      p.stroke(100, 255, 100);
+      p.strokeWeight(2);
+      p.noFill();
+      p.circle(this.x, this.y, this.size + 4);
+    }
+    
+    // Show dash indicator
+    p.noStroke();
+    if (this.dashesRemaining > 0) {
+      p.fill(100, 200, 255);
+      p.circle(this.x, this.y - this.size / 2 - 5, 4);
+    }
+    
+    p.pop();
+  }
+}
+</code>
+
+<code filename="rendering.js">
+// rendering.js - Rendering functions for the game
+
+import { 
+  GAME_WIDTH, GAME_HEIGHT, TILE_SIZE, GAME_PHASES, gameState
+} from './globals.js';
+import { LEVELS } from './levels.js';
+
+export function drawStartScreen(p) {
+  // Use rect instead of background to respect scaling/translation
+  p.noStroke();
+  p.fill(20, 20, 40);
+  p.rect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+  
+  // Flashing start prompt, replacing the old title
+  if (Math.floor(p.frameCount / 30) % 2 === 0) {
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(255, 255, 100);
+    p.textSize(24); // Slightly larger for prominence
+    p.text("press enter to begin", GAME_WIDTH / 2, GAME_HEIGHT / 2); // Centered on canvas
+  }
+}
+
+export function drawPauseIndicator(p) {
+  p.push();
+  p.textAlign(p.RIGHT, p.TOP);
+  p.fill(255, 255, 100);
+  p.textSize(16);
+  p.text("PAUSED", GAME_WIDTH - 10, 10);
+  p.pop();
+}
+
+export function drawGameOverScreen(p) {
+  // Use rect instead of background to respect scaling/translation
+  p.noStroke();
+  p.fill(0, 0, 0, 200);
+  p.rect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+  
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN) {
+    p.fill(150, 255, 150);
+    p.textSize(48);
+    p.text("SUMMIT!", GAME_WIDTH / 2, GAME_HEIGHT / 2 - 60);
+    
+    p.fill(255);
+    p.textSize(20);
+    p.text("You reached the top of the mountain!", GAME_WIDTH / 2, GAME_HEIGHT / 2 - 20);
+  } else {
+    p.fill(255, 100, 100);
+    p.textSize(48);
+    p.text("GAME OVER", GAME_WIDTH / 2, GAME_HEIGHT / 2 - 60);
+    
+    p.fill(255);
+    p.textSize(20);
+    p.text("You ran out of lives", GAME_WIDTH / 2, GAME_HEIGHT / 2 - 20);
+  }
+  
+  p.fill(200, 200, 255);
+  p.textSize(24);
+  p.text(`Score: ${gameState.score}`, GAME_WIDTH / 2, GAME_HEIGHT / 2 + 20);
+  p.text(`Level: ${gameState.currentLevel + 1}/${LEVELS.length}`, GAME_WIDTH / 2, GAME_HEIGHT / 2 + 50);
+  
+  p.fill(255, 255, 100);
+  p.textSize(18);
+  p.text("PRESS R TO RESTART", GAME_WIDTH / 2, GAME_HEIGHT / 2 + 100);
+}
+
+export function drawLevel(p, level) {
+  if (!level) return;
+  
+  for (let row = 0; row < level.tiles.length; row++) {
+    for (let col = 0; col < level.tiles[row].length; col++) {
+      const tile = level.tiles[row][col];
+      const x = col * TILE_SIZE;
+      const y = row * TILE_SIZE;
+      
+      if (tile === 1) {
+        // Solid platform
+        p.fill(80, 80, 100);
+        p.stroke(100, 100, 120);
+        p.strokeWeight(1);
+        p.rect(x, y, TILE_SIZE, TILE_SIZE);
+      } else if (tile === 2) {
+        // Spikes
+        p.fill(200, 50, 50);
+        p.noStroke();
+        for (let i = 0; i < TILE_SIZE; i += TILE_SIZE / 3) {
+          p.triangle(
+            x + i, y + TILE_SIZE,
+            x + i + TILE_SIZE / 6, y + TILE_SIZE / 2,
+            x + i + TILE_SIZE / 3, y + TILE_SIZE
+          );
+        }
+      } else if (tile === 3) {
+        // Goal flag
+        p.fill(100, 255, 100);
+        p.noStroke();
+        p.rect(x + TILE_SIZE / 2 - 2, y + 5, 4, TILE_SIZE - 10);
+        p.fill(255, 200, 100);
+        p.triangle(
+          x + TILE_SIZE / 2, y + 5,
+          x + TILE_SIZE / 2, y + 12,
+          x + TILE_SIZE - 5, y + 8
+        );
+      } else if (tile === 4) {
+        // Strawberry
+        const key = `${gameState.currentLevel}-${row}-${col}`;
+        if (!gameState.collectedStrawberries.has(key)) {
+          p.fill(255, 100, 150);
+          p.noStroke();
+          p.circle(x + TILE_SIZE / 2, y + TILE_SIZE / 2, 8);
+          p.fill(100, 200, 100);
+          p.circle(x + TILE_SIZE / 2, y + TILE_SIZE / 2 - 5, 3);
+        }
+      } else if (tile === 5) {
+        // Climbable wall
+        p.fill(60, 80, 60);
+        p.noStroke();
+        p.rect(x, y, TILE_SIZE, TILE_SIZE);
+        // Add texture
+        p.stroke(80, 100, 80);
+        for (let i = 0; i < 4; i++) {
+          p.line(x + i * 5, y, x + i * 5, y + TILE_SIZE);
+        }
+      }
+    }
+  }
+}
+
+export function drawUI(p) {
+  p.push();
+  p.textAlign(p.LEFT, p.TOP);
+  p.fill(255);
+  p.noStroke();
+  p.textSize(16);
+  p.text(`Lives: ${gameState.lives}`, 10, 10);
+  p.text(`Score: ${gameState.score}`, 10, 30);
+  p.text(`Level: ${gameState.currentLevel + 1}/${LEVELS.length}`, 10, 50);
+  
+  // Show dashes
+  if (gameState.player) {
+    const dashText = gameState.player.dashesRemaining > 0 ? "Dash: Ready" : "Dash: Used";
+    p.text(dashText, GAME_WIDTH - 120, 10);
+  }
+  
+  p.pop();
+}
+
+export function drawBackground(p) {
+  // Gradient background
+  for (let y = 0; y < GAME_HEIGHT; y++) {
+    const inter = y / GAME_HEIGHT;
+    const c1 = [20, 20, 40];
+    const c2 = [60, 40, 80];
+    const col = [
+      c1[0] + (c2[0] - c1[0]) * inter,
+      c1[1] + (c2[1] - c1[1]) * inter,
+      c1[2] + (c2[2] - c1[2]) * inter
+    ];
+    p.stroke(...col);
+    p.line(0, y, GAME_WIDTH, y);
+  }
+}
+</code>
+
+<code filename="game.js">
+// game.js - Main game file
+
+import { 
+  CANVAS_WIDTH, CANVAS_HEIGHT, GAME_WIDTH, GAME_HEIGHT, TARGET_FPS, GAME_PHASES, CONTROL_MODES, gameState
+} from './globals.js';
+import { getLevelData } from './levels.js';
+import { InputState, updateInputFromKeyboard } from './input.js';
+import { initGame, updateGame } from './game_logic.js';
+import { 
+  drawStartScreen, drawPauseIndicator, drawGameOverScreen, 
+  drawLevel, drawUI, drawBackground 
+} from './rendering.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  let inputs;
+
+  // Initialize logs
+  p.logs = {
+    game_info: [],
+    inputs: [],
+    player_info: []
+  };
+
+  // New function for automatic game restart
+  function autoRestartGame() {
+    initGame(p); // Reset game state
+    gameState.gamePhase = GAME_PHASES.PLAYING; // Go directly to playing
+    gameState.autoRestartTimer = null; // Clear timer
+    p.logs.game_info.push({
+      data: { event: "game_auto_restarted", phase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(TARGET_FPS);
+    p.randomSeed(42);
+    
+    inputs = new InputState();
+    
+    // Log initialization
+    p.logs.game_info.push({
+      data: { event: "setup_complete", phase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+
+  p.draw = function() {
+    // Clear background to black (borders)
+    p.background(0);
+    
+    // Calculate scaling to fit game in canvas
+    // We want to fit 400x600 (Game) into 600x400 (Canvas)
+    // Scale is limited by height: 400 / 600 = 0.666...
+    const scale = CANVAS_HEIGHT / GAME_HEIGHT;
+    const tx = (CANVAS_WIDTH - GAME_WIDTH * scale) / 2;
+    const ty = (CANVAS_HEIGHT - GAME_HEIGHT * scale) / 2; // Should be 0
+    
+    p.push();
+    p.translate(tx, ty);
+    p.scale(scale);
+    
+    // Reset autoRestartTimer if not in game over phase (Pattern 3)
+    if (gameState.gamePhase !== GAME_PHASES.GAME_OVER_WIN &&
+        gameState.gamePhase !== GAME_PHASES.GAME_OVER_LOSE) {
+      gameState.autoRestartTimer = null;
+    }
+
+    if (gameState.gamePhase === GAME_PHASES.START) {
+      drawStartScreen(p);
+    } else if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      // Get input for HUMAN control mode
+      updateInputFromKeyboard(p, inputs);
+      
+      // Update game
+      updateGame(p, inputs);
+      
+      // Render
+      drawBackground(p);
+      const level = getLevelData(gameState.currentLevel);
+      drawLevel(p, level);
+      
+      // Draw entities
+      for (let entity of gameState.entities) {
+        if (entity.draw) {
+          entity.draw(p);
+        }
+      }
+      
+      drawUI(p);
+    } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+      // Still draw the game, but frozen
+      drawBackground(p);
+      const level = getLevelData(gameState.currentLevel);
+      drawLevel(p, level);
+      
+      for (let entity of gameState.entities) {
+        if (entity.draw) {
+          entity.draw(p);
+        }
+      }
+      
+      drawUI(p);
+      drawPauseIndicator(p);
+    } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || 
+               gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+      // Draw final game state
+      drawBackground(p);
+      const level = getLevelData(gameState.currentLevel);
+      drawLevel(p, level);
+      
+      for (let entity of gameState.entities) {
+        if (entity.draw) {
+          entity.draw(p);
+        }
+      }
+      
+      drawUI(p);
+      drawGameOverScreen(p);
+
+      // Auto-restart logic (Pattern 1)
+      if (gameState.autoRestartTimer === null) {
+          gameState.autoRestartTimer = p.frameCount;
+      }
+      const framesToWait = gameState.autoRestartDelayFrames;
+      if (p.frameCount - gameState.autoRestartTimer > framesToWait) {
+          autoRestartGame();
+      }
+    }
+    
+    p.pop(); // End scaling/translation
+  };
+
+  p.keyPressed = function() {
+    // Log input
+    p.logs.inputs.push({
+      input_type: "keyPressed",
+      data: { key: p.key, keyCode: p.keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    
+    // Handle game phase transitions
+    if (p.keyCode === 13) { // ENTER
+      if (gameState.gamePhase === GAME_PHASES.START) {
+        gameState.gamePhase = GAME_PHASES.PLAYING;
+        initGame(p);
+        
+        p.logs.game_info.push({
+          data: { event: "game_started", phase: gameState.gamePhase },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    } else if (p.keyCode === 27) { // ESC
+      if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+        gameState.gamePhase = GAME_PHASES.PAUSED;
+        
+        p.logs.game_info.push({
+          data: { event: "game_paused", phase: gameState.gamePhase },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+        gameState.gamePhase = GAME_PHASES.PLAYING;
+        
+        p.logs.game_info.push({
+          data: { event: "game_resumed", phase: gameState.gamePhase },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    } else if (p.keyCode === 82) { // R
+      if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || 
+          gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE ||
+          gameState.gamePhase === GAME_PHASES.PLAYING ||
+          gameState.gamePhase === GAME_PHASES.PAUSED) {
+        gameState.gamePhase = GAME_PHASES.START; // Manual restart goes to START screen
+        gameState.autoRestartTimer = null; // Cancel any pending auto-restart
+        
+        p.logs.game_info.push({
+          data: { event: "game_restarted", phase: gameState.gamePhase },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+    
+    // Prevent default for game keys
+    if ([13, 27, 32, 37, 38, 39, 40, 82, 90].includes(p.keyCode)) {
+      return false;
+    }
+  };
+});
+
+// Expose globally
+window.gameInstance = gameInstance;
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  // Ensure mode is always HUMAN since test modes are removed
+  gameState.controlMode = CONTROL_MODES.HUMAN;
+  
+  // Update button states
+  const humanModeBtn = document.getElementById('humanModeBtn');
+  if (humanModeBtn) {
+    humanModeBtn.classList.add('active');
+  }
+  
+  gameInstance.logs.game_info.push({
+    data: { event: "control_mode_changed", mode: gameState.controlMode },
+    framecount: gameInstance.frameCount,
+    timestamp: Date.now()
+  });
+};
+</code>

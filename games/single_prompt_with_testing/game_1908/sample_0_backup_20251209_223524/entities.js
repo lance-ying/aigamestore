@@ -1,0 +1,273 @@
+/**
+ * entities.js
+ * Player, Enemies, and other dynamic actors.
+ */
+
+import { gridToScreen, getDepth } from './iso.js';
+import { gameState, PALETTE, TILE_SIZE, ANIMATION_SPEED } from './globals.js';
+import { lerp } from './utils.js';
+
+export class Entity {
+    constructor(x, y, z) {
+        this.gridX = x;
+        this.gridY = y;
+        this.gridZ = z;
+        
+        this.x = x;
+        this.y = y;
+        this.z = z;
+        
+        this.targetX = x;
+        this.targetY = y;
+        this.targetZ = z;
+        
+        this.isMoving = false;
+        this.moveSpeed = 0.1;
+    }
+    
+    update() {
+        if (this.isMoving) {
+            this.x = lerp(this.x, this.targetX, this.moveSpeed);
+            this.y = lerp(this.y, this.targetY, this.moveSpeed);
+            this.z = lerp(this.z, this.targetZ, this.moveSpeed);
+            
+            const d = Math.abs(this.x - this.targetX) + Math.abs(this.y - this.targetY) + Math.abs(this.z - this.targetZ);
+            if (d < 0.01) {
+                this.x = this.targetX;
+                this.y = this.targetY;
+                this.z = this.targetZ;
+                this.gridX = Math.round(this.targetX);
+                this.gridY = Math.round(this.targetY);
+                this.gridZ = Math.round(this.targetZ);
+                this.isMoving = false;
+                this.onMoveComplete();
+            }
+        }
+    }
+    
+    onMoveComplete() {}
+    
+    render(p, cameraX, cameraY) {}
+    
+    getSortDepth() {
+        return getDepth(this.x, this.y, this.z) + 0.5; // Slightly in front of floor
+    }
+}
+
+export class Player extends Entity {
+    constructor(x, y, z) {
+        super(x, y, z);
+        this.moveSpeed = 0.15;
+    }
+    
+    tryMove(dx, dy) {
+        if (this.isMoving) return;
+        
+        // We need to find a neighbor that corresponds to the visual input direction
+        // dx, dy are screen space (-1, 0, 1)
+        // Current position
+        const neighbors = gameState.level.getNeighbors(this.gridX, this.gridY, this.gridZ);
+        
+        if (!neighbors) return;
+
+        // Current screen pos
+        const currentScreen = gridToScreen(this.gridX, this.gridY, this.gridZ);
+        
+        let bestNeighbor = null;
+        let minAngle = Infinity;
+        
+        // Desired screen vector
+        const inputVec = { x: dx, y: dy };
+        
+        neighbors.forEach(n => {
+            const nPos = n.pos; // {x, y, z}
+            const nScreen = gridToScreen(nPos.x, nPos.y, nPos.z);
+            
+            // Vector to neighbor
+            const vToN = { x: nScreen.x - currentScreen.x, y: nScreen.y - currentScreen.y };
+            const mag = Math.sqrt(vToN.x*vToN.x + vToN.y*vToN.y);
+            if (mag === 0) return;
+            
+            // Normalize
+            const vToNNorm = { x: vToN.x / mag, y: vToN.y / mag };
+            
+            // Dot product to find alignment
+            // We want max dot product (closest angle)
+            // But inputs are cardinal (1,0), (-1,0)...
+            const dot = vToNNorm.x * inputVec.x + vToNNorm.y * inputVec.y;
+            
+            // Threshold for direction (must be somewhat aligned, > 0.5 means < 60 degrees)
+            if (dot > 0.5) {
+                if (!bestNeighbor || dot > minAngle) { // Wait, dot > minAngle logic is wrong naming
+                    // We want highest dot
+                    if (!bestNeighbor || dot > bestDot) {
+                        bestNeighbor = n;
+                        bestDot = dot;
+                    }
+                }
+            }
+        });
+        
+        let bestDot = -1; // re-init for logic correctness above, simplified here:
+        
+        // Clean implementation
+        bestNeighbor = null;
+        let maxDot = -1;
+        
+        for (const n of neighbors) {
+            const nScreen = gridToScreen(n.pos.x, n.pos.y, n.pos.z);
+            const vx = nScreen.x - currentScreen.x;
+            const vy = nScreen.y - currentScreen.y;
+            const mag = Math.sqrt(vx*vx + vy*vy);
+            if (mag === 0) continue;
+            
+            const nx = vx / mag;
+            const ny = vy / mag;
+            
+            const dot = nx * dx + ny * dy;
+            
+            if (dot > 0.4 && dot > maxDot) {
+                maxDot = dot;
+                bestNeighbor = n;
+            }
+        }
+        
+        if (bestNeighbor) {
+            // Move there
+            this.targetX = bestNeighbor.pos.x;
+            this.targetY = bestNeighbor.pos.y;
+            this.targetZ = bestNeighbor.pos.z;
+            this.isMoving = true;
+            
+            // Log move
+            gameState.score += 1; // Small reward for moving
+        }
+    }
+    
+    update() {
+        super.update();
+        
+        // Check for Goal
+        if (!this.isMoving) {
+            const block = gameState.level.getNodeAt(this.gridX, this.gridY, this.gridZ);
+            if (block && block.type === 'GOAL') {
+                // Level Complete
+                if (gameState.gamePhase === "PLAYING") {
+                    // Go to next level
+                    gameState.currentLevelIndex++;
+                    gameState.gamePhase = "TRANSITION"; // Or handle immediately
+                }
+            }
+        }
+    }
+    
+    render(p, cameraX, cameraY) {
+        const pos = gridToScreen(this.x, this.y, this.z);
+        const scrX = pos.x + cameraX;
+        const scrY = pos.y + cameraY;
+        
+        // Draw Shadow
+        p.fill(PALETTE.player_shadow);
+        p.noStroke();
+        p.ellipse(scrX, scrY, 15, 8);
+        
+        // Draw Pilgrim (Cone/Cylinder)
+        p.fill(PALETTE.player);
+        p.stroke(200);
+        p.strokeWeight(1);
+        
+        // Body
+        p.beginShape();
+        p.vertex(scrX - 6, scrY);
+        p.vertex(scrX + 6, scrY);
+        p.vertex(scrX + 4, scrY - 25);
+        p.vertex(scrX - 4, scrY - 25);
+        p.endShape(p.CLOSE);
+        
+        // Head
+        p.fill(PALETTE.player);
+        p.ellipse(scrX, scrY - 25, 10, 10);
+        
+        // Hat (Cone)
+        p.beginShape();
+        p.vertex(scrX - 5, scrY - 28);
+        p.vertex(scrX + 5, scrY - 28);
+        p.vertex(scrX, scrY - 45);
+        p.endShape(p.CLOSE);
+    }
+}
+
+export class Crow extends Entity {
+    constructor(x, y, z, patrolPath) {
+        super(x, y, z);
+        this.patrolPath = patrolPath; // Array of {x,y,z}
+        this.patrolIndex = 0;
+        this.moveSpeed = 0.05;
+        this.pauseTimer = 0;
+        this.state = 'IDLE'; // IDLE, MOVING, WAITING
+    }
+    
+    update() {
+        if (this.state === 'WAITING') {
+            this.pauseTimer++;
+            if (this.pauseTimer > 60) {
+                this.state = 'MOVING';
+                this.nextPatrolPoint();
+            }
+            return;
+        }
+        
+        super.update();
+        
+        // Interaction with Player
+        if (gameState.player) {
+            const dx = this.x - gameState.player.x;
+            const dy = this.y - gameState.player.y;
+            const dz = this.z - gameState.player.z;
+            const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+            if (dist < 0.5) {
+                // Caw! Push player back or restart
+                // For simplicity, restart level
+                 gameState.gamePhase = "GAME_OVER_LOSE";
+            }
+        }
+    }
+    
+    onMoveComplete() {
+        this.state = 'WAITING';
+        this.pauseTimer = 0;
+    }
+    
+    nextPatrolPoint() {
+        this.patrolIndex = (this.patrolIndex + 1) % this.patrolPath.length;
+        const next = this.patrolPath[this.patrolIndex];
+        this.targetX = next.x;
+        this.targetY = next.y;
+        this.targetZ = next.z;
+        this.isMoving = true;
+    }
+    
+    render(p, cameraX, cameraY) {
+        const pos = gridToScreen(this.x, this.y, this.z);
+        const scrX = pos.x + cameraX;
+        const scrY = pos.y + cameraY;
+        
+        // Shadow
+        p.fill(0, 0, 0, 50);
+        p.noStroke();
+        p.ellipse(scrX, scrY, 15, 8);
+        
+        // Body
+        p.fill(PALETTE.crow);
+        p.rectMode(p.CENTER);
+        p.rect(scrX, scrY - 15, 12, 25, 5);
+        
+        // Beak
+        p.fill(PALETTE.crow_beak);
+        p.triangle(scrX + 4, scrY - 22, scrX + 4, scrY - 18, scrX + 12, scrY - 20);
+        
+        // Eye
+        p.fill(255);
+        p.circle(scrX + 2, scrY - 20, 3);
+    }
+}

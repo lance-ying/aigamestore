@@ -1,0 +1,1429 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you make the controls more intuitive, right now its kind of confusing, especially knowing when I select a piece or not, can you fix that and also can you move the cannon a bit lower so that I can see the balls full trajectory? and can you also make it so that level 1 and 2 a re easy, level 3 and 4 are medium difficult, and level 5 - 6 are more difficult (this can be determined by the number of cups and the number of platforms available and number of balls available, make it good, thanks!
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Cannon Shot</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+      .control-button:hover { background: #555; }
+      .control-button.active:hover { background: #0056b3; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Cannon Shot</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic Mechanics)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win Condition)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Guide cannon balls into buckets by strategically positioning ramps and deflectors! Each level gives you a limited number of balls to fill all buckets. Position the movable objects carefully, then fire the cannon to watch physics do its magic. Fill every bucket with at least one ball to win and unlock the next level. Run out of balls before completing the objective, and you'll need to try again!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">
+        <strong>Controls:</strong><br>
+        Arrow Keys (←→): Select object (when not grabbed)<br>
+        Space: Pick up/drop object (toggle grab mode)<br>
+        Arrow Keys (↑↓←→): Move grabbed object position<br>
+        A/D: Rotate grabbed object<br>
+        Enter: Start game from menu<br>
+        Esc: Pause/unpause game<br>
+        R: Restart from game over screen<br>
+        Z: Fire cannon (when in playing phase and not editing)
+      </p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+// globals.js - Global constants and game state
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const gameState = {
+  player: null,
+  entities: [],
+  score: 0,
+  gamePhase: "START", // "START", "PLAYING", "GAME_OVER_WIN", "GAME_OVER_LOSE", "PAUSED"
+  controlMode: "HUMAN", // "HUMAN", "TEST_1", "TEST_2", etc.
+  engine: null,
+  world: null,
+  
+  // Cannon Shot specific state
+  cannon: null,
+  balls: [],
+  buckets: [],
+  movableObjects: [],
+  selectedObjectIndex: -1,
+  isGrabbing: false,
+  ballsRemaining: 0,
+  ballsFired: 0,
+  currentLevel: 1,
+  bucketsFilledCount: 0,
+  
+  // Testing state
+  testFrameCount: 0,
+  testState: null
+};
+
+// Game constants
+export const BALL_RADIUS = 8;
+export const CANNON_SIZE = 40;
+export const BUCKET_WIDTH = 60;
+export const BUCKET_HEIGHT = 50;
+export const MAX_BALLS_PER_LEVEL = 15;
+export const TOTAL_LEVELS = 6;
+
+export function getGameState() {
+  return gameState;
+}
+
+// Expose globally
+if (typeof window !== 'undefined') {
+  window.getGameState = getGameState;
+}
+</file>
+
+<file name="game.js">
+// game.js - Main game logic with p5.js and Matter.js
+
+const p5 = window.p5;
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Engine, World, Body } = Matter;
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, MAX_BALLS_PER_LEVEL, TOTAL_LEVELS } from './globals.js';
+import { Cannon, Ball, Bucket, MovableObject, Wall } from './entities.js';
+import { setupCollisionHandling } from './physics.js';
+import { getLevelConfig, getTotalLevels } from './levels.js';
+
+let lastPlayerLogTime = 0;
+const PLAYER_LOG_INTERVAL = 500;
+
+function initializeGame(p) {
+  // Clear existing entities
+  gameState.entities.forEach(entity => {
+    if (entity.remove) entity.remove();
+  });
+  
+  gameState.entities = [];
+  gameState.balls = [];
+  gameState.buckets = [];
+  gameState.movableObjects = [];
+  gameState.selectedObjectIndex = -1;
+  gameState.isGrabbing = false;
+  
+  // Get level config
+  const levelConfig = getLevelConfig(gameState.currentLevel);
+  gameState.ballsRemaining = levelConfig.ballCount;
+  gameState.ballsFired = 0;
+  gameState.bucketsFilledCount = 0;
+  
+  // Create cannon
+  gameState.cannon = new Cannon(p, 100, 100);
+  
+  // Create boundaries (walls)
+  const wallThickness = 20;
+  
+  // Bottom
+  const bottomWall = new Wall(p, CANVAS_WIDTH / 2, CANVAS_HEIGHT + wallThickness / 2, CANVAS_WIDTH, wallThickness);
+  gameState.entities.push(bottomWall);
+  
+  // Left
+  const leftWall = new Wall(p, -wallThickness / 2, CANVAS_HEIGHT / 2, wallThickness, CANVAS_HEIGHT);
+  gameState.entities.push(leftWall);
+  
+  // Right
+  const rightWall = new Wall(p, CANVAS_WIDTH + wallThickness / 2, CANVAS_HEIGHT / 2, wallThickness, CANVAS_HEIGHT);
+  gameState.entities.push(rightWall);
+  
+  // Create buckets
+  levelConfig.buckets.forEach((bucketData, index) => {
+    const bucket = new Bucket(p, bucketData.x, bucketData.y, index);
+    gameState.buckets.push(bucket);
+    gameState.entities.push(bucket);
+  });
+  
+  // Create movable objects
+  levelConfig.movableObjects.forEach(objData => {
+    const obj = new MovableObject(
+      p,
+      objData.x,
+      objData.y,
+      objData.width,
+      objData.height,
+      objData.angle,
+      objData.type
+    );
+    gameState.movableObjects.push(obj);
+    gameState.entities.push(obj);
+  });
+}
+
+function resetGame(p) {
+  // Remove all physics bodies
+  gameState.entities.forEach(entity => {
+    if (entity.remove) entity.remove();
+  });
+  
+  gameState.balls.forEach(ball => {
+    if (ball.remove) ball.remove();
+  });
+  
+  // Reset to level 1
+  gameState.currentLevel = 1;
+  gameState.score = 0;
+  gameState.testFrameCount = 0;
+  gameState.testState = null;
+  
+  initializeGame(p);
+}
+
+function restartCurrentLevel(p) {
+  // Remove all physics bodies
+  gameState.entities.forEach(entity => {
+    if (entity.remove) entity.remove();
+  });
+  
+  gameState.balls.forEach(ball => {
+    if (ball.remove) ball.remove();
+  });
+  
+  // Keep current level but reinitialize
+  gameState.testFrameCount = 0;
+  gameState.testState = null;
+  
+  initializeGame(p);
+}
+
+function advanceToNextLevel(p) {
+  // Remove all physics bodies
+  gameState.entities.forEach(entity => {
+    if (entity.remove) entity.remove();
+  });
+  
+  gameState.balls.forEach(ball => {
+    if (ball.remove) ball.remove();
+  });
+  
+  // Advance level
+  gameState.currentLevel++;
+  gameState.testFrameCount = 0;
+  gameState.testState = null;
+  
+  initializeGame(p);
+}
+
+function updateGame(p) {
+  // Update cannon
+  if (gameState.cannon) {
+    gameState.cannon.update();
+  }
+  
+  // Update all entities
+  gameState.entities.forEach(entity => {
+    if (entity.update) {
+      entity.update();
+    }
+  });
+  
+  // Update balls
+  gameState.balls.forEach(ball => {
+    if (ball.update) {
+      ball.update();
+    }
+  });
+  
+  // Check bucket status
+  gameState.bucketsFilledCount = gameState.buckets.filter(b => b.filled).length;
+  
+  // Check win condition
+  if (gameState.bucketsFilledCount === gameState.buckets.length) {
+    gameState.gamePhase = "GAME_OVER_WIN";
+    p.logs.game_info.push({
+      data: { gamePhase: "GAME_OVER_WIN", score: gameState.score, level: gameState.currentLevel },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+  
+  // Check lose condition
+  const allBallsSettled = gameState.balls.every(ball => !ball.active || ball.inBucket);
+  if (gameState.ballsRemaining === 0 && allBallsSettled && gameState.bucketsFilledCount < gameState.buckets.length) {
+    gameState.gamePhase = "GAME_OVER_LOSE";
+    p.logs.game_info.push({
+      data: { gamePhase: "GAME_OVER_LOSE", score: gameState.score, level: gameState.currentLevel },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+  
+  // Log player info periodically
+  const now = Date.now();
+  if (now - lastPlayerLogTime > PLAYER_LOG_INTERVAL && gameState.cannon) {
+    p.logs.player_info.push({
+      screen_x: gameState.cannon.x,
+      screen_y: gameState.cannon.y,
+      game_x: gameState.cannon.x,
+      game_y: gameState.cannon.y,
+      framecount: p.frameCount,
+      timestamp: now
+    });
+    lastPlayerLogTime = now;
+  }
+}
+
+function renderStartScreen(p) {
+  p.background(20, 30, 50);
+  
+  // Title
+  p.fill(255, 220, 100);
+  p.textSize(48);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.text("CANNON SHOT", CANVAS_WIDTH / 2, 80);
+  
+  // Description
+  p.fill(200, 200, 220);
+  p.textSize(16);
+  p.text("Position ramps and deflectors to guide balls into buckets!", CANVAS_WIDTH / 2, 150);
+  
+  // Instructions
+  p.textSize(14);
+  p.textAlign(p.LEFT, p.TOP);
+  p.fill(180, 180, 200);
+  
+  const instructions = [
+    "← → : Select object (when not grabbed)",
+    "SPACE: Pick up / Drop object",
+    "Arrow Keys: Move object (when grabbed)",
+    "A / D: Rotate object (when grabbed)",
+    "Z: Fire cannon",
+    "ESC: Pause",
+    "R: Restart level"
+  ];
+  
+  let yPos = 190;
+  instructions.forEach(instr => {
+    p.text(instr, 80, yPos);
+    yPos += 25;
+  });
+  
+  // Start prompt
+  p.fill(255, 255, 100);
+  p.textSize(20);
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  // Blinking effect
+  if (p.frameCount % 60 < 40) {
+    p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 360);
+  }
+}
+
+function renderGame(p) {
+  // Background
+  p.background(220, 230, 255);
+  
+  // Sky gradient
+  for (let i = 0; i < CANVAS_HEIGHT / 2; i++) {
+    const inter = p.map(i, 0, CANVAS_HEIGHT / 2, 0, 1);
+    const c = p.lerpColor(p.color(135, 206, 235), p.color(220, 230, 255), inter);
+    p.stroke(c);
+    p.line(0, i, CANVAS_WIDTH, i);
+  }
+  
+  // Ground
+  p.noStroke();
+  p.fill(100, 180, 100);
+  p.rect(0, CANVAS_HEIGHT - 80, CANVAS_WIDTH, 80);
+  
+  // Render all entities
+  gameState.entities.forEach(entity => {
+    if (entity.render) {
+      entity.render();
+    }
+  });
+  
+  // Render cannon
+  if (gameState.cannon) {
+    gameState.cannon.render();
+  }
+  
+  // Render balls
+  gameState.balls.forEach(ball => {
+    if (ball.render) {
+      ball.render();
+    }
+  });
+  
+  // UI
+  renderUI(p);
+}
+
+function renderUI(p) {
+  // Panel background
+  p.fill(40, 40, 60, 200);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, 40);
+  
+  // Level
+  p.fill(255, 220, 100);
+  p.textSize(16);
+  p.textAlign(p.LEFT, p.CENTER);
+  const totalLevels = getTotalLevels();
+  p.text(`Level: ${gameState.currentLevel}/${totalLevels}`, 10, 20);
+  
+  // Balls remaining
+  p.fill(255);
+  p.text(`Balls: ${gameState.ballsRemaining}`, 130, 20);
+  
+  // Buckets filled
+  const bucketsTotal = gameState.buckets.length;
+  const bucketsFilled = gameState.bucketsFilledCount;
+  p.text(`Buckets: ${bucketsFilled}/${bucketsTotal}`, 230, 20);
+  
+  // Score
+  p.textAlign(p.RIGHT, p.CENTER);
+  p.text(`Score: ${gameState.score}`, CANVAS_WIDTH - 10, 20);
+  
+  // Edit mode indicator
+  if (gameState.isGrabbing && gameState.selectedObjectIndex >= 0) {
+    p.fill(255, 255, 100);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(14);
+    p.text("EDITING - Arrows to move, A/D to rotate, SPACE to drop", CANVAS_WIDTH / 2, 55);
+  }
+}
+
+function renderPausedOverlay(p) {
+  p.fill(0, 0, 0, 150);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.fill(255);
+  p.textSize(48);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.text("PAUSED", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  
+  p.textSize(20);
+  p.text("Press ESC to resume", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+}
+
+function renderGameOver(p) {
+  // Dim background
+  p.fill(0, 0, 0, 100);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Panel
+  p.fill(40, 40, 60, 240);
+  p.rect(100, 100, CANVAS_WIDTH - 200, CANVAS_HEIGHT - 200);
+  
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  const totalLevels = getTotalLevels();
+  const isLastLevel = gameState.currentLevel >= totalLevels;
+  
+  if (gameState.gamePhase === "GAME_OVER_WIN") {
+    p.fill(100, 255, 100);
+    p.textSize(42);
+    
+    if (isLastLevel) {
+      p.text("GAME COMPLETE!", CANVAS_WIDTH / 2, 150);
+    } else {
+      p.text("LEVEL COMPLETE!", CANVAS_WIDTH / 2, 150);
+    }
+    
+    p.fill(255);
+    p.textSize(24);
+    p.text(`Level ${gameState.currentLevel}/${totalLevels}`, CANVAS_WIDTH / 2, 200);
+    p.textSize(20);
+    p.text(`Score: ${gameState.score}`, CANVAS_WIDTH / 2, 235);
+    p.text(`Buckets: ${gameState.bucketsFilledCount}/${gameState.buckets.length}`, CANVAS_WIDTH / 2, 265);
+    
+    p.fill(255, 255, 100);
+    p.textSize(18);
+    
+    if (isLastLevel) {
+      p.text("Congratulations! You beat all levels!", CANVAS_WIDTH / 2, 305);
+      p.text("Press R to play again", CANVAS_WIDTH / 2, 330);
+    } else {
+      p.text("Press ENTER for next level", CANVAS_WIDTH / 2, 305);
+      p.text("Press R to restart this level", CANVAS_WIDTH / 2, 330);
+    }
+  } else {
+    p.fill(255, 100, 100);
+    p.textSize(42);
+    p.text("LEVEL FAILED", CANVAS_WIDTH / 2, 160);
+    
+    p.fill(255);
+    p.textSize(20);
+    p.text("Not all buckets were filled!", CANVAS_WIDTH / 2, 210);
+    p.text(`Level ${gameState.currentLevel}/${totalLevels}`, CANVAS_WIDTH / 2, 240);
+    p.text(`Buckets: ${gameState.bucketsFilledCount}/${gameState.buckets.length}`, CANVAS_WIDTH / 2, 270);
+    
+    p.fill(255, 255, 100);
+    p.textSize(18);
+    p.text("Press R to retry this level", CANVAS_WIDTH / 2, 320);
+  }
+}
+
+function handlePlayerInput(p) {
+  if (gameState.gamePhase !== "PLAYING") return;
+  
+  // When grabbing an object, use arrow keys to move it
+  if (gameState.isGrabbing && gameState.selectedObjectIndex >= 0) {
+    const obj = gameState.movableObjects[gameState.selectedObjectIndex];
+    const moveSpeed = 2;
+    
+    // Arrow key movement
+    if (p.keyIsDown(37)) { // Left arrow
+      const newX = obj.body.position.x - moveSpeed;
+      obj.moveTo(newX, obj.body.position.y);
+    }
+    
+    if (p.keyIsDown(39)) { // Right arrow
+      const newX = obj.body.position.x + moveSpeed;
+      obj.moveTo(newX, obj.body.position.y);
+    }
+    
+    if (p.keyIsDown(38)) { // Up arrow
+      const newY = obj.body.position.y - moveSpeed;
+      obj.moveTo(obj.body.position.x, newY);
+    }
+    
+    if (p.keyIsDown(40)) { // Down arrow
+      const newY = obj.body.position.y + moveSpeed;
+      obj.moveTo(obj.body.position.x, newY);
+    }
+    
+    // Rotation controls
+    if (p.keyIsDown(65)) { // A - rotate left
+      obj.rotate(-0.05);
+    }
+    
+    if (p.keyIsDown(68)) { // D - rotate right
+      obj.rotate(0.05);
+    }
+  } else {
+    // Selection controls (only when not grabbing)
+    if (p.keyIsDown(37)) { // Left arrow
+      if (p.frameCount % 10 === 0) {
+        selectPreviousObject();
+      }
+    }
+    
+    if (p.keyIsDown(39)) { // Right arrow
+      if (p.frameCount % 10 === 0) {
+        selectNextObject();
+      }
+    }
+  }
+}
+
+function selectNextObject() {
+  if (gameState.movableObjects.length === 0) return;
+  
+  if (gameState.selectedObjectIndex >= 0) {
+    gameState.movableObjects[gameState.selectedObjectIndex].selected = false;
+  }
+  
+  gameState.selectedObjectIndex = (gameState.selectedObjectIndex + 1) % gameState.movableObjects.length;
+  gameState.movableObjects[gameState.selectedObjectIndex].selected = true;
+}
+
+function selectPreviousObject() {
+  if (gameState.movableObjects.length === 0) return;
+  
+  if (gameState.selectedObjectIndex >= 0) {
+    gameState.movableObjects[gameState.selectedObjectIndex].selected = false;
+  }
+  
+  gameState.selectedObjectIndex--;
+  if (gameState.selectedObjectIndex < 0) {
+    gameState.selectedObjectIndex = gameState.movableObjects.length - 1;
+  }
+  
+  gameState.movableObjects[gameState.selectedObjectIndex].selected = true;
+}
+
+function handleTestMode(p) {
+  gameState.testFrameCount++;
+  
+  if (gameState.controlMode === "TEST_1") {
+    // Test basic mechanics
+    if (gameState.testFrameCount === 30) {
+      selectNextObject();
+    }
+    if (gameState.testFrameCount === 60) {
+      selectNextObject();
+    }
+    if (gameState.testFrameCount === 90) {
+      toggleGrab();
+    }
+    if (gameState.testFrameCount >= 91 && gameState.testFrameCount <= 120) {
+      if (gameState.selectedObjectIndex >= 0) {
+        gameState.movableObjects[gameState.selectedObjectIndex].rotate(0.05);
+      }
+    }
+    if (gameState.testFrameCount === 130) {
+      toggleGrab();
+    }
+    if (gameState.testFrameCount === 160) {
+      fireCannon();
+    }
+    if (gameState.testFrameCount === 180) {
+      fireCannon();
+    }
+    if (gameState.testFrameCount === 200) {
+      fireCannon();
+    }
+  } else if (gameState.controlMode === "TEST_2") {
+    // Test win condition - position objects optimally
+    if (gameState.testFrameCount === 30) {
+      // Position first object to guide to first bucket
+      if (gameState.movableObjects.length > 0) {
+        const bucket1 = gameState.buckets[0];
+        gameState.movableObjects[0].moveTo(
+          (gameState.cannon.x + bucket1.x) / 2,
+          (gameState.cannon.y + bucket1.y) / 2
+        );
+        gameState.movableObjects[0].rotate(0.5);
+      }
+    }
+    if (gameState.testFrameCount === 60) {
+      // Position second object to guide to second bucket
+      if (gameState.movableObjects.length > 1 && gameState.buckets.length > 1) {
+        const bucket2 = gameState.buckets[1];
+        gameState.movableObjects[1].moveTo(
+          (gameState.cannon.x + bucket2.x) / 2 + 50,
+          (gameState.cannon.y + bucket2.y) / 2
+        );
+        gameState.movableObjects[1].rotate(-0.5);
+      }
+    }
+    if (gameState.testFrameCount >= 100 && gameState.testFrameCount < 300) {
+      if (gameState.testFrameCount % 10 === 0) {
+        fireCannon();
+      }
+    }
+  } else if (gameState.controlMode === "TEST_3") {
+    // Test lose condition - fire balls away from buckets
+    if (gameState.testFrameCount === 30) {
+      if (gameState.movableObjects.length > 0) {
+        gameState.movableObjects[0].moveTo(100, 300);
+        gameState.movableObjects[0].rotate(Math.PI / 2);
+      }
+    }
+    if (gameState.testFrameCount >= 60 && gameState.testFrameCount < 200) {
+      if (gameState.testFrameCount % 8 === 0) {
+        fireCannon();
+      }
+    }
+  }
+}
+
+function toggleGrab() {
+  if (gameState.selectedObjectIndex >= 0) {
+    gameState.isGrabbing = !gameState.isGrabbing;
+  }
+}
+
+function fireCannon() {
+  if (gameState.cannon && !gameState.isGrabbing) {
+    gameState.cannon.fire();
+  }
+}
+
+// Main p5.js instance
+let gameInstance = new p5(p => {
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Create Matter.js engine and world
+    const engine = Engine.create();
+    const world = engine.world;
+    world.gravity.y = 0.6;
+    
+    gameState.engine = engine;
+    gameState.world = world;
+    
+    // Setup collision handling
+    setupCollisionHandling(engine, p);
+    
+    // Initialize p5.logs
+    p.logs = {
+      game_info: [],
+      player_info: [],
+      inputs: []
+    };
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: { gamePhase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    
+    // Initialize game
+    initializeGame(p);
+  };
+  
+  p.draw = function() {
+    // Update Matter.js physics
+    if (gameState.gamePhase === "PLAYING") {
+      Engine.update(gameState.engine, 1000 / 60);
+    }
+    
+    // Handle game phases
+    switch (gameState.gamePhase) {
+      case "START":
+        renderStartScreen(p);
+        break;
+        
+      case "PLAYING":
+        if (gameState.controlMode !== "HUMAN") {
+          handleTestMode(p);
+        } else {
+          handlePlayerInput(p);
+        }
+        updateGame(p);
+        renderGame(p);
+        break;
+        
+      case "PAUSED":
+        renderGame(p);
+        renderPausedOverlay(p);
+        break;
+        
+      case "GAME_OVER_WIN":
+      case "GAME_OVER_LOSE":
+        renderGame(p);
+        renderGameOver(p);
+        break;
+    }
+  };
+  
+  p.keyPressed = function() {
+    // Log input
+    p.logs.inputs.push({
+      input_type: "keyPressed",
+      data: { key: p.key, keyCode: p.keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    
+    // Phase controls
+    if (p.keyCode === 13 && gameState.gamePhase === "START") { // ENTER
+      gameState.gamePhase = "PLAYING";
+      gameState.testFrameCount = 0;
+      p.logs.game_info.push({
+        data: { gamePhase: "PLAYING" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+    
+    // ENTER to advance to next level after winning
+    if (p.keyCode === 13 && gameState.gamePhase === "GAME_OVER_WIN") {
+      const totalLevels = getTotalLevels();
+      
+      if (gameState.currentLevel < totalLevels) {
+        // Advance to next level
+        advanceToNextLevel(p);
+        gameState.gamePhase = "PLAYING";
+        p.logs.game_info.push({
+          data: { gamePhase: "PLAYING", level: gameState.currentLevel },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      } else {
+        // Beat all levels, reset to level 1
+        resetGame(p);
+        gameState.gamePhase = "START";
+        p.logs.game_info.push({
+          data: { gamePhase: "START", message: "All levels completed" },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+    
+    if (p.keyCode === 27) { // ESC - Pause/Unpause
+      if (gameState.gamePhase === "PLAYING") {
+        gameState.gamePhase = "PAUSED";
+        p.logs.game_info.push({
+          data: { gamePhase: "PAUSED" },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      } else if (gameState.gamePhase === "PAUSED") {
+        gameState.gamePhase = "PLAYING";
+        p.logs.game_info.push({
+          data: { gamePhase: "PLAYING" },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+    
+    if (p.keyCode === 82) { // R - Restart current level (or reset if beat game)
+      if (gameState.gamePhase === "GAME_OVER_WIN") {
+        const totalLevels = getTotalLevels();
+        
+        if (gameState.currentLevel >= totalLevels) {
+          // Beat all levels, reset to level 1
+          resetGame(p);
+          gameState.gamePhase = "START";
+        } else {
+          // Restart current level
+          restartCurrentLevel(p);
+          gameState.gamePhase = "PLAYING";
+        }
+        
+        p.logs.game_info.push({
+          data: { gamePhase: gameState.gamePhase, level: gameState.currentLevel },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      } else if (gameState.gamePhase === "GAME_OVER_LOSE") {
+        // Restart current level
+        restartCurrentLevel(p);
+        gameState.gamePhase = "PLAYING";
+        p.logs.game_info.push({
+          data: { gamePhase: "PLAYING", level: gameState.currentLevel },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+    
+    // Gameplay controls (only in PLAYING phase and HUMAN mode)
+    if (gameState.gamePhase === "PLAYING" && gameState.controlMode === "HUMAN") {
+      if (p.keyCode === 32) { // SPACE - Toggle grab
+        toggleGrab();
+      }
+      
+      if (p.keyCode === 90) { // Z - Fire cannon
+        fireCannon();
+      }
+    }
+    
+    return false;
+  };
+  
+  p.keyReleased = function() {
+    // Log input
+    p.logs.inputs.push({
+      input_type: "keyReleased",
+      data: { key: p.key, keyCode: p.keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    
+    return false;
+  };
+});
+
+// Expose globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Control mode setter
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  gameState.testFrameCount = 0;
+  gameState.testState = null;
+  
+  // Update button states
+  document.querySelectorAll('.control-button').forEach(btn => {
+    btn.classList.remove('active');
+  });
+  
+  const modeMap = {
+    'HUMAN': 'humanModeBtn',
+    'TEST_1': 'test_1_ModeBtn',
+    'TEST_2': 'test_2_ModeBtn'
+  };
+  
+  const btnId = modeMap[mode];
+  if (btnId) {
+    const btn = document.getElementById(btnId);
+    if (btn) btn.classList.add('active');
+  }
+  
+  console.log(`Control mode set to: ${mode}`);
+};
+</file>
+
+<file name="entities.js">
+// entities.js - Game entity classes
+
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Bodies, Body, World } = Matter;
+
+import { gameState, BALL_RADIUS, CANNON_SIZE, BUCKET_WIDTH, BUCKET_HEIGHT, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export class Cannon {
+  constructor(p, x, y) {
+    this.p = p;
+    this.x = x;
+    this.y = y;
+    this.angle = -Math.PI / 4; // Default 45 degrees up
+    this.color = [60, 60, 80];
+    this.fireDelay = 0;
+  }
+
+  update() {
+    if (this.fireDelay > 0) {
+      this.fireDelay--;
+    }
+  }
+
+  render() {
+    this.p.push();
+    this.p.translate(this.x, this.y);
+    
+    // Base
+    this.p.fill(this.color[0], this.color[1], this.color[2]);
+    this.p.noStroke();
+    this.p.rect(-CANNON_SIZE / 2, -10, CANNON_SIZE, 20);
+    
+    // Barrel
+    this.p.push();
+    this.p.rotate(this.angle);
+    this.p.fill(this.color[0] - 10, this.color[1] - 10, this.color[2] - 10);
+    this.p.rect(0, -8, 50, 16);
+    this.p.pop();
+    
+    this.p.pop();
+  }
+
+  fire() {
+    if (this.fireDelay > 0 || gameState.ballsRemaining <= 0) return;
+    
+    const speed = 8;
+    const vx = Math.cos(this.angle) * speed;
+    const vy = Math.sin(this.angle) * speed;
+    
+    const ball = new Ball(
+      this.p,
+      this.x + Math.cos(this.angle) * 50,
+      this.y + Math.sin(this.angle) * 50,
+      vx,
+      vy
+    );
+    
+    gameState.balls.push(ball);
+    gameState.entities.push(ball);
+    gameState.ballsRemaining--;
+    gameState.ballsFired++;
+    this.fireDelay = 8;
+  }
+}
+
+export class Ball {
+  constructor(p, x, y, vx, vy) {
+    this.p = p;
+    this.body = Bodies.circle(x, y, BALL_RADIUS, {
+      label: 'ball',
+      restitution: 0.6,
+      friction: 0.1,
+      density: 0.002
+    });
+    
+    Body.setVelocity(this.body, { x: vx, y: vy });
+    World.add(gameState.world, this.body);
+    
+    this.color = [255, 200, 50];
+    this.active = true;
+    this.inBucket = false;
+  }
+
+  update() {
+    // Check if ball is out of bounds
+    if (this.body.position.y > CANVAS_HEIGHT + 50) {
+      this.active = false;
+    }
+    
+    // Check if velocity is very low (settled)
+    const speed = Math.sqrt(
+      this.body.velocity.x ** 2 + this.body.velocity.y ** 2
+    );
+    if (speed < 0.1 && this.body.position.y > CANVAS_HEIGHT - 100) {
+      this.active = false;
+    }
+  }
+
+  render() {
+    if (!this.active) return;
+    
+    this.p.push();
+    this.p.translate(this.body.position.x, this.body.position.y);
+    this.p.rotate(this.body.angle);
+    
+    this.p.fill(this.color[0], this.color[1], this.color[2]);
+    this.p.noStroke();
+    this.p.circle(0, 0, BALL_RADIUS * 2);
+    
+    // Shine effect
+    this.p.fill(255, 255, 200, 150);
+    this.p.circle(-3, -3, BALL_RADIUS);
+    
+    this.p.pop();
+  }
+
+  remove() {
+    World.remove(gameState.world, this.body);
+  }
+}
+
+export class Bucket {
+  constructor(p, x, y, id) {
+    this.p = p;
+    this.x = x;
+    this.y = y;
+    this.id = id;
+    this.width = BUCKET_WIDTH;
+    this.height = BUCKET_HEIGHT;
+    this.ballsInside = [];
+    this.filled = false;
+    this.color = [100, 150, 200];
+    
+    // Create walls for bucket (3 sides)
+    const thickness = 5;
+    
+    // Left wall
+    this.leftWall = Bodies.rectangle(
+      x - this.width / 2 + thickness / 2,
+      y,
+      thickness,
+      this.height,
+      { isStatic: true, label: 'bucket_wall', friction: 0.3, restitution: 0.2 }
+    );
+    
+    // Right wall
+    this.rightWall = Bodies.rectangle(
+      x + this.width / 2 - thickness / 2,
+      y,
+      thickness,
+      this.height,
+      { isStatic: true, label: 'bucket_wall', friction: 0.3, restitution: 0.2 }
+    );
+    
+    // Bottom
+    this.bottom = Bodies.rectangle(
+      x,
+      y + this.height / 2 - thickness / 2,
+      this.width,
+      thickness,
+      { isStatic: true, label: 'bucket_wall', friction: 0.5, restitution: 0.1 }
+    );
+    
+    World.add(gameState.world, [this.leftWall, this.rightWall, this.bottom]);
+  }
+
+  update() {
+    // Check if any balls are inside
+    this.ballsInside = [];
+    
+    gameState.balls.forEach(ball => {
+      if (!ball.active || ball.inBucket) return;
+      
+      const bx = ball.body.position.x;
+      const by = ball.body.position.y;
+      
+      // Check if ball is inside bucket bounds
+      if (bx > this.x - this.width / 2 + 10 &&
+          bx < this.x + this.width / 2 - 10 &&
+          by > this.y - this.height / 2 &&
+          by < this.y + this.height / 2) {
+        
+        if (!this.ballsInside.includes(ball)) {
+          this.ballsInside.push(ball);
+          ball.inBucket = true;
+        }
+      }
+    });
+    
+    if (this.ballsInside.length > 0 && !this.filled) {
+      this.filled = true;
+      gameState.score += 100;
+    }
+  }
+
+  render() {
+    const fillColor = this.filled ? [50, 200, 50] : this.color;
+    
+    this.p.push();
+    
+    // Draw bucket structure
+    this.p.fill(fillColor[0], fillColor[1], fillColor[2]);
+    this.p.noStroke();
+    
+    // Left wall
+    this.p.rect(this.x - this.width / 2, this.y - this.height / 2, 5, this.height);
+    // Right wall
+    this.p.rect(this.x + this.width / 2 - 5, this.y - this.height / 2, 5, this.height);
+    // Bottom
+    this.p.rect(this.x - this.width / 2, this.y + this.height / 2 - 5, this.width, 5);
+    
+    // Draw fill indicator
+    if (this.filled) {
+      this.p.fill(50, 255, 50, 100);
+      this.p.rect(
+        this.x - this.width / 2 + 5,
+        this.y - this.height / 2,
+        this.width - 10,
+        this.height - 5
+      );
+    }
+    
+    // Draw checkmark if filled
+    if (this.filled) {
+      this.p.stroke(255);
+      this.p.strokeWeight(3);
+      this.p.noFill();
+      this.p.beginShape();
+      this.p.vertex(this.x - 10, this.y);
+      this.p.vertex(this.x - 5, this.y + 8);
+      this.p.vertex(this.x + 10, this.y - 10);
+      this.p.endShape();
+    }
+    
+    this.p.pop();
+  }
+
+  remove() {
+    World.remove(gameState.world, [this.leftWall, this.rightWall, this.bottom]);
+  }
+}
+
+export class MovableObject {
+  constructor(p, x, y, width, height, angle, type) {
+    this.p = p;
+    this.originalX = x;
+    this.originalY = y;
+    this.width = width;
+    this.height = height;
+    this.originalAngle = angle;
+    this.type = type; // 'ramp' or 'deflector'
+    
+    this.body = Bodies.rectangle(x, y, width, height, {
+      label: 'movable',
+      isStatic: true,
+      angle: angle,
+      friction: 0.3,
+      restitution: 0.7
+    });
+    
+    World.add(gameState.world, this.body);
+    
+    this.selected = false;
+    this.color = type === 'ramp' ? [150, 100, 50] : [100, 100, 150];
+  }
+
+  update() {
+    // Nothing to update for static objects
+  }
+
+  render() {
+    this.p.push();
+    this.p.translate(this.body.position.x, this.body.position.y);
+    this.p.rotate(this.body.angle);
+    
+    const c = this.selected ? [255, 255, 100] : this.color;
+    this.p.fill(c[0], c[1], c[2]);
+    this.p.stroke(255);
+    this.p.strokeWeight(this.selected ? 3 : 1);
+    this.p.rect(-this.width / 2, -this.height / 2, this.width, this.height);
+    
+    // Draw pattern based on type
+    if (this.type === 'ramp') {
+      this.p.stroke(200);
+      this.p.strokeWeight(1);
+      for (let i = -this.width / 2; i < this.width / 2; i += 10) {
+        this.p.line(i, -this.height / 2, i, this.height / 2);
+      }
+    } else {
+      this.p.fill(c[0] + 30, c[1] + 30, c[2] + 30);
+      this.p.noStroke();
+      this.p.circle(0, 0, Math.min(this.width, this.height) / 2);
+    }
+    
+    this.p.pop();
+  }
+
+  moveTo(x, y) {
+    Body.setPosition(this.body, { x, y });
+  }
+
+  rotate(angle) {
+    Body.setAngle(this.body, this.body.angle + angle);
+  }
+
+  reset() {
+    Body.setPosition(this.body, { x: this.originalX, y: this.originalY });
+    Body.setAngle(this.body, this.originalAngle);
+  }
+
+  remove() {
+    World.remove(gameState.world, this.body);
+  }
+}
+
+export class Wall {
+  constructor(p, x, y, width, height) {
+    this.p = p;
+    this.body = Bodies.rectangle(x, y, width, height, {
+      label: 'wall',
+      isStatic: true,
+      friction: 0.3,
+      restitution: 0.5
+    });
+    
+    World.add(gameState.world, this.body);
+    this.color = [80, 80, 80];
+  }
+
+  render() {
+    this.p.push();
+    this.p.translate(this.body.position.x, this.body.position.y);
+    this.p.rotate(this.body.angle);
+    
+    this.p.fill(this.color[0], this.color[1], this.color[2]);
+    this.p.noStroke();
+    
+    const vertices = this.body.vertices;
+    this.p.beginShape();
+    for (let v of vertices) {
+      const vx = v.x - this.body.position.x;
+      const vy = v.y - this.body.position.y;
+      this.p.vertex(vx, vy);
+    }
+    this.p.endShape(this.p.CLOSE);
+    
+    this.p.pop();
+  }
+
+  remove() {
+    World.remove(gameState.world, this.body);
+  }
+}
+</file>
+
+<file name="levels.js">
+// levels.js - Level configurations
+
+import { CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export const levels = [
+  // Level 1 - Tutorial: 2 buckets close together, very simple ramps, generous ball count
+  {
+    level: 1,
+    ballCount: 15,
+    buckets: [
+      { x: 220, y: CANVAS_HEIGHT - 40 },
+      { x: 380, y: CANVAS_HEIGHT - 40 }
+    ],
+    movableObjects: [
+      { x: 300, y: 220, width: 120, height: 10, angle: 0, type: 'ramp' }
+    ]
+  },
+  
+  // Level 2 - Introduction: 2 buckets farther apart, add deflector, more challenging
+  {
+    level: 2,
+    ballCount: 12,
+    buckets: [
+      { x: 140, y: CANVAS_HEIGHT - 40 },
+      { x: 460, y: CANVAS_HEIGHT - 40 }
+    ],
+    movableObjects: [
+      { x: 220, y: 180, width: 90, height: 10, angle: 0.5, type: 'ramp' },
+      { x: 420, y: 160, width: 85, height: 10, angle: -0.6, type: 'ramp' },
+      { x: 300, y: 120, width: 40, height: 40, angle: 0, type: 'deflector' }
+    ]
+  },
+  
+  // Level 3 - Medium: 3 buckets, need to think about routing
+  {
+    level: 3,
+    ballCount: 12,
+    buckets: [
+      { x: 120, y: CANVAS_HEIGHT - 40 },
+      { x: 300, y: CANVAS_HEIGHT - 40 },
+      { x: 480, y: CANVAS_HEIGHT - 40 }
+    ],
+    movableObjects: [
+      { x: 220, y: 180, width: 90, height: 10, angle: 0.5, type: 'ramp' },
+      { x: 380, y: 200, width: 80, height: 10, angle: -0.4, type: 'ramp' },
+      { x: 300, y: 120, width: 40, height: 40, angle: 0, type: 'deflector' }
+    ]
+  },
+  
+  // Level 4 - Medium-Hard: 3 buckets at different heights, fewer balls
+  {
+    level: 4,
+    ballCount: 10,
+    buckets: [
+      { x: 140, y: CANVAS_HEIGHT - 40 },
+      { x: 300, y: CANVAS_HEIGHT - 100 },
+      { x: 460, y: CANVAS_HEIGHT - 40 }
+    ],
+    movableObjects: [
+      { x: 200, y: 150, width: 100, height: 10, angle: 0.6, type: 'ramp' },
+      { x: 340, y: 180, width: 80, height: 10, angle: -0.3, type: 'ramp' },
+      { x: 430, y: 130, width: 90, height: 10, angle: 0.5, type: 'ramp' },
+      { x: 270, y: 100, width: 35, height: 35, angle: 0.2, type: 'deflector' }
+    ]
+  },
+  
+  // Level 5 - Hard: 4 buckets, limited balls, complex routing
+  {
+    level: 5,
+    ballCount: 10,
+    buckets: [
+      { x: 100, y: CANVAS_HEIGHT - 40 },
+      { x: 240, y: CANVAS_HEIGHT - 70 },
+      { x: 380, y: CANVAS_HEIGHT - 70 },
+      { x: 520, y: CANVAS_HEIGHT - 40 }
+    ],
+    movableObjects: [
+      { x: 180, y: 160, width: 85, height: 10, angle: 0.7, type: 'ramp' },
+      { x: 310, y: 140, width: 75, height: 10, angle: -0.6, type: 'ramp' },
+      { x: 440, y: 170, width: 80, height: 10, angle: 0.5, type: 'ramp' },
+      { x: 250, y: 90, width: 35, height: 35, angle: 0.3, type: 'deflector' },
+      { x: 380, y: 100, width: 35, height: 35, angle: -0.3, type: 'deflector' }
+    ]
+  },
+  
+  // Level 6 - Very Hard: 4 buckets, very limited balls, precise positioning required
+  {
+    level: 6,
+    ballCount: 8,
+    buckets: [
+      { x: 120, y: CANVAS_HEIGHT - 40 },
+      { x: 260, y: CANVAS_HEIGHT - 100 },
+      { x: 400, y: CANVAS_HEIGHT - 100 },
+      { x: 500, y: CANVAS_HEIGHT - 40 }
+    ],
+    movableObjects: [
+      { x: 190, y: 140, width: 80, height: 10, angle: 0.8, type: 'ramp' },
+      { x: 310, y: 120, width: 70, height: 10, angle: -0.7, type: 'ramp' },
+      { x: 420, y: 150, width: 75, height: 10, angle: 0.6, type: 'ramp' },
+      { x: 240, y: 80, width: 30, height: 30, angle: 0.4, type: 'deflector' },
+      { x: 360, y: 85, width: 30, height: 30, angle: -0.4, type: 'deflector' },
+      { x: 300, y: 200, width: 60, height: 10, angle: 0, type: 'ramp' }
+    ]
+  }
+];
+
+export function getLevelConfig(levelNum) {
+  const index = (levelNum - 1) % levels.length;
+  return levels[index];
+}
+
+export function getTotalLevels() {
+  return levels.length;
+}
+</file>
+
+<file name="physics.js">
+// physics.js - Physics collision handling
+
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Events } = Matter;
+
+import { gameState } from './globals.js';
+
+export function setupCollisionHandling(engine, p) {
+  Events.on(engine, 'collisionStart', (event) => {
+    const pairs = event.pairs;
+    
+    pairs.forEach(pair => {
+      const { bodyA, bodyB } = pair;
+      
+      // Calculate collision velocity
+      const relativeVelocity = {
+        x: bodyA.velocity.x - bodyB.velocity.x,
+        y: bodyA.velocity.y - bodyB.velocity.y
+      };
+      
+      const speed = Math.sqrt(
+        relativeVelocity.x ** 2 + relativeVelocity.y ** 2
+      );
+      
+      // Log significant collisions
+      if (speed > 5) {
+        p.logs.game_info.push({
+          data: {
+            event: 'collision',
+            bodyA: bodyA.label,
+            bodyB: bodyB.label,
+            speed: speed.toFixed(2)
+          },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    });
+  });
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

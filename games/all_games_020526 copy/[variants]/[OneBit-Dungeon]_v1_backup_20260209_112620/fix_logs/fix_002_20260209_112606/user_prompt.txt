@@ -1,0 +1,1413 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+🌸 p5.js says: There's a syntax error due to a symbol that wasn't expected at its place.
+Usually this is due to a typo. Check the line number in the error below for anything missing/extra.
+For more: https://developer.mozilla.org/docs/Web/JavaScript/Reference/Errors/Unexpected_token#What_went_wrong
+game.js:359 Uncaught SyntaxError: Unexpected token '<' (at game.js:359:1)Understand this error
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Game</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #121212; color: #fff; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; font-family: 'Courier New', Courier, monospace; }
+      canvas { border: 2px solid #333; box-shadow: 0 0 20px rgba(0,0,0,0.5); image-rendering: pixelated; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: 1px solid #555; border-radius: 4px; font-family: inherit; transition: background 0.2s; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #FFD700; color: #000; border-color: #FFD700; }
+      h1 { margin-bottom: 5px; text-shadow: 2px 2px 0px #000; }
+      
+      /* Updated styling for gameDescription */
+      #gameDescription { 
+        color: #ccc; 
+        font-family: Arial, sans-serif; 
+        max-width: 600px; 
+        margin: 0 auto 20px auto; /* Top/bottom margin, horizontally centered */
+        line-height: 1.4; 
+        text-align: center; /* Preserve existing text alignment */
+        font-size: 14px; /* Preserve existing font size */
+      }
+      
+      /* Updated styling for gameControls */
+      #gameControls { 
+        color: #ccc; 
+        font-family: Arial, sans-serif; 
+        max-width: 600px; 
+        margin: 0 auto 20px auto; /* Top/bottom margin, horizontally centered */
+        line-height: 1.4; 
+        text-align: center; /* Preserve existing text alignment */
+        font-size: 12px; /* Preserve existing font size */
+      }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 10px;">
+      <h1 id="gameTitle"></h1>
+      
+      <!-- control-buttons moved before description and controls as per requirements -->
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN', this)">Human Mode</button>
+      </div>
+      
+      <!-- Updated gameDescription content and placement -->
+      <p id="gameDescription">
+        A turn-based roguelike RPG. Explore procedurally generated dungeons, battle monsters, collect gold, and descend deeper. Every move counts, as enemies move when you do.
+      </p>
+      
+      <!-- Added/Updated gameControls content and placement -->
+      <p id="gameControls">
+        Arrow Keys: Move/Attack enemies | Space: Wait turn / Interact with stairs | Z: Use Health Potion | Enter: Start Game / Select Class | R: Restart Game | Esc: Pause/Resume
+      </p>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script type="module" src="game.js"></script>
+    
+    <script>
+      function setMode(mode, btn) {
+        if (window.setControlMode) {
+          window.setControlMode(mode);
+          document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          
+          // Force focus back to body so keys work immediately
+          document.body.focus();
+        }
+      }
+    </script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TILE_SIZE = 24;
+export const GRID_W = Math.floor(CANVAS_WIDTH / TILE_SIZE);
+export const GRID_H = Math.floor(CANVAS_HEIGHT / TILE_SIZE);
+
+export const COLORS = {
+    BACKGROUND: '#121212',
+    WALL: '#4A4A4A',
+    WALL_TOP: '#6E6E6E',
+    FLOOR: '#222222',
+    FLOOR_VISIBLE: '#2A2A2A',
+    UI_BG: 'rgba(0, 0, 0, 0.8)',
+    TEXT: '#FFFFFF',
+    ACCENT: '#FFD700', // Gold
+    PLAYER: '#FFFFFF',
+    ENEMY_SLIME: '#00FF00',
+    ENEMY_GOBLIN: '#FF5555',
+    ENEMY_SKELETON: '#EEEEEE',
+    STAIRS: '#00FFFF',
+    POTION: '#FF00FF',
+    GOLD: '#FFD700'
+};
+
+export const gameState = {
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN",
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Auto-restart timer
+    autoRestartTimer: null,
+    
+    // Game Specific
+    level: 1,
+    score: 0,
+    turn: 0,
+    
+    // Dungeon
+    map: [], // 2D array of tiles
+    rooms: [],
+    
+    // Entities
+    player: null,
+    entities: [], // All entities (enemies, items)
+    particles: [],
+    floatingTexts: [],
+    
+    // Camera
+    cameraX: 0,
+    cameraY: 0,
+    shake: 0,
+    
+    // Class Selection
+    selectedClassIndex: 0,
+    availableClasses: [
+        { name: "WARRIOR", hp: 100, atk: 15, def: 2, desc: "High Health & Defense" },
+        { name: "ROGUE",   hp: 70,  atk: 25, def: 0, desc: "High Damage, Low HP" },
+        { name: "TANK",    hp: 150, atk: 10, def: 5, desc: "Very High Survivability" }
+    ]
+};
+
+// Logging function helper
+export function logGameInfo(p, info) {
+    if (p.logs && p.logs.game_info) {
+        p.logs.game_info.push({
+            data: info,
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+
+export function getGameState() {
+    return gameState;
+}
+
+window.getGameState = getGameState;
+</file>
+
+<file name="game.js">
+import { gameState, TILE_SIZE, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS, logGameInfo } from './globals.js';
+import { DungeonGenerator } from './map.js';
+import { Player, Enemy, Item } from './entities.js';
+import { movePlayer, waitTurn, usePotion } from './physics.js';
+import { renderUI, renderStartScreen, renderGameOver } from './ui.js';
+import { randomInt, gridToPixel, distEuclidean } from './utils.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        gameState.gamePhase = "START";
+        
+        // Listen for level generation event
+        window.addEventListener('GENERATE_LEVEL', () => {
+            initLevel();
+        });
+        
+        logGameInfo(p, { gamePhase: "START" });
+    };
+
+    p.draw = function() {
+        gameState.frameCount = p.frameCount;
+        const currentTime = p.millis();
+        gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = currentTime;
+
+        switch (gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                // Clear auto-restart timer if we somehow got back to START
+                gameState.autoRestartTimer = null;
+                break;
+            case "PLAYING":
+                updateGame(p);
+                renderGame(p);
+                renderUI(p);
+                // Clear auto-restart timer if we are playing
+                gameState.autoRestartTimer = null;
+                break;
+            case "PAUSED":
+                renderGame(p);
+                renderUI(p); // Show UI in pause
+                // Clear auto-restart timer if paused
+                gameState.autoRestartTimer = null;
+                break;
+            case "GAME_OVER_WIN":
+            case "GAME_OVER_LOSE":
+                renderGame(p);
+                renderGameOver(p);
+
+                // Auto-restart logic
+                if (!gameState.autoRestartTimer) {
+                    gameState.autoRestartTimer = gameState.frameCount;
+                }
+                // Auto-restart after 1 second (p.frameRate() gives current FPS, default to 60)
+                const framesToWait = p.frameRate() || 60; 
+                if (gameState.frameCount - gameState.autoRestartTimer > framesToWait) {
+                    restartGame(); // Auto-restart
+                }
+                break;
+        }
+    };
+
+    p.keyPressed = function() {
+        // Input logging
+        p.logs.inputs.push({
+            input_type: 'keyPressed',
+            data: { key: p.key, keyCode: p.keyCode },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+
+        if (gameState.gamePhase === "START") {
+            if (p.keyCode === p.ENTER) {
+                startGame();
+            } else if (p.keyCode === p.LEFT_ARROW) {
+                gameState.selectedClassIndex = (gameState.selectedClassIndex - 1 + gameState.availableClasses.length) % gameState.availableClasses.length;
+            } else if (p.keyCode === p.RIGHT_ARROW) {
+                gameState.selectedClassIndex = (gameState.selectedClassIndex + 1) % gameState.availableClasses.length;
+            }
+        } else if (gameState.gamePhase === "PLAYING" && gameState.controlMode === "HUMAN") {
+            if (p.keyCode === p.UP_ARROW) movePlayer(0, -1);
+            else if (p.keyCode === p.DOWN_ARROW) movePlayer(0, 1);
+            else if (p.keyCode === p.LEFT_ARROW) movePlayer(-1, 0);
+            else if (p.keyCode === p.RIGHT_ARROW) movePlayer(1, 0);
+            else if (p.key === ' ' || p.keyCode === 32) waitTurn(); // Space to wait/interact
+            else if (p.key === 'z' || p.key === 'Z') usePotion();
+            else if (p.keyCode === 27) gameState.gamePhase = "PAUSED"; // ESC
+        } else if (gameState.gamePhase === "PAUSED") {
+            if (p.keyCode === 27) gameState.gamePhase = "PLAYING";
+        } else if (gameState.gamePhase === "GAME_OVER_LOSE" || gameState.gamePhase === "GAME_OVER_WIN") {
+            if (p.key === 'r' || p.key === 'R') {
+                restartGame(); // Manual restart, cancels auto-restart
+            }
+        }
+    };
+    
+    // Function to start a new game from the START screen
+    function startGame() {
+        gameState.gamePhase = "PLAYING";
+        gameState.level = 1;
+        gameState.score = 0;
+        gameState.turn = 0; // Reset turn count
+        
+        // Init player
+        const classData = gameState.availableClasses[gameState.selectedClassIndex];
+        // Temp pos, fixed in initLevel
+        gameState.player = new Player(0, 0, classData);
+        
+        initLevel();
+        
+        logGameInfo(p, { gamePhase: "PLAYING", class: classData.name });
+    }
+
+    // Function to restart the game, used by both manual and auto-restart
+    function restartGame() {
+        // Clear any pending auto-restart
+        gameState.autoRestartTimer = null;
+
+        // Reset core game state variables
+        gameState.level = 1;
+        gameState.score = 0;
+        gameState.turn = 0;
+
+        // Reset entities and particles
+        gameState.player = null; // Player will be re-created
+        gameState.entities = [];
+        gameState.particles = [];
+        gameState.floatingTexts = [];
+        
+        // Reset camera shake
+        gameState.shake = 0;
+
+        // Reset logs for a clean run
+        p.logs = {
+            "game_info": [],
+            "inputs": [],
+            "player_info": []
+        };
+        logGameInfo(p, { gamePhase: "RESTART_INITIATED" });
+
+        // Re-initialize player with the selected class and start playing
+        const classData = gameState.availableClasses[gameState.selectedClassIndex];
+        gameState.player = new Player(0, 0, classData); // Temp pos, fixed in initLevel
+        initLevel();
+        gameState.gamePhase = "PLAYING";
+        logGameInfo(p, { gamePhase: "PLAYING_AFTER_RESTART", class: classData.name });
+    }
+    
+    function initLevel() {
+        const gen = DungeonGenerator.generate(gameState.level);
+        gameState.map = gen.map;
+        gameState.rooms = gen.rooms;
+        
+        // Place Player in first room
+        const startRoom = gameState.rooms[0];
+        gameState.player.gridX = startRoom.cx;
+        gameState.player.gridY = startRoom.cy;
+        gameState.player.visualX = gameState.player.gridX * TILE_SIZE;
+        gameState.player.visualY = gameState.player.gridY * TILE_SIZE;
+        
+        // Spawn Enemies and Loot
+        gameState.entities = [gameState.player]; // Reset entities list
+        
+        // Skip first room for enemies
+        for (let i = 1; i < gameState.rooms.length; i++) {
+            const r = gameState.rooms[i];
+            const area = r.w * r.h;
+            
+            // Randomly spawn enemies
+            const enemyCount = randomInt(1, Math.max(1, Math.floor(area / 15)));
+            for (let j=0; j<enemyCount; j++) {
+                const ex = randomInt(r.x, r.x + r.w - 1);
+                const ey = randomInt(r.y, r.y + r.h - 1);
+                
+                // Don't spawn on top of each other
+                let occupied = gameState.entities.some(e => e.gridX === ex && e.gridY === ey);
+                if (!occupied && gameState.map[ey][ex].type !== 'STAIRS') {
+                    const type = Math.random() < 0.5 ? 'Slime' : (Math.random() < 0.8 ? 'Goblin' : 'Skeleton');
+                    gameState.entities.push(new Enemy(ex, ey, type, gameState.level));
+                }
+            }
+            
+            // Randomly spawn loot
+            if (Math.random() < 0.4) {
+                const lx = randomInt(r.x, r.x + r.w - 1);
+                const ly = randomInt(r.y, r.y + r.h - 1);
+                let occupied = gameState.entities.some(e => e.gridX === lx && e.gridY === ly);
+                if (!occupied && gameState.map[ly][lx].type !== 'STAIRS') {
+                    gameState.entities.push(new Item(lx, ly, Math.random() < 0.3 ? 'POTION' : 'GOLD'));
+                }
+            }
+        }
+        
+        // Initial visibility
+        updateVisibilityFallback();
+    }
+    
+    function updateGame(p) {
+        // Update Camera
+        if (gameState.player) {
+            gameState.player.updateVisuals();
+            
+            // Camera follow player with lerp
+            const targetCamX = gameState.player.visualX - CANVAS_WIDTH / 2 + TILE_SIZE/2;
+            const targetCamY = gameState.player.visualY - CANVAS_HEIGHT / 2 + TILE_SIZE/2;
+            
+            gameState.cameraX += (targetCamX - gameState.cameraX) * 0.1;
+            gameState.cameraY += (targetCamY - gameState.cameraY) * 0.1;
+            
+            // Shake decay
+            if (gameState.shake > 0) {
+                gameState.shake *= 0.9;
+                if (gameState.shake < 0.5) gameState.shake = 0;
+            }
+        }
+        
+        // Update visual positions of all entities
+        gameState.entities.forEach(e => {
+            if (e !== gameState.player) e.updateVisuals();
+        });
+        
+        // Update particles
+        for (let i = gameState.particles.length - 1; i >= 0; i--) {
+            gameState.particles[i].update();
+            if (gameState.particles[i].life <= 0) gameState.particles.splice(i, 1);
+        }
+        
+        // Update Floating text
+        for (let i = gameState.floatingTexts.length - 1; i >= 0; i--) {
+            gameState.floatingTexts[i].update();
+            if (gameState.floatingTexts[i].lifetime <= 0) gameState.floatingTexts.splice(i, 1);
+        }
+        
+        // Log player info periodically
+        if (p.frameCount % 60 === 0 && gameState.player) {
+            p.logs.player_info.push({
+                x: gameState.player.gridX,
+                y: gameState.player.gridY,
+                hp: gameState.player.hp,
+                score: gameState.score,
+                framecount: p.frameCount,
+                timestamp: Date.now()
+            });
+        }
+    }
+    
+    function renderGame(p) {
+        p.background(COLORS.BACKGROUND);
+        
+        p.push();
+        // Apply Camera and Shake
+        let shakeX = (Math.random() - 0.5) * gameState.shake;
+        let shakeY = (Math.random() - 0.5) * gameState.shake;
+        p.translate(-gameState.cameraX + shakeX, -gameState.cameraY + shakeY);
+        
+        // Render Map
+        // Optimize: only render visible tiles within camera
+        const startCol = Math.floor(gameState.cameraX / TILE_SIZE);
+        const endCol = startCol + (CANVAS_WIDTH / TILE_SIZE) + 1;
+        const startRow = Math.floor(gameState.cameraY / TILE_SIZE);
+        const endRow = startRow + (CANVAS_HEIGHT / TILE_SIZE) + 1;
+
+        for (let y = Math.max(0, startRow); y < Math.min(gameState.map.length, endRow); y++) {
+            for (let x = Math.max(0, startCol); x < Math.min(gameState.map[0].length, endCol); x++) {
+                const tile = gameState.map[y][x];
+                if (tile.visible) {
+                    if (tile.type === 'WALL') {
+                        p.fill(COLORS.WALL);
+                        p.rect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                        p.fill(COLORS.WALL_TOP); // highlight
+                        p.rect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, 4);
+                    } else if (tile.type === 'FLOOR') {
+                        p.fill(COLORS.FLOOR_VISIBLE);
+                        p.rect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                    } else if (tile.type === 'STAIRS') {
+                        p.fill(COLORS.FLOOR_VISIBLE);
+                        p.rect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                        p.fill(COLORS.STAIRS);
+                        p.rect(x * TILE_SIZE + 4, y * TILE_SIZE + 4, TILE_SIZE - 8, TILE_SIZE - 8);
+                    }
+                } else if (tile.seen) {
+                    // Fog of war
+                    if (tile.type === 'WALL') {
+                        p.fill(30);
+                        p.rect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                    } else {
+                        p.fill(20);
+                        p.rect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                        if (tile.type === 'STAIRS') {
+                            p.fill(0, 100, 100);
+                            p.rect(x * TILE_SIZE + 8, y * TILE_SIZE + 8, TILE_SIZE - 16, TILE_SIZE - 16);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Render Entities
+        gameState.entities.forEach(ent => {
+            // Only render if on visible tile
+            if (gameState.map[ent.gridY][ent.gridX].visible || ent instanceof Item && gameState.map[ent.gridY][ent.gridX].seen) {
+                ent.render(p, 0, 0); // Camera translation handled by push/pop
+            }
+        });
+        
+        // Render Particles
+        gameState.particles.forEach(pt => pt.render(p, 0, 0));
+        
+        // Render Floating Text
+        gameState.floatingTexts.forEach(ft => ft.render(p, 0, 0));
+        
+        p.pop();
+    }
+    
+    // Duplicate fallback for visibility init
+    function updateVisibilityFallback() {
+        const VIEW_RADIUS = 7;
+        const px = gameState.player.gridX;
+        const py = gameState.player.gridY;
+        
+        for (let y = py - VIEW_RADIUS; y <= py + VIEW_RADIUS; y++) {
+            for (let x = px - VIEW_RADIUS; x <= px + VIEW_RADIUS; x++) {
+                if (x >= 0 && x < gameState.map[0].length && y >= 0 && y < gameState.map.length) {
+                    if (Math.abs(x - px) + Math.abs(y - py) <= VIEW_RADIUS) {
+                        gameState.map[y][x].visible = true;
+                        gameState.map[y][x].seen = true;
+                    }
+                }
+            }
+        }
+    }
+});
+
+window.gameInstance = gameInstance;
+window.setControlMode = (mode) => {
+    gameState.controlMode = mode;
+    console.log("Control Mode Set:", mode);
+    // Restart if needed for clean state
+    if (gameState.gamePhase !== "START") {
+        // If we set to human mode and are not in start phase,
+        // it's probably a good idea to restart to a clean state.
+        // This will now call the new restartGame function
+        gameInstance.restartGame(); 
+    }
+};
+</code}
+
+<code filename="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './globals.js';
+
+export function renderUI(p) {
+    // HUD Bar
+    p.fill(COLORS.UI_BG);
+    p.rect(0, 0, CANVAS_WIDTH, 40);
+    p.rect(0, CANVAS_HEIGHT - 30, CANVAS_WIDTH, 30);
+    
+    // Top Bar Info
+    p.fill(COLORS.TEXT);
+    p.textSize(16);
+    p.textAlign(p.LEFT, p.CENTER);
+    p.text(`Lvl ${gameState.player.level} ${gameState.player.className}`, 10, 20);
+    
+    // Health Bar
+    p.fill(100, 0, 0);
+    p.rect(150, 10, 100, 20);
+    p.fill(0, 200, 0);
+    const hpPct = gameState.player.hp / gameState.player.maxHp;
+    p.rect(150, 10, 100 * hpPct, 20);
+    p.stroke(255);
+    p.noFill();
+    p.rect(150, 10, 100, 20);
+    p.noStroke();
+    
+    p.fill(255);
+    p.textSize(12);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text(`${gameState.player.hp}/${gameState.player.maxHp}`, 200, 20);
+    
+    // Stats
+    p.textSize(14);
+    p.textAlign(p.LEFT, p.CENTER);
+    p.text(`Floor: ${gameState.level}`, 270, 20);
+    p.text(`Gold: ${gameState.player.gold}`, 350, 20);
+    p.text(`Score: ${gameState.score}`, 440, 20);
+    p.fill(COLORS.POTION);
+    p.text(`Potions (Z): ${gameState.player.potions}`, 500, 20);
+
+    // Bottom Bar (Log/Tips)
+    p.fill(150);
+    p.textSize(12);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text("Arrows: Move/Attack | Space: Wait/Stairs | Z: Potion | Esc: Pause", CANVAS_WIDTH/2, CANVAS_HEIGHT - 15);
+}
+
+export function renderStartScreen(p) {
+    p.background(COLORS.BACKGROUND);
+    
+    p.fill(COLORS.TEXT);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.text("press enter to begin", CANVAS_WIDTH/2, 100); // Replaced game title
+    
+    p.textSize(20);
+    p.text("Choose Class", CANVAS_WIDTH/2, 160);
+    
+    // Class Selection UI
+    const classes = gameState.availableClasses;
+    const current = classes[gameState.selectedClassIndex];
+    
+    p.fill(30);
+    p.rect(CANVAS_WIDTH/2 - 100, 200, 200, 100, 10);
+    
+    p.fill(COLORS.ACCENT);
+    p.textSize(24);
+    p.text(`< ${current.name} >`, CANVAS_WIDTH/2, 220);
+    
+    p.fill(200);
+    p.textSize(14);
+    p.text(`HP: ${current.hp} | ATK: ${current.atk} | DEF: ${current.def}`, CANVAS_WIDTH/2, 250);
+    p.text(current.desc, CANVAS_WIDTH/2, 280);
+    
+    // Removed: p.text("Press ENTER to Start", CANVAS_WIDTH/2, 350); (redundant with main title)
+    
+    // Instructions
+    p.fill(100);
+    p.textSize(12);
+    p.text("Use Arrow Keys to select class", CANVAS_WIDTH/2, 375);
+}
+
+export function renderGameOver(p) {
+    p.fill(0, 0, 0, 220);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    const win = gameState.gamePhase === "GAME_OVER_WIN";
+    p.fill(win ? COLORS.ACCENT : '#FF5555');
+    p.textSize(40);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text(win ? "YOU ESCAPED!" : "YOU DIED", CANVAS_WIDTH/2, 120);
+    
+    p.fill(COLORS.TEXT);
+    p.textSize(24);
+    p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH/2, 180);
+    p.text(`Floor Reached: ${gameState.level}`, CANVAS_WIDTH/2, 220);
+    p.text(`Lvl ${gameState.player.level} ${gameState.player.className}`, CANVAS_WIDTH/2, 260);
+    
+    p.fill(150);
+    p.textSize(16);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, 350);
+}
+</file>
+
+<file name="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './globals.js';
+
+export function renderUI(p) {
+    // HUD Bar
+    p.fill(COLORS.UI_BG);
+    p.rect(0, 0, CANVAS_WIDTH, 40);
+    p.rect(0, CANVAS_HEIGHT - 30, CANVAS_WIDTH, 30);
+    
+    // Top Bar Info
+    p.fill(COLORS.TEXT);
+    p.textSize(16);
+    p.textAlign(p.LEFT, p.CENTER);
+    p.text(`Lvl ${gameState.player.level} ${gameState.player.className}`, 10, 20);
+    
+    // Health Bar
+    p.fill(100, 0, 0);
+    p.rect(150, 10, 100, 20);
+    p.fill(0, 200, 0);
+    const hpPct = gameState.player.hp / gameState.player.maxHp;
+    p.rect(150, 10, 100 * hpPct, 20);
+    p.stroke(255);
+    p.noFill();
+    p.rect(150, 10, 100, 20);
+    p.noStroke();
+    
+    p.fill(255);
+    p.textSize(12);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text(`${gameState.player.hp}/${gameState.player.maxHp}`, 200, 20);
+    
+    // Stats
+    p.textSize(14);
+    p.textAlign(p.LEFT, p.CENTER);
+    p.text(`Floor: ${gameState.level}`, 270, 20);
+    p.text(`Gold: ${gameState.player.gold}`, 350, 20);
+    p.text(`Score: ${gameState.score}`, 440, 20);
+    p.fill(COLORS.POTION);
+    p.text(`Potions (Z): ${gameState.player.potions}`, 500, 20);
+
+    // Bottom Bar (Log/Tips)
+    p.fill(150);
+    p.textSize(12);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text("Arrows: Move/Attack | Space: Wait/Stairs | Z: Potion | Esc: Pause", CANVAS_WIDTH/2, CANVAS_HEIGHT - 15);
+}
+
+export function renderStartScreen(p) {
+    p.background(COLORS.BACKGROUND);
+    
+    p.fill(COLORS.TEXT);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.text("press enter to begin", CANVAS_WIDTH/2, 100); // Replaced game title
+    
+    p.textSize(20);
+    p.text("Choose Class", CANVAS_WIDTH/2, 160);
+    
+    // Class Selection UI
+    const classes = gameState.availableClasses;
+    const current = classes[gameState.selectedClassIndex];
+    
+    p.fill(30);
+    p.rect(CANVAS_WIDTH/2 - 100, 200, 200, 100, 10);
+    
+    p.fill(COLORS.ACCENT);
+    p.textSize(24);
+    p.text(`< ${current.name} >`, CANVAS_WIDTH/2, 220);
+    
+    p.fill(200);
+    p.textSize(14);
+    p.text(`HP: ${current.hp} | ATK: ${current.atk} | DEF: ${current.def}`, CANVAS_WIDTH/2, 250);
+    p.text(current.desc, CANVAS_WIDTH/2, 280);
+    
+    // Removed: p.text("Press ENTER to Start", CANVAS_WIDTH/2, 350); (redundant with main title)
+    
+    // Instructions
+    p.fill(100);
+    p.textSize(12);
+    p.text("Use Arrow Keys to select class", CANVAS_WIDTH/2, 375);
+}
+
+export function renderPaused(p) {
+    p.fill(0, 0, 0, 200);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.fill(COLORS.TEXT);
+    p.textSize(40);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+}
+
+export function renderGameOver(p) {
+    p.fill(0, 0, 0, 220);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    const win = gameState.gamePhase === "GAME_OVER_WIN";
+    p.fill(win ? COLORS.ACCENT : '#FF5555');
+    p.textSize(40);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text(win ? "YOU ESCAPED!" : "YOU DIED", CANVAS_WIDTH/2, 120);
+    
+    p.fill(COLORS.TEXT);
+    p.textSize(24);
+    p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH/2, 180);
+    p.text(`Floor Reached: ${gameState.level}`, CANVAS_WIDTH/2, 220);
+    p.text(`Lvl ${gameState.player.level} ${gameState.player.className}`, CANVAS_WIDTH/2, 260);
+    
+    p.fill(150);
+    p.textSize(16);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, 350);
+}
+</file>
+
+<file name="entities.js">
+import { TILE_SIZE, COLORS, gameState } from './globals.js';
+import { randomInt, distManhattan, findPath } from './utils.js';
+
+export class Entity {
+    constructor(x, y, name) {
+        this.gridX = x;
+        this.gridY = y;
+        this.visualX = x * TILE_SIZE;
+        this.visualY = y * TILE_SIZE;
+        this.name = name;
+        this.dead = false;
+        this.color = COLORS.PLAYER;
+        this.blocksMovement = true;
+    }
+
+    updateVisuals() {
+        const targetX = this.gridX * TILE_SIZE;
+        const targetY = this.gridY * TILE_SIZE;
+        // Simple lerp
+        this.visualX += (targetX - this.visualX) * 0.3;
+        this.visualY += (targetY - this.visualY) * 0.3;
+        
+        // Snap if close
+        if (Math.abs(targetX - this.visualX) < 1) this.visualX = targetX;
+        if (Math.abs(targetY - this.visualY) < 1) this.visualY = targetY;
+    }
+
+    render(p, camX, camY) {
+        // To be implemented by subclasses
+    }
+}
+
+export class Player extends Entity {
+    constructor(x, y, classData) {
+        super(x, y, "Player");
+        this.hp = classData.hp;
+        this.maxHp = classData.hp;
+        this.atk = classData.atk;
+        this.def = classData.def;
+        this.potions = 1;
+        this.gold = 0;
+        this.xp = 0;
+        this.level = 1;
+        this.nextLevelXp = 100;
+        this.className = classData.name;
+    }
+
+    takeDamage(amount) {
+        const actualDmg = Math.max(1, amount - this.def);
+        this.hp -= actualDmg;
+        gameState.floatingTexts.push(new FloatingText(this.gridX, this.gridY, `-${actualDmg}`, '#FF0000'));
+        
+        // Screen shake
+        gameState.shake = 5;
+
+        if (this.hp <= 0) {
+            this.hp = 0;
+            this.dead = true;
+            gameState.gamePhase = "GAME_OVER_LOSE";
+        }
+    }
+
+    heal(amount) {
+        this.hp = Math.min(this.maxHp, this.hp + amount);
+        gameState.floatingTexts.push(new FloatingText(this.gridX, this.gridY, `+${amount}`, '#00FF00'));
+    }
+    
+    gainXp(amount) {
+        this.xp += amount;
+        if (this.xp >= this.nextLevelXp) {
+            this.levelUp();
+        }
+    }
+    
+    levelUp() {
+        this.level++;
+        this.xp -= this.nextLevelXp;
+        this.nextLevelXp = Math.floor(this.nextLevelXp * 1.5);
+        this.maxHp += 10;
+        this.hp = this.maxHp;
+        this.atk += 2;
+        this.def += 1;
+        gameState.floatingTexts.push(new FloatingText(this.gridX, this.gridY, "LEVEL UP!", '#FFFF00'));
+    }
+
+    render(p, camX, camY) {
+        p.push();
+        p.translate(this.visualX - camX, this.visualY - camY);
+        p.fill(COLORS.PLAYER);
+        p.noStroke();
+        // Draw character shape
+        p.rect(4, 4, TILE_SIZE - 8, TILE_SIZE - 8, 2);
+        
+        // Eyes
+        p.fill(0);
+        p.rect(8, 8, 4, 4);
+        p.rect(14, 8, 4, 4);
+        p.pop();
+    }
+}
+
+export class Enemy extends Entity {
+    constructor(x, y, type, level) {
+        super(x, y, type);
+        this.type = type;
+        
+        // Stats scaling with level
+        const scale = 1 + (level * 0.2);
+        
+        if (type === 'Slime') {
+            this.hp = Math.floor(20 * scale);
+            this.atk = Math.floor(5 * scale);
+            this.color = COLORS.ENEMY_SLIME;
+            this.xpValue = 10;
+        } else if (type === 'Goblin') {
+            this.hp = Math.floor(30 * scale);
+            this.atk = Math.floor(8 * scale);
+            this.color = COLORS.ENEMY_GOBLIN;
+            this.xpValue = 20;
+        } else if (type === 'Skeleton') {
+            this.hp = Math.floor(25 * scale);
+            this.atk = Math.floor(12 * scale);
+            this.color = COLORS.ENEMY_SKELETON;
+            this.xpValue = 15;
+        }
+        
+        this.maxHp = this.hp;
+    }
+
+    takeDamage(amount) {
+        this.hp -= amount;
+        gameState.floatingTexts.push(new FloatingText(this.gridX, this.gridY, `-${amount}`, '#FFFFFF'));
+        if (this.hp <= 0) {
+            this.dead = true;
+            this.blocksMovement = false;
+        }
+    }
+
+    render(p, camX, camY) {
+        p.push();
+        p.translate(this.visualX - camX, this.visualY - camY);
+        p.fill(this.color);
+        p.noStroke();
+        
+        if (this.type === 'Slime') {
+            p.rect(4, 8, TILE_SIZE-8, TILE_SIZE-12, 4);
+        } else if (this.type === 'Goblin') {
+            p.triangle(TILE_SIZE/2, 2, 4, TILE_SIZE-4, TILE_SIZE-4, TILE_SIZE-4);
+        } else {
+            p.rect(6, 4, TILE_SIZE-12, TILE_SIZE-8);
+        }
+        
+        // HP Bar
+        const hpPct = this.hp / this.maxHp;
+        p.fill(100, 0, 0);
+        p.rect(2, -4, TILE_SIZE-4, 3);
+        p.fill(0, 255, 0);
+        p.rect(2, -4, (TILE_SIZE-4) * hpPct, 3);
+        
+        p.pop();
+    }
+}
+
+export class Item extends Entity {
+    constructor(x, y, type) {
+        super(x, y, type);
+        this.type = type; // 'POTION', 'GOLD'
+        this.blocksMovement = false;
+        this.bobOffset = 0;
+    }
+    
+    render(p, camX, camY) {
+        this.bobOffset = Math.sin(gameState.frameCount * 0.1) * 3;
+        
+        p.push();
+        p.translate(this.visualX - camX, this.visualY - camY + this.bobOffset);
+        
+        if (this.type === 'POTION') {
+            p.fill(COLORS.POTION);
+            p.circle(TILE_SIZE/2, TILE_SIZE/2, 10);
+            p.rect(10, 4, 4, 6);
+        } else if (this.type === 'GOLD') {
+            p.fill(COLORS.GOLD);
+            p.circle(TILE_SIZE/2, TILE_SIZE/2, 8);
+        }
+        
+        p.pop();
+    }
+}
+
+export class FloatingText {
+    constructor(gridX, gridY, text, color) {
+        this.x = gridX * TILE_SIZE + TILE_SIZE/2;
+        this.y = gridY * TILE_SIZE;
+        this.text = text;
+        this.color = color;
+        this.lifetime = 60;
+        this.vy = -1;
+    }
+    
+    update() {
+        this.y += this.vy;
+        this.lifetime--;
+    }
+    
+    render(p, camX, camY) {
+        p.fill(this.color);
+        p.noStroke();
+        p.textAlign(p.CENTER, p.CENTER);
+        p.textSize(12);
+        p.text(this.text, this.x - camX, this.y - camY);
+    }
+}
+
+export class Particle {
+    constructor(x, y, color) {
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        this.vx = (Math.random() - 0.5) * 4;
+        this.vy = (Math.random() - 0.5) * 4;
+        this.life = 30;
+    }
+    
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life--;
+    }
+    
+    render(p, camX, camY) {
+        p.fill(this.color);
+        p.noStroke();
+        p.square(this.x - camX, this.y - camY, 3);
+    }
+}
+</file>
+
+<file name="utils.js">
+import { gameState, TILE_SIZE } from './globals.js';
+
+export function randomInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+export function randomChoice(arr) {
+    return arr[Math.floor(Math.random() * arr.length)];
+}
+
+export function gridToPixel(gridX, gridY) {
+    return {
+        x: gridX * TILE_SIZE,
+        y: gridY * TILE_SIZE
+    };
+}
+
+// Simple AABB collision for particles/non-grid entities
+export function checkCollision(x1, y1, w1, h1, x2, y2, w2, h2) {
+    return x1 < x2 + w2 && x1 + w1 > x2 && y1 < y2 + h2 && y1 + h1 > y2;
+}
+
+// Distance heuristic (Manhattan)
+export function distManhattan(x1, y1, x2, y2) {
+    return Math.abs(x1 - x2) + Math.abs(y1 - y2);
+}
+
+// Distance Euclidean
+export function distEuclidean(x1, y1, x2, y2) {
+    return Math.sqrt(Math.pow(x1 - x2, 2) + Math.pow(y1 - y2, 2));
+}
+
+// A* Pathfinding helper
+export function findPath(startX, startY, targetX, targetY, map) {
+    // Simplified Greedy Best-First Search for performance in JS
+    // A* implementation
+    
+    let openSet = [{x: startX, y: startY, cost: 0, dist: distManhattan(startX, startY, targetX, targetY)}];
+    let cameFrom = new Map();
+    let gScore = new Map();
+    gScore.set(`${startX},${startY}`, 0);
+    
+    let visited = new Set();
+    
+    while (openSet.length > 0) {
+        // Sort by heuristic
+        openSet.sort((a, b) => (a.cost + a.dist) - (b.cost + b.dist));
+        let current = openSet.shift();
+        
+        if (current.x === targetX && current.y === targetY) {
+            // Reconstruct path
+            let path = [];
+            let currKey = `${targetX},${targetY}`;
+            while (cameFrom.has(currKey)) {
+                let coords = currKey.split(',').map(Number);
+                path.unshift({x: coords[0], y: coords[1]});
+                currKey = cameFrom.get(currKey);
+            }
+            return path;
+        }
+        
+        visited.add(`${current.x},${current.y}`);
+        
+        // Neighbors (Up, Down, Left, Right)
+        const dirs = [{x:0, y:-1}, {x:0, y:1}, {x:-1, y:0}, {x:1, y:0}];
+        
+        for (let dir of dirs) {
+            let nx = current.x + dir.x;
+            let ny = current.y + dir.y;
+            let nKey = `${nx},${ny}`;
+            
+            // Check bounds and walls
+            if (nx < 0 || ny < 0 || nx >= map[0].length || ny >= map.length) continue;
+            if (map[ny][nx].type === 'WALL') continue;
+            // Check for other entities blocking (simplified: enemies block path)
+            // Ideally we'd check gameState.entities here, but that might be expensive for pathfinding every frame.
+            // We'll ignore dynamic entity collision for pathfinding to avoid getting stuck in corridors too easily
+            
+            if (visited.has(nKey)) continue;
+            
+            let tentativeGScore = (gScore.get(`${current.x},${current.y}`) || 0) + 1;
+            
+            if (tentativeGScore < (gScore.get(nKey) || Infinity)) {
+                cameFrom.set(nKey, `${current.x},${current.y}`);
+                gScore.set(nKey, tentativeGScore);
+                openSet.push({
+                    x: nx,
+                    y: ny,
+                    cost: tentativeGScore,
+                    dist: distManhattan(nx, ny, targetX, targetY)
+                });
+            }
+        }
+    }
+    return []; // No path
+}
+</file>
+
+<file name="physics.js">
+import { gameState, TILE_SIZE, GRID_W, GRID_H } from './globals.js';
+import { distManhattan, findPath } from './utils.js';
+import { Player, Enemy, Item, Particle } from './entities.js';
+
+export function movePlayer(dx, dy) {
+    if (gameState.gamePhase !== 'PLAYING') return;
+
+    const newX = gameState.player.gridX + dx;
+    const newY = gameState.player.gridY + dy;
+
+    // Check bounds
+    if (newX < 0 || newX >= GRID_W || newY < 0 || newY >= GRID_H) return;
+
+    // Check Wall
+    if (gameState.map[newY][newX].type === 'WALL') return;
+
+    // Check Entities
+    let blocked = false;
+    let attackTarget = null;
+    let itemCollected = null;
+
+    for (let ent of gameState.entities) {
+        if (!ent.dead && ent.gridX === newX && ent.gridY === newY) {
+            if (ent instanceof Enemy) {
+                blocked = true;
+                attackTarget = ent;
+            } else if (ent instanceof Item) {
+                itemCollected = ent;
+            }
+        }
+    }
+
+    if (attackTarget) {
+        // Combat
+        attackTarget.takeDamage(gameState.player.atk);
+        createParticles(newX, newY, '#FF0000', 5);
+        if (attackTarget.dead) {
+            gameState.player.gainXp(attackTarget.xpValue);
+            gameState.score += attackTarget.xpValue;
+            
+            // Random chance to regain health after killing enemy (25% chance)
+            if (Math.random() < 0.25) {
+                const healAmount = Math.floor(Math.random() * 3) + 2; // 2-4 HP
+                gameState.player.heal(healAmount);
+                createParticles(gameState.player.gridX, gameState.player.gridY, '#00FF00', 3);
+            }
+            
+            // Chance to drop loot
+            if (Math.random() < 0.3) {
+                gameState.entities.push(new Item(attackTarget.gridX, attackTarget.gridY, Math.random() < 0.5 ? 'GOLD' : 'POTION'));
+            }
+        }
+    } else {
+        // Move
+        gameState.player.gridX = newX;
+        gameState.player.gridY = newY;
+        
+        // Collect Item
+        if (itemCollected) {
+            if (itemCollected.type === 'GOLD') {
+                gameState.player.gold += 10;
+                gameState.score += 10;
+            } else if (itemCollected.type === 'POTION') {
+                gameState.player.potions++;
+            }
+            itemCollected.dead = true;
+            createParticles(newX, newY, '#FFFF00', 5);
+        }
+        
+        // Random chance to find health while exploring (15% chance)
+        if (!itemCollected && Math.random() < 0.15) {
+            const healAmount = Math.floor(Math.random() * 2) + 1; // 1-2 HP
+            gameState.player.heal(healAmount);
+            createParticles(newX, newY, '#00FF88', 3);
+        }
+        
+        // Check Stairs
+        if (gameState.map[newY][newX].type === 'STAIRS') {
+           // Handled by Space key usually, but let's allow "interact" logic
+        }
+    }
+
+    // Advance Turn
+    gameState.turn++;
+    updateEnemies();
+    updateVisibility();
+}
+
+export function waitTurn() {
+    // Check if on stairs
+    const pX = gameState.player.gridX;
+    const pY = gameState.player.gridY;
+    
+    if (gameState.map[pY][pX].type === 'STAIRS') {
+        nextLevel();
+    } else {
+        // Base heal + random bonus (20% chance for extra)
+        let healAmount = 1;
+        if (Math.random() < 0.2) {
+            healAmount += Math.floor(Math.random() * 2) + 1; // +1-2 extra HP
+        }
+        gameState.player.heal(healAmount);
+        
+        if (healAmount > 1) {
+            createParticles(gameState.player.gridX, gameState.player.gridY, '#00FF00', 3);
+        }
+        
+        gameState.turn++;
+        updateEnemies();
+    }
+}
+
+export function usePotion() {
+    if (gameState.player.potions > 0) {
+        gameState.player.potions--;
+        gameState.player.heal(30);
+        gameState.turn++;
+        updateEnemies();
+    }
+}
+
+function updateEnemies() {
+    gameState.entities.forEach(ent => {
+        if (ent instanceof Enemy && !ent.dead) {
+            // Check distance to player
+            const dist = distManhattan(ent.gridX, ent.gridY, gameState.player.gridX, gameState.player.gridY);
+            
+            if (dist <= 8) { // Aggro range
+                if (dist === 1) {
+                    // Attack Player
+                    gameState.player.takeDamage(ent.atk);
+                    createParticles(gameState.player.gridX, gameState.player.gridY, '#FFFFFF', 3);
+                } else {
+                    // Move towards player
+                    const path = findPath(ent.gridX, ent.gridY, gameState.player.gridX, gameState.player.gridY, gameState.map);
+                    if (path && path.length > 0) {
+                        const nextStep = path[0];
+                        
+                        // Check if blocked by another enemy
+                        let blocked = false;
+                        for (let other of gameState.entities) {
+                            if (other !== ent && !other.dead && other.blocksMovement && other.gridX === nextStep.x && other.gridY === nextStep.y) {
+                                blocked = true;
+                                break;
+                            }
+                        }
+                        
+                        if (!blocked) {
+                            ent.gridX = nextStep.x;
+                            ent.gridY = nextStep.y;
+                        }
+                    }
+                }
+            }
+        }
+    });
+    
+    // Cleanup dead entities
+    gameState.entities = gameState.entities.filter(e => !e.dead);
+}
+
+function updateVisibility() {
+    // Reset visibility
+    for(let y=0; y<GRID_H; y++) {
+        for(let x=0; x<GRID_W; x++) {
+            gameState.map[y][x].visible = false;
+        }
+    }
+    
+    // Simple raycasting or distance check for FOV
+    const VIEW_RADIUS = 7;
+    const px = gameState.player.gridX;
+    const py = gameState.player.gridY;
+    
+    for (let y = py - VIEW_RADIUS; y <= py + VIEW_RADIUS; y++) {
+        for (let x = px - VIEW_RADIUS; x <= px + VIEW_RADIUS; x++) {
+            if (x >= 0 && x < GRID_W && y >= 0 && y < GRID_H) {
+                if (distManhattan(px, py, x, y) <= VIEW_RADIUS) {
+                    // Simple line of sight check could go here, but distance is okay for OneBit style
+                    gameState.map[y][x].visible = true;
+                    gameState.map[y][x].seen = true;
+                }
+            }
+        }
+    }
+}
+
+function nextLevel() {
+    gameState.level++;
+    gameState.score += 100;
+    // Keep player stats but reset position in generateDungeon logic
+    // We need to signal the game loop to regenerate
+    // For now, let's just do it directly via a callback or event system.
+    // Simplest: expose a helper in logic.
+    window.dispatchEvent(new CustomEvent('GENERATE_LEVEL'));
+}
+
+function createParticles(gridX, gridY, color, count) {
+    const px = gridX * TILE_SIZE + TILE_SIZE/2;
+    const py = gridY * TILE_SIZE + TILE_SIZE/2;
+    for(let i=0; i<count; i++) {
+        gameState.particles.push(new Particle(px, py, color));
+    }
+}
+</file>
+
+<file name="map.js">
+import { TILE_SIZE, GRID_W, GRID_H, COLORS } from './globals.js';
+import { randomInt } from './utils.js';
+
+export class Tile {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.type = type; // 'WALL', 'FLOOR', 'STAIRS'
+        this.visible = false;
+        this.seen = false; // Fog of war memory
+    }
+}
+
+export class DungeonGenerator {
+    static generate(level) {
+        // Initialize grid with walls
+        let map = [];
+        for (let y = 0; y < GRID_H; y++) {
+            let row = [];
+            for (let x = 0; x < GRID_W; x++) {
+                row.push(new Tile(x, y, 'WALL'));
+            }
+            map.push(row);
+        }
+
+        const rooms = [];
+        const MAX_ROOMS = 8 + level; // More rooms as level increases
+        const MIN_SIZE = 3;
+        const MAX_SIZE = 8;
+
+        for (let i = 0; i < MAX_ROOMS; i++) {
+            const w = randomInt(MIN_SIZE, MAX_SIZE);
+            const h = randomInt(MIN_SIZE, MAX_SIZE);
+            const x = randomInt(1, GRID_W - w - 1);
+            const y = randomInt(1, GRID_H - h - 1);
+
+            const newRoom = { x, y, w, h, cx: Math.floor(x + w/2), cy: Math.floor(y + h/2) };
+
+            // Check overlap
+            let failed = false;
+            for (let other of rooms) {
+                if (newRoom.x <= other.x + other.w && newRoom.x + newRoom.w >= other.x &&
+                    newRoom.y <= other.y + other.h && newRoom.y + newRoom.h >= other.y) {
+                    failed = true;
+                    break;
+                }
+            }
+
+            if (!failed) {
+                rooms.push(newRoom);
+                // Carve room
+                for (let ry = newRoom.y; ry < newRoom.y + newRoom.h; ry++) {
+                    for (let rx = newRoom.x; rx < newRoom.x + newRoom.w; rx++) {
+                        map[ry][rx].type = 'FLOOR';
+                    }
+                }
+
+                // Connect to previous room
+                if (rooms.length > 1) {
+                    const prev = rooms[rooms.length - 2];
+                    // Horizontal then vertical
+                    if (Math.random() < 0.5) {
+                        DungeonGenerator.carveH(map, prev.cx, newRoom.cx, prev.cy);
+                        DungeonGenerator.carveV(map, prev.cy, newRoom.cy, newRoom.cx);
+                    } else {
+                        DungeonGenerator.carveV(map, prev.cy, newRoom.cy, prev.cx);
+                        DungeonGenerator.carveH(map, prev.cx, newRoom.cx, newRoom.cy);
+                    }
+                }
+            }
+        }
+        
+        // Place Stairs in the last room
+        const lastRoom = rooms[rooms.length - 1];
+        map[lastRoom.cy][lastRoom.cx].type = 'STAIRS';
+
+        return { map, rooms };
+    }
+
+    static carveH(map, x1, x2, y) {
+        for (let x = Math.min(x1, x2); x <= Math.max(x1, x2); x++) {
+            map[y][x].type = 'FLOOR';
+        }
+    }
+
+    static carveV(map, y1, y2, x) {
+        for (let y = Math.min(y1, y2); y <= Math.max(y1, y2); y++) {
+            map[y][x].type = 'FLOOR';
+        }
+    }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

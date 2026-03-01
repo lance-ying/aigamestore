@@ -1,0 +1,138 @@
+/**
+ * UI Rendering using 2D Canvas overlay
+ */
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, WIN_DISTANCE } from './globals.js';
+
+let uiCanvas, ctx;
+
+export function setupUI() {
+    uiCanvas = document.createElement('canvas');
+    uiCanvas.width = CANVAS_WIDTH;
+    uiCanvas.height = CANVAS_HEIGHT;
+    uiCanvas.style.position = 'absolute';
+    uiCanvas.style.top = '0';
+    uiCanvas.style.left = '0';
+    uiCanvas.style.pointerEvents = 'none'; // Click-through
+    uiCanvas.style.zIndex = '10';
+    
+    if (gameState.gameContainer) {
+        gameState.gameContainer.appendChild(uiCanvas);
+    } else {
+        // Fallback
+        document.body.appendChild(uiCanvas);
+    }
+    
+    ctx = uiCanvas.getContext('2d');
+}
+
+export function renderUI() {
+    if (!ctx) return;
+    
+    // Clear
+    ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    const phase = gameState.gamePhase;
+    
+    // HUD (always show if playing or paused)
+    if (phase === "PLAYING" || phase === "PAUSED") {
+        drawHUD();
+    }
+    
+    // Screens
+    if (phase === "START") {
+        drawStartScreen();
+    } else if (phase === "PAUSED") {
+        drawPausedScreen();
+    } else if (phase === "GAME_OVER_WIN") {
+        drawWinScreen();
+    } else if (phase === "GAME_OVER_LOSE") {
+        drawLoseScreen();
+    }
+    
+    // Debug info for Tests
+    if (gameState.controlMode !== "HUMAN") {
+        ctx.fillStyle = "red";
+        ctx.font = "12px monospace";
+        ctx.fillText(`MODE: ${gameState.controlMode}`, 10, CANVAS_HEIGHT - 10);
+    }
+}
+
+function drawHUD() {
+    ctx.fillStyle = "white";
+    ctx.font = "bold 20px Arial";
+    ctx.textAlign = "left";
+    ctx.fillText(`Score: ${Math.floor(gameState.score)}`, 20, 30);
+    
+    ctx.textAlign = "right";
+    const dist = gameState.player ? Math.floor(gameState.player.position.z) : 0;
+    ctx.fillText(`Dist: ${dist} / ${WIN_DISTANCE}m`, CANVAS_WIDTH - 20, 30);
+    
+    // Combo bar
+    if (gameState.combo > 1) {
+        ctx.textAlign = "center";
+        ctx.fillStyle = "#ff00ff";
+        ctx.fillText(`${gameState.combo}x COMBO!`, CANVAS_WIDTH / 2, 60);
+    }
+}
+
+function drawStartScreen() {
+    drawOverlay();
+    ctx.fillStyle = "cyan";
+    ctx.font = "bold 40px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("NEON HOP", CANVAS_WIDTH / 2, 120);
+    
+    ctx.fillStyle = "white";
+    ctx.font = "16px Arial";
+    ctx.fillText("Use Arrows/AD to steer", CANVAS_WIDTH / 2, 180);
+    ctx.fillText("Bounce on tiles to survive", CANVAS_WIDTH / 2, 210);
+    
+    ctx.fillStyle = "#ffff00";
+    ctx.font = "bold 20px Arial";
+    ctx.fillText("PRESS ENTER TO START", CANVAS_WIDTH / 2, 300);
+}
+
+function drawPausedScreen() {
+    drawOverlay();
+    ctx.fillStyle = "white";
+    ctx.font = "bold 30px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("PAUSED", CANVAS_WIDTH / 2, 200);
+}
+
+function drawWinScreen() {
+    drawOverlay();
+    ctx.fillStyle = "#00ff00";
+    ctx.font = "bold 40px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("VICTORY!", CANVAS_WIDTH / 2, 150);
+    
+    ctx.fillStyle = "white";
+    ctx.font = "20px Arial";
+    ctx.fillText(`Final Score: ${Math.floor(gameState.score)}`, CANVAS_WIDTH / 2, 220);
+    
+    ctx.fillStyle = "#ffff00";
+    ctx.font = "16px Arial";
+    ctx.fillText("Press R to Restart", CANVAS_WIDTH / 2, 300);
+}
+
+function drawLoseScreen() {
+    drawOverlay();
+    ctx.fillStyle = "#ff0000";
+    ctx.font = "bold 40px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("GAME OVER", CANVAS_WIDTH / 2, 150);
+    
+    ctx.fillStyle = "white";
+    ctx.font = "20px Arial";
+    ctx.fillText(`Score: ${Math.floor(gameState.score)}`, CANVAS_WIDTH / 2, 220);
+    
+    ctx.fillStyle = "#ffff00";
+    ctx.font = "16px Arial";
+    ctx.fillText("Press R to Restart", CANVAS_WIDTH / 2, 300);
+}
+
+function drawOverlay() {
+    ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+}

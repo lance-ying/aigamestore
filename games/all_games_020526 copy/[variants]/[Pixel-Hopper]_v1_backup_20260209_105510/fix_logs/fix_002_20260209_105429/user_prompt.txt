@@ -1,0 +1,1469 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+when i click pause/esc, I don't want the game to drop in opacity with the word paused, i just want the game to freeze, can you add that for me
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Game</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; font-family: sans-serif; transition: background 0.2s; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #007bff; }
+      .control-button:active { transform: translateY(1px); }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <!-- Removed h1#gameTitle as per feedback to remove game name from title screen -->
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN', this)">Human Mode</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">
+        Hop through an endless world of roads, rivers, and rails. Avoid cars, trains, and water, timing jumps to score points. Don't stay still too long, or the eagle gets you!
+      </p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">
+        Arrow Keys: Move | Enter: Start Game / Arm Double Hop | Esc: Pause/Unpause | R: Restart
+      </p>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.min.js"></script>
+    <script type="module" src="game.js"></script>
+    
+    <script>
+      function setMode(mode, btn) {
+        if (window.setControlMode) {
+          window.setControlMode(mode);
+          document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          // Focus canvas
+          document.querySelector('canvas').focus();
+        }
+      }
+    </script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+import { gameState, GRID_SIZE } from './globals.js';
+import { isSolid } from './physics.js';
+
+// Controller for TEST_1: Survival Strategy
+function getSurvivalAction(gameState) {
+    const player = gameState.player;
+    if (!player || player.isMoving || player.isDead) return null;
+    
+    const currentLane = gameState.laneManager.getLaneAt(player.gridY);
+    const forwardLane = gameState.laneManager.getLaneAt(player.gridY - 1);
+    
+    if (!forwardLane) return null;
+
+    // Helper: Predict collision at a grid point in future
+    // Basic heuristic: check if any obstacle is dangerously close to intersection
+    function isDangerous(lane, gridX, stepsAway = 0) {
+        if (!lane) return true; // Void is bad
+        
+        // 1. Static obstacles (Trees)
+        if (lane.staticMap && lane.staticMap[gridX]) return true;
+        
+        // 2. Dynamic obstacles
+        // Calculate player center X in world
+        const checkX = gridX * GRID_SIZE + GRID_SIZE/2;
+        const safetyMargin = GRID_SIZE * 1.5;
+        
+        if (lane.type === 'ROAD' || lane.type === 'RAIL') {
+            // Train warning
+            if (lane.type === 'RAIL' && (lane.isWarning || lane.trainActive)) return true;
+            
+            for (let obs of lane.obstacles) {
+                // Time to impact?
+                // Simple: is it currently close?
+                // Better: Where will it be in (stepsAway * moveDuration + reactionTime)
+                // Let's stick to simple "Is it close now moving towards us"
+                const dist = obs.x + obs.width/2 - checkX;
+                
+                // If moving towards us
+                if ((lane.direction === 1 && obs.x < checkX + safetyMargin && obs.x + obs.width > checkX - safetyMargin * 2) ||
+                    (lane.direction === -1 && obs.x > checkX - safetyMargin && obs.x < checkX + safetyMargin * 2)) {
+                    return true;
+                }
+            }
+            return false;
+        } 
+        
+        if (lane.type === 'WATER') {
+            // Dangerous if NO log is there
+            let hasLog = false;
+            for (let obs of lane.obstacles) {
+                const centerObs = obs.x + obs.width/2;
+                // Check if log covers the grid center
+                if (checkX > obs.x && checkX < obs.x + obs.width) {
+                    hasLog = true;
+                    break;
+                }
+            }
+            return !hasLog;
+        }
+        
+        return false;
+    }
+    
+    // Strategy:
+    // 1. Can we move Forward? (UP)
+    if (!isDangerous(forwardLane, player.gridX)) {
+        return { keyCode: 38 }; // UP
+    }
+    
+    // 2. If blocked, can we move Left or Right to a safer spot?
+    // Or just wait.
+    
+    // If we are currently in danger (e.g. log moving away), we MUST move.
+    const amInDanger = isDangerous(currentLane, player.gridX); // Mostly checks water/rail
+    
+    if (amInDanger) {
+        // Panic! Move anywhere safe.
+        if (!isDangerous(currentLane, player.gridX - 1)) return { keyCode: 37 }; // Left
+        if (!isDangerous(currentLane, player.gridX + 1)) return { keyCode: 39 }; // Right
+        if (!isDangerous(forwardLane, player.gridX)) return { keyCode: 38 }; // Up (Try again)
+        return { keyCode: 40 }; // Back
+    }
+    
+    // If waiting for a car to pass, maybe move sideways to optimize?
+    // Random side step if waiting too long?
+    if (Math.random() < 0.05) {
+        if (player.gridX > 2) return { keyCode: 37 };
+        if (player.gridX < 12) return { keyCode: 39 };
+    }
+
+    return null; // Wait
+}
+
+// Controller for TEST_2: Random Chaos
+function getRandomAction(gameState) {
+    const actions = [37, 38, 39, 40]; // Arrows
+    if (Math.random() < 0.2) { // 20% chance to press key per frame
+        return { keyCode: actions[Math.floor(Math.random() * actions.length)] };
+    }
+    return null;
+}
+
+export function get_automated_testing_action(gameState) {
+    if (gameState.gamePhase !== 'PLAYING') return null;
+
+    switch (gameState.controlMode) {
+        case "TEST_1":
+            return getSurvivalAction(gameState);
+        case "TEST_2":
+            return getRandomAction(gameState);
+        default:
+            return null;
+    }
+}
+
+window.get_automated_testing_action = get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const GRID_SIZE = 40; // Size of one tile
+export const MOVE_SPEED = 0.2; // 0.0 to 1.0 progress per frame (speed of hop)
+
+export const COLORS = {
+    GRASS_LIGHT: '#8bc34a',
+    GRASS_DARK: '#7cb342',
+    ROAD: '#455a64',
+    ROAD_MARKING: '#ffffff',
+    WATER: '#4fc3f7',
+    RAIL: '#5d4037',
+    RAIL_TIE: '#3e2723',
+    RAIL_METAL: '#90a4ae',
+    PLAYER: '#ffeb3b',
+    PLAYER_ACCENT: '#fbc02d',
+    CAR_COLORS: ['#e53935', '#1e88e5', '#43a047', '#fb8c00', '#8e24aa'],
+    LOG: '#795548',
+    TREE: '#2e7d32',
+    TRAIN: '#d32f2f'
+};
+
+export const gameState = {
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN",
+    
+    // Logic state
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    score: 0,
+    highScore: 0,
+    
+    // World state
+    cameraY: 0,
+    cameraOffsetTarget: 0,
+    
+    // Entities
+    player: null,
+    lanes: [], // Array of Lane objects
+    particles: [],
+    
+    // Input state
+    keys: {},
+
+    // Auto-restart state
+    autoRestartScheduled: false
+};
+
+// Initialize logs for debugging and analysis
+export function initLogs(p) {
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+}
+
+export function getGameState() {
+    return gameState;
+}
+
+window.getGameState = getGameState;
+</file>
+
+<file name="game.js">
+import { 
+    CANVAS_WIDTH, CANVAS_HEIGHT, gameState, initLogs 
+} from './globals.js';
+import { handleInput, registerKeyPress, registerKeyRelease } from './input.js';
+import { Player } from './entities.js';
+import { LaneManager } from './lanes.js';
+import { checkCollisions } from './physics.js';
+import { renderUI, renderStartScreen, renderGameOver, renderPaused } from './ui.js';
+
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        initLogs(p);
+        
+        // Init Game State
+        gameState.gamePhase = "START";
+        gameState.score = 0;
+        gameState.cameraY = 0;
+        gameState.particles = [];
+        
+        // Initialize Managers
+        gameState.laneManager = new LaneManager();
+        gameState.lanes = gameState.laneManager.lanes;
+        
+        // Initialize Player for START screen (needed for proper state)
+        gameState.player = new Player(7, 0);
+        
+        p.logs.game_info.push({
+            data: { gamePhase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    };
+
+    p.draw = function() {
+        // Update Time
+        gameState.frameCount = p.frameCount;
+        const currentTime = p.millis();
+        gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = currentTime;
+        
+        // Input Handling
+        handleInput(p);
+        
+        // Rendering
+        p.background(30, 30, 40); // Deep background color
+        
+        // UI Layers - Check phase first
+        if (gameState.gamePhase === "START") {
+            renderStartScreen(p);
+        } else if (gameState.gamePhase === "PLAYING") {
+            renderGameWorld(p);
+            updateGame(p);
+            renderUI(p);
+        } else if (gameState.gamePhase === "PAUSED") {
+            renderGameWorld(p);
+            renderUI(p); // Show score behind
+            renderPaused(p);
+        } else if (gameState.gamePhase.startsWith("GAME_OVER")) {
+            renderGameWorld(p);
+            renderUI(p);
+            renderGameOver(p, gameState.gamePhase === "GAME_OVER_WIN");
+        }
+    };
+
+    function renderGameWorld(p) {
+        // Camera Logic
+        if (gameState.player) {
+            // Camera follows player Y smoothly, but mostly moves UP (negative Y)
+            // Center player vertically around 3/4 of screen
+            const targetCamY = gameState.player.visualY - CANVAS_HEIGHT * 0.7;
+            
+            // Only scroll forward (up), never back down?
+            // Usually Crossy Road cam drifts up.
+            // Let's just lerp to player.
+            gameState.cameraY = p.lerp(gameState.cameraY, targetCamY, 0.1);
+        }
+        
+        // Apply Camera
+        p.push();
+        p.translate(0, -gameState.cameraY);
+        
+        // Render World
+        if (gameState.laneManager) {
+            gameState.laneManager.render(p);
+        }
+        
+        // Render Particles (Behind player?)
+        // Particles should be z-sorted. Simple: Render all particles.
+        gameState.particles.forEach(sys => sys.render(p));
+        
+        // Render Player
+        if (gameState.player) {
+            gameState.player.render(p);
+        }
+        
+        p.pop();
+    }
+
+    function updateGame(p) {
+        // Update Managers
+        gameState.laneManager.update(p);
+        
+        // Update Entities
+        if (gameState.player) gameState.player.update(p);
+        
+        // Update Particles
+        for (let i = gameState.particles.length - 1; i >= 0; i--) {
+            gameState.particles[i].update();
+            if (gameState.particles[i].isDead()) {
+                gameState.particles.splice(i, 1);
+            }
+        }
+        
+        // Physics
+        checkCollisions(p);
+    }
+
+    p.keyPressed = function() {
+        registerKeyPress(p, p.keyCode);
+    };
+
+    p.keyReleased = function() {
+        registerKeyRelease(p, p.keyCode);
+    };
+});
+
+window.gameInstance = gameInstance;
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+    // Restart game to ensure clean state
+    if (gameState.gamePhase !== "START") {
+        gameState.gamePhase = "START";
+    }
+};
+</file>
+
+<file name="lanes.js">
+import { GRID_SIZE, COLORS, CANVAS_WIDTH, CANVAS_HEIGHT, gameState } from './globals.js';
+import { Obstacle, Log, Train } from './entities.js';
+
+class Lane {
+    constructor(gridY, type) {
+        this.gridY = gridY;
+        this.y = gridY * GRID_SIZE;
+        this.type = type; // 'GRASS', 'ROAD', 'WATER', 'RAIL'
+        this.obstacles = [];
+        this.staticMap = {}; // For trees: { gridX: true }
+        
+        // Traffic settings
+        this.direction = Math.random() > 0.5 ? 1 : -1;
+        this.speed = 0;
+        this.spawnTimer = 0;
+        this.spawnRate = 0;
+        
+        this.setup();
+    }
+    
+    setup() {
+        if (this.type === 'GRASS') {
+            // Generate Trees
+            const density = 0.2;
+            const cols = Math.floor(CANVAS_WIDTH / GRID_SIZE);
+            for (let i = 0; i < cols; i++) {
+                if (Math.random() < density) {
+                    this.staticMap[i] = true;
+                }
+            }
+        } else if (this.type === 'ROAD') {
+            this.speed = (2 + Math.random() * 3) * this.direction;
+            this.spawnRate = 120 + Math.random() * 100; // frames
+            // Initial spawn
+            this.spawnObstacle(Math.random() * CANVAS_WIDTH);
+        } else if (this.type === 'WATER') {
+            this.speed = (1.5 + Math.random() * 2) * this.direction;
+            this.spawnRate = 100 + Math.random() * 80;
+            // Initial spawn multiple logs
+            this.spawnObstacle(Math.random() * CANVAS_WIDTH);
+            this.spawnObstacle((Math.random() * CANVAS_WIDTH + 300) % CANVAS_WIDTH);
+        } else if (this.type === 'RAIL') {
+            this.speed = 20 * this.direction; // Fast!
+            this.isWarning = false;
+            this.trainActive = false;
+            this.spawnRate = 300 + Math.random() * 200;
+            this.spawnTimer = this.spawnRate;
+        }
+    }
+    
+    spawnObstacle(xOffset = null) {
+        let x = xOffset !== null ? xOffset : (this.direction === 1 ? -100 : CANVAS_WIDTH + 100);
+        
+        if (this.type === 'ROAD') {
+            const color = COLORS.CAR_COLORS[Math.floor(Math.random() * COLORS.CAR_COLORS.length)];
+            const width = GRID_SIZE * (1.5 + Math.random() * 0.5); // Car length
+            this.obstacles.push(new Obstacle(x, this.y + 5, width, GRID_SIZE - 10, this.speed, color));
+        } else if (this.type === 'WATER') {
+            const width = GRID_SIZE * (2 + Math.random() * 2); // Log length
+            this.obstacles.push(new Log(x, this.y + 5, width, GRID_SIZE - 10, this.speed, COLORS.LOG));
+        } else if (this.type === 'RAIL') {
+            // Train is very long
+            const width = CANVAS_WIDTH * 1.5;
+            this.obstacles.push(new Train(x, this.y + 2, width, GRID_SIZE - 4, this.speed, COLORS.TRAIN));
+        }
+    }
+    
+    update(p) {
+        // Spawning Logic
+        if (this.type === 'RAIL') {
+            this.spawnTimer--;
+            
+            // Warning phase
+            if (this.spawnTimer < 60 && this.spawnTimer > 0) {
+                this.isWarning = true;
+            } else if (this.spawnTimer <= 0 && !this.trainActive) {
+                this.isWarning = false;
+                this.trainActive = true;
+                this.spawnObstacle();
+            }
+        } else if (this.type === 'ROAD' || this.type === 'WATER') {
+            this.spawnTimer++;
+            if (this.spawnTimer > this.spawnRate) {
+                // Check if space is clear to spawn (avoid overlap)
+                // Simple check: last obstacle far enough?
+                let safe = true;
+                if (this.obstacles.length > 0) {
+                    const last = this.obstacles[this.obstacles.length - 1];
+                    const dist = this.direction === 1 ? (0 - (last.x + last.width)) : (last.x - CANVAS_WIDTH);
+                    if (Math.abs(dist) < GRID_SIZE * 3) safe = false;
+                }
+                
+                if (safe) {
+                    this.spawnObstacle();
+                    this.spawnTimer = 0;
+                    // Randomize next rate slightly
+                    this.spawnRate = (this.type === 'ROAD' ? 120 : 100) + Math.random() * 100;
+                }
+            }
+        }
+        
+        // Update Obstacles
+        for (let i = this.obstacles.length - 1; i >= 0; i--) {
+            const obs = this.obstacles[i];
+            obs.update();
+            
+            // Cleanup off-screen
+            if ((this.direction === 1 && obs.x > CANVAS_WIDTH + 200) ||
+                (this.direction === -1 && obs.x < -200 - obs.width)) {
+                this.obstacles.splice(i, 1);
+                if (this.type === 'RAIL') {
+                    this.trainActive = false;
+                    this.spawnTimer = 300 + Math.random() * 200;
+                }
+            }
+        }
+    }
+    
+    render(p) {
+        const y = this.y;
+        
+        // Background
+        p.noStroke();
+        if (this.type === 'GRASS') p.fill(COLORS.GRASS_LIGHT);
+        else if (this.type === 'ROAD') p.fill(COLORS.ROAD);
+        else if (this.type === 'WATER') p.fill(COLORS.WATER);
+        else if (this.type === 'RAIL') p.fill(COLORS.RAIL);
+        
+        p.rect(0, y, CANVAS_WIDTH, GRID_SIZE);
+        
+        // Decals
+        if (this.type === 'GRASS') {
+            // Draw Trees
+            p.fill(COLORS.TREE);
+            for(let x in this.staticMap) {
+                // Simple pine tree
+                const tx = x * GRID_SIZE + GRID_SIZE/2;
+                const ty = y + GRID_SIZE - 5;
+                p.triangle(tx - 15, ty, tx + 15, ty, tx, ty - 35);
+                p.fill(COLORS.GRASS_DARK); // Shadow/trunk
+                p.rect(tx - 3, ty, 6, 5);
+                p.fill(COLORS.TREE); // Reset fill
+            }
+        } else if (this.type === 'ROAD') {
+            p.stroke(COLORS.ROAD_MARKING);
+            p.strokeWeight(2);
+            p.line(0, y + GRID_SIZE - 5, CANVAS_WIDTH, y + GRID_SIZE - 5); // Curb
+            p.drawingContext.setLineDash([10, 10]);
+            p.line(0, y + GRID_SIZE/2, CANVAS_WIDTH, y + GRID_SIZE/2);
+            p.drawingContext.setLineDash([]);
+        } else if (this.type === 'RAIL') {
+            // Ties
+            p.fill(COLORS.RAIL_TIE);
+            p.noStroke();
+            for(let i=0; i<CANVAS_WIDTH; i+=20) {
+                p.rect(i, y + 5, 6, GRID_SIZE - 10);
+            }
+            // Rails
+            p.stroke(COLORS.RAIL_METAL);
+            p.strokeWeight(3);
+            p.line(0, y + 10, CANVAS_WIDTH, y + 10);
+            p.line(0, y + GRID_SIZE - 10, CANVAS_WIDTH, y + GRID_SIZE - 10);
+            
+            // Warning Light
+            if (this.isWarning) {
+                if (Math.floor(p.frameCount / 10) % 2 === 0) {
+                    p.fill(255, 0, 0, 150);
+                    p.noStroke();
+                    p.rect(0, y, CANVAS_WIDTH, GRID_SIZE);
+                }
+            }
+        }
+        
+        // Obstacles
+        this.obstacles.forEach(obs => obs.render(p));
+    }
+}
+
+export class LaneManager {
+    constructor() {
+        this.lanes = [];
+        this.startGridY = 5; // Start generation here
+        this.minGridY = 10;  // How far back to keep lanes
+        
+        // Generate initial safe zone
+        this.initSafeZone();
+    }
+    
+    initSafeZone() {
+        // Clear lanes
+        this.lanes = [];
+        // Create 10 grass lanes around 0
+        for (let i = 5; i >= -5; i--) {
+            this.addLane(i, 'GRASS');
+        }
+        // Ensure starting position (0,0) is free of trees
+        const startLane = this.getLaneAt(0);
+        if (startLane && startLane.staticMap[7]) { // Player starts at x=7
+            delete startLane.staticMap[7];
+        }
+    }
+    
+    addLane(gridY, forcedType = null) {
+        // Procedural Generation Logic
+        let type = 'GRASS';
+        
+        if (forcedType) {
+            type = forcedType;
+        } else {
+            const r = Math.random();
+            // Groups of lanes logic could go here
+            // Simple probability
+            if (r < 0.4) type = 'GRASS';
+            else if (r < 0.7) type = 'ROAD';
+            else if (r < 0.9) type = 'WATER';
+            else type = 'RAIL';
+        }
+        
+        const lane = new Lane(gridY, type);
+        this.lanes.push(lane);
+        
+        // Keep sorted by Y for rendering? 
+        // Rendering should be back-to-front (highest Y to lowest Y, since low Y is far away/up)
+        // Actually, painter's algorithm: draw top (lowest Y) first.
+        this.lanes.sort((a, b) => a.gridY - b.gridY);
+    }
+    
+    update(p) {
+        // Safety check: ensure lanes array is not empty
+        if (this.lanes.length === 0) {
+            this.initSafeZone();
+        }
+        
+        // Generate new lanes ahead of player
+        const playerGridY = gameState.player ? gameState.player.gridY : 0;
+        const lowestGeneratedY = this.lanes[0].gridY;
+        
+        if (playerGridY < lowestGeneratedY + 15) {
+            // Need more lanes
+            for(let i=1; i<=5; i++) {
+                this.addLane(lowestGeneratedY - i);
+            }
+        }
+        
+        // Remove old lanes behind player (optimization)
+        const cutoff = playerGridY + 10;
+        for (let i = this.lanes.length - 1; i >= 0; i--) {
+            if (this.lanes[i].gridY > cutoff) {
+                this.lanes.splice(i, 1);
+            }
+        }
+        
+        // Update all lanes
+        this.lanes.forEach(lane => lane.update(p));
+    }
+    
+    render(p) {
+        // Render in order
+        this.lanes.forEach(lane => {
+            // Culling
+            const screenY = lane.y - gameState.cameraY;
+            if (screenY > -GRID_SIZE && screenY < CANVAS_HEIGHT) {
+                lane.render(p);
+            }
+        });
+    }
+    
+    getLaneAt(gridY) {
+        return this.lanes.find(l => l.gridY === gridY);
+    }
+}
+</file>
+
+<file name="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderUI(p) {
+    // Score
+    p.push();
+    p.resetMatrix();
+    p.fill(255);
+    p.stroke(0);
+    p.strokeWeight(4);
+    p.textSize(32);
+    p.textAlign(p.LEFT, p.TOP);
+    p.text(gameState.score, 20, 20);
+    
+    // High Score
+    p.textSize(16);
+    p.textAlign(p.RIGHT, p.TOP);
+    p.text(`HI: ${Math.max(gameState.score, gameState.highScore)}`, CANVAS_WIDTH - 20, 20);
+    
+    // Hop Charge Indicator
+    if (gameState.player && gameState.player.hasHopCharge) {
+        p.textAlign(p.CENTER, p.TOP);
+        if (gameState.player.isDoubleHopArmed) {
+            p.fill(255, 255, 100);
+            p.stroke(0);
+            p.strokeWeight(3);
+            p.textSize(20);
+            p.text("⚡ DOUBLE HOP ARMED! ⚡", CANVAS_WIDTH/2, 20);
+        } else {
+            p.fill(100, 200, 255);
+            p.stroke(0);
+            p.strokeWeight(3);
+            p.textSize(20);
+            p.text("⚡ DOUBLE HOP READY - Press ENTER ⚡", CANVAS_WIDTH/2, 20);
+        }
+    }
+    
+    p.pop();
+}
+
+export function renderStartScreen(p) {
+    p.background(50, 50, 60);
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    // Main Title: Replaced with "press enter to begin"
+    p.textSize(48); // Adjusted size for new title
+    p.text("press enter to begin", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    
+    // Preserve description and controls, adjust Y positions
+    p.textSize(16);
+    p.fill(200);
+    p.text("Arrows to Move | Avoid Cars & Water", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+    
+    p.textSize(14);
+    p.fill(100, 200, 255);
+    p.text("Cross rivers to earn DOUBLE HOPS!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 70);
+    p.text("Press ENTER to activate, then use arrows", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 90);
+}
+
+export function renderGameOver(p, win) {
+    p.push();
+    p.resetMatrix();
+    p.fill(0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(50);
+    p.text("GAME OVER", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+    
+    p.textSize(30);
+    p.text(`Score: ${gameState.score}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 20);
+    
+    p.textSize(20);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60);
+    p.pop();
+}
+
+export function renderPaused(p) {
+    p.push();
+    p.resetMatrix();
+    p.fill(0, 100);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    p.pop();
+}
+</file>
+
+<file name="entities.js">
+import { GRID_SIZE, COLORS, gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { ParticleSystem } from './particles.js';
+import { isSolid } from './physics.js';
+import { scheduleAutoRestart } from './input.js'; // Import the new auto-restart function
+
+export class Player {
+    constructor(gridX, gridY) {
+        this.gridX = gridX;
+        this.gridY = gridY; // 0 is start, -1 is forward, 1 is backward
+        
+        // Visual position (pixel coordinates)
+        this.visualX = gridX * GRID_SIZE;
+        this.visualY = gridY * GRID_SIZE;
+        
+        // Movement state
+        this.isMoving = false;
+        this.moveStartX = 0;
+        this.moveStartY = 0;
+        this.moveTargetX = 0;
+        this.moveTargetY = 0;
+        this.moveProgress = 0;
+        this.moveSpeed = 0.15; // Speed of hop animation
+        
+        // Render state
+        this.width = GRID_SIZE * 0.6;
+        this.height = GRID_SIZE * 0.6;
+        this.jumpHeight = GRID_SIZE * 0.5;
+        this.facing = 'UP'; // UP, DOWN, LEFT, RIGHT
+        this.squash = 1.0;
+        
+        this.isDead = false;
+        this.score = 0;
+        this.maxGridY = 0; // Furthest distance reached (negative value usually)
+        
+        // River crossing hop charge mechanic
+        this.hasHopCharge = false;
+        this.isDoubleHopArmed = false; // Whether ENTER was pressed to arm the double hop
+        this.previousLaneType = null;
+    }
+    
+    queueMove(dx, dy, useCharge = false) {
+        if (this.isDead || this.isMoving) return;
+        
+        // Store previous lane type before moving
+        const currentLane = gameState.laneManager.getLaneAt(this.gridY);
+        this.previousLaneType = currentLane ? currentLane.type : null;
+        
+        // Apply hop charge only if explicitly requested via useCharge parameter
+        let moveDx = dx;
+        let moveDy = dy;
+        if (useCharge && this.hasHopCharge && (dx !== 0 || dy !== 0)) {
+            moveDx *= 2;
+            moveDy *= 2;
+            this.hasHopCharge = false; // Consume charge
+            this.isDoubleHopArmed = false; // Clear armed state
+        }
+        
+        const targetGridX = this.gridX + moveDx;
+        const targetGridY = this.gridY + moveDy;
+        
+        // Set facing
+        if (moveDx > 0) this.facing = 'RIGHT';
+        if (moveDx < 0) this.facing = 'LEFT';
+        if (moveDy > 0) this.facing = 'DOWN';
+        if (moveDy < 0) this.facing = 'UP';
+        
+        // Boundary Check (Left/Right)
+        const maxCols = Math.floor(CANVAS_WIDTH / GRID_SIZE);
+        if (targetGridX < 0 || targetGridX >= maxCols) return;
+        
+        // Solid Check (Trees) - only at target, hop over intermediate obstacles
+        if (isSolid(targetGridX, targetGridY)) return;
+        
+        // Start Move
+        this.isMoving = true;
+        this.moveProgress = 0;
+        this.moveStartX = this.visualX;
+        this.moveStartY = this.visualY;
+        
+        // Logic Update Immediately
+        this.gridX = targetGridX;
+        this.gridY = targetGridY;
+        
+        // Calculate target visual
+        this.moveTargetX = targetGridX * GRID_SIZE;
+        this.moveTargetY = targetGridY * GRID_SIZE;
+        
+        // Score update
+        const distance = -this.gridY;
+        if (distance > this.score) {
+            this.score = distance;
+            gameState.score = this.score;
+        }
+    }
+    
+    update(p) {
+        if (this.isDead) return;
+
+        if (this.isMoving) {
+            this.moveProgress += this.moveSpeed;
+            if (this.moveProgress >= 1) {
+                this.moveProgress = 1;
+                this.isMoving = false;
+                this.visualX = this.moveTargetX;
+                this.visualY = this.moveTargetY;
+                
+                // Check for river crossing - grant hop charge
+                const currentLane = gameState.laneManager.getLaneAt(this.gridY);
+                if (this.previousLaneType === 'WATER' && currentLane && currentLane.type !== 'WATER') {
+                    this.hasHopCharge = true;
+                }
+                
+                // Landing squash effect
+                this.squash = 1.3; 
+                
+                // Dust particles
+                gameState.particles.push(new ParticleSystem(this.visualX + GRID_SIZE/2, this.visualY + GRID_SIZE/2, 'DUST'));
+            }
+            
+            // Lerp position
+            const t = this.moveProgress;
+            this.visualX = p.lerp(this.moveStartX, this.moveTargetX, t);
+            this.visualY = p.lerp(this.moveStartY, this.moveTargetY, t);
+        } else {
+            // Relax squash
+            this.squash = p.lerp(this.squash, 1.0, 0.2);
+            
+            // Update gridX based on visualX (reverse mapping for proper column calculation if drifting on log)
+            this.gridX = Math.round(this.visualX / GRID_SIZE);
+        }
+    }
+    
+    isJumping() {
+        return this.isMoving && this.moveProgress > 0.2 && this.moveProgress < 0.8;
+    }
+    
+    render(p) {
+        if (this.isDead) return; // Or render flattened corpse
+        
+        const centerX = this.visualX + GRID_SIZE / 2;
+        const centerY = this.visualY + GRID_SIZE / 2;
+        
+        // Calculate Jump Offset (Parabola)
+        let jumpY = 0;
+        if (this.isMoving) {
+            // For double hops, jump higher
+            const distance = Math.abs(this.moveTargetX - this.moveStartX) + Math.abs(this.moveTargetY - this.moveStartY);
+            const isDoubleHop = distance > GRID_SIZE * 1.5;
+            const heightMultiplier = isDoubleHop ? 1.5 : 1.0;
+            jumpY = -Math.sin(this.moveProgress * Math.PI) * this.jumpHeight * heightMultiplier;
+        }
+        
+        p.push();
+        p.translate(centerX, centerY + jumpY);
+        
+        // Visual indicator for hop charge (glowing aura)
+        if (this.hasHopCharge && !this.isMoving) {
+            const alpha = this.isDoubleHopArmed ? 200 : (100 + Math.sin(p.frameCount * 0.2) * 50);
+            p.noStroke();
+            p.fill(100, 200, 255, alpha);
+            p.circle(0, 0, this.width * 1.5);
+            
+            // Extra pulsing effect when armed
+            if (this.isDoubleHopArmed) {
+                p.fill(255, 255, 255, 100 + Math.sin(p.frameCount * 0.3) * 100);
+                p.circle(0, 0, this.width * 1.8);
+            }
+        }
+        
+        // Squash and stretch
+        // Scale Y inversely to X to maintain volume illusion
+        p.scale(1 / this.squash, this.squash);
+        
+        // Shadow (if jumping, shadow stays on ground, but fades/shrinks)
+        if (jumpY < 0) {
+            p.push();
+            p.translate(0, -jumpY); // Move back down to ground
+            p.scale(this.squash, 1/this.squash); // Unsquash for shadow
+            p.fill(0, 50);
+            p.noStroke();
+            const shadowSize = this.width * (1 - Math.abs(jumpY)/100);
+            p.ellipse(0, 10, shadowSize, shadowSize * 0.5);
+            p.pop();
+        }
+        
+        // Draw Body
+        p.fill(COLORS.PLAYER);
+        p.stroke(COLORS.PLAYER_ACCENT);
+        p.strokeWeight(2);
+        p.rectMode(p.CENTER);
+        
+        // Rotate based on facing? Or just move eyes.
+        // Let's rotate slightly for effect
+        if (this.isMoving) {
+             // Tilt forward slightly
+             // Simple 2D rotation isn't great for top down 2.5D, skip rotation
+        }
+        
+        p.rect(0, 0, this.width, this.height, 5);
+        
+        // Eyes / Beak
+        p.noStroke();
+        p.fill(0);
+        let eyeOffsetX = 0, eyeOffsetY = 0;
+        let beakOffsetX = 0, beakOffsetY = 0;
+        
+        if (this.facing === 'RIGHT') { eyeOffsetX = 6; beakOffsetX = 10; }
+        if (this.facing === 'LEFT') { eyeOffsetX = -6; beakOffsetX = -10; }
+        if (this.facing === 'DOWN') { eyeOffsetY = 6; beakOffsetY = 10; }
+        if (this.facing === 'UP') { eyeOffsetY = -6; beakOffsetY = -10; }
+        
+        if (this.facing === 'RIGHT' || this.facing === 'LEFT') {
+             p.circle(eyeOffsetX, -4, 4);
+             p.fill(255, 100, 0);
+             p.triangle(beakOffsetX, 0, beakOffsetX - (Math.sign(beakOffsetX)*4), -3, beakOffsetX - (Math.sign(beakOffsetX)*4), 3);
+        } else {
+             // Front/Back view
+             if (this.facing === 'DOWN') {
+                 p.circle(-6, 2, 4);
+                 p.circle(6, 2, 4);
+                 p.fill(255, 100, 0);
+                 p.triangle(0, 8, -3, 4, 3, 4);
+             }
+        }
+
+        p.pop();
+    }
+    
+    getHitbox() {
+        return {
+            x: this.visualX + (GRID_SIZE - this.width)/2,
+            y: this.visualY + (GRID_SIZE - this.height)/2,
+            w: this.width,
+            h: this.height
+        };
+    }
+    
+    die(reason, p) { // Added 'p' parameter
+        if (this.isDead) return;
+        this.isDead = true;
+        console.log(`Player died: ${reason}`);
+        
+        // Spawn death particles
+        gameState.particles.push(new ParticleSystem(this.visualX + GRID_SIZE/2, this.visualY + GRID_SIZE/2, 'EXPLOSION'));
+        
+        // Set game over phase immediately
+        gameState.gamePhase = "GAME_OVER_LOSE";
+
+        // Schedule auto-restart after 1 second
+        scheduleAutoRestart(p);
+    }
+}
+
+export class Obstacle {
+    constructor(x, y, width, height, speed, color) {
+        this.x = x;
+        this.y = y;
+        this.width = width;
+        this.height = height;
+        this.speed = speed;
+        this.color = color;
+    }
+    
+    update() {
+        this.x += this.speed;
+    }
+    
+    render(p) {
+        p.push();
+        p.translate(this.x + this.width/2, this.y + this.height/2);
+        
+        p.fill(this.color);
+        p.stroke(0, 50);
+        p.strokeWeight(2);
+        p.rectMode(p.CENTER);
+        
+        // Car detail (windows)
+        p.rect(0, 0, this.width, this.height, 4);
+        
+        p.fill(200, 200, 255);
+        p.noStroke();
+        p.rect(0, 0, this.width * 0.5, this.height * 0.6, 2);
+        
+        p.pop();
+    }
+    
+    getHitbox() {
+        return {
+            x: this.x,
+            y: this.y,
+            w: this.width,
+            h: this.height
+        };
+    }
+}
+
+export class Log extends Obstacle {
+    render(p) {
+        p.push();
+        p.translate(this.x + this.width/2, this.y + this.height/2);
+        p.fill(COLORS.LOG);
+        p.stroke(62, 39, 35);
+        p.strokeWeight(2);
+        p.rectMode(p.CENTER);
+        p.rect(0, 0, this.width, this.height, 6);
+        
+        // Wood grain details
+        p.stroke(100, 70, 60);
+        p.line(-this.width/3, 0, -this.width/4, 0);
+        p.line(0, 0, this.width/4, 0);
+        p.pop();
+    }
+}
+
+export class Train extends Obstacle {
+    render(p) {
+        p.push();
+        p.translate(this.x + this.width/2, this.y + this.height/2);
+        p.fill(COLORS.TRAIN);
+        p.rectMode(p.CENTER);
+        p.rect(0, 0, this.width, this.height, 2);
+        
+        // Windows
+        p.fill(255, 255, 200);
+        const windows = Math.floor(this.width / 30);
+        for(let i=0; i<windows; i++) {
+            p.rect(-this.width/2 + 15 + i*30, 0, 20, this.height-6);
+        }
+        p.pop();
+    }
+}
+</file>
+
+<file name="physics.js">
+import { gameState, GRID_SIZE, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function checkCollisions(p) {
+    const player = gameState.player;
+    if (!player || player.isDead) return;
+
+    // 1. Get the lane the player is currently on
+    // Lane index corresponds to player.gridY (negative because world goes up)
+    // Actually, let's map player world Y to lane index.
+    // In our system, gridY = 0 is start. gridY = -1 is one forward.
+    // Lane manager stores lanes such that index 0 is at gridY = 0?
+    // Let's defer to how LaneManager handles coordinates.
+    // Assuming LaneManager.getLaneAt(gridY) exists.
+    
+    const currentLane = gameState.laneManager.getLaneAt(player.gridY);
+    
+    if (!currentLane) return; // Should not happen
+
+    // 2. Check collisions based on lane type
+    
+    // A. Solid Static Obstacles (Trees) - handled in movement logic (pre-move check)
+    //    But we double check here just in case.
+    
+    // B. Dynamic Obstacles (Cars, Trains)
+    if (currentLane.type === 'ROAD' || currentLane.type === 'RAIL') {
+        const playerRect = player.getHitbox();
+        
+        for (let obstacle of currentLane.obstacles) {
+            const obsRect = obstacle.getHitbox();
+            if (p.collideRectRect(
+                playerRect.x, playerRect.y, playerRect.w, playerRect.h,
+                obsRect.x, obsRect.y, obsRect.w, obsRect.h
+            )) {
+                player.die("CRUSHED", p); // Pass p to player.die
+                return;
+            }
+        }
+    }
+    
+    // C. Water Logic (Logs)
+    if (currentLane.type === 'WATER') {
+        // Assume unsafe until proven safe by a log
+        let onLog = false;
+        const playerRect = player.getHitbox();
+        
+        // Slightly shrink player hitbox for log standing to be forgiving
+        const footRect = {
+            x: playerRect.x + 5,
+            y: playerRect.y + 5,
+            w: playerRect.w - 10,
+            h: playerRect.h - 10
+        };
+
+        for (let log of currentLane.obstacles) {
+            const logRect = log.getHitbox();
+            if (p.collideRectRect(
+                footRect.x, footRect.y, footRect.w, footRect.h,
+                logRect.x, logRect.y, logRect.w, logRect.h
+            )) {
+                onLog = true;
+                // Move player with log
+                if (!player.isMoving) {
+                    player.visualX += log.speed;
+                    // Update grid X roughly to track (though visual is detached)
+                    // We only enforce grid X snap when hopping. 
+                    // While on log, we float.
+                }
+                break;
+            }
+        }
+        
+        // If mid-jump, we are safe (flying over water)
+        // If not moving and not on log -> Drown
+        if (!onLog && !player.isMoving && !player.isJumping()) {
+            player.die("DROWNED", p); // Pass p to player.die
+            return;
+        }
+    }
+    
+    // 3. Screen Bounds
+    // If player drifted off screen while on log
+    if (player.visualX < -GRID_SIZE || player.visualX > CANVAS_WIDTH + GRID_SIZE) {
+        player.die("OFF_SCREEN", p); // Pass p to player.die
+    }
+    
+    // Camera catch up (Eagle)
+    // If player falls too far behind camera
+    const screenY = player.visualY - gameState.cameraY;
+    if (screenY > CANVAS_HEIGHT + GRID_SIZE) {
+        player.die("EAGLE", p); // Pass p to player.die
+    }
+}
+
+export function isSolid(gridX, gridY) {
+    const lane = gameState.laneManager.getLaneAt(gridY);
+    if (!lane) return true; // Void is solid/unsafe
+    
+    // Check trees/rocks
+    // Lane stores obstacles. Static obstacles map by X.
+    if (lane.staticMap && lane.staticMap[gridX]) {
+        return true;
+    }
+    
+    return false;
+}
+</file>
+
+<file name="particles.js">
+import { gameState } from './globals.js';
+
+export class Particle {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.type = type; // 'DUST', 'EXPLOSION'
+        this.age = 0;
+        
+        if (type === 'DUST') {
+            this.lifetime = 20;
+            this.vx = (Math.random() - 0.5) * 1;
+            this.vy = (Math.random() - 0.5) * 1;
+            this.size = Math.random() * 4 + 2;
+            this.color = [255, 255, 255, 200];
+        } else if (type === 'EXPLOSION') {
+            this.lifetime = 40;
+            this.vx = (Math.random() - 0.5) * 6;
+            this.vy = (Math.random() - 0.5) * 6;
+            this.size = Math.random() * 8 + 4;
+            this.color = [255, Math.random() * 100, 0, 255];
+        }
+    }
+    
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.age++;
+        
+        if (this.type === 'DUST') {
+            this.color[3] = 200 * (1 - this.age/this.lifetime);
+        } else if (this.type === 'EXPLOSION') {
+            this.color[3] = 255 * (1 - this.age/this.lifetime);
+            this.vy += 0.2; // Gravity
+        }
+    }
+    
+    render(p) {
+        p.noStroke();
+        p.fill(this.color);
+        p.circle(this.x, this.y, this.size);
+    }
+}
+
+export class ParticleSystem {
+    constructor(x, y, type) {
+        this.particles = [];
+        const count = type === 'EXPLOSION' ? 20 : 5;
+        
+        for(let i=0; i<count; i++) {
+            this.particles.push(new Particle(x, y, type));
+        }
+        
+        gameState.particles.push(this);
+    }
+    
+    update() {
+        for(let i = this.particles.length - 1; i >= 0; i--) {
+            this.particles[i].update();
+            if (this.particles[i].age >= this.particles[i].lifetime) {
+                this.particles.splice(i, 1);
+            }
+        }
+    }
+    
+    render(p) {
+        this.particles.forEach(pt => pt.render(p));
+    }
+    
+    isDead() {
+        return this.particles.length === 0;
+    }
+}
+</file>
+
+<file name="input.js">
+import { gameState } from './globals.js';
+import { Player } from './entities.js';
+import { LaneManager } from './lanes.js';
+
+let autoRestartTimeoutId = null; // To store setTimeout ID for cancellation
+
+export function handleInput(p) {
+    // Phase transitions
+    if (gameState.gamePhase === "START") {
+        if (isKeyPressed(13)) { // ENTER
+            startGame(p);
+        }
+    } else if (gameState.gamePhase === "PLAYING") {
+        if (isKeyPressed(27)) { // ESC
+            gameState.gamePhase = "PAUSED";
+            logGameInfo(p, "Phase Changed to PAUSED");
+        }
+    } else if (gameState.gamePhase === "PAUSED") {
+        if (isKeyPressed(27)) { // ESC
+            gameState.gamePhase = "PLAYING";
+            logGameInfo(p, "Phase Changed to PLAYING");
+        }
+    } else if (gameState.gamePhase.startsWith("GAME_OVER")) {
+        if (isKeyPressed(82)) { // R
+            restartGame(p); // Call the renamed restart function
+        }
+    }
+}
+
+// Helper to check key press only once per frame if needed, 
+// but for p5 keyPressed handles singular events. 
+// This is for continuous checks or specific logic.
+const keys = {};
+
+export function registerKeyPress(p, keyCode) {
+    keys[keyCode] = true;
+    
+    // Log input
+    if (p.logs) {
+        p.logs.inputs.push({
+            input_type: 'keyPressed',
+            data: { key: p.key, keyCode: keyCode },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+
+    // Direct gameplay input handling
+    if (gameState.gamePhase === "PLAYING" && gameState.player && !gameState.player.isMoving) {
+        // Check if double hop is armed (ENTER was pressed and hop charge available)
+        const useCharge = gameState.player.isDoubleHopArmed;
+        
+        if (keyCode === p.UP_ARROW) gameState.player.queueMove(0, -1, useCharge);
+        else if (keyCode === p.DOWN_ARROW) gameState.player.queueMove(0, 1, useCharge);
+        else if (keyCode === p.LEFT_ARROW) gameState.player.queueMove(-1, 0, useCharge);
+        else if (keyCode === p.RIGHT_ARROW) gameState.player.queueMove(1, 0, useCharge);
+        
+        // ENTER key to arm double hop (if hop charge is available)
+        if (keyCode === 13 && gameState.player.hasHopCharge) {
+            gameState.player.isDoubleHopArmed = !gameState.player.isDoubleHopArmed;
+        }
+    }
+    
+    // Global phase keys
+    if (keyCode === 13 && gameState.gamePhase === "START") startGame(p);
+    if (keyCode === 27) togglePause(p);
+    if (keyCode === 82 && (gameState.gamePhase.startsWith("GAME_OVER"))) restartGame(p); // Call the renamed restart function
+}
+
+export function registerKeyRelease(p, keyCode) {
+    keys[keyCode] = false;
+    if (p.logs) {
+        p.logs.inputs.push({
+            input_type: 'keyReleased',
+            data: { key: p.key, keyCode: keyCode },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+
+function isKeyPressed(keyCode) {
+    return keys[keyCode] === true;
+}
+
+function startGame(p) {
+    // Prevent multiple calls in the same frame
+    if (gameState.gamePhase !== "START") {
+        return;
+    }
+    resetGame(p);
+    gameState.gamePhase = "PLAYING";
+    logGameInfo(p, "Game Started");
+}
+
+function togglePause(p) {
+    if (gameState.gamePhase === "PLAYING") {
+        gameState.gamePhase = "PAUSED";
+    } else if (gameState.gamePhase === "PAUSED") {
+        gameState.gamePhase = "PLAYING";
+    }
+}
+
+// Renamed from restartFromGameOver to restartGame
+function restartGame(p) {
+    // Clear any pending auto-restart
+    if (autoRestartTimeoutId) {
+        clearTimeout(autoRestartTimeoutId);
+        autoRestartTimeoutId = null;
+    }
+    
+    // Determine the target phase based on whether it was an auto-restart
+    let targetPhase = "START"; // Default for manual restart
+    if (gameState.autoRestartScheduled) {
+        targetPhase = "PLAYING";
+    }
+
+    gameState.autoRestartScheduled = false; // Clear the flag after determining the target phase
+    
+    resetGame(p);
+    gameState.gamePhase = targetPhase; // Set the phase based on whether it was auto-restarted
+    logGameInfo(p, "Restarting game");
+}
+
+// New function to schedule the auto-restart
+export function scheduleAutoRestart(p) {
+    if (gameState.autoRestartScheduled) {
+        return; // Already scheduled
+    }
+    gameState.autoRestartScheduled = true;
+    
+    autoRestartTimeoutId = setTimeout(() => {
+        // Only trigger restart if still in a game over phase
+        if (gameState.gamePhase.startsWith("GAME_OVER")) {
+            restartGame(p);
+        }
+        // Always reset the flag and ID after the timeout, regardless of whether restart happened
+        gameState.autoRestartScheduled = false;
+        autoRestartTimeoutId = null;
+    }, 1000); // 1 second delay
+}
+
+export function resetGame(p) {
+    gameState.score = 0;
+    gameState.cameraY = 0;
+    gameState.particles = [];
+    
+    // Reset Lanes (initSafeZone is called in LaneManager constructor)
+    gameState.laneManager = new LaneManager();
+    gameState.lanes = gameState.laneManager.lanes;
+    
+    // Reset Player
+    // Start player at center X, and a few lanes up from bottom
+    gameState.player = new Player(7, 0); // Grid X, Grid Y (relative to start)
+    
+    logGameInfo(p, "Game Reset");
+}
+
+function logGameInfo(p, info) {
+    if (p.logs) {
+        p.logs.game_info.push({
+            data: { info: info, phase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

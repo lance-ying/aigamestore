@@ -1,0 +1,510 @@
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: The user wants more enemy variety, specifically multi-hit enemies, to increase gameplay depth. Currently, only 'TANK' (2 hits) exists as a multi-hit enemy.
+- Files affected: `globals.js`, `entities.js`, `combat_manager.js`.
+- Changes needed:
+  1.  `globals.js`: Define colors for new enemy types (`ARMORED`, `BOSS`).
+  2.  `entities.js`: Update `Enemy` class to handle new types (HP values 3 and 4, specific scaling/speed) and generalize the HP indicator (dots) rendering to work for all multi-hit enemies.
+  3.  `combat_manager.js`: Update the enemy spawning probability logic to include the new types at higher difficulty levels.
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="globals.js">
+/**
+ * globals.js
+ * Contains global constants, game state definition, and shared configuration.
+ * This file serves as the central source of truth for game tuning and state management.
+ */
+
+// ==========================================
+// CONFIGURATION CONSTANTS
+// ==========================================
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+
+// World & Physics
+export const GROUND_Y = 320;
+export const GRAVITY = 0.6;
+export const DRAG = 0.9;
+
+// Gameplay Mechanics
+export const PLAYER_X = CANVAS_WIDTH / 2;
+export const ATTACK_RANGE = 130; // Distance from player center where hits are valid
+export const HIT_SWEET_SPOT = 100; // Visual marker for "perfect" hit range
+export const MISS_PENALTY_FRAMES = 30; // Frames player is frozen if they miss
+export const COMBO_DECAY_FRAMES = 120; // Frames before combo resets
+export const FURY_MAX = 100; // Max value for fury meter
+export const FURY_GAIN_PER_HIT = 5;
+
+// Enemy Spawning
+export const SPAWN_RATE_INITIAL = 120; // Frames between spawns initially
+export const SPAWN_RATE_MIN = 30; // Fastest spawn rate
+export const DIFFICULTY_RAMP_INTERVAL = 600; // Every 10 seconds, difficulty increases
+
+// Colors (using RGB arrays for p5 usage)
+export const COLOR_BG = [20, 20, 25];
+export const COLOR_PLAYER = [255, 255, 255];
+export const COLOR_ENEMY_BASIC = [150, 150, 150];
+export const COLOR_ENEMY_FAST = [255, 100, 100];
+export const COLOR_ENEMY_TANK = [100, 100, 255];
+export const COLOR_ENEMY_ARMORED = [50, 150, 50]; // Green
+export const COLOR_ENEMY_BOSS = [139, 0, 0]; // Dark Red
+export const COLOR_GROUND = [50, 50, 60];
+export const COLOR_UI_ACCENT = [255, 215, 0]; // Gold
+
+// ==========================================
+// GAME STATE MANAGEMENT
+// ==========================================
+
+/**
+ * The central game state object.
+ * This object is mutated throughout the game loop to reflect the current status.
+ */
+export const gameState = {
+    // System State
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Gameplay State
+    score: 0,
+    highScore: 0,
+    combo: 0,
+    maxCombo: 0,
+    furyMeter: 0,
+    difficultyLevel: 1,
+    timeSinceLastKill: 0,
+    isMissStunned: false,
+    missStunTimer: 0,
+    
+    // Entities
+    player: null,
+    enemies: [],      // All active enemies
+    particles: [],    // Visual effects
+    floatingTexts: [], // Damage numbers, "Miss!", "Perfect!"
+    backgroundEffects: [], // Speed lines, flashes
+    
+    // Combat Queues (Optimization for rapid lookup)
+    leftSideEnemies: [],
+    rightSideEnemies: [],
+    
+    // Camera / Screen Shake
+    shakeIntensity: 0,
+    shakeDecay: 0.9,
+    cameraOffset: { x: 0, y: 0 },
+    
+    // Stats Tracking
+    kills: 0,
+    misses: 0,
+    perfectHits: 0
+};
+
+/**
+ * Returns the current game state.
+ * Exposed globally for debugging and automated testing.
+ */
+export function getGameState() {
+    return gameState;
+}
+
+// Expose globally
+if (typeof window !== 'undefined') {
+    window.getGameState = getGameState;
+}
+</code>
+
+<code filename="entities.js">
+/**
+ * entities.js
+ * Defines the Player and Enemy classes.
+ * Handles movement, state transitions, and interaction logic.
+ */
+
+import { 
+    gameState, CANVAS_WIDTH, GROUND_Y, ATTACK_RANGE, 
+    COLOR_PLAYER, COLOR_ENEMY_BASIC, COLOR_ENEMY_FAST, COLOR_ENEMY_TANK, 
+    COLOR_ENEMY_ARMORED, COLOR_ENEMY_BOSS,
+    GRAVITY
+} from './globals.js';
+import { drawStickman } from './renderer.js';
+import { createExplosion } from './particle_system.js';
+
+/**
+ * The Player Character
+ */
+export class Player {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.vx = 0;
+        this.vy = 0;
+        
+        this.facing = 1; // 1 = Right, -1 = Left
+        this.state = 'IDLE'; // IDLE, ATTACK_LEFT, ATTACK_RIGHT, HURT
+        this.animTimer = 0;
+        this.animDuration = 10; // Frames for attack animation
+        
+        this.health = 100;
+        this.maxHealth = 100;
+    }
+
+    update() {
+        // Animation State Management
+        if (this.state !== 'IDLE') {
+            this.animTimer--;
+            if (this.animTimer <= 0) {
+                this.state = 'IDLE';
+            }
+        }
+
+        // Miss stun recovery
+        if (gameState.isMissStunned) {
+            gameState.missStunTimer--;
+            if (gameState.missStunTimer <= 0) {
+                gameState.isMissStunned = false;
+            }
+        }
+        
+        // Simple Physics (mostly for jump/hit recoil effects, player stays mostly centered)
+        this.x = CANVAS_WIDTH / 2; // Lock x
+        this.y = GROUND_Y; // Lock y
+    }
+
+    attack(direction) {
+        this.facing = direction; // 1 or -1
+        // Alternate animations
+        this.state = (Math.random() > 0.5) ? 'ATTACK_PUNCH' : 'ATTACK_KICK';
+        this.animTimer = 8; // Quick snap
+    }
+    
+    takeDamage(amount) {
+        this.health = Math.max(0, this.health - amount);
+        this.state = 'HURT';
+        this.animTimer = 15;
+        
+        createExplosion(this.x, this.y - 30, "BLOOD", 5);
+        
+        if (this.health <= 0) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+        }
+    }
+
+    render(p) {
+        // Color changes if stunned
+        let color = COLOR_PLAYER;
+        if (gameState.isMissStunned) {
+            color = [100, 100, 100]; // Darker/Gray when stunned
+            // Shake effect on player
+            const shake = (Math.random() - 0.5) * 4;
+            drawStickman(p, this.x + shake, this.y, color, 'HURT', this.facing);
+        } else {
+            drawStickman(p, this.x, this.y, color, this.state, this.facing);
+        }
+    }
+}
+
+/**
+ * The Enemy Character
+ */
+export class Enemy {
+    constructor(side, type = 'BASIC') {
+        // Spawn off-screen
+        this.side = side; // -1 (Left) or 1 (Right)
+        this.x = (side === -1) ? -50 : CANVAS_WIDTH + 50;
+        this.y = GROUND_Y;
+        
+        this.type = type;
+        this.speed = 2 + Math.random();
+        this.hp = 1;
+        this.scale = 1.0;
+        this.color = COLOR_ENEMY_BASIC;
+
+        // Type Configuration
+        switch (type) {
+            case 'FAST':
+                this.speed = 4 + Math.random();
+                this.color = COLOR_ENEMY_FAST;
+                break;
+            case 'TANK':
+                this.speed *= 0.7;
+                this.hp = 2;
+                this.scale = 1.2;
+                this.color = COLOR_ENEMY_TANK;
+                break;
+            case 'ARMORED':
+                this.speed *= 0.8;
+                this.hp = 3;
+                this.scale = 1.1;
+                this.color = COLOR_ENEMY_ARMORED;
+                break;
+            case 'BOSS':
+                this.speed *= 0.5;
+                this.hp = 4;
+                this.scale = 1.5;
+                this.color = COLOR_ENEMY_BOSS;
+                break;
+            default: // BASIC
+                break;
+        }
+        
+        // Difficulty scaling for speed
+        this.speed *= (1 + gameState.difficultyLevel * 0.1);
+        
+        this.state = 'RUN';
+        this.markedForDeletion = false;
+        
+        this.damage = 10;
+    }
+
+    update() {
+        if (this.markedForDeletion) return;
+        
+        // Move towards player (center)
+        const targetX = CANVAS_WIDTH / 2;
+        const distToPlayer = Math.abs(this.x - targetX);
+        
+        // Stop if hit player
+        if (distToPlayer > 20) {
+            this.x += this.speed * -this.side; // Move opposite to side
+            this.state = 'RUN';
+        } else {
+            // Reached player, attack!
+            this.attackPlayer();
+        }
+    }
+    
+    attackPlayer() {
+        if (gameState.player && !gameState.isMissStunned) {
+            gameState.player.takeDamage(this.damage);
+            // Enemy effectively dies after hitting player (suicide attack style common in these games)
+            this.markedForDeletion = true;
+            createExplosion(this.x, this.y - 20, "SMOKE", 5);
+        }
+    }
+    
+    takeHit(damage) {
+        this.hp -= damage;
+        createExplosion(this.x, this.y - 30, "BLOOD", 8);
+        createExplosion(this.x, this.y - 30, "SPARK", 3);
+        
+        if (this.hp <= 0) {
+            this.die();
+        } else {
+            // Knockback
+            this.x += this.side * 40; 
+            this.state = 'HURT';
+        }
+    }
+    
+    die() {
+        this.markedForDeletion = true;
+        
+        // Ragdoll effect or just explosion
+        createExplosion(this.x, this.y - 25, "BLOOD", 15);
+        
+        // Update Game State
+        let scoreVal = 100;
+        if (this.type === 'TANK') scoreVal = 200;
+        if (this.type === 'ARMORED') scoreVal = 300;
+        if (this.type === 'BOSS') scoreVal = 500;
+
+        gameState.score += scoreVal;
+        gameState.kills++;
+        gameState.furyMeter = Math.min(gameState.furyMeter + 5, 100);
+        gameState.timeSinceLastKill = 0;
+        gameState.combo++;
+        if (gameState.combo > gameState.maxCombo) gameState.maxCombo = gameState.combo;
+    }
+
+    render(p) {
+        // Facing opposite to side (Face the player)
+        const facing = -this.side;
+        drawStickman(p, this.x, this.y, this.color, this.state, facing, this.scale);
+        
+        // Draw HP dots for Multi-Hit Enemies
+        if (this.hp > 1) {
+             p.push();
+             p.fill(255, 0, 0);
+             p.noStroke();
+             const dotSpacing = 10;
+             const startX = this.x - ((this.hp - 1) * dotSpacing) / 2;
+             const yOffset = 65 * this.scale; // Adjust height based on scale
+             
+             for(let i=0; i<this.hp; i++) {
+                 p.circle(startX + i * dotSpacing, this.y - yOffset, 5);
+             }
+             p.pop();
+        }
+    }
+}
+</code>
+
+<code filename="combat_manager.js">
+/**
+ * combat_manager.js
+ * Handles the logic for registering hits, misses, spawning enemies, and managing queues.
+ */
+
+import { 
+    gameState, CANVAS_WIDTH, ATTACK_RANGE, MISS_PENALTY_FRAMES, 
+    SPAWN_RATE_INITIAL, SPAWN_RATE_MIN, DIFFICULTY_RAMP_INTERVAL 
+} from './globals.js';
+import { Enemy } from './entities.js';
+import { createFloatingText, createExplosion } from './particle_system.js';
+import { randomRange } from './utils.js';
+
+let spawnTimer = 0;
+let currentSpawnRate = SPAWN_RATE_INITIAL;
+
+export function initCombat() {
+    spawnTimer = 0;
+    currentSpawnRate = SPAWN_RATE_INITIAL;
+}
+
+export function updateCombat(p) {
+    if (gameState.gamePhase !== 'PLAYING') return;
+
+    // 1. Spawning Logic
+    spawnTimer++;
+    
+    // Ramp up difficulty
+    if (gameState.frameCount % DIFFICULTY_RAMP_INTERVAL === 0) {
+        gameState.difficultyLevel++;
+        currentSpawnRate = Math.max(SPAWN_RATE_MIN, currentSpawnRate - 5);
+        createFloatingText(CANVAS_WIDTH/2, 100, "SPEED UP!", [255, 50, 50], 30);
+    }
+    
+    if (spawnTimer > currentSpawnRate) {
+        spawnEnemy();
+        spawnTimer = 0;
+    }
+
+    // 2. Sort/Clean Queues (Remove dead enemies)
+    gameState.enemies = gameState.enemies.filter(e => !e.markedForDeletion);
+    
+    // Re-categorize for queue accuracy
+    gameState.leftSideEnemies = gameState.enemies
+        .filter(e => e.side === -1)
+        .sort((a, b) => b.x - a.x); // Sort by closeness to center (descending x for left side)
+        
+    gameState.rightSideEnemies = gameState.enemies
+        .filter(e => e.side === 1)
+        .sort((a, b) => a.x - b.x); // Sort by closeness to center (ascending x for right side)
+        
+    // 3. Update all enemies
+    gameState.enemies.forEach(e => e.update());
+}
+
+function spawnEnemy() {
+    // Determine side (try to balance or random)
+    const side = (Math.random() > 0.5) ? 1 : -1;
+    
+    // Determine type based on difficulty
+    let type = 'BASIC';
+    const roll = Math.random() * 100;
+    
+    // Probabilities shift as difficulty increases
+    if (gameState.difficultyLevel > 5 && roll < 5) {
+        type = 'BOSS'; // Rare boss at high levels
+    } else if (gameState.difficultyLevel > 3 && roll < 15) {
+        type = 'ARMORED'; // 3 HP enemy
+    } else if (gameState.difficultyLevel > 2 && roll < 30) {
+        type = 'TANK'; // 2 HP enemy
+    } else if (gameState.difficultyLevel > 1 && roll < 50) {
+        type = 'FAST'; // Fast enemy
+    }
+    
+    const enemy = new Enemy(side, type);
+    gameState.enemies.push(enemy);
+}
+
+/**
+ * Player attempts an attack.
+ * @param {number} side - -1 for Left, 1 for Right
+ */
+export function handleAttackInput(side) {
+    if (gameState.isMissStunned) return; // Cannot attack while stunned
+    if (gameState.gamePhase !== 'PLAYING') return;
+
+    const center = CANVAS_WIDTH / 2;
+    let target = null;
+    
+    // Check the appropriate queue
+    // The queues are sorted by closeness to player. Index 0 is the closest.
+    if (side === -1) {
+        if (gameState.leftSideEnemies.length > 0) {
+            target = gameState.leftSideEnemies[0];
+        }
+    } else {
+        if (gameState.rightSideEnemies.length > 0) {
+            target = gameState.rightSideEnemies[0];
+        }
+    }
+    
+    // Validation
+    let validHit = false;
+    if (target) {
+        const dist = Math.abs(target.x - center);
+        if (dist <= ATTACK_RANGE) {
+            validHit = true;
+        }
+    }
+    
+    // Execute
+    gameState.player.attack(side);
+    
+    if (validHit) {
+        // Successful Hit
+        gameState.player.vx = side * 5; // Slight lunge visual
+        target.takeHit(1);
+        
+        gameState.shakeIntensity = 5;
+        
+        // visual feedback
+        const dist = Math.abs(target.x - center);
+        if (dist < 80) {
+             createFloatingText(target.x, target.y - 50, "PERFECT!", [255, 215, 0], 24);
+             gameState.perfectHits++;
+             gameState.score += 50;
+        }
+        
+    } else {
+        // Miss!
+        handleMiss();
+    }
+}
+
+export function handleFury() {
+    if (gameState.furyMeter >= 100 && !gameState.isMissStunned) {
+        // Unleash Fury
+        gameState.furyMeter = 0;
+        gameState.shakeIntensity = 20;
+        gameState.backgroundEffects = []; // Clear current effects
+        
+        // Kill all enemies on screen
+        gameState.enemies.forEach(e => {
+            if (Math.abs(e.x - CANVAS_WIDTH/2) < CANVAS_WIDTH/2) {
+                e.takeHit(100);
+            }
+        });
+        
+        createFloatingText(CANVAS_WIDTH/2, CANVAS_HEIGHT/2, "FURY BLAST!", [255, 0, 0], 40);
+    }
+}
+
+function handleMiss() {
+    gameState.combo = 0;
+    gameState.misses++;
+    gameState.isMissStunned = true;
+    gameState.missStunTimer = MISS_PENALTY_FRAMES;
+    
+    createFloatingText(CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 50, "MISS!", [150, 150, 150], 30);
+    
+    // Visual feedback for miss (gray flash?)
+    gameState.shakeIntensity = 2;
+}
+</code>

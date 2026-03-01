@@ -1,0 +1,1652 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+again, there is an issue now where wave 2 doesn't end. as well, there shouldn't be a level selector, we should move from easy, medium, adn then hard maps automatically, and can you make sure that the tower ui doesnt overlap ontop of the path? move it on the bottom right
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">2112TD: Tower Defense Survival</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Defend your mobile command center against waves of alien invaders in this tower defense survival game. Deploy and upgrade towers (Machine Gun, Flamethrower, Cannon, Plasma) along a fixed path to destroy enemies before they reach your base. Each tower can be upgraded twice for enhanced power. Manage resources wisely and survive multiple waves to win. If any enemy reaches your command center, the game is over.</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Keys: Navigate/Select towers and positions | Space: Place/Upgrade tower | Z: Cancel selection | Shift: Speed up (hold) | Enter: Start game | ESC: Pause/Unpause | R: Restart</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+import { gameState, TOWER_TYPES } from './globals.js';
+
+let testState = {
+  phase: "INIT",
+  targetTowerIndex: 0,
+  placementAttempts: 0,
+  framesSinceLastAction: 0,
+  towersPlaced: 0,
+  upgradeAttempts: 0,
+  lastX: 0,
+  lastY: 0,
+  stuckCounter: 0
+};
+
+function getTestBasicAction(gs) {
+  testState.framesSinceLastAction++;
+  
+  if (testState.framesSinceLastAction < 10) {
+    return [];
+  }
+  
+  const types = Object.keys(TOWER_TYPES);
+  
+  if (testState.phase === "INIT") {
+    testState.phase = "SELECT_TOWER";
+    testState.framesSinceLastAction = 0;
+    return [39];
+  }
+  
+  if (testState.phase === "SELECT_TOWER") {
+    if (testState.targetTowerIndex < types.length) {
+      testState.targetTowerIndex++;
+      testState.framesSinceLastAction = 0;
+      return [39];
+    } else {
+      testState.phase = "PLACE_TOWER";
+      testState.framesSinceLastAction = 0;
+      return [32];
+    }
+  }
+  
+  if (testState.phase === "PLACE_TOWER") {
+    if (!gs.placementMode) {
+      testState.framesSinceLastAction = 0;
+      return [32];
+    }
+    
+    testState.placementAttempts++;
+    
+    if (testState.placementAttempts < 20) {
+      const action = testState.placementAttempts % 2 === 0 ? 39 : 40;
+      testState.framesSinceLastAction = 0;
+      return [action];
+    } else {
+      testState.framesSinceLastAction = 0;
+      testState.placementAttempts = 0;
+      testState.towersPlaced++;
+      
+      if (testState.towersPlaced >= 3) {
+        testState.phase = "UPGRADE";
+      } else {
+        testState.phase = "SELECT_TOWER";
+        testState.targetTowerIndex = 0;
+      }
+      return [32];
+    }
+  }
+  
+  if (testState.phase === "UPGRADE") {
+    if (gs.towers.length > 0 && gs.money >= 75) {
+      testState.upgradeAttempts++;
+      testState.framesSinceLastAction = 0;
+      
+      if (testState.upgradeAttempts < 5) {
+        return [32];
+      }
+    }
+    testState.phase = "WAIT";
+  }
+  
+  return [];
+}
+
+function getTestWinAction(gs) {
+  testState.framesSinceLastAction++;
+  
+  if (testState.framesSinceLastAction < 8) {
+    return [];
+  }
+  
+  if (testState.phase === "INIT") {
+    testState.phase = "PLACE_INITIAL";
+    testState.towersPlaced = 0;
+  }
+  
+  const strategicPositions = [
+    { x: 120, y: 160, type: "MACHINE_GUN" },
+    { x: 160, y: 200, type: "MACHINE_GUN" },
+    { x: 280, y: 160, type: "CANNON" },
+    { x: 280, y: 240, type: "CANNON" },
+    { x: 440, y: 240, type: "PLASMA" },
+    { x: 440, y: 160, type: "MACHINE_GUN" }
+  ];
+  
+  if (testState.phase === "PLACE_INITIAL" && testState.towersPlaced < strategicPositions.length) {
+    const target = strategicPositions[testState.towersPlaced];
+    const types = Object.keys(TOWER_TYPES);
+    const targetIndex = types.indexOf(target.type);
+    
+    if (!gs.placementMode) {
+      if (gs.selectedTowerIndex !== targetIndex) {
+        testState.framesSinceLastAction = 0;
+        return [39];
+      }
+      
+      const towerData = TOWER_TYPES[target.type];
+      if (gs.money >= towerData.cost) {
+        testState.framesSinceLastAction = 0;
+        return [32];
+      }
+    } else {
+      const dx = target.x - gs.previewX;
+      const dy = target.y - gs.previewY;
+      
+      if (Math.abs(dx) > 5) {
+        testState.framesSinceLastAction = 0;
+        return [dx > 0 ? 39 : 37];
+      }
+      if (Math.abs(dy) > 5) {
+        testState.framesSinceLastAction = 0;
+        return [dy > 0 ? 40 : 38];
+      }
+      
+      testState.towersPlaced++;
+      testState.framesSinceLastAction = 0;
+      return [32];
+    }
+  }
+  
+  if (testState.phase === "PLACE_INITIAL" && testState.towersPlaced >= strategicPositions.length) {
+    testState.phase = "UPGRADE_TOWERS";
+  }
+  
+  if (testState.phase === "UPGRADE_TOWERS") {
+    if (gs.money >= 100 && gs.towers.length > 0) {
+      const tower = gs.towers[0];
+      if (tower && tower.level < 2) {
+        testState.framesSinceLastAction = 0;
+        gs.selectedTower = tower;
+        return [32];
+      }
+    }
+    
+    if (gs.towers.length > 0 && gs.towers.every(t => t.level >= 1)) {
+      testState.phase = "MAINTAIN";
+    }
+  }
+  
+  if (testState.phase === "MAINTAIN") {
+    if (gs.money >= 150 && gs.towers.length < 10) {
+      testState.phase = "PLACE_EXTRA";
+      testState.towersPlaced = 0;
+    }
+  }
+  
+  if (testState.phase === "PLACE_EXTRA") {
+    if (!gs.placementMode && gs.money >= 75) {
+      testState.framesSinceLastAction = 0;
+      return [32];
+    }
+    
+    if (gs.placementMode) {
+      const moveActions = [39, 40, 37, 38];
+      const action = moveActions[testState.towersPlaced % 4];
+      testState.framesSinceLastAction = 0;
+      
+      if (testState.framesSinceLastAction > 30) {
+        testState.towersPlaced++;
+        return [32];
+      }
+      
+      return [action];
+    }
+  }
+  
+  testState.framesSinceLastAction = 0;
+  return [];
+}
+
+function getRandomAction(gs) {
+  const actions = [37, 39, 38, 40, 32];
+  const randomIndex = Math.floor(Math.random() * actions.length);
+  return [actions[randomIndex]];
+}
+
+export function get_automated_testing_action(gs) {
+  if (gs.controlMode === "TEST_1") {
+    return getTestBasicAction(gs);
+  } else if (gs.controlMode === "TEST_2") {
+    return getTestWinAction(gs);
+  }
+  return getRandomAction(gs);
+}
+
+window.get_automated_testing_action = get_automated_testing_action;
+export default get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const GRID_SIZE = 40;
+
+export const TOWER_TYPES = {
+  MACHINE_GUN: {
+    name: "Machine Gun",
+    cost: 50,
+    damage: 15,
+    range: 80,
+    fireRate: 15,
+    color: [100, 100, 200],
+    upgradeCost: [75, 100],
+    damageMultiplier: [1, 1.5, 2.5],
+    rangeMultiplier: [1, 1.2, 1.4]
+  },
+  FLAMETHROWER: {
+    name: "Flamethrower",
+    cost: 75,
+    damage: 8,
+    range: 60,
+    fireRate: 5,
+    color: [255, 100, 50],
+    upgradeCost: [100, 150],
+    damageMultiplier: [1, 1.8, 3.0],
+    rangeMultiplier: [1, 1.3, 1.6]
+  },
+  CANNON: {
+    name: "Cannon",
+    cost: 100,
+    damage: 50,
+    range: 100,
+    fireRate: 60,
+    color: [80, 200, 80],
+    upgradeCost: [150, 200],
+    damageMultiplier: [1, 1.6, 2.8],
+    rangeMultiplier: [1, 1.15, 1.3]
+  },
+  PLASMA: {
+    name: "Plasma",
+    cost: 150,
+    damage: 35,
+    range: 90,
+    fireRate: 30,
+    color: [200, 50, 255],
+    upgradeCost: [200, 300],
+    damageMultiplier: [1, 2.0, 3.5],
+    rangeMultiplier: [1, 1.25, 1.5]
+  }
+};
+
+export const ENEMY_TYPES = {
+  BASIC: {
+    name: "Scout",
+    health: 50,
+    speed: 1.0,
+    reward: 15,
+    color: [255, 100, 100],
+    size: 8
+  },
+  FAST: {
+    name: "Runner",
+    health: 30,
+    speed: 1.8,
+    reward: 20,
+    color: [255, 255, 100],
+    size: 6
+  },
+  TANK: {
+    name: "Tank",
+    health: 150,
+    speed: 0.5,
+    reward: 40,
+    color: [150, 50, 50],
+    size: 12
+  },
+  ELITE: {
+    name: "Elite",
+    health: 200,
+    speed: 0.8,
+    reward: 60,
+    color: [200, 50, 255],
+    size: 10
+  }
+};
+
+export const MAPS = {
+  EASY: {
+    name: "Desert Outpost",
+    difficulty: "Easy",
+    bgColor: [40, 35, 25],
+    pathColor: [80, 70, 50],
+    maxWaves: 5,
+    startMoney: 250
+  },
+  MEDIUM: {
+    name: "Arctic Base",
+    difficulty: "Medium",
+    bgColor: [25, 30, 40],
+    pathColor: [60, 80, 100],
+    maxWaves: 5,
+    startMoney: 200
+  },
+  HARD: {
+    name: "Volcanic Ridge",
+    difficulty: "Hard",
+    bgColor: [30, 20, 20],
+    pathColor: [100, 40, 30],
+    maxWaves: 5,
+    startMoney: 150
+  }
+};
+
+export const gameState = {
+  player: null,
+  entities: [],
+  towers: [],
+  enemies: [],
+  projectiles: [],
+  score: 0,
+  money: 200,
+  wave: 0,
+  waveActive: false,
+  waveEnemiesSpawned: 0,
+  waveEnemiesTotal: 0,
+  waveSpawnTimer: 0,
+  gamePhase: "START",
+  controlMode: "HUMAN",
+  commandCenterHealth: 100,
+  selectedTowerType: null,
+  selectedTowerIndex: 0,
+  placementMode: false,
+  previewX: 0,
+  previewY: 0,
+  selectedTower: null,
+  gameSpeed: 1,
+  enemiesReachedGoal: 0,
+  path: [],
+  validTowerPositions: [],
+  framesSinceLastAction: 0,
+  currentMap: null,
+  selectedMapKey: "EASY"
+};
+
+export function getGameState() {
+  return gameState;
+}
+
+window.getGameState = getGameState;
+</file>
+
+<file name="waveManager.js">
+import { gameState, ENEMY_TYPES, MAPS } from './globals.js';
+import { Enemy } from './entities.js';
+
+export function startWave() {
+  gameState.wave++;
+  gameState.waveActive = true;
+  gameState.waveEnemiesSpawned = 0;
+  gameState.waveSpawnTimer = 0;
+  
+  const waveConfig = generateWaveConfig(gameState.wave, gameState.currentMap);
+  gameState.waveEnemiesTotal = waveConfig.totalEnemies;
+  gameState.currentWaveConfig = waveConfig;
+}
+
+function generateWaveConfig(waveNumber, mapKey) {
+  const config = {
+    totalEnemies: 0,
+    spawnInterval: 60,
+    composition: []
+  };
+  
+  // Base difficulty on map
+  let difficultyMultiplier = 1;
+  if (mapKey === "MEDIUM") {
+    difficultyMultiplier = 1.3;
+  } else if (mapKey === "HARD") {
+    difficultyMultiplier = 1.6;
+  }
+  
+  // Wave progression within the map (1-5)
+  if (waveNumber === 1) {
+    config.totalEnemies = Math.floor(5 * difficultyMultiplier);
+    config.composition = [
+      { type: 'BASIC', count: config.totalEnemies }
+    ];
+  } else if (waveNumber === 2) {
+    config.totalEnemies = Math.floor(8 * difficultyMultiplier);
+    config.composition = [
+      { type: 'BASIC', count: Math.floor(config.totalEnemies * 0.7) },
+      { type: 'FAST', count: Math.floor(config.totalEnemies * 0.3) }
+    ];
+  } else if (waveNumber === 3) {
+    config.totalEnemies = Math.floor(10 * difficultyMultiplier);
+    config.composition = [
+      { type: 'BASIC', count: Math.floor(config.totalEnemies * 0.5) },
+      { type: 'FAST', count: Math.floor(config.totalEnemies * 0.3) },
+      { type: 'TANK', count: Math.floor(config.totalEnemies * 0.2) }
+    ];
+  } else if (waveNumber === 4) {
+    config.totalEnemies = Math.floor(12 * difficultyMultiplier);
+    config.composition = [
+      { type: 'BASIC', count: Math.floor(config.totalEnemies * 0.4) },
+      { type: 'FAST', count: Math.floor(config.totalEnemies * 0.3) },
+      { type: 'TANK', count: Math.floor(config.totalEnemies * 0.3) }
+    ];
+  } else if (waveNumber === 5) {
+    config.totalEnemies = Math.floor(15 * difficultyMultiplier);
+    config.composition = [
+      { type: 'BASIC', count: Math.floor(config.totalEnemies * 0.3) },
+      { type: 'FAST', count: Math.floor(config.totalEnemies * 0.3) },
+      { type: 'TANK', count: Math.floor(config.totalEnemies * 0.2) },
+      { type: 'ELITE', count: Math.floor(config.totalEnemies * 0.2) }
+    ];
+  }
+  
+  return config;
+}
+
+export function updateWaveSpawning(p) {
+  if (!gameState.waveActive) return;
+  
+  if (gameState.waveEnemiesSpawned < gameState.waveEnemiesTotal) {
+    gameState.waveSpawnTimer--;
+    
+    if (gameState.waveSpawnTimer <= 0) {
+      spawnNextEnemy(p);
+      gameState.waveSpawnTimer = gameState.currentWaveConfig.spawnInterval;
+    }
+  } else {
+    if (gameState.enemies.length === 0) {
+      gameState.waveActive = false;
+      
+      const maxWaves = MAPS[gameState.currentMap].maxWaves;
+      if (gameState.wave >= maxWaves) {
+        gameState.gamePhase = "MAP_COMPLETE";
+        p.logs.game_info.push({
+          data: { phase: "MAP_COMPLETE", wave: gameState.wave, map: gameState.currentMap },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+  }
+}
+
+function spawnNextEnemy(p) {
+  const config = gameState.currentWaveConfig;
+  let typeToSpawn = null;
+  
+  for (const comp of config.composition) {
+    if (comp.count > 0) {
+      typeToSpawn = comp.type;
+      comp.count--;
+      break;
+    }
+  }
+  
+  if (typeToSpawn) {
+    const waveMultiplier = 1 + (gameState.wave - 1) * 0.15;
+    const enemy = new Enemy(typeToSpawn, gameState.path, waveMultiplier);
+    gameState.enemies.push(enemy);
+    gameState.entities.push(enemy);
+    gameState.waveEnemiesSpawned++;
+  }
+}
+
+export function canStartWave() {
+  if (gameState.waveActive) return false;
+  if (gameState.enemies.length > 0) return false;
+  const maxWaves = MAPS[gameState.currentMap].maxWaves;
+  if (gameState.wave >= maxWaves) return false;
+  return true;
+}
+</file>
+
+<file name="game.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, getGameState } from './globals.js';
+import { generatePath, generateValidTowerPositions } from './pathGeneration.js';
+import { handleKeyPressed, updatePlacementPreview } from './input.js';
+import { updateWaveSpawning } from './waveManager.js';
+import { renderStartScreen, renderMapSelection, renderMapComplete, renderPauseIndicator, renderGameOverScreen, renderUI, renderPath, renderTowerPreview, renderCommandCenter } from './rendering.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    p.logs = {
+      game_info: [],
+      inputs: [],
+      player_info: []
+    };
+    
+    gameState.currentMap = "EASY";
+    gameState.path = generatePath(gameState.currentMap);
+    gameState.validTowerPositions = generateValidTowerPositions(gameState.path);
+    
+    p.logs.game_info.push({
+      data: { phase: "START", initialized: true },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+  
+  p.draw = function() {
+    if (gameState.gamePhase === "START") {
+      renderStartScreen(p);
+      return;
+    }
+    
+    if (gameState.gamePhase === "MAP_SELECTION") {
+      renderMapSelection(p);
+      return;
+    }
+    
+    if (gameState.gamePhase === "MAP_COMPLETE") {
+      renderMapComplete(p);
+      return;
+    }
+    
+    if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+      renderGameOverScreen(p);
+      return;
+    }
+    
+    if (gameState.gamePhase === "PLAYING") {
+      updateGame(p);
+    }
+    
+    renderGame(p);
+    
+    if (gameState.gamePhase === "PAUSED") {
+      renderPauseIndicator(p);
+    }
+  };
+  
+  p.keyPressed = function() {
+    if (gameState.controlMode === "HUMAN") {
+      handleKeyPressed(p, p.key, p.keyCode);
+    }
+  };
+  
+  function updateGame(p) {
+    if (gameState.controlMode !== "HUMAN") {
+      const actions = get_automated_testing_action(gameState);
+      for (const keyCode of actions) {
+        handleKeyPressed(p, String.fromCharCode(keyCode), keyCode);
+      }
+    }
+    
+    gameState.framesSinceLastAction++;
+    
+    gameState.gameSpeed = p.keyIsDown(16) ? 2 : 1;
+    
+    updateWaveSpawning(p);
+    
+    updatePlacementPreview(p);
+    
+    for (const tower of gameState.towers) {
+      tower.update(gameState.enemies, gameState.projectiles, gameState.gameSpeed);
+    }
+    
+    for (const projectile of gameState.projectiles) {
+      projectile.update(gameState.gameSpeed);
+    }
+    
+    gameState.projectiles = gameState.projectiles.filter(proj => !proj.dead);
+    
+    for (const enemy of gameState.enemies) {
+      enemy.update(gameState.gameSpeed);
+      
+      if (enemy.reachedGoal && !enemy.dead) {
+        gameState.commandCenterHealth -= 10;
+        gameState.enemiesReachedGoal++;
+        enemy.dead = true;
+        
+        if (gameState.commandCenterHealth <= 0) {
+          gameState.gamePhase = "GAME_OVER_LOSE";
+          p.logs.game_info.push({
+            data: { phase: "GAME_OVER_LOSE", wave: gameState.wave },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+        }
+      }
+    }
+    
+    const deadEnemies = gameState.enemies.filter(e => e.dead && !e.reachedGoal);
+    for (const enemy of deadEnemies) {
+      gameState.money += enemy.reward;
+      gameState.score += enemy.reward * 10;
+    }
+    
+    gameState.enemies = gameState.enemies.filter(e => !e.dead);
+  }
+  
+  function renderGame(p) {
+    const mapData = gameState.currentMap ? window.MAPS[gameState.currentMap] : { bgColor: [20, 30, 50] };
+    p.background(...mapData.bgColor);
+    
+    renderPath(p);
+    renderCommandCenter(p);
+    
+    for (const tower of gameState.towers) {
+      tower.render(p);
+    }
+    
+    for (const enemy of gameState.enemies) {
+      enemy.render(p);
+    }
+    
+    for (const projectile of gameState.projectiles) {
+      projectile.render(p);
+    }
+    
+    renderTowerPreview(p);
+    renderUI(p);
+    
+    if (p.frameCount % 10 === 0 && gameState.gamePhase === "PLAYING") {
+      p.logs.player_info.push({
+        screen_x: gameState.previewX,
+        screen_y: gameState.previewY,
+        game_x: gameState.previewX,
+        game_y: gameState.previewY,
+        framecount: p.frameCount
+      });
+    }
+  }
+});
+
+window.gameInstance = gameInstance;
+window.MAPS = { EASY: { name: "Desert Outpost", difficulty: "Easy", bgColor: [40, 35, 25], pathColor: [80, 70, 50], maxWaves: 5, startMoney: 250 }, MEDIUM: { name: "Arctic Base", difficulty: "Medium", bgColor: [25, 30, 40], pathColor: [60, 80, 100], maxWaves: 5, startMoney: 200 }, HARD: { name: "Volcanic Ridge", difficulty: "Hard", bgColor: [30, 20, 20], pathColor: [100, 40, 30], maxWaves: 5, startMoney: 150 } };
+
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  document.querySelectorAll('.control-button').forEach(btn => {
+    btn.classList.remove('active');
+  });
+  
+  const modeMap = {
+    'HUMAN': 'humanModeBtn',
+    'TEST_1': 'test_1_ModeBtn',
+    'TEST_2': 'test_2_ModeBtn'
+  };
+  
+  const btnId = modeMap[mode];
+  if (btnId) {
+    document.getElementById(btnId).classList.add('active');
+  }
+};
+</file>
+
+<file name="rendering.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, TOWER_TYPES, MAPS } from './globals.js';
+import { canStartWave } from './waveManager.js';
+
+export function renderStartScreen(p) {
+  p.background(20, 20, 40);
+  
+  p.fill(100, 200, 255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(36);
+  p.text("2112TD: TOWER DEFENSE", CANVAS_WIDTH / 2, 60);
+  
+  p.textSize(14);
+  p.fill(200, 200, 220);
+  p.text("Defend your command center against waves of alien invaders!", CANVAS_WIDTH / 2, 110);
+  p.text("Deploy towers strategically along the path.", CANVAS_WIDTH / 2, 130);
+  p.text("Survive 5 waves on each map to progress!", CANVAS_WIDTH / 2, 150);
+  
+  p.textSize(20);
+  p.fill(255, 255, 100);
+  p.text("PRESS ENTER TO BEGIN", CANVAS_WIDTH / 2, 350);
+}
+
+export function renderMapSelection(p) {
+  const mapData = MAPS[gameState.currentMap];
+  p.background(...mapData.bgColor);
+  
+  p.fill(100, 200, 255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(32);
+  p.text("SELECT MAP", CANVAS_WIDTH / 2, 40);
+  
+  const maps = Object.keys(MAPS);
+  const boxWidth = 150;
+  const boxHeight = 120;
+  const spacing = 30;
+  const startX = (CANVAS_WIDTH - (boxWidth * 3 + spacing * 2)) / 2;
+  const startY = 100;
+  
+  for (let i = 0; i < maps.length; i++) {
+    const mapKey = maps[i];
+    const map = MAPS[mapKey];
+    const x = startX + i * (boxWidth + spacing);
+    const y = startY;
+    
+    const isSelected = gameState.selectedMapKey === mapKey;
+    
+    p.push();
+    p.fill(...(isSelected ? [100, 200, 255, 150] : [50, 50, 80, 180]));
+    p.stroke(isSelected ? [100, 200, 255] : [100, 100, 150]);
+    p.strokeWeight(isSelected ? 3 : 1);
+    p.rect(x, y, boxWidth, boxHeight, 5);
+    
+    p.fill(255);
+    p.textAlign(p.CENTER, p.TOP);
+    p.textSize(16);
+    p.text(map.name, x + boxWidth / 2, y + 10);
+    
+    p.textSize(14);
+    p.fill(200, 200, 200);
+    p.text(map.difficulty, x + boxWidth / 2, y + 35);
+    
+    p.textSize(11);
+    p.fill(180, 180, 180);
+    p.text(`5 Waves`, x + boxWidth / 2, y + 60);
+    p.text(`Start: $${map.startMoney}`, x + boxWidth / 2, y + 80);
+    p.pop();
+  }
+  
+  p.fill(255, 255, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(12);
+  p.text("Arrow Keys: Select Map | Enter: Start Map", CANVAS_WIDTH / 2, 260);
+  
+  renderPath(p);
+  renderCommandCenter(p);
+}
+
+export function renderMapComplete(p) {
+  const mapData = MAPS[gameState.currentMap];
+  p.background(...mapData.bgColor);
+  
+  p.fill(100, 255, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text("MAP COMPLETE!", CANVAS_WIDTH / 2, 100);
+  
+  p.textSize(20);
+  p.fill(200, 200, 220);
+  p.text(`${mapData.name} - ${mapData.difficulty}`, CANVAS_WIDTH / 2, 160);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 190);
+  p.text(`Money: $${gameState.money}`, CANVAS_WIDTH / 2, 220);
+  
+  p.textSize(16);
+  p.fill(255, 255, 100);
+  p.text("PRESS ENTER to continue", CANVAS_WIDTH / 2, 280);
+  p.text("PRESS R to restart game", CANVAS_WIDTH / 2, 310);
+}
+
+export function renderPauseIndicator(p) {
+  p.push();
+  p.fill(255, 255, 100);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(16);
+  p.text("PAUSED", CANVAS_WIDTH - 10, 10);
+  p.pop();
+}
+
+export function renderGameOverScreen(p) {
+  p.background(20, 20, 40);
+  
+  const isWin = gameState.gamePhase === "GAME_OVER_WIN";
+  
+  p.fill(isWin ? [100, 255, 100] : [255, 100, 100]);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text(isWin ? "VICTORY!" : "DEFEAT", CANVAS_WIDTH / 2, 100);
+  
+  p.textSize(20);
+  p.fill(200, 200, 220);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 160);
+  p.text(`Waves Completed: ${gameState.wave}`, CANVAS_WIDTH / 2, 190);
+  p.text(`Money: $${gameState.money}`, CANVAS_WIDTH / 2, 220);
+  
+  if (!isWin) {
+    p.textSize(16);
+    p.fill(255, 150, 150);
+    p.text(`Command Center Destroyed`, CANVAS_WIDTH / 2, 260);
+  }
+  
+  p.textSize(20);
+  p.fill(255, 255, 100);
+  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, 330);
+}
+
+export function renderUI(p) {
+  p.push();
+  p.fill(255);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(12);
+  p.text(`Money: $${gameState.money}`, 10, 10);
+  
+  const maxWaves = MAPS[gameState.currentMap].maxWaves;
+  p.text(`Wave: ${gameState.wave}/${maxWaves}`, 10, 25);
+  p.text(`Score: ${gameState.score}`, 10, 40);
+  
+  const healthPercent = Math.max(0, gameState.commandCenterHealth / 100);
+  p.fill(255, 0, 0);
+  p.rect(10, 55, 100, 10);
+  p.fill(0, 255, 0);
+  p.rect(10, 55, 100 * healthPercent, 10);
+  p.fill(255);
+  p.text(`Base: ${Math.floor(gameState.commandCenterHealth)}%`, 10, 70);
+  
+  const mapData = MAPS[gameState.currentMap];
+  p.textAlign(p.RIGHT, p.TOP);
+  p.fill(200, 200, 255);
+  p.text(mapData.name, CANVAS_WIDTH - 10, 10);
+  p.text(mapData.difficulty, CANVAS_WIDTH - 10, 25);
+  
+  if (gameState.placementMode && gameState.selectedTowerType) {
+    const towerData = TOWER_TYPES[gameState.selectedTowerType];
+    p.fill(255, 255, 100);
+    p.textAlign(p.CENTER, p.TOP);
+    p.textSize(14);
+    p.text(`Placing: ${towerData.name} ($${towerData.cost})`, CANVAS_WIDTH / 2, 10);
+    p.text(`Range: ${towerData.range} | Damage: ${towerData.damage}`, CANVAS_WIDTH / 2, 28);
+  }
+  
+  // Wave start button
+  if (canStartWave()) {
+    p.fill(100, 255, 100, 200);
+    p.stroke(100, 255, 100);
+    p.strokeWeight(2);
+    p.rect(CANVAS_WIDTH / 2 - 80, CANVAS_HEIGHT - 70, 160, 30, 5);
+    p.fill(0);
+    p.noStroke();
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(14);
+    p.text(`START WAVE ${gameState.wave + 1}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 55);
+    p.fill(200, 200, 200);
+    p.textSize(10);
+    p.text("(Press W)", CANVAS_WIDTH / 2, CANVAS_HEIGHT - 38);
+  }
+  
+  renderTowerSelector(p);
+  p.pop();
+}
+
+export function renderTowerSelector(p) {
+  const types = Object.keys(TOWER_TYPES);
+  const boxWidth = 70;
+  const boxHeight = 50;
+  const spacing = 5;
+  const startX = CANVAS_WIDTH - (boxWidth + spacing) * types.length - 10;
+  const startY = CANVAS_HEIGHT - boxHeight - 100;
+  
+  for (let i = 0; i < types.length; i++) {
+    const type = types[i];
+    const towerData = TOWER_TYPES[type];
+    const x = startX + i * (boxWidth + spacing);
+    const y = startY;
+    
+    const isSelected = gameState.selectedTowerIndex === i;
+    
+    p.push();
+    p.fill(...(isSelected ? [255, 255, 100, 100] : [50, 50, 80, 180]));
+    p.stroke(isSelected ? [255, 255, 100] : [100, 100, 150]);
+    p.strokeWeight(isSelected ? 3 : 1);
+    p.rect(x, y, boxWidth, boxHeight);
+    
+    p.fill(...towerData.color);
+    p.noStroke();
+    p.rectMode(p.CENTER);
+    p.rect(x + boxWidth / 2, y + boxHeight / 2 - 5, 15, 15);
+    p.rectMode(p.CORNER);
+    
+    p.fill(255);
+    p.textAlign(p.CENTER, p.TOP);
+    p.textSize(8);
+    p.text(towerData.name, x + boxWidth / 2, y + boxHeight - 15);
+    p.text(`$${towerData.cost}`, x + boxWidth / 2, y + boxHeight - 7);
+    p.pop();
+  }
+}
+
+export function renderPath(p) {
+  const mapData = MAPS[gameState.currentMap];
+  p.push();
+  p.stroke(...mapData.pathColor);
+  p.strokeWeight(30);
+  p.noFill();
+  p.beginShape();
+  for (const point of gameState.path) {
+    p.vertex(point.x, point.y);
+  }
+  p.endShape();
+  p.pop();
+}
+
+export function renderTowerPreview(p) {
+  if (!gameState.placementMode || !gameState.selectedTowerType) return;
+  
+  const towerData = TOWER_TYPES[gameState.selectedTowerType];
+  const isValid = isTowerPositionValid(gameState.previewX, gameState.previewY);
+  
+  p.push();
+  p.fill(...towerData.color, 100);
+  p.stroke(...(isValid ? [0, 255, 0] : [255, 0, 0]));
+  p.strokeWeight(2);
+  p.rectMode(p.CENTER);
+  p.rect(gameState.previewX, gameState.previewY, 20, 20);
+  
+  p.noFill();
+  p.stroke(...towerData.color, 80);
+  p.strokeWeight(1);
+  p.ellipse(gameState.previewX, gameState.previewY, towerData.range * 2);
+  p.pop();
+}
+
+function isTowerPositionValid(x, y) {
+  for (const tower of gameState.towers) {
+    const dist = Math.sqrt((tower.x - x) ** 2 + (tower.y - y) ** 2);
+    if (dist < 30) return false;
+  }
+  
+  let minDist = Infinity;
+  for (const pos of gameState.validTowerPositions) {
+    const dist = Math.sqrt((pos.x - x) ** 2 + (pos.y - y) ** 2);
+    minDist = Math.min(minDist, dist);
+  }
+  
+  return minDist < 25;
+}
+
+export function renderCommandCenter(p) {
+  const lastPoint = gameState.path[gameState.path.length - 1];
+  
+  p.push();
+  p.fill(50, 150, 255);
+  p.stroke(100, 200, 255);
+  p.strokeWeight(2);
+  p.rectMode(p.CENTER);
+  p.rect(lastPoint.x - 30, lastPoint.y, 40, 40);
+  
+  p.fill(255);
+  p.noStroke();
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(10);
+  p.text("HQ", lastPoint.x - 30, lastPoint.y);
+  p.pop();
+}
+</file>
+
+<file name="entities.js">
+import { ENEMY_TYPES } from './globals.js';
+
+export class Enemy {
+  constructor(type, path, waveMultiplier = 1) {
+    this.type = type;
+    this.typeData = ENEMY_TYPES[type];
+    this.health = this.typeData.health * waveMultiplier;
+    this.maxHealth = this.health;
+    this.speed = this.typeData.speed;
+    this.reward = Math.floor(this.typeData.reward * waveMultiplier);
+    this.color = this.typeData.color;
+    this.size = this.typeData.size;
+    this.path = path;
+    this.pathIndex = 0;
+    this.x = path[0].x;
+    this.y = path[0].y;
+    this.reachedGoal = false;
+    this.dead = false;
+  }
+  
+  update(gameSpeed) {
+    if (this.dead || this.reachedGoal) return;
+    
+    if (this.pathIndex >= this.path.length - 1) {
+      this.reachedGoal = true;
+      return;
+    }
+    
+    const target = this.path[this.pathIndex + 1];
+    const dx = target.x - this.x;
+    const dy = target.y - this.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    
+    if (dist < this.speed * gameSpeed) {
+      this.pathIndex++;
+      if (this.pathIndex >= this.path.length - 1) {
+        this.reachedGoal = true;
+      }
+    } else {
+      this.x += (dx / dist) * this.speed * gameSpeed;
+      this.y += (dy / dist) * this.speed * gameSpeed;
+    }
+  }
+  
+  takeDamage(damage) {
+    this.health -= damage;
+    if (this.health <= 0) {
+      this.dead = true;
+      return true;
+    }
+    return false;
+  }
+  
+  render(p) {
+    if (this.dead || this.reachedGoal) return;
+    
+    p.push();
+    p.fill(...this.color);
+    p.noStroke();
+    p.ellipse(this.x, this.y, this.size * 2);
+    
+    const healthBarWidth = this.size * 2;
+    const healthBarHeight = 3;
+    const healthPercent = this.health / this.maxHealth;
+    
+    p.fill(255, 0, 0);
+    p.rect(this.x - healthBarWidth / 2, this.y - this.size - 5, healthBarWidth, healthBarHeight);
+    p.fill(0, 255, 0);
+    p.rect(this.x - healthBarWidth / 2, this.y - this.size - 5, healthBarWidth * healthPercent, healthBarHeight);
+    p.pop();
+  }
+}
+
+export class Tower {
+  constructor(type, x, y, typeData) {
+    this.type = type;
+    this.typeData = typeData;
+    this.x = x;
+    this.y = y;
+    this.level = 0;
+    this.damage = typeData.damage;
+    this.range = typeData.range;
+    this.fireRate = typeData.fireRate;
+    this.color = typeData.color;
+    this.fireTimer = 0;
+    this.target = null;
+    this.rotation = 0;
+  }
+  
+  update(enemies, projectiles, gameSpeed) {
+    this.fireTimer = Math.max(0, this.fireTimer - gameSpeed);
+    
+    this.target = this.findTarget(enemies);
+    
+    if (this.target) {
+      const dx = this.target.x - this.x;
+      const dy = this.target.y - this.y;
+      this.rotation = Math.atan2(dy, dx);
+      
+      if (this.fireTimer === 0) {
+        this.fire(projectiles);
+        this.fireTimer = this.fireRate;
+      }
+    }
+  }
+  
+  findTarget(enemies) {
+    let closestEnemy = null;
+    let maxProgress = -1;
+    
+    const rangeMultiplier = this.typeData.rangeMultiplier[this.level];
+    const effectiveRange = this.range * rangeMultiplier;
+    
+    for (const enemy of enemies) {
+      if (enemy.dead || enemy.reachedGoal) continue;
+      
+      const dist = Math.sqrt((enemy.x - this.x) ** 2 + (enemy.y - this.y) ** 2);
+      
+      if (dist <= effectiveRange) {
+        if (enemy.pathIndex > maxProgress) {
+          maxProgress = enemy.pathIndex;
+          closestEnemy = enemy;
+        }
+      }
+    }
+    
+    return closestEnemy;
+  }
+  
+  fire(projectiles) {
+    if (!this.target) return;
+    
+    const damageMultiplier = this.typeData.damageMultiplier[this.level];
+    const damage = this.damage * damageMultiplier;
+    
+    projectiles.push(new Projectile(this.x, this.y, this.target, damage, this.color, this.type));
+  }
+  
+  upgrade() {
+    if (this.level < 2) {
+      this.level++;
+      return true;
+    }
+    return false;
+  }
+  
+  getUpgradeCost() {
+    if (this.level < 2) {
+      return this.typeData.upgradeCost[this.level];
+    }
+    return null;
+  }
+  
+  render(p) {
+    p.push();
+    p.fill(...this.color);
+    p.stroke(255);
+    p.strokeWeight(1);
+    p.rectMode(p.CENTER);
+    p.translate(this.x, this.y);
+    p.rotate(this.rotation);
+    p.rect(0, 0, 20, 20);
+    p.fill(255);
+    p.noStroke();
+    p.rect(8, 0, 8, 4);
+    p.pop();
+    
+    if (this.level > 0) {
+      p.push();
+      p.fill(255, 215, 0);
+      p.noStroke();
+      for (let i = 0; i < this.level; i++) {
+        p.ellipse(this.x - 8 + i * 8, this.y - 15, 4);
+      }
+      p.pop();
+    }
+    
+    const rangeMultiplier = this.typeData.rangeMultiplier[this.level];
+    const effectiveRange = this.range * rangeMultiplier;
+    
+    p.push();
+    p.noFill();
+    p.stroke(...this.color, 50);
+    p.strokeWeight(1);
+    p.ellipse(this.x, this.y, effectiveRange * 2);
+    p.pop();
+  }
+}
+
+export class Projectile {
+  constructor(x, y, target, damage, color, type) {
+    this.x = x;
+    this.y = y;
+    this.target = target;
+    this.damage = damage;
+    this.color = color;
+    this.type = type;
+    this.speed = 5;
+    this.dead = false;
+  }
+  
+  update(gameSpeed) {
+    if (this.dead || !this.target || this.target.dead || this.target.reachedGoal) {
+      this.dead = true;
+      return;
+    }
+    
+    const dx = this.target.x - this.x;
+    const dy = this.target.y - this.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    
+    if (dist < this.speed * gameSpeed) {
+      this.target.takeDamage(this.damage);
+      this.dead = true;
+    } else {
+      this.x += (dx / dist) * this.speed * gameSpeed;
+      this.y += (dy / dist) * this.speed * gameSpeed;
+    }
+  }
+  
+  render(p) {
+    if (this.dead) return;
+    
+    p.push();
+    p.fill(...this.color);
+    p.noStroke();
+    p.ellipse(this.x, this.y, 4);
+    p.pop();
+  }
+}
+</file>
+
+<file name="pathGeneration.js">
+import { CANVAS_WIDTH, CANVAS_HEIGHT, GRID_SIZE } from './globals.js';
+
+export function generatePath(mapKey = "EASY") {
+  if (mapKey === "EASY") {
+    return generateEasyPath();
+  } else if (mapKey === "MEDIUM") {
+    return generateMediumPath();
+  } else if (mapKey === "HARD") {
+    return generateHardPath();
+  }
+  return generateEasyPath();
+}
+
+function generateEasyPath() {
+  // Simple path with gentle turns
+  const path = [];
+  path.push({ x: 0, y: 200 });
+  path.push({ x: 150, y: 200 });
+  path.push({ x: 150, y: 120 });
+  path.push({ x: 300, y: 120 });
+  path.push({ x: 300, y: 280 });
+  path.push({ x: 450, y: 280 });
+  path.push({ x: 450, y: 200 });
+  path.push({ x: CANVAS_WIDTH, y: 200 });
+  return path;
+}
+
+function generateMediumPath() {
+  // More complex path with tighter turns
+  const path = [];
+  path.push({ x: 0, y: 100 });
+  path.push({ x: 100, y: 100 });
+  path.push({ x: 100, y: 280 });
+  path.push({ x: 220, y: 280 });
+  path.push({ x: 220, y: 150 });
+  path.push({ x: 380, y: 150 });
+  path.push({ x: 380, y: 300 });
+  path.push({ x: 500, y: 300 });
+  path.push({ x: 500, y: 120 });
+  path.push({ x: CANVAS_WIDTH, y: 120 });
+  return path;
+}
+
+function generateHardPath() {
+  // Complex winding path
+  const path = [];
+  path.push({ x: 0, y: 200 });
+  path.push({ x: 80, y: 200 });
+  path.push({ x: 80, y: 100 });
+  path.push({ x: 180, y: 100 });
+  path.push({ x: 180, y: 250 });
+  path.push({ x: 280, y: 250 });
+  path.push({ x: 280, y: 120 });
+  path.push({ x: 380, y: 120 });
+  path.push({ x: 380, y: 300 });
+  path.push({ x: 480, y: 300 });
+  path.push({ x: 480, y: 150 });
+  path.push({ x: CANVAS_WIDTH, y: 150 });
+  return path;
+}
+
+export function generateValidTowerPositions(path) {
+  const positions = [];
+  const pathBuffer = 35;
+  
+  for (let x = GRID_SIZE; x < CANVAS_WIDTH - GRID_SIZE; x += GRID_SIZE) {
+    for (let y = GRID_SIZE; y < CANVAS_HEIGHT - GRID_SIZE; y += GRID_SIZE) {
+      let validPos = true;
+      
+      for (let i = 0; i < path.length - 1; i++) {
+        const p1 = path[i];
+        const p2 = path[i + 1];
+        
+        const dist = pointToLineDistance(x, y, p1.x, p1.y, p2.x, p2.y);
+        if (dist < pathBuffer) {
+          validPos = false;
+          break;
+        }
+      }
+      
+      if (validPos) {
+        positions.push({ x, y });
+      }
+    }
+  }
+  
+  return positions;
+}
+
+function pointToLineDistance(px, py, x1, y1, x2, y2) {
+  const A = px - x1;
+  const B = py - y1;
+  const C = x2 - x1;
+  const D = y2 - y1;
+  
+  const dot = A * C + B * D;
+  const lenSq = C * C + D * D;
+  let param = -1;
+  
+  if (lenSq !== 0) {
+    param = dot / lenSq;
+  }
+  
+  let xx, yy;
+  
+  if (param < 0) {
+    xx = x1;
+    yy = y1;
+  } else if (param > 1) {
+    xx = x2;
+    yy = y2;
+  } else {
+    xx = x1 + param * C;
+    yy = y1 + param * D;
+  }
+  
+  const dx = px - xx;
+  const dy = py - yy;
+  
+  return Math.sqrt(dx * dx + dy * dy);
+}
+</file>
+
+<file name="input.js">
+import { gameState, TOWER_TYPES, GRID_SIZE, MAPS } from './globals.js';
+import { Tower } from './entities.js';
+import { startWave, canStartWave } from './waveManager.js';
+import { generatePath, generateValidTowerPositions } from './pathGeneration.js';
+
+export function handleKeyPressed(p, key, keyCode) {
+  p.logs.inputs.push({
+    input_type: "keyPressed",
+    data: { key, keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  
+  if (gameState.gamePhase === "START") {
+    if (keyCode === 13) {
+      enterMapSelection(p);
+    }
+  } else if (gameState.gamePhase === "MAP_SELECTION") {
+    if (keyCode === 13) {
+      startMap(p);
+    } else if (keyCode === 37 || keyCode === 39) {
+      handleMapSelection(keyCode);
+    }
+  } else if (gameState.gamePhase === "PLAYING") {
+    if (keyCode === 27) {
+      pauseGame(p);
+    } else if (keyCode === 32) {
+      handleSpaceKey(p);
+    } else if (keyCode === 90) {
+      handleZKey();
+    } else if (keyCode === 37 || keyCode === 39) {
+      handleArrowKeys(keyCode);
+    } else if (keyCode === 87) {
+      // W key to start wave
+      handleWaveStart(p);
+    }
+  } else if (gameState.gamePhase === "PAUSED") {
+    if (keyCode === 27) {
+      unpauseGame(p);
+    }
+  } else if (gameState.gamePhase === "MAP_COMPLETE") {
+    if (keyCode === 13) {
+      enterMapSelection(p);
+    } else if (keyCode === 82) {
+      restartGame(p);
+    }
+  } else if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+    if (keyCode === 82) {
+      restartGame(p);
+    }
+  }
+}
+
+function enterMapSelection(p) {
+  gameState.gamePhase = "MAP_SELECTION";
+  gameState.selectedMapKey = "EASY";
+  gameState.currentMap = "EASY";
+  gameState.path = generatePath(gameState.currentMap);
+  gameState.validTowerPositions = generateValidTowerPositions(gameState.path);
+  
+  p.logs.game_info.push({
+    data: { phase: "MAP_SELECTION" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function handleMapSelection(keyCode) {
+  const maps = Object.keys(MAPS);
+  const currentIndex = maps.indexOf(gameState.selectedMapKey);
+  
+  if (keyCode === 37) {
+    const newIndex = (currentIndex - 1 + maps.length) % maps.length;
+    gameState.selectedMapKey = maps[newIndex];
+  } else if (keyCode === 39) {
+    const newIndex = (currentIndex + 1) % maps.length;
+    gameState.selectedMapKey = maps[newIndex];
+  }
+  
+  gameState.currentMap = gameState.selectedMapKey;
+  gameState.path = generatePath(gameState.currentMap);
+  gameState.validTowerPositions = generateValidTowerPositions(gameState.path);
+}
+
+function startMap(p) {
+  const mapData = MAPS[gameState.currentMap];
+  
+  gameState.gamePhase = "PLAYING";
+  gameState.towers = [];
+  gameState.enemies = [];
+  gameState.projectiles = [];
+  gameState.entities = [];
+  gameState.money = mapData.startMoney;
+  gameState.wave = 0;
+  gameState.waveActive = false;
+  gameState.commandCenterHealth = 100;
+  gameState.selectedTowerType = null;
+  gameState.placementMode = false;
+  gameState.selectedTower = null;
+  gameState.enemiesReachedGoal = 0;
+  
+  p.logs.game_info.push({
+    data: { phase: "PLAYING", map: gameState.currentMap },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function handleWaveStart(p) {
+  if (canStartWave()) {
+    startWave();
+    p.logs.game_info.push({
+      data: { action: "START_WAVE", wave: gameState.wave },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+
+function pauseGame(p) {
+  gameState.gamePhase = "PAUSED";
+  p.logs.game_info.push({
+    data: { phase: "PAUSED" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function unpauseGame(p) {
+  gameState.gamePhase = "PLAYING";
+  p.logs.game_info.push({
+    data: { phase: "PLAYING" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function restartGame(p) {
+  gameState.gamePhase = "START";
+  gameState.score = 0;
+  
+  p.logs.game_info.push({
+    data: { phase: "START" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function handleSpaceKey(p) {
+  if (gameState.placementMode) {
+    attemptTowerPlacement(p);
+  } else if (gameState.selectedTower) {
+    attemptTowerUpgrade(p);
+  } else {
+    enterPlacementMode();
+  }
+}
+
+function handleZKey() {
+  gameState.placementMode = false;
+  gameState.selectedTower = null;
+  gameState.selectedTowerType = null;
+}
+
+function handleArrowKeys(keyCode) {
+  if (!gameState.placementMode) {
+    const types = Object.keys(TOWER_TYPES);
+    if (keyCode === 37) {
+      gameState.selectedTowerIndex = (gameState.selectedTowerIndex - 1 + types.length) % types.length;
+    } else if (keyCode === 39) {
+      gameState.selectedTowerIndex = (gameState.selectedTowerIndex + 1) % types.length;
+    }
+  }
+}
+
+function enterPlacementMode() {
+  const types = Object.keys(TOWER_TYPES);
+  gameState.selectedTowerType = types[gameState.selectedTowerIndex];
+  gameState.placementMode = true;
+  gameState.previewX = 300;
+  gameState.previewY = 200;
+}
+
+function attemptTowerPlacement(p) {
+  const towerData = TOWER_TYPES[gameState.selectedTowerType];
+  
+  if (gameState.money < towerData.cost) {
+    return;
+  }
+  
+  let closestPos = null;
+  let minDist = Infinity;
+  
+  for (const pos of gameState.validTowerPositions) {
+    const dist = Math.sqrt((pos.x - gameState.previewX) ** 2 + (pos.y - gameState.previewY) ** 2);
+    if (dist < minDist) {
+      minDist = dist;
+      closestPos = pos;
+    }
+  }
+  
+  if (closestPos && minDist < 25) {
+    let canPlace = true;
+    for (const tower of gameState.towers) {
+      const dist = Math.sqrt((tower.x - closestPos.x) ** 2 + (tower.y - closestPos.y) ** 2);
+      if (dist < 30) {
+        canPlace = false;
+        break;
+      }
+    }
+    
+    if (canPlace) {
+      const newTower = new Tower(gameState.selectedTowerType, closestPos.x, closestPos.y, towerData);
+      gameState.towers.push(newTower);
+      gameState.entities.push(newTower);
+      gameState.money -= towerData.cost;
+      gameState.placementMode = false;
+      gameState.selectedTowerType = null;
+    }
+  }
+}
+
+function attemptTowerUpgrade(p) {
+  const tower = gameState.selectedTower;
+  const upgradeCost = tower.getUpgradeCost();
+  
+  if (upgradeCost && gameState.money >= upgradeCost) {
+    tower.upgrade();
+    gameState.money -= upgradeCost;
+  }
+}
+
+export function updatePlacementPreview(p) {
+  if (!gameState.placementMode) return;
+  
+  if (p.keyIsDown(37)) {
+    gameState.previewX = Math.max(GRID_SIZE, gameState.previewX - 2);
+  }
+  if (p.keyIsDown(39)) {
+    gameState.previewX = Math.min(p.width - GRID_SIZE, gameState.previewX + 2);
+  }
+  if (p.keyIsDown(38)) {
+    gameState.previewY = Math.max(GRID_SIZE, gameState.previewY - 2);
+  }
+  if (p.keyIsDown(40)) {
+    gameState.previewY = Math.min(p.height - GRID_SIZE, gameState.previewY + 2);
+  }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

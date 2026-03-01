@@ -1,0 +1,452 @@
+<analysis>
+- Issue identified: Level 2 ("Crossing") is currently too difficult due to a very long spike pit that is likely unsolvable with basic mechanics. The user requested this level design be moved to a harder difficulty slot (Level 5 or 6) and modified to be solvable, while Level 2 should be made easier. The user also suggested strawberries could refill dashes to help with solvability/mechanics.
+- Files affected: `levels.js` (level design), `game_logic.js` (strawberry mechanics), `index.html` (game description).
+- Changes needed:
+    1.  **`game_logic.js`**: Update `checkStrawberryCollection` to refill the player's dash when a strawberry is collected.
+    2.  **`levels.js`**:
+        -   Modify **Level 2** ("Crossing") to have a much shorter spike pit (approx 4 tiles) to be suitable for an "Easy" level.
+        -   Replace **Level 5** ("The Gauntlet") with a new level "The Void" based on the original Level 2 layout. Break up the long spike pit with safe islands to make it solvable as a "Hard" level.
+        -   Ensure the difficulty curve is Easy (1, 2), Medium (3, 4), Hard (5, 6).
+    3.  **`index.html`**: Update the game description to mention that strawberries refill dashes.
+</analysis>
+
+<code filename="game_logic.js">
+// game_logic.js - Core game logic
+
+import { gameState, GAME_PHASES, STARTING_LIVES, TILE_SIZE } from './globals.js';
+import { LEVELS, getLevelData, isStrawberryTile } from './levels.js';
+import { Player } from './player.js';
+
+export function initGame(p) {
+  gameState.currentLevel = 0;
+  gameState.score = 0;
+  gameState.lives = STARTING_LIVES;
+  gameState.collectedStrawberries = new Set();
+  loadLevel(p, 0);
+  
+  p.logs.game_info.push({
+    data: { event: "game_initialized", level: 0 },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function loadLevel(p, levelIndex) {
+  const level = getLevelData(levelIndex);
+  if (!level) {
+    return false;
+  }
+  
+  gameState.currentLevel = levelIndex;
+  
+  // Create player at start position
+  const startX = level.startX * TILE_SIZE + TILE_SIZE / 2;
+  const startY = level.startY * TILE_SIZE + TILE_SIZE / 2;
+  gameState.player = new Player(startX, startY);
+  
+  // Store level start position
+  gameState.levelStartPosition = { x: startX, y: startY };
+  
+  // Clear and rebuild entities array
+  gameState.entities = [gameState.player];
+  
+  p.logs.game_info.push({
+    data: { event: "level_loaded", level: levelIndex, levelName: level.name },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  
+  return true;
+}
+
+export function respawnPlayer(p) {
+  if (gameState.player) {
+    gameState.player.x = gameState.levelStartPosition.x;
+    gameState.player.y = gameState.levelStartPosition.y;
+    gameState.player.vx = 0;
+    gameState.player.vy = 0;
+    gameState.player.dead = false;
+    gameState.player.onGround = false;
+    gameState.player.hasDoubleJump = true;
+    gameState.player.dashesRemaining = 1;
+    gameState.player.isDashing = false;
+    gameState.player.isClimbing = false;
+    gameState.player.onWall = 0;
+    
+    p.logs.game_info.push({
+      data: { event: "player_respawned", lives: gameState.lives },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+
+export function checkStrawberryCollection(p, level) {
+  if (!gameState.player || !level) return;
+  
+  const col = Math.floor(gameState.player.x / TILE_SIZE);
+  const row = Math.floor(gameState.player.y / TILE_SIZE);
+  
+  // Check surrounding tiles
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      const r = row + dr;
+      const c = col + dc;
+      if (r >= 0 && r < level.tiles.length && c >= 0 && c < level.tiles[0].length) {
+        const tile = level.tiles[r][c];
+        const key = `${gameState.currentLevel}-${r}-${c}`;
+        
+        if (isStrawberryTile(tile) && !gameState.collectedStrawberries.has(key)) {
+          const tileX = c * TILE_SIZE + TILE_SIZE / 2;
+          const tileY = r * TILE_SIZE + TILE_SIZE / 2;
+          const dist = p.dist(gameState.player.x, gameState.player.y, tileX, tileY);
+          
+          if (dist < 15) {
+            gameState.collectedStrawberries.add(key);
+            gameState.score += 100;
+            
+            // Refill dash on strawberry collection
+            if (gameState.player) {
+              gameState.player.dashesRemaining = 1;
+            }
+            
+            p.logs.game_info.push({
+              data: { event: "strawberry_collected", score: gameState.score },
+              framecount: p.frameCount,
+              timestamp: Date.now()
+            });
+          }
+        }
+      }
+    }
+  }
+}
+
+export function updateGame(p, inputs) {
+  const level = getLevelData(gameState.currentLevel);
+  if (!level || !gameState.player) return;
+  
+  // Update player
+  gameState.player.update(p, level, inputs);
+  
+  // Check strawberry collection
+  checkStrawberryCollection(p, level);
+  
+  // Log player position periodically
+  if (p.frameCount % 30 === 0) {
+    p.logs.player_info.push({
+      screen_x: gameState.player.x,
+      screen_y: gameState.player.y,
+      game_x: gameState.player.x,
+      game_y: gameState.player.y,
+      framecount: p.frameCount
+    });
+  }
+  
+  // Check death
+  if (gameState.player.dead) {
+    gameState.lives--;
+    
+    p.logs.game_info.push({
+      data: { event: "player_died", lives: gameState.lives },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    
+    if (gameState.lives <= 0) {
+      gameState.gamePhase = GAME_PHASES.GAME_OVER_LOSE;
+      
+      p.logs.game_info.push({
+        data: { event: "game_over", result: "lose", score: gameState.score },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    } else {
+      respawnPlayer(p);
+    }
+  }
+  
+  // Check goal reached
+  if (gameState.player.reachedGoal) {
+    gameState.score += 500; // Level completion bonus
+    
+    p.logs.game_info.push({
+      data: { event: "level_completed", level: gameState.currentLevel, score: gameState.score },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    
+    // Advance to next level
+    if (gameState.currentLevel < LEVELS.length - 1) {
+      loadLevel(p, gameState.currentLevel + 1);
+    } else {
+      // Won the game!
+      gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
+      
+      p.logs.game_info.push({
+        data: { event: "game_over", result: "win", score: gameState.score },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+}
+</code>
+
+<code filename="levels.js">
+// levels.js - Level definitions
+
+import { TILE_SIZE, SCREEN_COLS, SCREEN_ROWS } from './globals.js';
+
+// Level tiles:
+// 0 = empty
+// 1 = solid platform
+// 2 = spike (deadly)
+// 3 = goal flag
+// 4 = strawberry (collectible)
+// 5 = wall (climbable)
+
+export const LEVELS = [
+  // LEVEL 1: VERY EASY - Basic Movement & Strawberries
+  {
+    name: "Foothills",
+    startX: 1,
+    startY: 15,
+    tiles: [
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1],
+      [0,0,0,0,0,0,0,0,0,1,1,1,1,1,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0],
+      [1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [1,1,1,1,1,1,1,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+      [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+    ]
+  },
+  // LEVEL 2: EASY - Dash Introduction (Modified: Shorter spikes)
+  {
+    name: "Crossing",
+    startX: 1,
+    startY: 15,
+    tiles: [
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [1,1,1,1,1,1,1,1,1,1,2,2,2,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+      [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+    ]
+  },
+  // LEVEL 3: MEDIUM - Wall Climb & Hazards
+  {
+    name: "The Ascent",
+    startX: 1,
+    startY: 17,
+    tiles: [
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,5,5,5,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,5,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+      [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+    ]
+  },
+  // LEVEL 4: MEDIUM - Platforms & Spikes
+  {
+    name: "Sky Islands",
+    startX: 1,
+    startY: 15,
+    tiles: [
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [1,1,1,1,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [1,1,1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+      [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+    ]
+  },
+  // LEVEL 5: HARD - The Void (Modified from Old Level 2)
+  {
+    name: "The Void",
+    startX: 1,
+    startY: 15,
+    tiles: [
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,4,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [1,1,1,1,1,2,2,2,2,2,2,2,1,1,2,2,2,2,2,2,2,2,1,1,2,2,2,1,1,1],
+      [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+    ]
+  },
+  // LEVEL 6: HARD - The Summit
+  {
+    name: "Summit",
+    startX: 1,
+    startY: 18,
+    tiles: [
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,5,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,5,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+      [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+    ]
+  }
+];
+
+export function getLevelData(levelIndex) {
+  if (levelIndex < 0 || levelIndex >= LEVELS.length) {
+    return null;
+  }
+  return LEVELS[levelIndex];
+}
+
+export function getTileAt(level, x, y) {
+  const col = Math.floor(x / TILE_SIZE);
+  const row = Math.floor(y / TILE_SIZE);
+  
+  if (row < 0 || row >= level.tiles.length || col < 0 || col >= level.tiles[0].length) {
+    return 0;
+  }
+  
+  return level.tiles[row][col];
+}
+
+export function isSolidTile(tile) {
+  return tile === 1 || tile === 5;
+}
+
+export function isWallTile(tile) {
+  return tile === 5;
+}
+
+export function isSpikeTile(tile) {
+  return tile === 2;
+}
+
+export function isGoalTile(tile) {
+  return tile === 3;
+}
+
+export function isStrawberryTile(tile) {
+  return tile === 4;
+}
+</code>
+
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">CELESTE MOUNTAIN</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic Movement)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win Strategy)</button>
+        <button id="test_3_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_3')">TEST (Hazard Test)</button>
+        <button id="test_4_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_4')">TEST (Mechanics Test)</button>
+        <button id="test_5_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_5')">TEST (Collection Test)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Help Madeline climb Celeste Mountain and reach the summit while overcoming challenging platforming obstacles. Jump across gaps, dash through the air, and climb walls to navigate hand-crafted levels. Avoid deadly spikes and falling into pits. Each screen presents new challenges that test your precision and timing. Collect strawberries for bonus points and to recharge your dash!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Keys: Move left/right, climb up/down on walls | Space: Jump (press again in air for double jump) | Z: Air dash in the direction you're moving (limited uses, recharges on landing) | Enter: Start game | ESC: Pause/Unpause | R: Restart to main menu</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</code>

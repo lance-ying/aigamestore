@@ -1,0 +1,298 @@
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, logs, COLORS, LANE_WIDTH, PLAYER_SPEED_BASE, PLAYER_ACCELERATION, logGameInfo, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { setupRenderer } from './renderer.js';
+import { setupCamera, updateCamera, triggerCameraShake } from './camera.js';
+import { setupLighting, updateLighting } from './lighting.js';
+import { setupUI, renderUI } from './ui.js';
+import { Player, createExplosion } from './entities.js';
+import { initWorld, updateWorld } from './world.js';
+import { updatePhysics, checkSphereCollision, checkBoxSphereCollision } from './physics.js';
+import { getRandomElement, getRandomRange } from './utils.js';
+
+// Init
+function init() {
+    // 1. Setup Systems
+    setupRenderer();
+    setupCamera();
+    setupLighting();
+    setupUI();
+    
+    // 2. Initialize Logic
+    gameState.gamePhase = "START";
+    Math.seedrandom('42');
+    
+    // 3. Create Player (but hide or pause)
+    createGameSession();
+    
+    // 4. Start Loop
+    requestAnimationFrame(gameLoop);
+    
+    // 5. Input Listeners
+    setupInputs();
+    
+    logGameInfo({ action: "init", status: "success" });
+}
+
+function createGameSession() {
+    if (gameState.player) {
+        gameState.scene.remove(gameState.player.mesh);
+        gameState.player.mesh.geometry.dispose();
+        gameState.player.mesh.material.dispose();
+    }
+    
+    // Reset State
+    gameState.score = 0;
+    gameState.speed = PLAYER_SPEED_BASE;
+    gameState.distance = 0;
+    gameState.frameCount = 0;
+    
+    // Init World
+    initWorld();
+    
+    // Create Player
+    gameState.player = new Player();
+}
+
+function resetGame() {
+    createGameSession();
+    gameState.gamePhase = "START";
+}
+
+// Input Handling
+const keys = {};
+
+function setupInputs() {
+    window.addEventListener('keydown', (e) => {
+        keys[e.keyCode] = true;
+        
+        // Logs
+        logs.inputs.push({
+            type: 'keydown',
+            key: e.key,
+            code: e.keyCode,
+            frame: gameState.frameCount,
+            time: Date.now()
+        });
+        
+        // Global Controls
+        if (e.code === 'Enter') {
+            if (gameState.gamePhase === "START") {
+                gameState.gamePhase = "PLAYING";
+                logGameInfo({ action: "state_change", to: "PLAYING" });
+            }
+        }
+        else if (e.code === 'Escape') {
+            if (gameState.gamePhase === "PLAYING") {
+                gameState.gamePhase = "PAUSED";
+            } else if (gameState.gamePhase === "PAUSED") {
+                gameState.gamePhase = "PLAYING";
+            }
+        }
+        else if (e.code === 'KeyR') {
+            if (gameState.gamePhase === "GAME_OVER_LOSE" || gameState.gamePhase === "GAME_OVER_WIN") {
+                resetGame();
+            }
+        }
+        
+        // Player Controls (Only in Play)
+        if (gameState.gamePhase === "PLAYING" && gameState.player && gameState.controlMode === "HUMAN") {
+            if (e.code === 'ArrowLeft' || e.code === 'KeyA') {
+                gameState.player.setLane(gameState.player.lane - 1);
+            }
+            if (e.code === 'ArrowRight' || e.code === 'KeyD') {
+                gameState.player.setLane(gameState.player.lane + 1);
+            }
+        }
+    });
+
+    window.addEventListener('keyup', (e) => {
+        keys[e.keyCode] = false;
+    });
+}
+
+// Global hook for mode setting from HTML
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+    // Restart if playing to ensure clean state
+    if (gameState.gamePhase === "PLAYING") resetGame();
+};
+
+function updateAI(deltaTime) {
+    if (!gameState.player || gameState.gamePhase !== "PLAYING") return;
+
+    // AI Logic
+    const playerZ = gameState.player.mesh.position.z;
+    const lookAheadDist = 25.0;
+    
+    // Find closest relevant object ahead
+    let targetObj = null;
+    let closestDist = Infinity;
+    
+    // Check Orbs
+    for (const orb of gameState.orbs) {
+        const dist = orb.mesh.position.z - playerZ; // Z is negative, so orb Z < player Z is false... 
+        // Wait, player moves negative. Objects are at negative Z.
+        // Orb Z (-50) - Player Z (-10) = -40. 
+        // Distance ahead means Orb Z < Player Z.
+        // Let's use absolute distance for simplicity.
+        const diff = playerZ - orb.mesh.position.z; 
+        
+        if (diff > 0 && diff < lookAheadDist && diff < closestDist) {
+            targetObj = orb;
+            closestDist = diff;
+        }
+    }
+    
+    // Check Ramps (Ramps are always good)
+    for (const ramp of gameState.ramps) {
+        const diff = playerZ - ramp.mesh.position.z;
+        if (diff > 0 && diff < lookAheadDist && diff < closestDist) {
+            targetObj = ramp;
+            closestDist = diff;
+            // Always prioritize ramp if close?
+            // Actually, ramp changes color, might change strategy.
+        }
+    }
+
+    if (!targetObj) return;
+
+    // Decision Making
+    let desiredLane = gameState.player.lane;
+    
+    if (targetObj instanceof THREE.Mesh) {
+        // Just generic mesh logic if structure changed, but we use classes
+    } 
+    
+    // Determine lane of object
+    // Map x position back to lane index: x / LANE_WIDTH
+    const objLane = Math.round(targetObj.mesh.position.x / LANE_WIDTH);
+    
+    if (targetObj.color === gameState.player.color || targetObj.constructor.name === 'Ramp') {
+        // Good object, go to it
+        desiredLane = objLane;
+    } else {
+        // Bad object, avoid it
+        if (objLane === desiredLane) {
+            // Must switch!
+            // Prefer center if possible, otherwise any valid lane
+            if (desiredLane === 0) desiredLane = 1; // Default right
+            else desiredLane = 0; // Default center
+        }
+    }
+
+    // Apply Move
+    if (gameState.controlMode === "TEST_1") {
+        // Random movement test
+        if (Math.random() < 0.05) {
+             const rand = Math.random();
+             if (rand < 0.33) gameState.player.setLane(-1);
+             else if (rand < 0.66) gameState.player.setLane(0);
+             else gameState.player.setLane(1);
+        }
+    } 
+    else if (gameState.controlMode === "TEST_2") {
+        // Perfect Play
+        gameState.player.setLane(desiredLane);
+    }
+}
+
+
+function gameLoop(currentTime) {
+    requestAnimationFrame(gameLoop);
+
+    // Time Management
+    if (gameState.lastTime === 0) gameState.lastTime = currentTime;
+    const rawDelta = (currentTime - gameState.lastTime) / 1000;
+    gameState.lastTime = currentTime;
+    
+    // Cap delta to prevent spirals
+    const deltaTime = Math.min(rawDelta, 0.1);
+    gameState.deltaTime = deltaTime;
+
+    // Update
+    if (gameState.gamePhase === "PLAYING") {
+        gameState.frameCount++;
+        
+        // Speed scaling
+        gameState.speed += PLAYER_ACCELERATION * deltaTime;
+        gameState.speed = Math.min(gameState.speed, 50.0); // Cap speed
+        
+        // AI
+        if (gameState.controlMode !== "HUMAN") {
+            updateAI(deltaTime);
+        }
+
+        // Entities
+        if (gameState.player) gameState.player.update(deltaTime);
+        
+        gameState.orbs.forEach(orb => orb.update(deltaTime));
+        gameState.ramps.forEach(ramp => ramp.update(deltaTime));
+        
+        // World Gen
+        if (gameState.player) {
+            updateWorld(gameState.player.mesh.position.z);
+        }
+        
+        // Physics & Collisions
+        updatePhysics(deltaTime);
+        checkCollisions();
+        
+        // Scoring
+        gameState.score += gameState.speed * deltaTime * 0.1;
+    }
+    
+    updateLighting();
+    updateCamera(deltaTime);
+    
+    // Render
+    gameState.renderer.render(gameState.scene, gameState.camera);
+    renderUI();
+}
+
+function checkCollisions() {
+    if (!gameState.player) return;
+
+    const pMesh = gameState.player.mesh;
+    const pRadius = 0.5; // From constants
+
+    // Check Orbs
+    for (let i = gameState.orbs.length - 1; i >= 0; i--) {
+        const orb = gameState.orbs[i];
+        if (checkSphereCollision(pMesh.position, pRadius, orb.mesh.position, 0.5)) {
+            // Collision!
+            if (orb.color === gameState.player.color) {
+                // Good!
+                orb.destroy();
+                gameState.orbs.splice(i, 1);
+                gameState.score += 100;
+                createExplosion(orb.mesh.position, orb.color, 5);
+            } else {
+                // Bad!
+                triggerCameraShake(0.5);
+                gameState.player.explode();
+                logGameInfo({ type: "death", reason: "wrong_color", score: gameState.score });
+                gameState.gamePhase = "GAME_OVER_LOSE";
+            }
+        }
+    }
+
+    // Check Ramps
+    for (const ramp of gameState.ramps) {
+        // Simple Z overlap check + Lane check is faster than OBB
+        // Ramp width 2.0, Player width 1.0. 
+        if (Math.abs(pMesh.position.z - ramp.mesh.position.z) < (RAMP_LENGTH/2 + pRadius)) {
+             if (Math.abs(pMesh.position.x - ramp.mesh.position.x) < 1.0) {
+                 // Touching ramp
+                 if (gameState.player.color !== ramp.color) {
+                     gameState.player.setColor(ramp.color);
+                     gameState.score += 50;
+                     createExplosion(pMesh.position, ramp.color, 10);
+                 }
+             }
+        }
+    }
+}
+
+// Start
+init();

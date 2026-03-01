@@ -1,0 +1,1203 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+391game.js:284 Uncaught ReferenceError: RAMP_LENGTH is not defined
+    at checkCollisions (game.js:284:66)
+    at gameLoop (game.js:239:9)
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Color Roller 3D</title>
+    <style>
+      html, body { 
+          margin: 0; 
+          padding: 0; 
+          height: 100%; 
+          overflow: hidden; 
+          background: #111; 
+          color: #eee;
+          font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      }
+      body { 
+          display: flex; 
+          flex-direction: column; 
+          justify-content: center; 
+          align-items: center; 
+      }
+      #game-container {
+          box-shadow: 0 0 20px rgba(0,0,0,0.5);
+          border: 2px solid #333;
+      }
+      canvas { 
+          display: block;
+      }
+      .control-buttons { 
+          display: flex; 
+          gap: 10px; 
+          margin-bottom: 15px; 
+          flex-wrap: wrap; 
+          justify-content: center; 
+      }
+      .control-button { 
+          padding: 8px 20px; 
+          cursor: pointer; 
+          background: #333; 
+          color: #fff; 
+          border: 1px solid #555; 
+          border-radius: 4px; 
+          font-weight: bold;
+          transition: all 0.2s;
+      }
+      .control-button:hover {
+          background: #444;
+          transform: translateY(-2px);
+      }
+      .control-button.active { 
+          background: #007bff; 
+          border-color: #0056b3;
+      }
+      h1 { margin-bottom: 10px; text-transform: uppercase; letter-spacing: 2px; }
+      .instructions { color: #888; font-size: 0.9em; margin-bottom: 20px; text-align: center; max-width: 600px; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center;">
+      <h1 id="gameTitle">Color Roller 3D</h1>
+      
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="updateMode('HUMAN', this)">Human Mode</button>
+        <button id="test1ModeBtn" class="control-button" onclick="updateMode('TEST_1', this)">TEST 1 (Random)</button>
+        <button id="test2ModeBtn" class="control-button" onclick="updateMode('TEST_2', this)">TEST 2 (Perfect AI)</button>
+      </div>
+
+      <p class="instructions">
+          Roll through matching colors! Avoid different colors!<br>
+          Use <b>Arrow Keys</b> or <b>A/D</b> to switch lanes.
+      </p>
+    </div>
+
+    <!-- Game container will be injected here by script if not present, but let's be explicit -->
+    <!-- Script handles injection to body, but we want it here in flex flow -->
+    <!-- Modifying renderer.js to append to specific ID if exists -->
+    <div id="game-container"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/seedrandom@3.0.5/seedrandom.min.js"></script>
+    <script type="module" src="game.js"></script>
+    
+    <script>
+        function updateMode(mode, btn) {
+            // Update game state
+            if (window.setControlMode) window.setControlMode(mode);
+            
+            // Update UI
+            document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            
+            // Focus game so keys work immediately
+            const container = document.getElementById('game-container');
+            if(container) container.focus();
+        }
+    </script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// Game Configuration
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+
+// Game Colors (Neon/Vibrant Palette)
+export const COLORS = {
+    RED: 0xFF0055,
+    BLUE: 0x0088FF,
+    GREEN: 0x00FF66,
+    YELLOW: 0xFFDD00,
+    WHITE: 0xFFFFFF,
+    BLACK: 0x111111,
+    GRAY: 0x333333,
+    TRACK: 0x222222
+};
+
+// Physics & Gameplay Constants
+export const LANE_WIDTH = 2.5;
+export const MAX_LANES = 3; // -1 (Left), 0 (Center), 1 (Right)
+export const GRAVITY = -0.5;
+export const PLAYER_SPEED_BASE = 15.0;
+export const PLAYER_ACCELERATION = 0.05;
+export const MAX_SPEED = 30.0;
+export const JUMP_FORCE = 0.2;
+export const STRAFE_SPEED = 0.2; // Lerp factor
+
+// Dimensions
+export const PLAYER_RADIUS = 0.5;
+export const ORB_RADIUS = 0.5;
+export const RAMP_WIDTH = 2.0;
+export const RAMP_LENGTH = 3.0;
+export const RAMP_HEIGHT = 0.5;
+
+// Global State
+export const gameState = {
+    // Phase
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2
+
+    // Three.js Core
+    scene: null,
+    camera: null,
+    renderer: null,
+    gameContainer: null,
+
+    // Lighting
+    lights: [],
+    ambientLight: null,
+    directionalLight: null,
+
+    // Entities
+    player: null,
+    entities: [], // Generic list for updates
+    
+    // World Objects (Separate lists for collision optimization)
+    orbs: [], 
+    ramps: [],
+    trackSegments: [],
+    particles: [],
+
+    // Gameplay State
+    score: 0,
+    speed: PLAYER_SPEED_BASE,
+    distance: 0,
+    currentColor: COLORS.RED, // Current active color state
+    
+    // Camera State
+    cameraOffset: new THREE.Vector3(0, 4, 6),
+    cameraShake: 0,
+    
+    // Performance / Time
+    frameCount: 0,
+    deltaTime: 0,
+    lastTime: 0,
+
+    // Testing AI State
+    aiTargetLane: 0,
+    aiReactionTimer: 0
+};
+
+// Logger
+export const logs = {
+    game_info: [],
+    player_info: [],
+    inputs: []
+};
+
+// Expose to window for debugging/hard constraints
+window.gameInstance = gameState;
+window.logs = logs;
+
+export function getGameState() {
+    return gameState;
+}
+window.getGameState = getGameState;
+
+export function logGameInfo(info) {
+    logs.game_info.push({
+        ...info,
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+}
+</file>
+
+<file name="game.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, logs, COLORS, LANE_WIDTH, PLAYER_SPEED_BASE, PLAYER_ACCELERATION, logGameInfo, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { setupRenderer } from './renderer.js';
+import { setupCamera, updateCamera, triggerCameraShake } from './camera.js';
+import { setupLighting, updateLighting } from './lighting.js';
+import { setupUI, renderUI } from './ui.js';
+import { Player, createExplosion } from './entities.js';
+import { initWorld, updateWorld } from './world.js';
+import { updatePhysics, checkSphereCollision, checkBoxSphereCollision } from './physics.js';
+import { getRandomElement, getRandomRange } from './utils.js';
+
+// Init
+function init() {
+    // 1. Setup Systems
+    setupRenderer();
+    setupCamera();
+    setupLighting();
+    setupUI();
+    
+    // 2. Initialize Logic
+    gameState.gamePhase = "START";
+    Math.seedrandom('42');
+    
+    // 3. Create Player (but hide or pause)
+    createGameSession();
+    
+    // 4. Start Loop
+    requestAnimationFrame(gameLoop);
+    
+    // 5. Input Listeners
+    setupInputs();
+    
+    logGameInfo({ action: "init", status: "success" });
+}
+
+function createGameSession() {
+    if (gameState.player) {
+        gameState.scene.remove(gameState.player.mesh);
+        gameState.player.mesh.geometry.dispose();
+        gameState.player.mesh.material.dispose();
+    }
+    
+    // Reset State
+    gameState.score = 0;
+    gameState.speed = PLAYER_SPEED_BASE;
+    gameState.distance = 0;
+    gameState.frameCount = 0;
+    
+    // Init World
+    initWorld();
+    
+    // Create Player
+    gameState.player = new Player();
+}
+
+function resetGame() {
+    createGameSession();
+    gameState.gamePhase = "START";
+}
+
+// Input Handling
+const keys = {};
+
+function setupInputs() {
+    window.addEventListener('keydown', (e) => {
+        keys[e.keyCode] = true;
+        
+        // Logs
+        logs.inputs.push({
+            type: 'keydown',
+            key: e.key,
+            code: e.keyCode,
+            frame: gameState.frameCount,
+            time: Date.now()
+        });
+        
+        // Global Controls
+        if (e.code === 'Enter') {
+            if (gameState.gamePhase === "START") {
+                gameState.gamePhase = "PLAYING";
+                logGameInfo({ action: "state_change", to: "PLAYING" });
+            }
+        }
+        else if (e.code === 'Escape') {
+            if (gameState.gamePhase === "PLAYING") {
+                gameState.gamePhase = "PAUSED";
+            } else if (gameState.gamePhase === "PAUSED") {
+                gameState.gamePhase = "PLAYING";
+            }
+        }
+        else if (e.code === 'KeyR') {
+            if (gameState.gamePhase === "GAME_OVER_LOSE" || gameState.gamePhase === "GAME_OVER_WIN") {
+                resetGame();
+            }
+        }
+        
+        // Player Controls (Only in Play)
+        if (gameState.gamePhase === "PLAYING" && gameState.player && gameState.controlMode === "HUMAN") {
+            if (e.code === 'ArrowLeft' || e.code === 'KeyA') {
+                gameState.player.setLane(gameState.player.lane - 1);
+            }
+            if (e.code === 'ArrowRight' || e.code === 'KeyD') {
+                gameState.player.setLane(gameState.player.lane + 1);
+            }
+        }
+    });
+
+    window.addEventListener('keyup', (e) => {
+        keys[e.keyCode] = false;
+    });
+}
+
+// Global hook for mode setting from HTML
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+    // Restart if playing to ensure clean state
+    if (gameState.gamePhase === "PLAYING") resetGame();
+};
+
+function updateAI(deltaTime) {
+    if (!gameState.player || gameState.gamePhase !== "PLAYING") return;
+
+    // AI Logic
+    const playerZ = gameState.player.mesh.position.z;
+    const lookAheadDist = 25.0;
+    
+    // Find closest relevant object ahead
+    let targetObj = null;
+    let closestDist = Infinity;
+    
+    // Check Orbs
+    for (const orb of gameState.orbs) {
+        const dist = orb.mesh.position.z - playerZ; // Z is negative, so orb Z < player Z is false... 
+        // Wait, player moves negative. Objects are at negative Z.
+        // Orb Z (-50) - Player Z (-10) = -40. 
+        // Distance ahead means Orb Z < Player Z.
+        // Let's use absolute distance for simplicity.
+        const diff = playerZ - orb.mesh.position.z; 
+        
+        if (diff > 0 && diff < lookAheadDist && diff < closestDist) {
+            targetObj = orb;
+            closestDist = diff;
+        }
+    }
+    
+    // Check Ramps (Ramps are always good)
+    for (const ramp of gameState.ramps) {
+        const diff = playerZ - ramp.mesh.position.z;
+        if (diff > 0 && diff < lookAheadDist && diff < closestDist) {
+            targetObj = ramp;
+            closestDist = diff;
+            // Always prioritize ramp if close?
+            // Actually, ramp changes color, might change strategy.
+        }
+    }
+
+    if (!targetObj) return;
+
+    // Decision Making
+    let desiredLane = gameState.player.lane;
+    
+    if (targetObj instanceof THREE.Mesh) {
+        // Just generic mesh logic if structure changed, but we use classes
+    } 
+    
+    // Determine lane of object
+    // Map x position back to lane index: x / LANE_WIDTH
+    const objLane = Math.round(targetObj.mesh.position.x / LANE_WIDTH);
+    
+    if (targetObj.color === gameState.player.color || targetObj.constructor.name === 'Ramp') {
+        // Good object, go to it
+        desiredLane = objLane;
+    } else {
+        // Bad object, avoid it
+        if (objLane === desiredLane) {
+            // Must switch!
+            // Prefer center if possible, otherwise any valid lane
+            if (desiredLane === 0) desiredLane = 1; // Default right
+            else desiredLane = 0; // Default center
+        }
+    }
+
+    // Apply Move
+    if (gameState.controlMode === "TEST_1") {
+        // Random movement test
+        if (Math.random() < 0.05) {
+             const rand = Math.random();
+             if (rand < 0.33) gameState.player.setLane(-1);
+             else if (rand < 0.66) gameState.player.setLane(0);
+             else gameState.player.setLane(1);
+        }
+    } 
+    else if (gameState.controlMode === "TEST_2") {
+        // Perfect Play
+        gameState.player.setLane(desiredLane);
+    }
+}
+
+
+function gameLoop(currentTime) {
+    requestAnimationFrame(gameLoop);
+
+    // Time Management
+    if (gameState.lastTime === 0) gameState.lastTime = currentTime;
+    const rawDelta = (currentTime - gameState.lastTime) / 1000;
+    gameState.lastTime = currentTime;
+    
+    // Cap delta to prevent spirals
+    const deltaTime = Math.min(rawDelta, 0.1);
+    gameState.deltaTime = deltaTime;
+
+    // Update
+    if (gameState.gamePhase === "PLAYING") {
+        gameState.frameCount++;
+        
+        // Speed scaling
+        gameState.speed += PLAYER_ACCELERATION * deltaTime;
+        gameState.speed = Math.min(gameState.speed, 50.0); // Cap speed
+        
+        // AI
+        if (gameState.controlMode !== "HUMAN") {
+            updateAI(deltaTime);
+        }
+
+        // Entities
+        if (gameState.player) gameState.player.update(deltaTime);
+        
+        gameState.orbs.forEach(orb => orb.update(deltaTime));
+        gameState.ramps.forEach(ramp => ramp.update(deltaTime));
+        
+        // World Gen
+        if (gameState.player) {
+            updateWorld(gameState.player.mesh.position.z);
+        }
+        
+        // Physics & Collisions
+        updatePhysics(deltaTime);
+        checkCollisions();
+        
+        // Scoring
+        gameState.score += gameState.speed * deltaTime * 0.1;
+    }
+    
+    updateLighting();
+    updateCamera(deltaTime);
+    
+    // Render
+    gameState.renderer.render(gameState.scene, gameState.camera);
+    renderUI();
+}
+
+function checkCollisions() {
+    if (!gameState.player) return;
+
+    const pMesh = gameState.player.mesh;
+    const pRadius = 0.5; // From constants
+
+    // Check Orbs
+    for (let i = gameState.orbs.length - 1; i >= 0; i--) {
+        const orb = gameState.orbs[i];
+        if (checkSphereCollision(pMesh.position, pRadius, orb.mesh.position, 0.5)) {
+            // Collision!
+            if (orb.color === gameState.player.color) {
+                // Good!
+                orb.destroy();
+                gameState.orbs.splice(i, 1);
+                gameState.score += 100;
+                createExplosion(orb.mesh.position, orb.color, 5);
+            } else {
+                // Bad!
+                triggerCameraShake(0.5);
+                gameState.player.explode();
+                logGameInfo({ type: "death", reason: "wrong_color", score: gameState.score });
+                gameState.gamePhase = "GAME_OVER_LOSE";
+            }
+        }
+    }
+
+    // Check Ramps
+    for (const ramp of gameState.ramps) {
+        // Simple Z overlap check + Lane check is faster than OBB
+        // Ramp width 2.0, Player width 1.0. 
+        if (Math.abs(pMesh.position.z - ramp.mesh.position.z) < (RAMP_LENGTH/2 + pRadius)) {
+             if (Math.abs(pMesh.position.x - ramp.mesh.position.x) < 1.0) {
+                 // Touching ramp
+                 if (gameState.player.color !== ramp.color) {
+                     gameState.player.setColor(ramp.color);
+                     gameState.score += 50;
+                     createExplosion(pMesh.position, ramp.color, 10);
+                 }
+             }
+        }
+    }
+}
+
+// Start
+init();
+</file>
+
+<file name="renderer.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function setupRenderer() {
+    // Container logic
+    let container = document.getElementById('game-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'game-container';
+        container.style.width = `${CANVAS_WIDTH}px`;
+        container.style.height = `${CANVAS_HEIGHT}px`;
+        container.style.position = 'relative';
+        container.style.overflow = 'hidden';
+        document.body.appendChild(container);
+    }
+    gameState.gameContainer = container;
+
+    // Renderer
+    const renderer = new THREE.WebGLRenderer({ 
+        antialias: true,
+        powerPreference: "high-performance"
+    });
+    renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.2;
+    
+    container.appendChild(renderer.domElement);
+    gameState.renderer = renderer;
+
+    // Scene
+    gameState.scene = new THREE.Scene();
+    gameState.scene.background = new THREE.Color(0x111111);
+    gameState.scene.fog = new THREE.FogExp2(0x111111, 0.015);
+}
+</file>
+
+<file name="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+let uiCanvas = null;
+let uiContext = null;
+
+export function setupUI() {
+    uiCanvas = document.createElement('canvas');
+    uiCanvas.width = CANVAS_WIDTH;
+    uiCanvas.height = CANVAS_HEIGHT;
+    uiCanvas.style.position = 'absolute';
+    uiCanvas.style.top = '0';
+    uiCanvas.style.left = '0';
+    uiCanvas.style.pointerEvents = 'none';
+    uiCanvas.style.zIndex = '100';
+    
+    if (gameState.gameContainer) {
+        gameState.gameContainer.appendChild(uiCanvas);
+    }
+    
+    uiContext = uiCanvas.getContext('2d');
+}
+
+export function renderUI() {
+    if (!uiContext) return;
+    
+    // Clear
+    uiContext.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    // Common Settings
+    uiContext.textAlign = 'center';
+    uiContext.textBaseline = 'middle';
+    
+    if (gameState.gamePhase === "START") {
+        drawOverlay(0.7);
+        drawText(CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40, "COLOR ROLLER 3D", 40, "bold", "#FFF");
+        drawText(CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 20, "Press ENTER to Start", 20, "normal", "#DDD");
+        drawText(CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 50, "Match colors. Avoid mismatch.", 14, "normal", "#AAA");
+        drawText(CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 70, "Arrows to Move", 14, "normal", "#AAA");
+    }
+    else if (gameState.gamePhase === "PLAYING") {
+        // HUD
+        uiContext.textAlign = 'left';
+        drawText(20, 30, `Score: ${Math.floor(gameState.score)}`, 20, "bold", "#FFF");
+        drawText(20, 55, `Speed: ${Math.floor(gameState.speed)}`, 14, "normal", "#CCC");
+        
+        // Mode indicator
+        if (gameState.controlMode !== "HUMAN") {
+            uiContext.textAlign = 'right';
+            drawText(CANVAS_WIDTH - 20, 30, `MODE: ${gameState.controlMode}`, 14, "bold", "#FF0055");
+        }
+    }
+    else if (gameState.gamePhase === "PAUSED") {
+        drawOverlay(0.5);
+        drawText(CANVAS_WIDTH/2, CANVAS_HEIGHT/2, "PAUSED", 30, "bold", "#FFF");
+        drawText(CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 30, "Press ESC to Resume", 16, "normal", "#CCC");
+    }
+    else if (gameState.gamePhase === "GAME_OVER_LOSE") {
+        drawOverlay(0.8);
+        drawText(CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 30, "GAME OVER", 40, "bold", "#FF0055");
+        drawText(CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 20, `Final Score: ${Math.floor(gameState.score)}`, 24, "bold", "#FFF");
+        drawText(CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60, "Press R to Restart", 16, "normal", "#CCC");
+    }
+}
+
+function drawOverlay(alpha) {
+    uiContext.fillStyle = `rgba(0, 0, 0, ${alpha})`;
+    uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+}
+
+function drawText(x, y, text, size, weight, color) {
+    uiContext.font = `${weight} ${size}px Arial`;
+    uiContext.fillStyle = color;
+    uiContext.shadowColor = 'black';
+    uiContext.shadowBlur = 4;
+    uiContext.fillText(text, x, y);
+    uiContext.shadowBlur = 0;
+}
+</file>
+
+<file name="lighting.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+
+export function setupLighting() {
+    gameState.lights = [];
+
+    // Ambient Light - Base visibility
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+    gameState.scene.add(ambientLight);
+    gameState.ambientLight = ambientLight;
+
+    // Directional Light - The "Sun" / Main shadow caster
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(10, 20, 10);
+    dirLight.castShadow = true;
+    
+    // Optimize shadows
+    dirLight.shadow.mapSize.width = 1024;
+    dirLight.shadow.mapSize.height = 1024;
+    dirLight.shadow.camera.near = 0.1;
+    dirLight.shadow.camera.far = 100;
+    dirLight.shadow.camera.left = -20;
+    dirLight.shadow.camera.right = 20;
+    dirLight.shadow.camera.top = 20;
+    dirLight.shadow.camera.bottom = -20;
+
+    gameState.scene.add(dirLight);
+    gameState.directionalLight = dirLight;
+    gameState.lights.push(dirLight);
+
+    // Hemisphere Light - Nice gradient from sky to ground
+    const hemiLight = new THREE.HemisphereLight(0x87CEEB, 0x222222, 0.4);
+    hemiLight.position.set(0, 20, 0);
+    gameState.scene.add(hemiLight);
+    gameState.lights.push(hemiLight);
+}
+
+export function updateLighting() {
+    // Make the directional light follow the player slightly to maintain shadows
+    if (gameState.player && gameState.directionalLight) {
+        gameState.directionalLight.position.z = gameState.player.mesh.position.z + 10;
+        gameState.directionalLight.target.position.z = gameState.player.mesh.position.z;
+        gameState.directionalLight.target.updateMatrixWorld();
+    }
+}
+</file>
+
+<file name="world.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, LANE_WIDTH, COLORS, RAMP_LENGTH } from './globals.js';
+import { Orb, Ramp, TrackSegment } from './entities.js';
+import { getRandomGameColor, getRandomElement, getRandomRange } from './utils.js';
+
+// World Generation State
+let nextSpawnZ = 0;
+const SEGMENT_LENGTH = 50;
+const SPAWN_AHEAD_DISTANCE = 150;
+
+export function initWorld() {
+    nextSpawnZ = 10; // Start slightly ahead
+    // Clear existing
+    clearWorld();
+    
+    // Initial safe zone
+    spawnTrackSegment(50, false); 
+}
+
+export function updateWorld(playerZ) {
+    // Spawn new segments as player moves
+    while (nextSpawnZ > playerZ - SPAWN_AHEAD_DISTANCE) {
+        spawnTrackSegment(SEGMENT_LENGTH, true);
+    }
+    
+    // Cleanup old segments and objects behind player
+    const deleteThreshold = playerZ + 20; // 20 units behind player
+    
+    // Clean segments
+    for (let i = gameState.trackSegments.length - 1; i >= 0; i--) {
+        const seg = gameState.trackSegments[i];
+        if (seg.zStart > deleteThreshold) { // Remember Z is negative
+             // Actually, Z decreases as we go forward. Player Z becomes -10, -20, etc.
+             // So "Behind" means Z > PlayerZ + offset
+             // Wait, logic check: Player starts 0, moves -Z. 
+             // Behind player is Positive Z (or less negative).
+             if (seg.zEnd > deleteThreshold) {
+                 seg.destroy();
+                 gameState.trackSegments.splice(i, 1);
+             }
+        }
+    }
+
+    // Clean entities
+    const cleanEntityList = (list) => {
+        for (let i = list.length - 1; i >= 0; i--) {
+            if (list[i].mesh.position.z > deleteThreshold) {
+                list[i].destroy();
+                list.splice(i, 1);
+            }
+        }
+    };
+    cleanEntityList(gameState.orbs);
+    cleanEntityList(gameState.ramps);
+}
+
+function clearWorld() {
+    gameState.orbs.forEach(o => o.destroy());
+    gameState.orbs = [];
+    
+    gameState.ramps.forEach(r => r.destroy());
+    gameState.ramps = [];
+    
+    gameState.trackSegments.forEach(t => t.destroy());
+    gameState.trackSegments = [];
+}
+
+function spawnTrackSegment(length, spawnObjects) {
+    // Create floor
+    const segment = new TrackSegment(nextSpawnZ, length);
+    gameState.trackSegments.push(segment);
+    
+    if (spawnObjects) {
+        spawnObstaclesForSegment(nextSpawnZ, length);
+    }
+    
+    nextSpawnZ -= length;
+}
+
+function spawnObstaclesForSegment(startZ, length) {
+    const numRows = Math.floor(length / 15); // One row every 15 units
+    
+    for (let i = 0; i < numRows; i++) {
+        const z = startZ - (i * 15) - 10;
+        
+        const type = Math.random();
+        
+        if (type < 0.2) {
+            // Spawn Ramp
+            const lane = getRandomElement([-1, 0, 1]);
+            const color = getRandomGameColor();
+            const ramp = new Ramp(lane * LANE_WIDTH, z, color);
+            gameState.ramps.push(ramp);
+        } else {
+            // Spawn Orbs
+            // Pattern: 3 orbs, at least one matches player color if we can predict?
+            // Actually, just random is fine, but ensures solvability.
+            // Solvability: If we have a color, we need at least one safe path OR a ramp before.
+            // Simplified: Just spawn random rows.
+            
+            const lanes = [-1, 0, 1];
+            // Ensure at least one lane is "safe" (matches a potential color) 
+            // Since player color changes, we pick random colors.
+            
+            lanes.forEach(lane => {
+                const color = getRandomGameColor();
+                const orb = new Orb(lane * LANE_WIDTH, z, color);
+                gameState.orbs.push(orb);
+            });
+        }
+    }
+}
+</file>
+
+<file name="entities.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, COLORS, PLAYER_RADIUS, LANE_WIDTH, STRAFE_SPEED, ORB_RADIUS, RAMP_WIDTH, RAMP_LENGTH, RAMP_HEIGHT } from './globals.js';
+import { lerp } from './utils.js';
+
+/* ===========================
+   PLAYER CLASS
+   =========================== */
+export class Player {
+    constructor() {
+        // Geometry
+        const geometry = new THREE.SphereGeometry(PLAYER_RADIUS, 32, 32);
+        this.material = new THREE.MeshStandardMaterial({ 
+            color: COLORS.RED,
+            roughness: 0.2,
+            metalness: 0.5,
+            emissive: 0x000000,
+            emissiveIntensity: 0.2
+        });
+        this.mesh = new THREE.Mesh(geometry, this.material);
+        this.mesh.castShadow = true;
+        this.mesh.receiveShadow = true;
+        
+        // Initial State
+        this.mesh.position.set(0, PLAYER_RADIUS, 0);
+        this.lane = 0; // -1, 0, 1
+        this.targetX = 0;
+        this.color = COLORS.RED;
+        
+        // Rolling animation
+        this.visualRotation = 0;
+
+        gameState.scene.add(this.mesh);
+    }
+
+    update(deltaTime) {
+        // Continuous forward movement
+        const moveDist = gameState.speed * deltaTime;
+        this.mesh.position.z -= moveDist; // Moving into negative Z
+        gameState.distance += moveDist;
+
+        // Lane Switching (Smooth Lerp)
+        this.targetX = this.lane * LANE_WIDTH;
+        this.mesh.position.x = lerp(this.mesh.position.x, this.targetX, STRAFE_SPEED);
+
+        // Rolling visual effect
+        this.visualRotation -= gameState.speed * deltaTime / PLAYER_RADIUS;
+        this.mesh.rotation.x = this.visualRotation;
+
+        // Sync gameState color
+        gameState.currentColor = this.color;
+    }
+
+    setLane(lane) {
+        this.lane = Math.max(-1, Math.min(1, lane));
+    }
+
+    setColor(color) {
+        this.color = color;
+        this.material.color.setHex(color);
+        this.material.emissive.setHex(color);
+        this.material.emissiveIntensity = 0.2;
+    }
+
+    explode() {
+        createExplosion(this.mesh.position, this.color, 20);
+        this.mesh.visible = false;
+    }
+
+    reset() {
+        this.mesh.visible = true;
+        this.mesh.position.set(0, PLAYER_RADIUS, 0);
+        this.lane = 0;
+        this.targetX = 0;
+        this.setColor(COLORS.RED);
+        gameState.distance = 0;
+        this.visualRotation = 0;
+    }
+}
+
+/* ===========================
+   ORB (OBSTACLE/COLLECTIBLE)
+   =========================== */
+export class Orb {
+    constructor(x, z, color) {
+        const geometry = new THREE.SphereGeometry(ORB_RADIUS, 24, 24);
+        const material = new THREE.MeshStandardMaterial({ 
+            color: color,
+            roughness: 0.1,
+            metalness: 0.3
+        });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.set(x, ORB_RADIUS, z);
+        this.mesh.castShadow = true;
+        this.mesh.receiveShadow = true;
+        
+        this.color = color;
+        this.active = true;
+        this.bobOffset = Math.random() * Math.PI * 2;
+        
+        gameState.scene.add(this.mesh);
+    }
+
+    update(deltaTime) {
+        // Gentle bobbing animation
+        const time = Date.now() * 0.003;
+        this.mesh.position.y = ORB_RADIUS + Math.sin(time + this.bobOffset) * 0.2;
+    }
+
+    destroy() {
+        gameState.scene.remove(this.mesh);
+        this.mesh.geometry.dispose();
+        this.mesh.material.dispose();
+        this.active = false;
+    }
+}
+
+/* ===========================
+   COLOR RAMP
+   =========================== */
+export class Ramp {
+    constructor(x, z, color) {
+        const geometry = new THREE.BoxGeometry(RAMP_WIDTH, RAMP_HEIGHT, RAMP_LENGTH);
+        
+        // Create a gradient-like texture or just use color
+        const material = new THREE.MeshStandardMaterial({ 
+            color: color, 
+            roughness: 1.0,
+            emissive: color,
+            emissiveIntensity: 0.5,
+            transparent: true,
+            opacity: 0.9
+        });
+
+        this.mesh = new THREE.Mesh(geometry, material);
+        // Positioned so player rolls 'up' it slightly or just passes through
+        this.mesh.position.set(x, RAMP_HEIGHT/2, z);
+        this.mesh.castShadow = false;
+        this.mesh.receiveShadow = true;
+        
+        // Visual flair: Slope rotation
+        this.mesh.rotation.x = -0.1; 
+
+        this.color = color;
+        this.active = true;
+
+        gameState.scene.add(this.mesh);
+    }
+
+    update(deltaTime) {
+        // Pulse effect
+        const pulse = 0.5 + Math.sin(Date.now() * 0.005) * 0.2;
+        this.mesh.material.emissiveIntensity = pulse;
+    }
+
+    destroy() {
+        gameState.scene.remove(this.mesh);
+        this.mesh.geometry.dispose();
+        this.mesh.material.dispose();
+        this.active = false;
+    }
+}
+
+/* ===========================
+   PARTICLE SYSTEM (EXPLOSIONS)
+   =========================== */
+export class Particle {
+    constructor(pos, color) {
+        const size = Math.random() * 0.2 + 0.1;
+        const geometry = new THREE.BoxGeometry(size, size, size);
+        const material = new THREE.MeshBasicMaterial({ color: color });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.copy(pos);
+        
+        // Random velocity
+        this.velocity = new THREE.Vector3(
+            (Math.random() - 0.5) * 5,
+            Math.random() * 5 + 2,
+            (Math.random() - 0.5) * 5
+        );
+        
+        this.life = 1.0; // Seconds
+        
+        gameState.scene.add(this.mesh);
+    }
+}
+
+export function createExplosion(pos, color, count) {
+    for (let i = 0; i < count; i++) {
+        const p = new Particle(pos, color);
+        gameState.particles.push(p);
+    }
+}
+
+/* ===========================
+   TRACK SEGMENT
+   =========================== */
+export class TrackSegment {
+    constructor(zPos, length) {
+        const geometry = new THREE.PlaneGeometry(LANE_WIDTH * 3 + 4, length);
+        const material = new THREE.MeshStandardMaterial({ 
+            color: COLORS.TRACK,
+            roughness: 0.8,
+            side: THREE.DoubleSide
+        });
+        
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.rotation.x = -Math.PI / 2;
+        this.mesh.position.set(0, 0, zPos - length/2); // Centered
+        this.mesh.receiveShadow = true;
+
+        // Add lane markings
+        this.markings = [];
+        const markingGeo = new THREE.PlaneGeometry(0.1, length);
+        const markingMat = new THREE.MeshBasicMaterial({ color: 0x444444 });
+        
+        const positions = [-LANE_WIDTH/2, LANE_WIDTH/2];
+        positions.forEach(x => {
+            const mark = new THREE.Mesh(markingGeo, markingMat);
+            mark.rotation.x = -Math.PI / 2;
+            mark.position.set(x, 0.01, zPos - length/2);
+            this.markings.push(mark);
+            gameState.scene.add(mark);
+        });
+
+        gameState.scene.add(this.mesh);
+        this.zStart = zPos;
+        this.zEnd = zPos - length;
+        this.active = true;
+    }
+
+    destroy() {
+        gameState.scene.remove(this.mesh);
+        this.mesh.geometry.dispose();
+        this.mesh.material.dispose();
+        
+        this.markings.forEach(m => {
+            gameState.scene.remove(m);
+            m.geometry.dispose();
+            m.material.dispose();
+        });
+        
+        this.active = false;
+    }
+}
+</file>
+
+<file name="utils.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { COLORS } from './globals.js';
+
+// Helper to get random item from array
+export function getRandomElement(arr) {
+    return arr[Math.floor(Math.random() * arr.length)];
+}
+
+// Helper to get random number in range
+export function getRandomRange(min, max) {
+    return Math.random() * (max - min) + min;
+}
+
+// Helper to get a random color from the main gameplay colors
+export function getRandomGameColor() {
+    const gameColors = [COLORS.RED, COLORS.BLUE, COLORS.GREEN, COLORS.YELLOW];
+    return getRandomElement(gameColors);
+}
+
+// Linear interpolation
+export function lerp(start, end, t) {
+    return start * (1 - t) + end * t;
+}
+
+// Clamp value
+export function clamp(value, min, max) {
+    return Math.min(Math.max(value, min), max);
+}
+
+// Check AABB vs Sphere collision roughly (treating box as sphere for simplicity or checking bounds)
+// For this game, specific collision functions in physics.js are better.
+</file>
+
+<file name="camera.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+import { lerp } from './utils.js';
+
+export function setupCamera() {
+    const aspect = gameState.gameContainer.offsetWidth / gameState.gameContainer.offsetHeight;
+    gameState.camera = new THREE.PerspectiveCamera(60, aspect, 0.1, 500);
+    gameState.camera.position.set(0, 5, 10);
+    gameState.camera.lookAt(0, 0, -20);
+}
+
+export function updateCamera(deltaTime) {
+    if (!gameState.player) return;
+
+    // Camera follow target
+    const targetZ = gameState.player.mesh.position.z + gameState.cameraOffset.z;
+    const targetX = gameState.player.mesh.position.x * 0.5; // Dampen X movement
+    const targetY = gameState.player.mesh.position.y + gameState.cameraOffset.y;
+
+    // Smooth follow
+    gameState.camera.position.z = targetZ; // Lock Z to player mostly
+    gameState.camera.position.x = lerp(gameState.camera.position.x, targetX, 5.0 * deltaTime);
+    gameState.camera.position.y = lerp(gameState.camera.position.y, targetY, 5.0 * deltaTime);
+
+    // Look slightly ahead of player
+    gameState.camera.lookAt(
+        gameState.player.mesh.position.x * 0.2, 
+        gameState.player.mesh.position.y, 
+        gameState.player.mesh.position.z - 10
+    );
+
+    // Apply Shake
+    if (gameState.cameraShake > 0) {
+        const intensity = gameState.cameraShake;
+        gameState.camera.position.add(new THREE.Vector3(
+            (Math.random() - 0.5) * intensity,
+            (Math.random() - 0.5) * intensity,
+            (Math.random() - 0.5) * intensity
+        ));
+        gameState.cameraShake = Math.max(0, gameState.cameraShake - deltaTime * 2.0);
+    }
+}
+
+export function triggerCameraShake(amount) {
+    gameState.cameraShake = amount;
+}
+</file>
+
+<file name="physics.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, PLAYER_RADIUS, ORB_RADIUS } from './globals.js';
+
+// Sphere to Sphere collision
+export function checkSphereCollision(pos1, radius1, pos2, radius2) {
+    const distSq = pos1.distanceToSquared(pos2);
+    const radiusSum = radius1 + radius2;
+    return distSq < (radiusSum * radiusSum);
+}
+
+// AABB to Sphere Collision (Simplified for Ramp)
+// Ramp is a box, Player is a sphere
+export function checkBoxSphereCollision(boxMesh, sphereMesh, sphereRadius) {
+    // Get box bounds
+    const boxBox = new THREE.Box3().setFromObject(boxMesh);
+    
+    // Get closest point on box to sphere center
+    const spherePos = sphereMesh.position;
+    const closestPoint = new THREE.Vector3();
+    boxBox.clampPoint(spherePos, closestPoint);
+    
+    // Check distance
+    const distSq = spherePos.distanceToSquared(closestPoint);
+    return distSq < (sphereRadius * sphereRadius);
+}
+
+export function updatePhysics(deltaTime) {
+    // Simple gravity for particles
+    gameState.particles.forEach(p => {
+        p.velocity.y += -9.8 * deltaTime;
+        p.mesh.position.add(p.velocity.clone().multiplyScalar(deltaTime));
+        p.life -= deltaTime;
+    });
+
+    // Clean up dead particles
+    for (let i = gameState.particles.length - 1; i >= 0; i--) {
+        if (gameState.particles[i].life <= 0) {
+            gameState.scene.remove(gameState.particles[i].mesh);
+            gameState.particles.splice(i, 1);
+        }
+    }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

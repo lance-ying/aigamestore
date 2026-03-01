@@ -1,0 +1,1939 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you explictly say that Z is used for the yellow notes and the red /green is used for the space notes. and then I also want the levels to be way shorter, right now the levels are way too long, perhaps after 30 note hits (or a score requirement to pass tot eh enxt level) should proceed to the enxt level (thats an example) and there should be a limit number of misses, perhaps after 5 misses, then its game over (these misses reset after each level)
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">DEEMO - Rhythm of the Growing Tree</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
+        <button id="test_3_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_3')">TEST (Movement)</button>
+        <button id="test_4_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_4')">TEST (Random)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Guide the growth of a mystical tree by performing musical notes with precise timing. Notes descend from above and must be hit exactly when they reach the judgment line. Hold notes appear as long green bars - press and hold SPACE when the front reaches the line, then release after the entire bar passes through. Build combos for higher scores and faster tree growth!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;"><strong>Controls:</strong> Arrow Keys (←→): Move between lanes | Space: Hit notes / Hold long notes | Z: Release hold notes early | Enter: Start | Esc: Pause | R: Restart</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="song_manager.js">
+// song_manager.js - Song and note pattern management
+import { 
+  NOTE_TYPE_SINGLE, 
+  NOTE_TYPE_HOLD, 
+  NOTE_TYPE_SWIPE,
+  DIFFICULTY_EASY,
+  DIFFICULTY_NORMAL,
+  DIFFICULTY_HARD,
+  NUM_LANES,
+  NOTE_SPEED,
+  JUDGMENT_LINE_Y,
+  GOOD_TIMING
+} from './globals.js';
+import { Note } from './note.js';
+
+export class SongManager {
+  constructor(p) {
+    this.p = p;
+    this.songs = this.createSongLibrary();
+    this.currentSongIndex = 0;
+    this.currentPattern = [];
+    this.patternIndex = 0;
+  }
+
+  createSongLibrary() {
+    return [
+      {
+        id: 0,
+        name: "First Steps",
+        difficulty: DIFFICULTY_EASY,
+        unlocked: true,
+        treeGrowth: 1.0,
+        bgColor: { top: [40, 80, 120], bottom: [10, 20, 40] } // Blue
+      },
+      {
+        id: 1,
+        name: "Emerald Path",
+        difficulty: DIFFICULTY_EASY,
+        unlocked: false,
+        treeGrowth: 1.2,
+        bgColor: { top: [40, 120, 60], bottom: [10, 40, 20] } // Green
+      },
+      {
+        id: 2,
+        name: "Violet Dream",
+        difficulty: DIFFICULTY_NORMAL,
+        unlocked: false,
+        treeGrowth: 1.5,
+        bgColor: { top: [100, 40, 120], bottom: [30, 10, 40] } // Purple
+      },
+      {
+        id: 3,
+        name: "Amber Sunset",
+        difficulty: DIFFICULTY_NORMAL,
+        unlocked: false,
+        treeGrowth: 1.8,
+        bgColor: { top: [140, 80, 40], bottom: [50, 20, 10] } // Orange
+      },
+      {
+        id: 4,
+        name: "Crimson Storm",
+        difficulty: DIFFICULTY_HARD,
+        unlocked: false,
+        treeGrowth: 2.0,
+        bgColor: { top: [120, 40, 40], bottom: [40, 10, 10] } // Red
+      },
+      {
+        id: 5,
+        name: "Void Walker",
+        difficulty: DIFFICULTY_HARD,
+        unlocked: false,
+        treeGrowth: 2.5,
+        bgColor: { top: [60, 60, 70], bottom: [10, 10, 15] } // Dark Grey
+      }
+    ];
+  }
+
+  getSong(index) {
+    return this.songs[index] || this.songs[0];
+  }
+
+  unlockNextSong() {
+    for (let i = 0; i < this.songs.length; i++) {
+      if (!this.songs[i].unlocked) {
+        this.songs[i].unlocked = true;
+        return this.songs[i];
+      }
+    }
+    return null;
+  }
+
+  generatePattern(songId, difficulty) {
+    const pattern = [];
+    const song = this.getSong(songId);
+    
+    // Pattern length based on difficulty
+    let numNotes = 30;
+    let holdFrequency = 0.15;
+    let swipeFrequency = 0.1;
+    let baseReactionBuffer = 20; // Frames
+    
+    if (difficulty === DIFFICULTY_NORMAL) {
+      numNotes = 50;
+      holdFrequency = 0.2;
+      swipeFrequency = 0.15;
+      baseReactionBuffer = 15;
+    } else if (difficulty === DIFFICULTY_HARD) {
+      numNotes = 70;
+      holdFrequency = 0.25;
+      swipeFrequency = 0.2;
+      baseReactionBuffer = 10;
+    }
+
+    let frame = 60; // Start after 1 second
+    let lastLane = Math.floor(NUM_LANES / 2); // Assume player starts in middle
+
+    for (let i = 0; i < numNotes; i++) {
+      const lane = Math.floor(this.p.random(NUM_LANES));
+      const rand = this.p.random();
+      
+      let noteType = NOTE_TYPE_SINGLE;
+      let holdDuration = 0;
+
+      if (rand < swipeFrequency) {
+        noteType = NOTE_TYPE_SWIPE;
+      } else if (rand < swipeFrequency + holdFrequency) {
+        noteType = NOTE_TYPE_HOLD;
+        holdDuration = Math.floor(this.p.random(30, 60));
+      }
+
+      // Calculate minimum gap required based on travel time
+      // Player speed is 15px/frame. Lane width is 150px. ~10 frames per lane.
+      const laneDistance = Math.abs(lane - lastLane);
+      const travelFrames = laneDistance * 10;
+      
+      // Ensure no simultaneous notes and allow travel time
+      const minGap = travelFrames + baseReactionBuffer;
+      
+      // Apply gap to frame counter
+      frame += minGap + Math.floor(this.p.random(10, 30));
+
+      pattern.push({
+        frame: frame,
+        lane: lane,
+        type: noteType,
+        holdDuration: holdDuration
+      });
+
+      // If it's a hold note, ensure next note doesn't start until hold is done
+      // (Assuming single-channel focus)
+      if (noteType === NOTE_TYPE_HOLD) {
+        frame += holdDuration;
+      }
+
+      lastLane = lane;
+    }
+
+    return pattern;
+  }
+
+  loadSong(songId) {
+    this.currentSongIndex = songId;
+    const song = this.getSong(songId);
+    this.currentPattern = this.generatePattern(songId, song.difficulty);
+    this.patternIndex = 0;
+    return song;
+  }
+
+  getNextNote(frameCount) {
+    if (this.patternIndex >= this.currentPattern.length) {
+      return null;
+    }
+
+    const nextNote = this.currentPattern[this.patternIndex];
+    if (frameCount >= nextNote.frame) {
+      this.patternIndex++;
+      return nextNote;
+    }
+
+    return null;
+  }
+
+  isPatternComplete() {
+    return this.patternIndex >= this.currentPattern.length;
+  }
+
+  getTotalNotes() {
+    return this.currentPattern.length;
+  }
+}
+</file>
+
+<file name="automated_testing_controller.js">
+// automated_testing_controller.js - Automated testing strategies
+import { 
+  NOTE_TYPE_SINGLE,
+  NOTE_TYPE_HOLD,
+  NOTE_TYPE_SWIPE,
+  JUDGMENT_LINE_Y,
+  PERFECT_TIMING,
+  TREE_HEIGHT_TARGET
+} from './globals.js';
+
+function getTestWinAction(gameState) {
+  // Optimal strategy to win the game
+  const player = gameState.player;
+  const notes = gameState.notes;
+
+  // Find the closest note that needs attention
+  let targetNote = null;
+  let minDistance = Infinity;
+
+  for (const note of notes) {
+    if (note.active && !note.hit) {
+      const distance = JUDGMENT_LINE_Y - note.y;
+      if (distance > -50 && distance < 100) {
+        if (distance < minDistance) {
+          minDistance = distance;
+          targetNote = note;
+        }
+      }
+    }
+  }
+
+  const action = { left: false, right: false, hit: false, release: false };
+
+  if (targetNote) {
+    // Move to the note's lane
+    if (player.lane < targetNote.lane) {
+      action.right = true;
+    } else if (player.lane > targetNote.lane) {
+      action.left = true;
+    }
+
+    // Hit the note at perfect timing
+    if (player.lane === targetNote.lane) {
+      const distance = Math.abs(targetNote.y - JUDGMENT_LINE_Y);
+      
+      if (targetNote.type === NOTE_TYPE_HOLD) {
+        if (!gameState.holdingNote && distance <= PERFECT_TIMING) {
+          action.hit = true;
+        } else if (gameState.holdingNote === targetNote && targetNote.holdComplete) {
+          action.release = true;
+        }
+      } else if (distance <= PERFECT_TIMING) {
+        action.hit = true;
+      }
+    }
+  }
+
+  return action;
+}
+
+function getTestBasicAction(gameState) {
+  // Basic testing - hit notes with good timing
+  const player = gameState.player;
+  const notes = gameState.notes;
+
+  let targetNote = null;
+  let minDistance = Infinity;
+
+  for (const note of notes) {
+    if (note.active && !note.hit && note.lane === player.lane) {
+      const distance = Math.abs(note.y - JUDGMENT_LINE_Y);
+      if (distance < minDistance && distance < 40) {
+        minDistance = distance;
+        targetNote = note;
+      }
+    }
+  }
+
+  const action = { left: false, right: false, hit: false, release: false };
+
+  if (targetNote) {
+    const distance = Math.abs(targetNote.y - JUDGMENT_LINE_Y);
+    if (distance <= 25) {
+      action.hit = true;
+    }
+  } else {
+    // Move randomly to test movement
+    if (Math.random() < 0.05) {
+      if (Math.random() < 0.5) {
+        action.left = true;
+      } else {
+        action.right = true;
+      }
+    }
+  }
+
+  return action;
+}
+
+function getTestMovementAction(gameState) {
+  // Test movement mechanics
+  const player = gameState.player;
+  const action = { left: false, right: false, hit: false, release: false };
+
+  // Cycle through lanes
+  const targetLane = Math.floor((gameState.framesSinceStart / 60) % 4);
+  
+  if (player.lane < targetLane) {
+    action.right = true;
+  } else if (player.lane > targetLane) {
+    action.left = true;
+  }
+
+  return action;
+}
+
+function getRandomAction(gameState) {
+  // Random actions for testing
+  const action = { left: false, right: false, hit: false, release: false };
+  
+  const rand = Math.random();
+  if (rand < 0.1) {
+    action.left = true;
+  } else if (rand < 0.2) {
+    action.right = true;
+  } else if (rand < 0.3) {
+    action.hit = true;
+  }
+
+  return action;
+}
+
+export function get_automated_testing_action(gameState) {
+  switch (gameState.controlMode) {
+    case "TEST_1":
+      return getTestBasicAction(gameState);
+    case "TEST_2":
+      return getTestWinAction(gameState);
+    case "TEST_3":
+      return getTestMovementAction(gameState);
+    case "TEST_4":
+      return getRandomAction(gameState);
+    default:
+      return { left: false, right: false, hit: false, release: false };
+  }
+}
+
+window.get_automated_testing_action = get_automated_testing_action;
+export default get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+// globals.js - Global constants and game state
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+
+// Game phases
+export const PHASE_START = "START";
+export const PHASE_PLAYING = "PLAYING";
+export const PHASE_PAUSED = "PAUSED";
+export const PHASE_GAME_OVER_WIN = "GAME_OVER_WIN";
+export const PHASE_GAME_OVER_LOSE = "GAME_OVER_LOSE";
+
+// Gameplay constants
+export const JUDGMENT_LINE_Y = 340;
+export const NUM_LANES = 4;
+export const LANE_WIDTH = CANVAS_WIDTH / NUM_LANES;
+export const NOTE_SPEED = 2.5;
+export const NOTE_SIZE = 40;
+export const PERFECT_TIMING = 15;
+export const GREAT_TIMING = 30;
+export const GOOD_TIMING = 50;
+
+// Tree growth constants
+export const TREE_BASE_X = CANVAS_WIDTH / 2;
+export const TREE_BASE_Y = CANVAS_HEIGHT - 50;
+export const TREE_HEIGHT_TARGET = 20; // meters
+export const TREE_HEIGHT_STORY_1 = 5;
+export const TREE_HEIGHT_STORY_2 = 10;
+export const TREE_HEIGHT_STORY_3 = 15;
+
+// Note types
+export const NOTE_TYPE_SINGLE = "SINGLE";
+export const NOTE_TYPE_HOLD = "HOLD";
+export const NOTE_TYPE_SWIPE = "SWIPE";
+
+// Song difficulty
+export const DIFFICULTY_EASY = "EASY";
+export const DIFFICULTY_NORMAL = "NORMAL";
+export const DIFFICULTY_HARD = "HARD";
+
+// Game state object
+export const gameState = {
+  player: null,
+  entities: [],
+  notes: [],
+  score: 0,
+  combo: 0,
+  maxCombo: 0,
+  treeHeight: 0, // in meters
+  gamePhase: PHASE_START,
+  controlMode: "HUMAN",
+  currentSong: null,
+  currentDifficulty: DIFFICULTY_EASY,
+  unlockedSongs: 1,
+  storyProgress: 0,
+  perfectHits: 0,
+  greatHits: 0,
+  goodHits: 0,
+  missedHits: 0,
+  songComplete: false,
+  songsCompleted: 0,
+  framesSinceStart: 0,
+  holdingNote: null,
+  lastNoteSpawnFrame: 0,
+  notesHitThisSong: 0,
+  totalNotesThisSong: 0
+};
+
+// Global reference to p5 instance
+export let p5Instance = null;
+
+export function setP5Instance(p) {
+  p5Instance = p;
+}
+</file>
+
+<file name="game.js">
+// game.js - Main game file
+import { 
+  gameState, 
+  setP5Instance,
+  CANVAS_WIDTH,
+  CANVAS_HEIGHT,
+  TARGET_FPS,
+  PHASE_START,
+  PHASE_PLAYING,
+  PHASE_PAUSED,
+  PHASE_GAME_OVER_WIN,
+  PHASE_GAME_OVER_LOSE
+} from './globals.js';
+import { Player } from './player.js';
+import { Tree } from './tree.js';
+import { SongManager } from './song_manager.js';
+import { UI } from './ui.js';
+import { GameLogic } from './game_logic.js';
+import { InputHandler } from './input_handler.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  let player;
+  let tree;
+  let songManager;
+  let ui;
+  let gameLogic;
+  let inputHandler;
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(TARGET_FPS);
+    p.randomSeed(42);
+
+    // Initialize logs
+    p.logs = {
+      "game_info": [],
+      "inputs": [],
+      "player_info": []
+    };
+
+    // Set p5 instance globally
+    setP5Instance(p);
+
+    // Initialize game objects
+    player = new Player(p);
+    tree = new Tree(p);
+    songManager = new SongManager(p);
+    ui = new UI(p);
+    gameLogic = new GameLogic(p, player, songManager, ui);
+    inputHandler = new InputHandler(p, gameLogic);
+
+    // Set initial game state
+    gameState.player = player;
+    gameState.entities = [player];
+
+    // Log initial state
+    p.logs.game_info.push({
+      data: { phase: PHASE_START },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+
+  p.draw = function() {
+    p.background(20, 20, 40);
+
+    if (gameState.gamePhase === PHASE_START) {
+      ui.renderStartScreen();
+    } else if (gameState.gamePhase === PHASE_PLAYING) {
+      // Update game logic
+      inputHandler.updateAutomatedTesting();
+      gameLogic.update();
+      
+      // Render gameplay
+      ui.renderGameplay();
+      tree.render();
+      
+      // Render notes
+      for (const note of gameState.notes) {
+        note.render();
+      }
+      
+      // Render player
+      player.render();
+
+      // Log player info periodically
+      if (p.frameCount % 10 === 0) {
+        inputHandler.logPlayerInfo();
+      }
+    } else if (gameState.gamePhase === PHASE_PAUSED) {
+      ui.renderGameplay();
+      tree.render();
+      
+      for (const note of gameState.notes) {
+        note.render();
+      }
+      
+      player.render();
+      ui.renderPauseIndicator();
+    } else if (gameState.gamePhase === PHASE_GAME_OVER_WIN || 
+               gameState.gamePhase === PHASE_GAME_OVER_LOSE) {
+      // Render final game state
+      ui.renderGameplay();
+      tree.render();
+      player.render();
+      
+      // Render game over screen
+      ui.renderGameOverScreen(gameState.gamePhase === PHASE_GAME_OVER_WIN);
+    }
+  };
+
+  p.keyPressed = function() {
+    inputHandler.handleKeyPressed();
+    return false;
+  };
+
+  p.keyReleased = function() {
+    inputHandler.handleKeyReleased();
+    return false;
+  };
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Expose getGameState function
+window.getGameState = function() {
+  return gameState;
+};
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn', 'test_3_ModeBtn', 'test_4_ModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const modeMap = {
+    'HUMAN': 'humanModeBtn',
+    'TEST_1': 'test_1_ModeBtn',
+    'TEST_2': 'test_2_ModeBtn',
+    'TEST_3': 'test_3_ModeBtn',
+    'TEST_4': 'test_4_ModeBtn'
+  };
+  
+  const activeBtn = document.getElementById(modeMap[mode]);
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+};
+
+export default gameInstance;
+</file>
+
+<file name="ui.js">
+// ui.js - UI rendering
+import { 
+  CANVAS_WIDTH, 
+  CANVAS_HEIGHT, 
+  JUDGMENT_LINE_Y,
+  NUM_LANES,
+  LANE_WIDTH,
+  TREE_HEIGHT_TARGET,
+  PHASE_START,
+  PHASE_PLAYING,
+  PHASE_PAUSED,
+  PHASE_GAME_OVER_WIN,
+  PHASE_GAME_OVER_LOSE,
+  gameState
+} from './globals.js';
+
+export class UI {
+  constructor(p) {
+    this.p = p;
+    this.feedbackText = "";
+    this.feedbackAlpha = 0;
+    this.feedbackX = 0;
+    this.feedbackY = 0;
+  }
+
+  showFeedback(text, x, y) {
+    this.feedbackText = text;
+    this.feedbackAlpha = 255;
+    this.feedbackX = x;
+    this.feedbackY = y;
+  }
+
+  update() {
+    this.feedbackAlpha *= 0.95;
+  }
+
+  renderStartScreen() {
+    const p = this.p;
+    p.push();
+
+    // Background gradient
+    for (let i = 0; i < CANVAS_HEIGHT; i++) {
+      const inter = i / CANVAS_HEIGHT;
+      p.stroke(20 + inter * 30, 20 + inter * 40, 40 + inter * 60);
+      p.line(0, i, CANVAS_WIDTH, i);
+    }
+
+    // Title
+    p.textAlign(p.CENTER, p.CENTER);
+    p.noStroke();
+    p.fill(150, 200, 255);
+    p.textSize(48);
+    p.text("DEEMO", CANVAS_WIDTH / 2, 60);
+
+    // Subtitle
+    p.fill(200, 220, 255);
+    p.textSize(16);
+    p.text("Rhythm of the Growing Tree", CANVAS_WIDTH / 2, 100);
+
+    // Instructions box
+    p.fill(30, 40, 60, 200);
+    p.rect(50, 140, CANVAS_WIDTH - 100, 180, 10);
+
+    // Instructions
+    p.fill(255);
+    p.textSize(14);
+    p.textAlign(p.LEFT, p.TOP);
+    const instructions = [
+      "OBJECTIVE:",
+      "Hit falling notes with perfect timing to grow the tree.",
+      "Reach 20m height to unlock the final story scene!",
+      "",
+      "CONTROLS:",
+      "← → Arrow Keys: Move between lanes",
+      "SPACE: Hit Blue/Green notes | Hold Green notes",
+      "Z: Hit Yellow (Swipe) notes",
+      "",
+      "Build combos for bonus points and faster tree growth!"
+    ];
+
+    let yPos = 150;
+    for (let line of instructions) {
+      p.text(line, 70, yPos);
+      yPos += 18;
+    }
+
+    // Start prompt
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(100, 255, 150);
+    p.textSize(20);
+    const pulse = Math.sin(p.frameCount * 0.1) * 0.3 + 0.7;
+    p.fill(100 * pulse, 255 * pulse, 150 * pulse);
+    p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 350);
+
+    p.pop();
+  }
+
+  renderGameplay() {
+    const p = this.p;
+    p.push();
+
+    // Background gradient based on current song
+    let topColor = [10, 10, 20];
+    let bottomColor = [20, 20, 40];
+
+    if (gameState.currentSong && gameState.currentSong.bgColor) {
+      topColor = gameState.currentSong.bgColor.top;
+      bottomColor = gameState.currentSong.bgColor.bottom;
+    }
+
+    for (let i = 0; i < CANVAS_HEIGHT; i++) {
+      const inter = i / CANVAS_HEIGHT;
+      p.stroke(
+        p.lerp(topColor[0], bottomColor[0], inter),
+        p.lerp(topColor[1], bottomColor[1], inter),
+        p.lerp(topColor[2], bottomColor[2], inter)
+      );
+      p.line(0, i, CANVAS_WIDTH, i);
+    }
+
+    // Lane dividers
+    p.stroke(60, 60, 80, 150);
+    p.strokeWeight(1);
+    for (let i = 1; i < NUM_LANES; i++) {
+      const x = i * LANE_WIDTH;
+      p.line(x, 0, x, JUDGMENT_LINE_Y + 50);
+    }
+
+    // Judgment line
+    p.stroke(255, 255, 255, 200);
+    p.strokeWeight(3);
+    p.line(0, JUDGMENT_LINE_Y, CANVAS_WIDTH, JUDGMENT_LINE_Y);
+    
+    // Judgment line glow
+    p.stroke(100, 200, 255, 100);
+    p.strokeWeight(6);
+    p.line(0, JUDGMENT_LINE_Y, CANVAS_WIDTH, JUDGMENT_LINE_Y);
+
+    p.pop();
+
+    // Render HUD
+    this.renderHUD();
+
+    // Render feedback
+    if (this.feedbackAlpha > 10) {
+      this.renderFeedback();
+    }
+  }
+
+  renderHUD() {
+    const p = this.p;
+    p.push();
+
+    // Semi-transparent background for HUD
+    p.noStroke();
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, 60);
+
+    // Score
+    p.fill(255);
+    p.textSize(18);
+    p.textAlign(p.LEFT, p.TOP);
+    p.text(`SCORE: ${gameState.score}`, 10, 10);
+
+    // Combo
+    if (gameState.combo > 0) {
+      const comboColor = gameState.combo > 20 ? [255, 200, 0] : [100, 200, 255];
+      p.fill(...comboColor);
+      p.textSize(16);
+      p.text(`COMBO: ${gameState.combo}`, 10, 35);
+    }
+
+    // Tree height
+    p.fill(100, 255, 150);
+    p.textAlign(p.RIGHT, p.TOP);
+    p.textSize(18);
+    p.text(`Tree: ${gameState.treeHeight.toFixed(1)}m / ${TREE_HEIGHT_TARGET}m`, CANVAS_WIDTH - 10, 10);
+
+    // Song info
+    if (gameState.currentSong) {
+      p.fill(200);
+      p.textSize(14);
+      p.text(gameState.currentSong.name, CANVAS_WIDTH - 10, 35);
+    }
+
+    // Progress bar
+    const progress = Math.min(gameState.treeHeight / TREE_HEIGHT_TARGET, 1);
+    p.fill(40, 40, 60);
+    p.rect(10, 55, CANVAS_WIDTH - 20, 5);
+    p.fill(100, 255, 150);
+    p.rect(10, 55, (CANVAS_WIDTH - 20) * progress, 5);
+
+    p.pop();
+  }
+
+  renderFeedback() {
+    const p = this.p;
+    p.push();
+
+    p.textAlign(p.CENTER, p.CENTER);
+    p.noStroke();
+    
+    let textColor = [255, 255, 255];
+    let textSize = 24;
+
+    if (this.feedbackText === "Perfect") {
+      textColor = [255, 220, 0];
+      textSize = 28;
+    } else if (this.feedbackText === "Great") {
+      textColor = [100, 255, 100];
+      textSize = 26;
+    } else if (this.feedbackText === "Good") {
+      textColor = [100, 200, 255];
+      textSize = 24;
+    } else if (this.feedbackText === "Miss") {
+      textColor = [255, 100, 100];
+      textSize = 22;
+    } else if (this.feedbackText === "Hold Start") {
+      textColor = [100, 255, 150];
+      textSize = 22;
+    }
+
+    p.fill(...textColor, this.feedbackAlpha);
+    p.textSize(textSize);
+    p.text(this.feedbackText, this.feedbackX, this.feedbackY - 40);
+
+    p.pop();
+  }
+
+  renderPauseIndicator() {
+    const p = this.p;
+    p.push();
+    
+    p.fill(255, 255, 0);
+    p.textSize(16);
+    p.textAlign(p.RIGHT, p.TOP);
+    p.text("PAUSED", CANVAS_WIDTH - 10, 10);
+
+    p.pop();
+  }
+
+  renderGameOverScreen(isWin) {
+    const p = this.p;
+    p.push();
+
+    // Semi-transparent overlay
+    p.fill(0, 0, 0, 200);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+    // Result message
+    p.textAlign(p.CENTER, p.CENTER);
+    p.noStroke();
+    
+    if (isWin) {
+      p.fill(255, 220, 100);
+      p.textSize(48);
+      p.text("STORY COMPLETE!", CANVAS_WIDTH / 2, 100);
+      
+      p.fill(200, 255, 200);
+      p.textSize(20);
+      p.text("The tree has reached its full height!", CANVAS_WIDTH / 2, 150);
+      p.text("The memories are now complete.", CANVAS_WIDTH / 2, 180);
+    } else {
+      p.fill(200, 100, 100);
+      p.textSize(36);
+      p.text("Song Complete", CANVAS_WIDTH / 2, 100);
+    }
+
+    // Stats box
+    p.fill(30, 40, 60, 220);
+    p.rect(100, 200, CANVAS_WIDTH - 200, 120, 10);
+
+    p.fill(255);
+    p.textSize(16);
+    p.textAlign(p.LEFT, p.TOP);
+    p.text(`Final Score: ${gameState.score}`, 120, 215);
+    p.text(`Max Combo: ${gameState.maxCombo}`, 120, 240);
+    p.text(`Tree Height: ${gameState.treeHeight.toFixed(1)}m`, 120, 265);
+    p.text(`Perfect: ${gameState.perfectHits}  Great: ${gameState.greatHits}`, 120, 290);
+
+    // Restart prompt
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(150, 200, 255);
+    p.textSize(20);
+    p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, 360);
+
+    p.pop();
+  }
+}
+</file>
+
+<file name="tree.js">
+// tree.js - Tree growth visualization
+import { TREE_BASE_X, TREE_BASE_Y, gameState } from './globals.js';
+
+export class Tree {
+  constructor(p) {
+    this.p = p;
+    this.baseX = TREE_BASE_X;
+    this.baseY = TREE_BASE_Y;
+    this.animationProgress = 0;
+  }
+
+  update() {
+    // Smooth animation progress
+    this.animationProgress += 0.02;
+  }
+
+  render() {
+    const p = this.p;
+    const height = gameState.treeHeight;
+    const pixelHeight = height * 10; // 10 pixels per meter
+
+    p.push();
+
+    // Ground
+    p.noStroke();
+    p.fill(80, 60, 40);
+    p.rect(0, this.baseY, p.width, p.height - this.baseY);
+
+    // Tree trunk
+    const trunkWidth = 20;
+    p.fill(100, 70, 40);
+    p.rect(
+      this.baseX - trunkWidth / 2,
+      this.baseY - pixelHeight,
+      trunkWidth,
+      pixelHeight
+    );
+
+    // Tree branches (appear as tree grows)
+    if (height > 3) {
+      this.renderBranches(pixelHeight);
+    }
+
+    // Tree leaves (appear as tree grows)
+    if (height > 2) {
+      this.renderLeaves(pixelHeight);
+    }
+
+    // Glowing effect at top
+    if (height > 1) {
+      p.noStroke();
+      p.fill(150, 255, 150, 100);
+      p.ellipse(this.baseX, this.baseY - pixelHeight, 30, 30);
+    }
+
+    p.pop();
+  }
+
+  renderBranches(height) {
+    const p = this.p;
+    const numBranches = Math.floor(gameState.treeHeight / 3);
+    
+    p.stroke(100, 70, 40);
+    p.strokeWeight(3);
+
+    for (let i = 0; i < numBranches; i++) {
+      const branchY = this.baseY - (height * (i + 1) / (numBranches + 1));
+      const branchLength = 25;
+      const side = i % 2 === 0 ? 1 : -1;
+      
+      p.line(
+        this.baseX,
+        branchY,
+        this.baseX + side * branchLength,
+        branchY - 10
+      );
+    }
+  }
+
+  renderLeaves(height) {
+    const p = this.p;
+    const numLeaves = Math.floor(gameState.treeHeight / 2);
+    
+    p.noStroke();
+    p.fill(50, 200, 80, 180);
+
+    for (let i = 0; i < numLeaves; i++) {
+      const leafY = this.baseY - (height * (i + 0.5) / numLeaves);
+      const side = i % 2 === 0 ? 1 : -1;
+      const offset = side * (20 + Math.sin(this.animationProgress + i) * 5);
+      
+      p.ellipse(this.baseX + offset, leafY, 15, 20);
+    }
+  }
+}
+</file>
+
+<file name="input_handler.js">
+// input_handler.js - Input handling for both human and automated testing
+import { gameState, PHASE_START, PHASE_PLAYING, PHASE_PAUSED } from './globals.js';
+import get_automated_testing_action from './automated_testing_controller.js';
+
+export class InputHandler {
+  constructor(p, gameLogic) {
+    this.p = p;
+    this.gameLogic = gameLogic;
+    this.actionQueue = [];
+  }
+
+  handleKeyPressed() {
+    const p = this.p;
+
+    // Log the input
+    p.logs.inputs.push({
+      input_type: "keyPressed",
+      data: { key: p.key, keyCode: p.keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+
+    // Game phase transitions (always human controlled)
+    if (p.keyCode === 13) { // ENTER
+      if (gameState.gamePhase === PHASE_START) {
+        this.gameLogic.startGame();
+      }
+      return;
+    }
+
+    if (p.keyCode === 27) { // ESC
+      if (gameState.gamePhase === PHASE_PLAYING) {
+        this.gameLogic.pauseGame();
+      } else if (gameState.gamePhase === PHASE_PAUSED) {
+        this.gameLogic.unpauseGame();
+      }
+      return;
+    }
+
+    if (p.keyCode === 82) { // R
+      this.gameLogic.restartGame();
+      return;
+    }
+
+    // Gameplay inputs
+    if (gameState.gamePhase === PHASE_PLAYING && gameState.controlMode === "HUMAN") {
+      this.processGameplayInput(p.keyCode);
+    }
+  }
+
+  handleKeyReleased() {
+    const p = this.p;
+
+    // Log the input
+    p.logs.inputs.push({
+      input_type: "keyReleased",
+      data: { key: p.key, keyCode: p.keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+
+    // Release hold notes on SPACE release (Standard hold key)
+    // Z key (Special) does not control holds
+    if (gameState.gamePhase === PHASE_PLAYING && gameState.controlMode === "HUMAN") {
+      if (p.keyCode === 32) { // SPACE
+        this.gameLogic.releaseHoldKey();
+      }
+    }
+  }
+
+  processGameplayInput(keyCode) {
+    const player = gameState.player;
+
+    if (keyCode === 37) { // LEFT
+      player.moveLeft();
+    } else if (keyCode === 39) { // RIGHT
+      player.moveRight();
+    } else if (keyCode === 32 || keyCode === 16) { // SPACE or SHIFT
+      // Standard hit (Blue/Green notes)
+      this.gameLogic.hitNote('STANDARD');
+    } else if (keyCode === 90) { // Z
+      // Special hit (Yellow/Swipe notes)
+      this.gameLogic.hitNote('SPECIAL');
+    }
+  }
+
+  updateAutomatedTesting() {
+    if (gameState.gamePhase !== PHASE_PLAYING) return;
+    if (gameState.controlMode === "HUMAN") return;
+
+    // Get action from automated testing
+    const action = get_automated_testing_action(gameState);
+    
+    if (action) {
+      this.executeAction(action);
+    }
+  }
+
+  executeAction(action) {
+    const player = gameState.player;
+
+    if (action.left) {
+      player.moveLeft();
+    }
+    if (action.right) {
+      player.moveRight();
+    }
+    if (action.hit) {
+      // For automated testing, we try to be smart about input type
+      // or we can just rely on gameLogic being lenient for non-human modes
+      this.gameLogic.hitNote('STANDARD'); 
+    }
+    if (action.release) {
+      this.gameLogic.releaseHoldKey();
+    }
+  }
+
+  logPlayerInfo() {
+    if (gameState.gamePhase !== PHASE_PLAYING || !gameState.player) return;
+
+    const pos = gameState.player.getScreenPosition();
+    const gamePos = gameState.player.getGamePosition();
+
+    this.p.logs.player_info.push({
+      screen_x: pos.x,
+      screen_y: pos.y,
+      game_x: gamePos.x,
+      game_y: gamePos.y,
+      framecount: this.p.frameCount
+    });
+  }
+}
+</file>
+
+<file name="note.js">
+// note.js - Note entities
+import { 
+  JUDGMENT_LINE_Y, 
+  NOTE_SPEED, 
+  NOTE_SIZE, 
+  LANE_WIDTH,
+  NOTE_TYPE_SINGLE,
+  NOTE_TYPE_HOLD,
+  NOTE_TYPE_SWIPE,
+  PERFECT_TIMING,
+  GREAT_TIMING,
+  GOOD_TIMING
+} from './globals.js';
+
+export class Note {
+  constructor(p, lane, type = NOTE_TYPE_SINGLE, holdDuration = 0) {
+    this.p = p;
+    this.lane = lane;
+    this.x = lane * LANE_WIDTH + LANE_WIDTH / 2;
+    this.y = -50;
+    this.type = type;
+    this.speed = NOTE_SPEED;
+    this.size = NOTE_SIZE;
+    this.active = true;
+    this.hit = false;
+    this.holdDuration = holdDuration; // frames to hold
+    this.holdProgress = 0;
+    this.isHolding = false;
+    this.holdComplete = false;
+    this.tailTiming = null; // Store timing when tail crosses judgment line
+    // Calculate visual length for hold notes
+    this.holdLength = holdDuration * NOTE_SPEED;
+  }
+
+  update() {
+    if (!this.hit || this.type === NOTE_TYPE_HOLD) {
+      this.y += this.speed;
+    }
+
+    // Check if note passed judgment line
+    if (this.type === NOTE_TYPE_HOLD) {
+      // For hold notes, check if the tail (top) has passed
+      const tailY = this.y - this.holdLength;
+      if (this.y > JUDGMENT_LINE_Y + GOOD_TIMING && tailY > JUDGMENT_LINE_Y + GOOD_TIMING && !this.hit) {
+        this.active = false;
+      }
+    } else {
+      if (this.y > JUDGMENT_LINE_Y + GOOD_TIMING && !this.hit) {
+        this.active = false;
+      }
+    }
+  }
+
+  canHit() {
+    const distance = Math.abs(this.y - JUDGMENT_LINE_Y);
+    return distance <= GOOD_TIMING;
+  }
+
+  getHitTiming() {
+    const distance = Math.abs(this.y - JUDGMENT_LINE_Y);
+    if (distance <= PERFECT_TIMING) return "Perfect";
+    if (distance <= GREAT_TIMING) return "Great";
+    if (distance <= GOOD_TIMING) return "Good";
+    return "Miss";
+  }
+
+  getTailTiming() {
+    const tailY = this.y - this.holdLength;
+    const distance = Math.abs(tailY - JUDGMENT_LINE_Y);
+    if (distance <= PERFECT_TIMING) return "Perfect";
+    if (distance <= GREAT_TIMING) return "Great";
+    if (distance <= GOOD_TIMING) return "Good";
+    return "Miss";
+  }
+
+  getTailHitTiming() {
+    // For hold notes, check timing based on tail position
+    const tailY = this.y - this.holdLength;
+    const distance = Math.abs(tailY - JUDGMENT_LINE_Y);
+    if (distance <= PERFECT_TIMING) return "Perfect";
+    if (distance <= GREAT_TIMING) return "Great";
+    if (distance <= GOOD_TIMING) return "Good";
+    return "Miss";
+  }
+
+  canRelease() {
+    // Check if tail is in release range
+    const tailY = this.y - this.holdLength;
+    const distance = Math.abs(tailY - JUDGMENT_LINE_Y);
+    return distance <= GOOD_TIMING;
+  }
+
+  startHold() {
+    if (this.type === NOTE_TYPE_HOLD && this.canHit()) {
+      this.isHolding = true;
+      this.hit = true;
+      return true;
+    }
+    return false;
+  }
+
+  updateHold() {
+    if (this.isHolding && !this.holdComplete) {
+      this.holdProgress++;
+      // Check if the tail of the note has passed beyond the good timing window
+      const tailY = this.y - this.holdLength;
+      if (tailY > JUDGMENT_LINE_Y + GOOD_TIMING) {
+        // Auto-release if player held too long
+        this.holdComplete = true;
+        this.active = false;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  releaseHold() {
+    if (this.isHolding) {
+      this.isHolding = false;
+      // Check if release timing is good
+      const timing = this.getTailHitTiming();
+      this.holdComplete = (timing !== "Miss");
+      return this.holdComplete;
+    }
+    return false;
+  }
+
+  render() {
+    const p = this.p;
+    p.push();
+
+    if (this.type === NOTE_TYPE_SINGLE) {
+      this.renderSingleNote();
+    } else if (this.type === NOTE_TYPE_HOLD) {
+      this.renderHoldNote();
+    } else if (this.type === NOTE_TYPE_SWIPE) {
+      this.renderSwipeNote();
+    }
+
+    p.pop();
+  }
+
+  renderSingleNote() {
+    const p = this.p;
+    
+    // Outer glow
+    p.noStroke();
+    p.fill(255, 100, 150, 100);
+    p.ellipse(this.x, this.y, this.size * 1.2, this.size * 1.2);
+
+    // Main circle
+    p.stroke(255, 255, 255);
+    p.strokeWeight(2);
+    p.fill(255, 50, 100);
+    p.ellipse(this.x, this.y, this.size, this.size);
+
+    // Inner detail
+    p.noStroke();
+    p.fill(255, 150, 180);
+    p.ellipse(this.x, this.y, this.size * 0.4, this.size * 0.4);
+  }
+
+  renderHoldNote() {
+    const p = this.p;
+
+    // Calculate the tail position (top of the hold bar)
+    const tailY = this.y - this.holdLength;
+    
+    // Render the long bar (the hold trail that extends upward)
+    p.noStroke();
+    
+    // If holding, show which part has been held
+    if (this.isHolding) {
+      // Held portion (green)
+      const heldLength = this.holdProgress * this.speed;
+      if (heldLength > 0) {
+        p.fill(100, 255, 100, 200);
+        p.rect(this.x - 15, this.y - heldLength, 30, heldLength, 5, 5, 0, 0);
+      }
+      
+      // Remaining portion (lighter green)
+      const remainingLength = this.holdLength - heldLength;
+      if (remainingLength > 0) {
+        p.fill(100, 200, 100, 150);
+        p.rect(this.x - 15, tailY, 30, remainingLength, 0, 0, 5, 5);
+      }
+    } else {
+      // Not holding yet - show full bar in light green
+      p.fill(100, 200, 100, 180);
+      p.rect(this.x - 15, tailY, 30, this.holdLength, 5);
+    }
+
+    // Render tail dot (release point)
+    // Outer glow on the tail (top circle)
+    p.noStroke();
+    p.fill(100, 255, 100, 100);
+    p.ellipse(this.x, tailY, this.size * 1.2, this.size * 1.2);
+
+    // Main circle at the tail (top)
+    p.stroke(255, 255, 255);
+    p.strokeWeight(2);
+    p.fill(50, 200, 50);
+    p.ellipse(this.x, tailY, this.size, this.size);
+
+    // Inner detail on tail
+    p.noStroke();
+    p.fill(150, 255, 150);
+    p.ellipse(this.x, tailY, this.size * 0.4, this.size * 0.4);
+
+    // Release indicator text on the tail
+    if (this.isHolding) {
+      p.noStroke();
+      p.fill(255);
+      p.textSize(10);
+      p.textAlign(p.CENTER, p.CENTER);
+      p.text("RELEASE", this.x, tailY);
+    }
+
+    // Outer glow on the head (bottom circle)
+    p.noStroke();
+    p.fill(100, 255, 100, 100);
+    p.ellipse(this.x, this.y, this.size * 1.2, this.size * 1.2);
+
+    // Main circle at the head (bottom)
+    p.stroke(255, 255, 255);
+    p.strokeWeight(2);
+    p.fill(50, 200, 50);
+    p.ellipse(this.x, this.y, this.size, this.size);
+
+    // Hold indicator text on the head
+    if (!this.hit) {
+      p.noStroke();
+      p.fill(255);
+      p.textSize(12);
+      p.textAlign(p.CENTER, p.CENTER);
+      p.text("HOLD", this.x, this.y);
+    }
+  }
+
+  renderSwipeNote() {
+    const p = this.p;
+
+    // Render as a special single note with distinct visual
+    // Outer glow
+    p.noStroke();
+    p.fill(255, 200, 50, 100);
+    p.ellipse(this.x, this.y, this.size * 1.3, this.size * 1.3);
+
+    // Main circle with gradient effect
+    p.stroke(255, 255, 255);
+    p.strokeWeight(2);
+    p.fill(255, 180, 0);
+    p.ellipse(this.x, this.y, this.size, this.size);
+
+    // Inner circles for visual flair
+    p.noStroke();
+    p.fill(255, 220, 100, 200);
+    p.ellipse(this.x - 8, this.y, this.size * 0.3, this.size * 0.3);
+    p.ellipse(this.x + 8, this.y, this.size * 0.3, this.size * 0.3);
+    
+    // Center indicator
+    p.fill(255, 240, 150);
+    p.ellipse(this.x, this.y, this.size * 0.25, this.size * 0.25);
+  }
+}
+</file>
+
+<file name="player.js">
+// player.js - Player entity
+import { CANVAS_WIDTH, JUDGMENT_LINE_Y, NUM_LANES, LANE_WIDTH } from './globals.js';
+
+export class Player {
+  constructor(p) {
+    this.p = p;
+    this.lane = Math.floor(NUM_LANES / 2); // Start in middle lane
+    this.x = this.lane * LANE_WIDTH + LANE_WIDTH / 2;
+    this.y = JUDGMENT_LINE_Y;
+    this.targetX = this.x;
+    this.moveSpeed = 15;
+    this.size = 50;
+    this.glowIntensity = 0;
+  }
+
+  moveLeft() {
+    if (this.lane > 0) {
+      this.lane--;
+      this.targetX = this.lane * LANE_WIDTH + LANE_WIDTH / 2;
+    }
+  }
+
+  moveRight() {
+    if (this.lane < NUM_LANES - 1) {
+      this.lane++;
+      this.targetX = this.lane * LANE_WIDTH + LANE_WIDTH / 2;
+    }
+  }
+
+  update() {
+    // Smooth movement to target position
+    if (Math.abs(this.x - this.targetX) > 1) {
+      this.x += (this.targetX - this.x) * 0.3;
+    } else {
+      this.x = this.targetX;
+    }
+
+    // Update glow intensity
+    this.glowIntensity *= 0.9;
+  }
+
+  triggerGlow() {
+    this.glowIntensity = 1;
+  }
+
+  render() {
+    const p = this.p;
+    p.push();
+    
+    // Glow effect
+    if (this.glowIntensity > 0) {
+      p.noStroke();
+      p.fill(100, 200, 255, this.glowIntensity * 100);
+      p.ellipse(this.x, this.y, this.size * 2, this.size * 2);
+    }
+
+    // Player circle
+    p.stroke(255, 255, 255);
+    p.strokeWeight(3);
+    p.fill(50, 150, 255);
+    p.ellipse(this.x, this.y, this.size, this.size);
+
+    // Inner detail
+    p.noStroke();
+    p.fill(150, 200, 255);
+    p.ellipse(this.x, this.y, this.size * 0.5, this.size * 0.5);
+
+    p.pop();
+  }
+
+  getScreenPosition() {
+    return { x: this.x, y: this.y };
+  }
+
+  getGamePosition() {
+    return { x: this.x, y: this.y };
+  }
+}
+</file>
+
+<file name="game_logic.js">
+// game_logic.js - Core game logic
+import {
+  gameState,
+  PHASE_START,
+  PHASE_PLAYING,
+  PHASE_PAUSED,
+  PHASE_GAME_OVER_WIN,
+  PHASE_GAME_OVER_LOSE,
+  TREE_HEIGHT_TARGET,
+  TREE_HEIGHT_STORY_1,
+  TREE_HEIGHT_STORY_2,
+  TREE_HEIGHT_STORY_3,
+  CANVAS_WIDTH,
+  NOTE_TYPE_SWIPE,
+  NOTE_TYPE_HOLD
+} from './globals.js';
+import { Note } from './note.js';
+
+export class GameLogic {
+  constructor(p, player, songManager, ui) {
+    this.p = p;
+    this.player = player;
+    this.songManager = songManager;
+    this.ui = ui;
+  }
+
+  startGame() {
+    // Load first song
+    gameState.currentSong = this.songManager.loadSong(0);
+    gameState.gamePhase = PHASE_PLAYING;
+    gameState.framesSinceStart = 0;
+    gameState.notes = [];
+    gameState.entities = [this.player];
+    gameState.notesHitThisSong = 0;
+    gameState.totalNotesThisSong = this.songManager.getTotalNotes();
+    gameState.songComplete = false;
+    
+    this.p.logs.game_info.push({
+      data: { phase: PHASE_PLAYING, song: gameState.currentSong.name },
+      framecount: this.p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+
+  update() {
+    if (gameState.gamePhase !== PHASE_PLAYING) return;
+
+    gameState.framesSinceStart++;
+    this.player.update();
+
+    // Spawn notes based on song pattern
+    const nextNote = this.songManager.getNextNote(gameState.framesSinceStart);
+    if (nextNote) {
+      const note = new Note(
+        this.p,
+        nextNote.lane,
+        nextNote.type,
+        nextNote.holdDuration
+      );
+      gameState.notes.push(note);
+    }
+
+    // Update notes
+    for (let i = gameState.notes.length - 1; i >= 0; i--) {
+      const note = gameState.notes[i];
+      note.update();
+
+      // Update holding notes - auto-release if held too long
+      if (note === gameState.holdingNote && note.updateHold()) {
+        this.releaseHoldNote(note, true);
+      }
+
+      // Remove inactive notes
+      if (!note.active) {
+        if (!note.hit && note.type !== "HOLD") {
+          this.missNote(note);
+        } else if (note.type === "HOLD" && !note.hit) {
+          this.missNote(note);
+        }
+        gameState.notes.splice(i, 1);
+      }
+    }
+
+    // Check if song is complete
+    if (this.songManager.isPatternComplete() && gameState.notes.length === 0) {
+      if (!gameState.songComplete) {
+        this.completeSong();
+      }
+    }
+
+    // Check win condition
+    if (gameState.treeHeight >= TREE_HEIGHT_TARGET) {
+      this.winGame();
+    }
+
+    this.ui.update();
+  }
+
+  hitNote(inputType = 'STANDARD') {
+    // Find the closest note in player's lane
+    let closestNote = null;
+    let closestDist = Infinity;
+
+    for (const note of gameState.notes) {
+      if (note.lane === this.player.lane && !note.hit && note.canHit()) {
+        const dist = Math.abs(note.y - this.player.y);
+        if (dist < closestDist) {
+          closestDist = dist;
+          closestNote = note;
+        }
+      }
+    }
+
+    if (closestNote) {
+      // Validate Input Type
+      const isSwipe = closestNote.type === NOTE_TYPE_SWIPE;
+      const isHuman = gameState.controlMode === 'HUMAN';
+
+      if (isHuman) {
+        if (isSwipe && inputType !== 'SPECIAL') {
+          // Yellow notes require Z (Special)
+          return;
+        }
+        if (!isSwipe && inputType === 'SPECIAL') {
+          // Normal/Hold notes require Space (Standard)
+          return;
+        }
+      }
+
+      if (closestNote.type === NOTE_TYPE_HOLD) {
+        if (closestNote.startHold()) {
+          gameState.holdingNote = closestNote;
+          const timing = closestNote.getHitTiming();
+          this.player.triggerGlow();
+          this.ui.showFeedback("Hold Start", closestNote.x, closestNote.y);
+        }
+      } else {
+        // Regular note (single or swipe)
+        this.processHit(closestNote);
+      }
+    }
+  }
+
+  releaseHoldKey() {
+    if (gameState.holdingNote) {
+      this.releaseHoldNote(gameState.holdingNote, false);
+    }
+  }
+
+  releaseHoldNote(note, autoRelease) {
+    const success = note.releaseHold();
+    
+    if (success) {
+      // Successful hold release with timing
+      this.processHoldRelease(note);
+    } else if (autoRelease) {
+      // Auto-released because held too long - give miss
+      this.ui.showFeedback("Miss", note.x, note.y);
+      gameState.combo = 0;
+      gameState.missedHits++;
+    } else {
+      // Released too early
+      this.ui.showFeedback("Miss", note.x, note.y);
+      gameState.combo = 0;
+      gameState.missedHits++;
+    }
+    
+    note.active = false;
+    gameState.holdingNote = null;
+  }
+
+  processHoldRelease(note) {
+    // Use tail timing for hold notes
+    const timing = note.getTailHitTiming();
+    
+    let points = 0;
+    let treeGrowth = 0;
+
+    if (timing === "Perfect") {
+      points = 100;
+      treeGrowth = 0.05;
+      gameState.perfectHits++;
+      gameState.combo++;
+    } else if (timing === "Great") {
+      points = 75;
+      treeGrowth = 0.03;
+      gameState.greatHits++;
+      gameState.combo++;
+    } else if (timing === "Good") {
+      points = 50;
+      treeGrowth = 0.02;
+      gameState.goodHits++;
+      gameState.combo++;
+    } else {
+      gameState.combo = 0;
+      gameState.missedHits++;
+      this.ui.showFeedback("Miss", note.x, note.y);
+      return;
+    }
+
+    // Apply combo multiplier
+    const comboMultiplier = 1 + Math.floor(gameState.combo / 10) * 0.1;
+    points = Math.floor(points * comboMultiplier);
+    treeGrowth *= comboMultiplier;
+
+    // Bonus for hold notes
+    points += 50;
+    treeGrowth += 0.03;
+
+    gameState.score += points;
+    gameState.treeHeight += treeGrowth;
+    gameState.maxCombo = Math.max(gameState.maxCombo, gameState.combo);
+    gameState.notesHitThisSong++;
+
+    this.player.triggerGlow();
+    this.ui.showFeedback(timing + " Release!", note.x, note.y - note.holdLength);
+
+    // Check for story unlocks
+    this.checkStoryUnlocks();
+  }
+
+  processHit(note, isHoldComplete = false) {
+    const timing = note.getHitTiming();
+    note.hit = true;
+    
+    if (note.type !== "HOLD") {
+      note.active = false;
+    }
+
+    let points = 0;
+    let treeGrowth = 0;
+
+    if (timing === "Perfect") {
+      points = 100;
+      treeGrowth = 0.05;
+      gameState.perfectHits++;
+      gameState.combo++;
+    } else if (timing === "Great") {
+      points = 75;
+      treeGrowth = 0.03;
+      gameState.greatHits++;
+      gameState.combo++;
+    } else if (timing === "Good") {
+      points = 50;
+      treeGrowth = 0.02;
+      gameState.goodHits++;
+      gameState.combo++;
+    } else {
+      gameState.combo = 0;
+      this.ui.showFeedback("Miss", note.x, note.y);
+      return;
+    }
+
+    // Apply combo multiplier
+    const comboMultiplier = 1 + Math.floor(gameState.combo / 10) * 0.1;
+    points = Math.floor(points * comboMultiplier);
+    treeGrowth *= comboMultiplier;
+
+    // Bonus for hold notes (this is for the initial hold start, not release)
+    if (isHoldComplete) {
+      points += 50;
+      treeGrowth += 0.03;
+      this.ui.showFeedback("Hold Complete!", note.x, note.y);
+    } else {
+      this.ui.showFeedback(timing, note.x, note.y);
+    }
+
+    gameState.score += points;
+    gameState.treeHeight += treeGrowth;
+    gameState.maxCombo = Math.max(gameState.maxCombo, gameState.combo);
+    gameState.notesHitThisSong++;
+
+    this.player.triggerGlow();
+
+    // Check for story unlocks
+    this.checkStoryUnlocks();
+  }
+
+  missNote(note) {
+    gameState.missedHits++;
+    gameState.combo = 0;
+  }
+
+  checkStoryUnlocks() {
+    if (gameState.treeHeight >= TREE_HEIGHT_STORY_1 && gameState.storyProgress === 0) {
+      gameState.storyProgress = 1;
+      this.songManager.unlockNextSong();
+      gameState.unlockedSongs++;
+    } else if (gameState.treeHeight >= TREE_HEIGHT_STORY_2 && gameState.storyProgress === 1) {
+      gameState.storyProgress = 2;
+      this.songManager.unlockNextSong();
+      gameState.unlockedSongs++;
+    } else if (gameState.treeHeight >= TREE_HEIGHT_STORY_3 && gameState.storyProgress === 2) {
+      gameState.storyProgress = 3;
+      this.songManager.unlockNextSong();
+      gameState.unlockedSongs++;
+    }
+  }
+
+  completeSong() {
+    gameState.songComplete = true;
+    gameState.songsCompleted++;
+
+    // Add song completion bonus
+    const accuracy = gameState.notesHitThisSong / gameState.totalNotesThisSong;
+    const bonus = gameState.currentSong.treeGrowth * accuracy;
+    gameState.treeHeight += bonus;
+    gameState.score += Math.floor(bonus * 100);
+
+    // Load next song if available and not won yet
+    if (gameState.treeHeight < TREE_HEIGHT_TARGET) {
+      let nextSongId = (gameState.currentSong.id + 1) % this.songManager.songs.length;
+      const nextSong = this.songManager.getSong(nextSongId);
+      if (!nextSong.unlocked) {
+        nextSongId = gameState.currentSong.id; // Repeat if next not unlocked
+      }
+
+      setTimeout(() => {
+        if (gameState.gamePhase === PHASE_PLAYING) {
+          gameState.currentSong = this.songManager.loadSong(nextSongId);
+          gameState.framesSinceStart = 0;
+          gameState.notesHitThisSong = 0;
+          gameState.totalNotesThisSong = this.songManager.getTotalNotes();
+          gameState.songComplete = false;
+          gameState.notes = [];
+        }
+      }, 100);
+    }
+  }
+
+  winGame() {
+    gameState.gamePhase = PHASE_GAME_OVER_WIN;
+    this.p.logs.game_info.push({
+      data: { 
+        phase: PHASE_GAME_OVER_WIN, 
+        finalScore: gameState.score,
+        treeHeight: gameState.treeHeight 
+      },
+      framecount: this.p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+
+  pauseGame() {
+    if (gameState.gamePhase === PHASE_PLAYING) {
+      gameState.gamePhase = PHASE_PAUSED;
+      this.p.logs.game_info.push({
+        data: { phase: PHASE_PAUSED },
+        framecount: this.p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+
+  unpauseGame() {
+    if (gameState.gamePhase === PHASE_PAUSED) {
+      gameState.gamePhase = PHASE_PLAYING;
+      this.p.logs.game_info.push({
+        data: { phase: PHASE_PLAYING },
+        framecount: this.p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+
+  restartGame() {
+    gameState.score = 0;
+    gameState.combo = 0;
+    gameState.maxCombo = 0;
+    gameState.treeHeight = 0;
+    gameState.perfectHits = 0;
+    gameState.greatHits = 0;
+    gameState.goodHits = 0;
+    gameState.missedHits = 0;
+    gameState.songsCompleted = 0;
+    gameState.storyProgress = 0;
+    gameState.unlockedSongs = 1;
+    gameState.notes = [];
+    gameState.holdingNote = null;
+    gameState.gamePhase = PHASE_START;
+    
+    // Reset song manager
+    this.songManager.songs.forEach((song, i) => {
+      song.unlocked = (i === 0);
+    });
+
+    this.p.logs.game_info.push({
+      data: { phase: PHASE_START },
+      framecount: this.p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

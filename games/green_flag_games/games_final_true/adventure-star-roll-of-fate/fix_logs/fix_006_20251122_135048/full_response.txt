@@ -1,0 +1,750 @@
+<analysis>
+- Issue identified: The player does not have a defined title/name, and there's no validation to prevent enemies from having the same name as the player. The user wants to ensure enemies cannot share the same title as the player.
+- Files affected: globals.js, player.js, enemy.js
+- Changes needed: 
+  1. Define a constant for the player's title in globals.js
+  2. Add the title property to the Player class in player.js
+  3. Add validation in enemy.js to ensure enemy names don't match the player's title (future-proofing)
+</analysis>
+
+<code filename="globals.js">
+// globals.js - Global constants and game state
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+
+export const PLAYER_TITLE = "Hero";
+
+export const GAME_PHASE = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE",
+  LEVEL_TRANSITION: "LEVEL_TRANSITION"
+};
+
+export const CONTROL_MODE = {
+  HUMAN: "HUMAN",
+  TEST_1: "TEST_1",
+  TEST_2: "TEST_2"
+};
+
+export const GRID_CONFIG = {
+  tileSize: 38,
+  offsetX: 30,
+  offsetY: 105
+};
+
+// Function to update grid offsets for centering
+export function updateGridOffsets(mapWidth, mapHeight) {
+  const gridPixelWidth = mapWidth * GRID_CONFIG.tileSize;
+  const gridPixelHeight = mapHeight * GRID_CONFIG.tileSize;
+  
+  // Center horizontally
+  GRID_CONFIG.offsetX = Math.floor((CANVAS_WIDTH - gridPixelWidth) / 2);
+  
+  // Center vertically, accounting for UI at top (about 64 pixels)
+  const uiHeight = 64;
+  const availableHeight = CANVAS_HEIGHT - uiHeight;
+  GRID_CONFIG.offsetY = uiHeight + Math.floor((availableHeight - gridPixelHeight) / 2);
+}
+
+export const TILE_TYPES = {
+  EMPTY: "EMPTY",
+  WALL: "WALL",
+  EXIT: "EXIT",
+  EVENT_TREASURE: "EVENT_TREASURE",
+  EVENT_TRAP: "EVENT_TRAP",
+  EVENT_ENEMY: "EVENT_ENEMY",
+  EVENT_NPC: "EVENT_NPC",
+  EVENT_MYSTERY: "EVENT_MYSTERY",
+  WEAPON: "WEAPON"
+};
+
+export const WEAPONS = {
+  PISTOL: {
+    name: "Pistol",
+    damage: 1,
+    speed: 3,
+    cost: 0,
+    icon: "🔫",
+    color: [255, 255, 100]
+  },
+  SWORD: {
+    name: "Sword",
+    damage: 2,
+    speed: 3,
+    cost: 500,
+    icon: "⚔️",
+    color: [200, 200, 255]
+  },
+  SHOTGUN: {
+    name: "Shotgun",
+    damage: 2,
+    speed: 4,
+    cost: 800,
+    icon: "💥",
+    color: [255, 150, 50]
+  },
+  RIFLE: {
+    name: "Rifle",
+    damage: 3,
+    speed: 2,
+    cost: 1500,
+    icon: "🎯",
+    color: [100, 255, 255]
+  },
+  LASER: {
+    name: "Laser Gun",
+    damage: 4,
+    speed: 1,
+    cost: 2500,
+    icon: "⚡",
+    color: [255, 100, 255]
+  }
+};
+
+export const gameState = {
+  player: null,
+  entities: [],
+  enemies: [], // Array of moving Enemy instances
+  projectiles: [], // Array of active projectiles
+  score: 0,
+  gamePhase: GAME_PHASE.START,
+  controlMode: CONTROL_MODE.HUMAN,
+  currentLevel: 1,
+  maxLevel: 9,
+  hp: 100,
+  maxHp: 100,
+  currentMap: null,
+  eventMessage: "",
+  eventMessageTimer: 0,
+  eventMessageDuration: 120,
+  levelTransitionTimer: 0,
+  levelTransitionDuration: 90,
+  playerDamageFlash: 0,
+  highScore: 0,
+  luckFactor: 1.0,
+  luck: 50,
+  needsInteraction: false,
+  testModeActionQueue: [],
+  testModeActionIndex: 0,
+  weaponPower: 1,
+  currentWeapon: "PISTOL",
+  ownedWeapons: ["PISTOL"],
+  shopOpen: false
+};
+
+// Load high score from localStorage
+if (typeof window !== 'undefined' && window.localStorage) {
+  const stored = localStorage.getItem('adventureStarHighScore');
+  if (stored) {
+    gameState.highScore = parseInt(stored, 10) || 0;
+  }
+}
+
+export function saveHighScore() {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    localStorage.setItem('adventureStarHighScore', gameState.highScore.toString());
+  }
+}
+</code>
+
+<code filename="player.js">
+// player.js - Player entity
+
+import { gameState, GRID_CONFIG, WEAPONS, PLAYER_TITLE } from './globals.js';
+import { triggerEvent } from './events.js';
+
+export class Player {
+  constructor(gridX, gridY, maxHP) {
+    this.gridX = gridX;
+    this.gridY = gridY;
+    this.maxHP = maxHP;
+    this.hp = maxHP;
+    this.name = PLAYER_TITLE;
+    this.damageFlashTimer = 0;
+    this.moveDelay = 0;
+    this.moveDelayMax = 0; // No delay for turn-based movement
+    this.facingDirection = 1; // 0=left, 1=right, 2=up, 3=down
+  }
+
+  getScreenX() {
+    return GRID_CONFIG.offsetX + this.gridX * GRID_CONFIG.tileSize + GRID_CONFIG.tileSize / 2;
+  }
+
+  getScreenY() {
+    return GRID_CONFIG.offsetY + this.gridY * GRID_CONFIG.tileSize + GRID_CONFIG.tileSize / 2;
+  }
+
+  takeDamage(amount) {
+    this.hp -= amount;
+    if (this.hp < 0) this.hp = 0;
+    this.damageFlashTimer = 15; // flash for 15 frames
+  }
+
+  heal(amount) {
+    this.hp += amount;
+    if (this.hp > this.maxHP) this.hp = this.maxHP;
+  }
+
+  canMoveTo(gridX, gridY, map) {
+    if (gridX < 0 || gridX >= map.width || gridY < 0 || gridY >= map.height) {
+      return false;
+    }
+    const tile = map.tiles[gridY][gridX];
+    return tile.type !== 'WALL';
+  }
+
+  moveTo(gridX, gridY, map) {
+    if (this.canMoveTo(gridX, gridY, map)) {
+      // Update facing direction
+      if (gridX < this.gridX) this.facingDirection = 0; // left
+      else if (gridX > this.gridX) this.facingDirection = 1; // right
+      else if (gridY < this.gridY) this.facingDirection = 2; // up
+      else if (gridY > this.gridY) this.facingDirection = 3; // down
+
+      this.gridX = gridX;
+      this.gridY = gridY;
+      
+      const tile = map.tiles[gridY][gridX];
+      
+      // Mark all tiles as visited for consistent visual feedback
+      if (!tile.visited) {
+        tile.visited = true;
+        // Only give exploration points for empty tiles
+        if (tile.type === 'EMPTY') {
+          gameState.score += 5;
+        }
+      }
+
+      // Check for weapon pickup
+      if (tile.type === 'WEAPON' && !tile.interacted) {
+        tile.interacted = true;
+        gameState.weaponPower++;
+        gameState.eventMessage = `Weapon Upgrade! Attack Power: ${gameState.weaponPower}`;
+        gameState.eventMessageTimer = gameState.eventMessageDuration;
+        gameState.score += 50;
+      }
+    }
+  }
+
+  shoot(projectiles) {
+    // Create a Projectile instance in facing direction with current weapon
+    const weapon = WEAPONS[gameState.currentWeapon];
+    const projectile = new Projectile(
+      this.gridX,
+      this.gridY,
+      this.facingDirection,
+      weapon.damage,
+      weapon.speed,
+      weapon.color
+    );
+    projectiles.push(projectile);
+  }
+
+  update(p) {
+    if (this.damageFlashTimer > 0) {
+      this.damageFlashTimer--;
+    }
+    if (this.moveDelay > 0) {
+      this.moveDelay--;
+    }
+  }
+
+  render(p) {
+    const x = this.getScreenX();
+    const y = this.getScreenY();
+    const size = GRID_CONFIG.tileSize * 0.7;
+
+    // Draw player
+    p.push();
+    if (this.damageFlashTimer > 0 && this.damageFlashTimer % 6 < 3) {
+      p.fill(255, 100, 100);
+    } else {
+      p.fill(50, 150, 255);
+    }
+    p.stroke(0);
+    p.strokeWeight(2);
+    p.rectMode(p.CENTER);
+    p.rect(x, y, size, size, 5);
+    
+    // Draw "A" for Adventure
+    p.fill(255);
+    p.noStroke();
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(size * 0.6);
+    p.text('A', x, y);
+
+    // Draw direction indicator with weapon color
+    const weapon = WEAPONS[gameState.currentWeapon];
+    p.fill(...weapon.color);
+    const indicatorSize = 6;
+    let ix = x, iy = y;
+    switch (this.facingDirection) {
+      case 0: ix -= size * 0.5; break; // left
+      case 1: ix += size * 0.5; break; // right
+      case 2: iy -= size * 0.5; break; // up
+      case 3: iy += size * 0.5; break; // down
+    }
+    p.ellipse(ix, iy, indicatorSize, indicatorSize);
+
+    p.pop();
+  }
+}
+
+export class Projectile {
+  constructor(gridX, gridY, direction, damage, speed, color) {
+    this.x = gridX;
+    this.y = gridY;
+    this.direction = direction;
+    this.damage = damage;
+    this.speed = speed;
+    this.color = color;
+    this.active = true;
+    this.moveDelay = 0;
+    this.isEnemyProjectile = false;
+  }
+
+  update(map, enemies) {
+    if (!this.active) return;
+
+    this.moveDelay++;
+    if (this.moveDelay >= this.speed) {
+      this.moveDelay = 0;
+      
+      // Move in direction
+      let newX = this.x;
+      let newY = this.y;
+      
+      switch (this.direction) {
+        case 0: newX--; break; // left
+        case 1: newX++; break; // right
+        case 2: newY--; break; // up
+        case 3: newY++; break; // down
+      }
+
+      // Check if hit wall or out of bounds
+      if (newX < 0 || newX >= map.width || newY < 0 || newY >= map.height) {
+        this.active = false;
+        return;
+      }
+
+      const tile = map.tiles[newY][newX];
+      if (tile.type === 'WALL') {
+        this.active = false;
+        return;
+      }
+
+      this.x = newX;
+      this.y = newY;
+
+      // Check if hit enemy
+      enemies.forEach(enemy => {
+        if (enemy.active && enemy.gridX === this.x && enemy.gridY === this.y) {
+          enemy.takeDamage(this.damage);
+          this.active = false;
+          if (!enemy.active) {
+            gameState.score += 100;
+            gameState.eventMessage = `${enemy.name} Enemy defeated! +100 gold`;
+            gameState.eventMessageTimer = 60;
+          }
+        }
+      });
+    }
+  }
+
+  getScreenX() {
+    return GRID_CONFIG.offsetX + this.x * GRID_CONFIG.tileSize + GRID_CONFIG.tileSize / 2;
+  }
+
+  getScreenY() {
+    return GRID_CONFIG.offsetY + this.y * GRID_CONFIG.tileSize + GRID_CONFIG.tileSize / 2;
+  }
+
+  render(p) {
+    if (!this.active) return;
+
+    const x = this.getScreenX();
+    const y = this.getScreenY();
+
+    p.push();
+    p.fill(...this.color);
+    p.stroke(this.color[0] * 0.8, this.color[1] * 0.8, this.color[2] * 0.8);
+    p.strokeWeight(2);
+    p.ellipse(x, y, 10, 10);
+    p.pop();
+  }
+}
+</code>
+
+<code filename="enemy.js">
+// enemy.js - Enemy entity with autonomous movement AI
+
+import { GRID_CONFIG, PLAYER_TITLE } from './globals.js';
+
+export class Enemy {
+  constructor(gridX, gridY, level, type = "NORMAL") {
+    this.gridX = gridX;
+    this.gridY = gridY;
+    this.level = level;
+    this.type = type;
+    this.direction = Math.floor(Math.random() * 4); // 0=left, 1=right, 2=up, 3=down
+    this.active = true;
+    
+    // Set stats based on type
+    this.setStats();
+    
+    // Movement timing
+    this.moveTimer = 0;
+    this.moveDelay = this.calculateMoveDelay();
+    
+    // Attack cooldown to prevent constant damage
+    this.attackCooldown = 0;
+    this.attackDelay = 60; // 60 frames = 1 second at 60fps
+  }
+
+  setStats() {
+    switch (this.type) {
+      case "FAST":
+        this.damage = 4 + this.level * 1; // Reduced from 6 + level * 1
+        this.hp = 1;
+        this.maxHp = 1;
+        this.moveChance = 0.7; // Reduced from 0.8 - moves 70% of turns
+        this.baseSpeed = 25; // Increased from 15 - slower movement
+        this.color = [255, 150, 50];
+        this.name = "Fast";
+        break;
+      case "TANK":
+        this.damage = 12 + this.level * 2; // Reduced from 20 + level * 4
+        this.hp = 4;
+        this.maxHp = 4;
+        this.moveChance = 0.3; // Moves 30% of turns
+        this.baseSpeed = 50; // Frames between moves (slower)
+        this.color = [100, 255, 100];
+        this.name = "Tank";
+        break;
+      case "RANGED":
+        this.damage = 7 + this.level * 2; // Reduced from 12 + level * 3
+        this.hp = 2;
+        this.maxHp = 2;
+        this.moveChance = 0.4; // Moves 40% of turns
+        this.baseSpeed = 35; // Frames between moves
+        this.color = [150, 100, 255];
+        this.name = "Ranged";
+        this.shootCooldown = 0;
+        this.shootDelay = 180; // Shoots every 180 frames (3 seconds at 60fps)
+        break;
+      default: // NORMAL
+        this.damage = 9 + this.level * 2; // Reduced from 15 + level * 3
+        this.hp = 2;
+        this.maxHp = 2;
+        this.moveChance = 0.5; // Moves 50% of turns
+        this.baseSpeed = 30; // Frames between moves
+        this.color = [255, 50, 50];
+        this.name = "Normal";
+        break;
+    }
+    
+    // Ensure enemy name doesn't match player title
+    if (this.name === PLAYER_TITLE) {
+      this.name = this.name + " Enemy";
+    }
+  }
+
+  calculateMoveDelay() {
+    // Add randomness to movement timing
+    return this.baseSpeed + Math.floor(Math.random() * 20) - 10;
+  }
+
+  getScreenX() {
+    return GRID_CONFIG.offsetX + this.gridX * GRID_CONFIG.tileSize + GRID_CONFIG.tileSize / 2;
+  }
+
+  getScreenY() {
+    return GRID_CONFIG.offsetY + this.gridY * GRID_CONFIG.tileSize + GRID_CONFIG.tileSize / 2;
+  }
+
+  canMoveTo(gridX, gridY, map) {
+    if (gridX < 0 || gridX >= map.width || gridY < 0 || gridY >= map.height) {
+      return false;
+    }
+    const tile = map.tiles[gridY][gridX];
+    return tile.type !== 'WALL';
+  }
+
+  // Continuous update - called every frame
+  update(map, player, projectiles) {
+    if (!this.active) return;
+
+    // Update attack cooldown
+    if (this.attackCooldown > 0) {
+      this.attackCooldown--;
+    }
+
+    // Ranged enemies can shoot
+    if (this.type === "RANGED") {
+      this.shootCooldown--;
+      if (this.shootCooldown <= 0) {
+        this.shootAtPlayer(player, projectiles, map);
+        this.shootCooldown = this.shootDelay;
+      }
+    }
+
+    // Movement timing
+    this.moveTimer++;
+    if (this.moveTimer >= this.moveDelay) {
+      this.moveTimer = 0;
+      this.moveDelay = this.calculateMoveDelay();
+      
+      // Move based on moveChance
+      if (Math.random() <= this.moveChance) {
+        this.performMove(map, player);
+      }
+    }
+
+    // Check if adjacent to player (not on same tile)
+    const dx = Math.abs(player.gridX - this.gridX);
+    const dy = Math.abs(player.gridY - this.gridY);
+    const isAdjacent = (dx === 1 && dy === 0) || (dx === 0 && dy === 1);
+    
+    if (isAdjacent && this.attackCooldown === 0) {
+      this.attackPlayer(player);
+      this.attackCooldown = this.attackDelay; // Reset cooldown after attack
+    }
+  }
+
+  performMove(map, player) {
+    // Simple AI: move toward player with some randomness
+    const dx = player.gridX - this.gridX;
+    const dy = player.gridY - this.gridY;
+    const distToPlayer = Math.abs(dx) + Math.abs(dy);
+
+    // 70% chance to move toward player, 30% random
+    if (Math.random() < 0.7 && distToPlayer > 0) {
+      // Move toward player
+      if (Math.abs(dx) > Math.abs(dy)) {
+        this.direction = dx > 0 ? 1 : 0; // right or left
+      } else {
+        this.direction = dy > 0 ? 3 : 2; // down or up
+      }
+    } else {
+      // Random movement
+      this.direction = Math.floor(Math.random() * 4);
+    }
+
+    this.tryMove(map);
+  }
+
+  shootAtPlayer(player, projectiles, map) {
+    // Determine direction to player
+    const dx = player.gridX - this.gridX;
+    const dy = player.gridY - this.gridY;
+    
+    let direction;
+    if (Math.abs(dx) > Math.abs(dy)) {
+      direction = dx > 0 ? 1 : 0; // right or left
+    } else {
+      direction = dy > 0 ? 3 : 2; // down or up
+    }
+
+    // Create enemy projectile with reduced damage
+    const projectile = new EnemyProjectile(this.gridX, this.gridY, direction, this.damage * 0.4); // Reduced from 0.5
+    projectiles.push(projectile);
+  }
+
+  tryMove(map) {
+    let newX = this.gridX;
+    let newY = this.gridY;
+
+    switch (this.direction) {
+      case 0: newX--; break; // left
+      case 1: newX++; break; // right
+      case 2: newY--; break; // up
+      case 3: newY++; break; // down
+    }
+
+    if (this.canMoveTo(newX, newY, map)) {
+      this.gridX = newX;
+      this.gridY = newY;
+      return true;
+    }
+    return false;
+  }
+
+  attackPlayer(player) {
+    if (this.active) {
+      player.takeDamage(this.damage);
+    }
+  }
+
+  takeDamage(amount) {
+    this.hp -= amount;
+    if (this.hp <= 0) {
+      this.active = false;
+    }
+  }
+
+  render(p) {
+    if (!this.active) return;
+
+    const x = this.getScreenX();
+    const y = this.getScreenY();
+    const size = GRID_CONFIG.tileSize * 0.65;
+
+    p.push();
+    
+    // Enemy body - pulsing with type color
+    const pulse = Math.sin(p.frameCount * 0.1) * 0.15 + 0.85;
+    p.fill(this.color[0] * pulse, this.color[1] * pulse, this.color[2] * pulse);
+    p.stroke(this.color[0] * 0.6, this.color[1] * 0.6, this.color[2] * 0.6);
+    p.strokeWeight(2);
+    
+    // Different shapes for different types - all centered
+    if (this.type === "FAST") {
+      // Triangle centered at x, y
+      p.triangle(x, y - size * 0.5, x - size * 0.4, y + size * 0.4, x + size * 0.4, y + size * 0.4);
+    } else if (this.type === "TANK") {
+      // Rectangle centered
+      p.rectMode(p.CENTER);
+      p.rect(x, y, size, size);
+    } else {
+      // Ellipse is already centered
+      p.ellipse(x, y, size, size);
+    }
+    
+    // Eyes - centered on the shape
+    p.fill(255, 255, 0);
+    p.noStroke();
+    p.ellipse(x - size * 0.15, y - size * 0.1, size * 0.2, size * 0.2);
+    p.ellipse(x + size * 0.15, y - size * 0.1, size * 0.2, size * 0.2);
+    
+    // Pupils
+    p.fill(0);
+    p.ellipse(x - size * 0.15, y - size * 0.1, size * 0.1, size * 0.1);
+    p.ellipse(x + size * 0.15, y - size * 0.1, size * 0.1, size * 0.1);
+    
+    // Health bar - centered above enemy
+    const barWidth = size * 1.2;
+    const barHeight = 5;
+    const barX = x - barWidth / 2;
+    const barY = y - size * 0.6 - 8;
+    
+    // Background
+    p.fill(60, 60, 60);
+    p.noStroke();
+    p.rect(barX, barY, barWidth, barHeight);
+    
+    // Health fill
+    const hpPercent = this.hp / this.maxHp;
+    const hpColor = hpPercent > 0.5 ? [100, 255, 100] : hpPercent > 0.25 ? [255, 200, 50] : [255, 50, 50];
+    p.fill(...hpColor);
+    p.rect(barX, barY, barWidth * hpPercent, barHeight);
+    
+    // Border
+    p.noFill();
+    p.stroke(200, 200, 200);
+    p.strokeWeight(1);
+    p.rect(barX, barY, barWidth, barHeight);
+    
+    p.pop();
+  }
+}
+
+export class EnemyProjectile {
+  constructor(gridX, gridY, direction, damage) {
+    this.x = gridX;
+    this.y = gridY;
+    this.direction = direction;
+    this.damage = damage;
+    this.active = true;
+    this.moveDelay = 0;
+    this.moveSpeed = 4;
+    this.isEnemyProjectile = true;
+  }
+
+  update(map, player) {
+    if (!this.active) return;
+
+    this.moveDelay++;
+    if (this.moveDelay >= this.moveSpeed) {
+      this.moveDelay = 0;
+      
+      // Move in direction
+      let newX = this.x;
+      let newY = this.y;
+      
+      switch (this.direction) {
+        case 0: newX--; break; // left
+        case 1: newX++; break; // right
+        case 2: newY--; break; // up
+        case 3: newY++; break; // down
+      }
+
+      // Check if hit wall or out of bounds
+      if (newX < 0 || newX >= map.width || newY < 0 || newY >= map.height) {
+        this.active = false;
+        return;
+      }
+
+      const tile = map.tiles[newY][newX];
+      if (tile.type === 'WALL') {
+        this.active = false;
+        return;
+      }
+
+      this.x = newX;
+      this.y = newY;
+
+      // Check if hit player
+      if (player && player.gridX === this.x && player.gridY === this.y) {
+        player.takeDamage(this.damage);
+        this.active = false;
+      }
+    }
+  }
+
+  getScreenX() {
+    return GRID_CONFIG.offsetX + this.x * GRID_CONFIG.tileSize + GRID_CONFIG.tileSize / 2;
+  }
+
+  getScreenY() {
+    return GRID_CONFIG.offsetY + this.y * GRID_CONFIG.tileSize + GRID_CONFIG.tileSize / 2;
+  }
+
+  render(p) {
+    if (!this.active) return;
+
+    const x = this.getScreenX();
+    const y = this.getScreenY();
+
+    p.push();
+    p.fill(255, 100, 100);
+    p.stroke(200, 0, 0);
+    p.strokeWeight(2);
+    p.ellipse(x, y, 10, 10);
+    p.pop();
+  }
+}
+
+// Factory function to create random enemy type
+export function createRandomEnemy(gridX, gridY, level) {
+  const types = ["NORMAL", "FAST", "TANK", "RANGED"];
+  const rand = Math.random();
+  let type;
+  
+  if (rand < 0.4) {
+    type = "NORMAL";
+  } else if (rand < 0.6) {
+    type = "FAST";
+  } else if (rand < 0.8) {
+    type = "TANK";
+  } else {
+    type = "RANGED";
+  }
+  
+  return new Enemy(gridX, gridY, level, type);
+}
+</code>

@@ -1,0 +1,302 @@
+<analysis>
+- Issue identified: The current level design is hardcoded and described as "not carefully designed". The user requested procedural generation to make the levels playable and fun.
+- Files affected: `game.js`
+- Changes needed:
+    1.  Rewrite `buildLevel()` to use a procedural generation algorithm. It will generate a vertical level ("Summit Ascent") by stacking patterns (platforms, wall jumps, dash gaps) from the bottom up to a configurable height.
+    2.  Update the camera logic in `updateGame()` to dynamically clamp based on the generated `gameState.levelHeight` instead of a hardcoded value, allowing for taller levels.
+    3.  Ensure the `Spring` class (previously a local fallback) is properly defined and integrated into the procedural generation for variety.
+    4.  Update `resetGame` to re-seed the random generator so that retries can offer new layouts (rogue-like element) or consistent ones depending on preference (chose to reseed for variety).
+</analysis>
+
+<code filename="game.js">
+/**
+ * Main Game Loop and Setup.
+ * Initializes p5 instance, handles loading, drawing, and state transitions.
+ */
+
+import { 
+    CANVAS_WIDTH, CANVAS_HEIGHT, gameState, logGameInfo, COLORS 
+} from './globals.js';
+import { 
+    Player, Solid, Spike, Strawberry, DashCrystal, Goal 
+} from './entities.js';
+import { 
+    handleKeyDown, handleKeyUp, clearFrameInputs 
+} from './input.js';
+import { 
+    checkSpikeCollision, checkTriggerCollisions 
+} from './physics.js';
+import { 
+    renderStartScreen, renderHUD, renderPauseScreen, renderGameOver 
+} from './ui.js';
+import { 
+    createParticle, updateParticles, renderParticles 
+} from './particles.js';
+
+const p5 = window.p5;
+
+// Fallback for Spring since we mentioned it
+class Spring {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.width = 20;
+        this.height = 10;
+        gameState.triggers.push(this);
+    }
+    onCollide(player) {
+        if (player.vy > 0) {
+            player.vy = -10; // Bounce high
+            player.refillDash();
+            player.inputBuffer.dash = 0;
+            player.inputBuffer.jump = 0;
+            // Visual bounce effect could go here
+        }
+    }
+    render(p) {
+        p.fill(COLORS.spring);
+        p.rect(this.x, this.y, this.width, this.height);
+    }
+}
+
+function buildLevel() {
+    gameState.entities = [];
+    gameState.solids = [];
+    gameState.hazards = [];
+    gameState.collectibles = [];
+    gameState.triggers = [];
+    gameState.particles = [];
+    gameState.score = 0;
+    
+    const LEVEL_HEIGHT = 2000; // Height of the mountain
+    gameState.levelHeight = LEVEL_HEIGHT;
+    
+    // --- BOUNDARIES ---
+    new Solid(0, CANVAS_HEIGHT - 20, CANVAS_WIDTH, 40); // Floor
+    // Side walls extending to the top
+    new Solid(0, -LEVEL_HEIGHT, 20, LEVEL_HEIGHT + CANVAS_HEIGHT); // Left Wall
+    new Solid(CANVAS_WIDTH - 20, -LEVEL_HEIGHT, 20, LEVEL_HEIGHT + CANVAS_HEIGHT); // Right Wall
+    
+    // --- PROCEDURAL GENERATION ---
+    let currentY = CANVAS_HEIGHT - 100;
+    const END_Y = -LEVEL_HEIGHT + 100;
+    
+    // Initial safe platform
+    new Solid(100, currentY, 100, 20);
+    currentY -= 60;
+    
+    while (currentY > END_Y) {
+        // Randomly select a pattern
+        const pattern = Math.floor(Math.random() * 5);
+        const difficulty = Math.abs(currentY) / LEVEL_HEIGHT; // 0 to 1
+        
+        // Ensure vertical spacing is jumpable (max jump ~60px, wall jump higher)
+        // We vary spacing slightly
+        const gap = 50 + Math.random() * 20;
+        
+        switch (pattern) {
+            case 0: // Simple Platform (Left/Right/Center)
+            case 1:
+                let w = 80 + Math.random() * 80;
+                // Keep within walls (20px padding)
+                let x = 30 + Math.random() * (CANVAS_WIDTH - 60 - w);
+                new Solid(x, currentY, w, 20);
+                
+                // Chance for items
+                if (Math.random() < 0.2) new Strawberry(x + w/2, currentY - 20);
+                // Chance for spike
+                if (Math.random() < 0.2 + (difficulty * 0.3)) {
+                    new Spike(x + w/2 - 8, currentY - 16, 'UP');
+                }
+                break;
+                
+            case 2: // Dual Platforms (Gap in middle)
+                new Solid(20, currentY, 80, 20);
+                new Solid(CANVAS_WIDTH - 100, currentY, 80, 20);
+                
+                // Dash crystal in the gap?
+                if (Math.random() < 0.3) {
+                    new DashCrystal(CANVAS_WIDTH/2 - 8, currentY - 30);
+                }
+                break;
+                
+            case 3: // Central Pillar (Wall Jump)
+                new Solid(CANVAS_WIDTH/2 - 20, currentY - 40, 40, 100);
+                // Maybe spikes on the side of the pillar
+                if (difficulty > 0.3 && Math.random() < 0.4) {
+                    new Spike(CANVAS_WIDTH/2 - 36, currentY, 'LEFT');
+                    new Spike(CANVAS_WIDTH/2 + 20, currentY, 'RIGHT');
+                }
+                // Spring on top?
+                if (Math.random() < 0.2) {
+                    new Spring(CANVAS_WIDTH/2 - 10, currentY - 50);
+                }
+                break;
+                
+            case 4: // Dash Challenge
+                // A wide gap requiring a dash
+                // Only generate if we have vertical space
+                if (currentY > END_Y + 100) {
+                     // Platform far left
+                     new Solid(20, currentY, 60, 20);
+                     // Platform far right
+                     new Solid(CANVAS_WIDTH - 80, currentY - 20, 60, 20);
+                     // Crystal
+                     new DashCrystal(CANVAS_WIDTH/2 - 8, currentY - 40);
+                     // Spikes below
+                     if (difficulty > 0.5) {
+                         new Spike(CANVAS_WIDTH/2 - 8, currentY + 60, 'UP');
+                     }
+                } else {
+                    // Fallback to simple platform
+                    new Solid(CANVAS_WIDTH/2 - 50, currentY, 100, 20);
+                }
+                break;
+        }
+        
+        currentY -= gap;
+    }
+    
+    // --- GOAL ---
+    new Solid(CANVAS_WIDTH/2 - 60, END_Y - 50, 120, 20);
+    new Goal(CANVAS_WIDTH/2 - 10, END_Y - 90);
+    
+    // Initial Player Position
+    new Player(50, CANVAS_HEIGHT - 60);
+    
+    // Camera Init
+    gameState.cameraY = 0;
+}
+
+let gameInstance = new p5(p => {
+    
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42); // Keep seed for consistent "random" levels during a session if desired, or remove for true random
+        
+        // Log start
+        logGameInfo(p, { action: "SETUP", controlMode: gameState.controlMode });
+        
+        // Pre-create snow particles
+        for(let i=0; i<50; i++) {
+            createParticle(Math.random() * CANVAS_WIDTH, Math.random() * CANVAS_HEIGHT, 'SNOW');
+        }
+    };
+
+    p.draw = function() {
+        // Update Time
+        let now = p.millis();
+        gameState.deltaTime = (now - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = now;
+        gameState.frameCount = p.frameCount;
+        
+        p.background(COLORS.background);
+        
+        if (gameState.gamePhase === "START") {
+            renderStartScreen(p);
+        } else if (gameState.gamePhase === "PLAYING") {
+            updateGame(p);
+            renderGame(p);
+            renderHUD(p);
+        } else if (gameState.gamePhase === "PAUSED") {
+            renderGame(p);
+            renderPauseScreen(p);
+        } else if (gameState.gamePhase.startsWith("GAME_OVER")) {
+            renderGame(p);
+            renderGameOver(p, gameState.gamePhase === "GAME_OVER_WIN");
+        }
+        
+        // Clean inputs
+        clearFrameInputs();
+        
+        // Auto-restart handling logic
+        if (p.keyIsDown(82)) { // R key
+             resetGame(p);
+        }
+    };
+
+    p.keyPressed = function() {
+        handleKeyDown(p);
+    };
+
+    p.keyReleased = function() {
+        handleKeyUp(p);
+    };
+});
+
+function resetGame(p) {
+    gameState.gamePhase = "START";
+    gameState.score = 0;
+    gameState.deathCount = 0;
+    // Reseed for new level layout every retry
+    p.randomSeed(p.millis()); 
+    buildLevel();
+}
+
+function updateGame(p) {
+    if (!gameState.player) {
+        buildLevel(); // Init level if empty
+    }
+    
+    const player = gameState.player;
+    
+    // Update Entities
+    player.update(p);
+    gameState.triggers.forEach(t => { if(t.update) t.update(); });
+    
+    // Physics Checks
+    if (checkSpikeCollision(p, player)) {
+        player.die();
+    }
+    checkTriggerCollisions(player);
+    
+    // Update Particles
+    updateParticles();
+    
+    // Camera Follow
+    let targetCamY = player.y - CANVAS_HEIGHT / 2;
+    
+    // Clamp Camera
+    if (targetCamY > 0) targetCamY = 0; // Bottom limit
+    
+    // Top limit dynamic based on level height
+    // Level goes up to -gameState.levelHeight roughly
+    const topLimit = -(gameState.levelHeight) + CANVAS_HEIGHT/2; 
+    if (targetCamY < topLimit) targetCamY = topLimit;
+    
+    gameState.cameraY = p.lerp(gameState.cameraY, targetCamY, 0.1);
+    
+    // Check Fall off world
+    if (player.y > CANVAS_HEIGHT + 100) {
+        player.die();
+    }
+}
+
+function renderGame(p) {
+    p.push();
+    p.translate(0, -gameState.cameraY); // Simple Camera
+    
+    // Render World
+    gameState.solids.forEach(s => s.render(p));
+    gameState.hazards.forEach(h => h.render(p));
+    gameState.triggers.forEach(t => t.render(p));
+    gameState.collectibles.forEach(c => c.render(p));
+    
+    if (gameState.player && gameState.gamePhase !== "GAME_OVER_LOSE") {
+        gameState.player.render(p);
+    }
+    
+    renderParticles(p);
+    
+    p.pop();
+}
+
+window.gameInstance = gameInstance;
+</code>

@@ -1,0 +1,1456 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+physics.js:8  GET https://cdn.jsdelivr.net/npm/p5.collide2d@1.0.0/+esm net::ERR_ABORTED 404 (Not Found)
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Timberman Clone</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; font-family: sans-serif; transition: background 0.2s; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: 'Segoe UI', Arial, sans-serif; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 2px;">Timberman Clone</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="updateMode('HUMAN', this)">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="updateMode('TEST_1', this)">TEST (Auto Play)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="updateMode('TEST_2', this)">TEST (Crash)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 10px auto; line-height: 1.4; font-size: 14px;">
+        Chop the tree, avoid branches, and race against time! Use Left/Right arrows to move and chop.
+      </p>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.7.0/lib/p5.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/p5.collide2d@1.0.0/p5.collide2d.min.js"></script>
+    
+    <script>
+      function updateMode(mode, btn) {
+        // Update Game Mode
+        if(window.setControlMode) window.setControlMode(mode);
+        
+        // Update UI
+        document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        
+        // Reset focus to canvas logic if needed, or just let click handle it
+        document.body.focus();
+      }
+    </script>
+    
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+/**
+ * Automated Controller logic for testing modes.
+ * Determines the next action based on game state.
+ */
+
+import { gameState, SIDE, KEYS } from './globals.js';
+
+/**
+ * Determines the automated action for the current frame.
+ * @returns {object|null} Object containing keyCode to press, or null.
+ */
+export function get_automated_testing_action() {
+    if (gameState.gamePhase !== "PLAYING") return null;
+
+    // Throttle inputs to strictly one per frame, or even slower to simulate reaction time?
+    // For 'Win' mode, we can go fast (every few frames).
+    // For 'Test', we follow the strategy.
+    
+    // Simple throttle to avoid 60 moves per second which depletes tree instantly
+    if (gameState.frameCount % 5 !== 0) return null;
+
+    if (gameState.controlMode === "TEST_1" || gameState.controlMode === "TEST_2") {
+        return getSmartAction();
+    }
+    
+    return null;
+}
+
+function getSmartAction() {
+    if (!gameState.tree || !gameState.player) return null;
+
+    // Look at the segment immediately "above" the player's head interaction zone.
+    // In our Tree logic, the bottom segment (index 0) is what we chop.
+    // The segment at index 1 is what falls down to become the new bottom.
+    // IF index 0 has a branch, we are already dead if we are on that side (collision happens on chop).
+    // But collision check happens AFTER move.
+    
+    // Strategy:
+    // We want to chop the current bottom segment (index 0).
+    // We need to be on a side that is SAFE for index 0 (if it had a branch we'd be dead already or it's on other side).
+    // wait, branches at index 0 are dangerous if we are on that side.
+    // BUT, we also need to check index 1 (the one coming down).
+    // Actually, in Timberman:
+    // You chop the bottom block. 
+    // The danger is the branch on the bottom block (if you move into it) OR the branch on the block above (if it falls on you).
+    // Actually, usually the branch on the bottom block is already avoided.
+    // When you chop, the bottom block disappears, and the one above falls.
+    // If the one above (index 1) has a branch on your CURRENT side, you die when it falls.
+    // So you must move to the OTHER side if index 1 has a branch on your side.
+    
+    const nextSegment = gameState.tree.segments[1]; // The one that will fall to player level
+    const currentSegment = gameState.tree.segments[0];
+    
+    // Default: Stay on current side
+    let targetSide = gameState.player.side;
+    
+    // If the next segment has a branch, we MUST NOT be on that side
+    if (nextSegment && nextSegment.hasBranch) {
+        targetSide = (nextSegment.branchSide === SIDE.LEFT) ? SIDE.RIGHT : SIDE.LEFT;
+    }
+    
+    // Exception for Test 2 (Crash): Intentionally hit the branch
+    if (gameState.controlMode === "TEST_2" && gameState.score > 5) {
+        // After a few points, suicide
+        if (nextSegment && nextSegment.hasBranch) {
+            targetSide = nextSegment.branchSide;
+        }
+    }
+
+    // Convert side to Key
+    if (targetSide === SIDE.LEFT) return { keyCode: KEYS.LEFT };
+    if (targetSide === SIDE.RIGHT) return { keyCode: KEYS.RIGHT };
+    
+    return null;
+}
+
+window.get_automated_testing_action = get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+/**
+ * Global constants and state management for the Lumberjack game.
+ * This file contains configuration values, color palettes, and the central gameState object.
+ */
+
+// Canvas Dimensions
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+
+// Game Balance Configuration
+export const GAME_CONFIG = {
+    INITIAL_TIME: 100,          // Starting energy/time value
+    MAX_TIME: 100,              // Max energy
+    TIME_DEPLETION_RATE: 0.2,   // Energy lost per frame (increases with score)
+    TIME_GAIN_PER_CHOP: 5,      // Energy gained per chop
+    DIFFICULTY_SCALING: 0.005,  // How much depletion rate increases per score point
+    GRAVITY: 0.8,               // Physics gravity for particles
+    TREE_WIDTH: 100,            // Width of the tree trunk
+    SEGMENT_HEIGHT: 80,         // Height of one tree segment
+    PLAYER_OFFSET_X: 90,        // Distance of player from center
+    BRANCH_LENGTH: 80,          // Length of branches
+    BG_SCROLL_SPEED: 0.5        // Speed of background parallax
+};
+
+// Color Palettes (Seasons)
+export const COLORS = {
+    UI_TEXT: '#FFFFFF',
+    UI_SHADOW: '#000000',
+    ENERGY_BAR_BG: '#550000',
+    ENERGY_BAR_FILL: '#FFCC00',
+    
+    // Default Tree Colors
+    TREE_BARK: '#5D4037',
+    TREE_BARK_DARK: '#3E2723',
+    TREE_RINGS: '#D7CCC8',
+    
+    // Player Colors
+    PLAYER_SKIN: '#FFCC80',
+    PLAYER_SHIRT: '#D32F2F',
+    PLAYER_PANTS: '#1565C0',
+    AXE_HANDLE: '#8D6E63',
+    AXE_HEAD: '#B0BEC5',
+    
+    // Seasonal Palettes
+    SEASONS: [
+        {
+            name: "Summer",
+            skyTop: [135, 206, 235],    // Sky Blue
+            skyBottom: [224, 247, 250], // Light Blue
+            ground: [76, 175, 80],      // Green
+            leaves: [56, 142, 60]       // Dark Green
+        },
+        {
+            name: "Autumn",
+            skyTop: [255, 167, 38],     // Orange
+            skyBottom: [255, 224, 178], // Light Orange
+            ground: [121, 85, 72],      // Brown
+            leaves: [216, 67, 21]       // Red/Orange
+        },
+        {
+            name: "Winter",
+            skyTop: [40, 53, 147],      // Dark Blue
+            skyBottom: [144, 202, 249], // Light Blue
+            ground: [236, 239, 241],    // Snow White
+            leaves: [255, 255, 255]     // White (Snow on branches)
+        },
+        {
+            name: "Spring",
+            skyTop: [186, 104, 200],    // Purple-ish
+            skyBottom: [248, 187, 208], // Pink
+            ground: [139, 195, 74],     // Light Green
+            leaves: [233, 30, 99]       // Pink (Blossoms)
+        }
+    ]
+};
+
+// Input Keys
+export const KEYS = {
+    ENTER: 13,
+    ESC: 27,
+    SPACE: 32,
+    LEFT: 37,
+    UP: 38,
+    RIGHT: 39,
+    DOWN: 40,
+    SHIFT: 16,
+    Z: 90,
+    R: 82
+};
+
+// Enums
+export const SIDE = {
+    NONE: 0,
+    LEFT: -1,
+    RIGHT: 1
+};
+
+/**
+ * Central Game State Object
+ * Modified directly by game logic and read by renderers.
+ */
+export const gameState = {
+    // Core References
+    player: null,
+    tree: null,
+    background: null,
+    
+    // Phase Management
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2
+    
+    // Gameplay Data
+    score: 0,
+    highScore: 0,
+    energy: 100,
+    level: 1,
+    currentSeasonIndex: 0,
+    
+    // Physics & Entities
+    entities: [],       // General purpose entity list
+    particles: [],      // Visual effects
+    popups: [],         // Text popups (score, etc)
+    
+    // Performance / Time
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Input State
+    keysPressed: {},    // Map of currently pressed keys
+    
+    // Camera / Shake
+    shakeTimer: 0,
+    shakeMagnitude: 0
+};
+
+// Global Helper to access game state
+window.getGameState = () => gameState;
+
+// Reset function for game restart
+export function resetGameState() {
+    gameState.score = 0;
+    gameState.energy = GAME_CONFIG.INITIAL_TIME;
+    gameState.level = 1;
+    gameState.currentSeasonIndex = 0;
+    gameState.entities = [];
+    gameState.particles = [];
+    gameState.popups = [];
+    gameState.shakeTimer = 0;
+    gameState.shakeMagnitude = 0;
+    // Note: Player and Tree are re-initialized in their specific setup functions
+}
+</file>
+
+<file name="game.js">
+/**
+ * Main Game Loop and Initialization.
+ * Assembles all modules and handles the primary lifecycle of the p5.js instance.
+ */
+
+import { gameState, resetGameState, GAME_CONFIG, COLORS, SIDE, KEYS, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Player, Tree, WoodChip, FloatingText } from './entities.js';
+import { Background } from './background.js';
+import { updatePhysics, checkPlayerTreeCollision, getShakeOffset, triggerShake } from './physics.js';
+import { renderHUD, renderStartScreen, renderGameOver, renderPauseScreen } from './ui.js';
+import { handleKeyPress, handleKeyRelease, consumeInput, inputQueue } from './input.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    // Logging Initialization
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        // Initial Game State Setup
+        resetGameState();
+        
+        // Create permanent background object
+        gameState.background = new Background();
+        
+        // Log Start
+        p.logs.game_info.push({
+            data: { gamePhase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    };
+
+    p.draw = function() {
+        // Time Management
+        const currentTime = p.millis();
+        gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = currentTime;
+        gameState.frameCount = p.frameCount;
+
+        // --- RENDER START ---
+        
+        // Clear background (Background module handles drawing sky/mountains)
+        // If we are in menus, we might draw over it, but we draw it every frame
+        
+        // 1. Logic Update
+        if (gameState.gamePhase === "PLAYING") {
+            updateGame(p);
+        } else if (gameState.gamePhase === "GAME_OVER_LOSE" || gameState.gamePhase === "GAME_OVER_WIN") {
+            // Handle restart input here to ensure responsiveness
+            if (p.keyIsDown(KEYS.R)) {
+                 startGame(p);
+            }
+        }
+
+        // 2. Rendering
+        // Apply Screen Shake
+        const shake = getShakeOffset(p);
+        p.push();
+        p.translate(shake.x, shake.y);
+
+        // Render World
+        if (gameState.background) gameState.background.render(p);
+        
+        // Render Tree
+        if (gameState.tree) gameState.tree.render(p, COLORS.SEASONS[gameState.currentSeasonIndex]);
+        
+        // Render Particles (Behind player)
+        gameState.particles.forEach(part => part.render(p));
+        
+        // Render Player
+        if (gameState.player) gameState.player.render(p);
+        
+        // Render Popups (Front)
+        gameState.popups.forEach(pop => pop.render(p));
+        
+        p.pop(); // End Shake
+
+        // 3. UI Overlay (No Shake)
+        switch (gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                break;
+            case "PLAYING":
+                renderHUD(p);
+                break;
+            case "PAUSED":
+                renderHUD(p); // Show HUD in background
+                renderPauseScreen(p);
+                break;
+            case "GAME_OVER_WIN":
+            case "GAME_OVER_LOSE":
+                renderHUD(p);
+                renderGameOver(p);
+                break;
+        }
+        
+        // Logging Player Info
+        if (gameState.gamePhase === "PLAYING" && gameState.player && p.frameCount % 10 === 0) {
+            p.logs.player_info.push({
+                screen_x: gameState.player.x,
+                screen_y: gameState.player.y,
+                score: gameState.score,
+                energy: gameState.energy,
+                framecount: p.frameCount,
+                timestamp: Date.now()
+            });
+        }
+    };
+
+    p.keyPressed = function() {
+        handleKeyPress(p);
+    };
+
+    p.keyReleased = function() {
+        handleKeyRelease(p);
+    };
+});
+
+// Game Logic Functions
+
+function startGame(p) {
+    resetGameState();
+    gameState.gamePhase = "PLAYING";
+    
+    // Initialize Entities
+    gameState.tree = new Tree();
+    gameState.player = new Player();
+    
+    // Keep background consistent or reset clouds? Let's keep clouds flowing.
+    // Reset inputs
+    inputQueue.length = 0;
+    
+    p.logs.game_info.push({
+        data: { action: "START_GAME" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+    });
+}
+
+function updateGame(p) {
+    // 1. Process Input (Human or Auto)
+    let inputKey = null;
+    
+    // Automated Input
+    const autoAction = get_automated_testing_action();
+    if (autoAction) {
+        inputKey = autoAction.keyCode;
+    } else {
+        // Human Input
+        inputKey = consumeInput();
+    }
+    
+    if (inputKey) {
+        processPlayerMove(p, inputKey);
+    }
+    
+    // 2. Update Entities
+    if (gameState.player) gameState.player.update();
+    if (gameState.tree) gameState.tree.update();
+    if (gameState.background) gameState.background.update();
+    
+    // 3. Update Physics / Particles
+    updatePhysics(gameState.particles);
+    // Remove dead particles
+    gameState.particles = gameState.particles.filter(pt => !pt.dead);
+    
+    // 4. Update Popups
+    gameState.popups.forEach(pop => pop.update());
+    gameState.popups = gameState.popups.filter(pop => !pop.dead);
+    
+    // 5. Energy Depletion
+    // Depletion rate increases with score
+    const currentDepletion = GAME_CONFIG.TIME_DEPLETION_RATE + (gameState.score * GAME_CONFIG.DIFFICULTY_SCALING);
+    gameState.energy -= currentDepletion;
+    
+    if (gameState.energy <= 0) {
+        triggerGameOver(p, "TIMEOUT");
+    }
+}
+
+function processPlayerMove(p, keyCode) {
+    if (!gameState.player || !gameState.tree) return;
+    
+    let moved = false;
+    
+    // Determine target side
+    if (keyCode === KEYS.LEFT) {
+        gameState.player.moveTo(SIDE.LEFT);
+        moved = true;
+    } else if (keyCode === KEYS.RIGHT) {
+        gameState.player.moveTo(SIDE.RIGHT);
+        moved = true;
+    }
+    
+    if (moved) {
+        // Perform Chop
+        gameState.player.chop();
+        
+        // Visuals
+        triggerShake(5, 2);
+        createChopEffects(p);
+        
+        // LOGIC:
+        // 1. Check if we hit the branch on the CURRENT bottom segment (if we moved into it)
+        // Note: Tree logic usually implies you chop the bottom one. 
+        // If the bottom one has a branch on Right, and you move to Right, you hit it.
+        const currentSeg = gameState.tree.segments[0];
+        if (checkPlayerTreeCollision(gameState.player, currentSeg)) {
+            triggerGameOver(p, "COLLISION");
+            return;
+        }
+        
+        // 2. If safe, execute tree chop (shift down)
+        gameState.tree.chop();
+        
+        // 3. Check collision with the NEW bottom segment (the one that just fell)
+        // The tree.chop() shifted the array. So index 0 is now the one that was index 1.
+        // It falls instantly in logic, visually interpolated.
+        const newSeg = gameState.tree.segments[0];
+        if (checkPlayerTreeCollision(gameState.player, newSeg)) {
+            triggerGameOver(p, "SQUASHED");
+            return;
+        }
+        
+        // 4. Success - Score & Energy
+        gameState.score++;
+        gameState.energy += GAME_CONFIG.TIME_GAIN_PER_CHOP;
+        if (gameState.energy > GAME_CONFIG.MAX_TIME) gameState.energy = GAME_CONFIG.MAX_TIME;
+        
+        // Popup
+        gameState.popups.push(new FloatingText(gameState.player.x, gameState.player.y - 50, "+1", p.color(255, 255, 0)));
+    }
+}
+
+function createChopEffects(p) {
+    // Wood chips flying opposite to player side
+    const chipCount = 5;
+    const originX = CANVAS_WIDTH / 2;
+    const originY = CANVAS_HEIGHT - 60;
+    
+    for (let i = 0; i < chipCount; i++) {
+        // If player is Left, chips fly Right
+        const chipSide = (gameState.player.side === SIDE.LEFT) ? SIDE.RIGHT : SIDE.LEFT;
+        // Position slightly varied
+        const x = originX + (Math.random() * 20 - 10);
+        const y = originY + (Math.random() * 20 - 10);
+        
+        gameState.particles.push(new WoodChip(x, y, chipSide));
+    }
+}
+
+function triggerGameOver(p, reason) {
+    gameState.gamePhase = "GAME_OVER_LOSE";
+    if (gameState.player) gameState.player.die();
+    
+    p.logs.game_info.push({
+        data: { action: "GAME_OVER", reason: reason, finalScore: gameState.score },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+    });
+    
+    triggerShake(20, 5);
+}
+
+// Expose instance
+window.gameInstance = gameInstance;
+
+// Expose control mode setter for HTML buttons
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    console.log("Control Mode Set:", mode);
+    // Restart game if switching modes to ensure clean state
+    if (gameState.gamePhase === "PLAYING") {
+        startGame(gameInstance);
+    }
+};
+</file>
+
+<file name="ui.js">
+/**
+ * User Interface Manager.
+ * Handles HUD (Score, Energy), Start Screen, Game Over Screen, and Pause Screen.
+ */
+
+import { gameState, GAME_CONFIG, COLORS, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderHUD(p) {
+    // Score
+    p.push();
+    p.textAlign(p.CENTER, p.TOP);
+    
+    // Shadow
+    p.fill(COLORS.UI_SHADOW);
+    p.textSize(48);
+    p.text(gameState.score, CANVAS_WIDTH / 2 + 2, 22);
+    
+    // Text
+    p.fill(COLORS.UI_TEXT);
+    p.text(gameState.score, CANVAS_WIDTH / 2, 20);
+    p.pop();
+
+    // Energy Bar
+    renderEnergyBar(p);
+    
+    // Level / Season Indicator
+    p.push();
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(16);
+    p.fill(255);
+    p.text(`Season: ${COLORS.SEASONS[gameState.currentSeasonIndex].name}`, 10, 10);
+    p.pop();
+}
+
+function renderEnergyBar(p) {
+    const barWidth = 300;
+    const barHeight = 20;
+    const x = (CANVAS_WIDTH - barWidth) / 2;
+    const y = 80;
+
+    // Border
+    p.fill(COLORS.UI_SHADOW);
+    p.rect(x - 2, y - 2, barWidth + 4, barHeight + 4, 5);
+    
+    // Background
+    p.fill(COLORS.ENERGY_BAR_BG);
+    p.rect(x, y, barWidth, barHeight, 3);
+    
+    // Fill
+    const fillPercent = gameState.energy / GAME_CONFIG.MAX_TIME;
+    p.fill(COLORS.ENERGY_BAR_FILL);
+    p.rect(x, y, barWidth * fillPercent, barHeight, 3);
+    
+    // Warning flash if low
+    if (fillPercent < 0.25 && Math.floor(gameState.frameCount / 10) % 2 === 0) {
+        p.fill(255, 0, 0, 100);
+        p.rect(x, y, barWidth, barHeight, 3);
+    }
+}
+
+export function renderStartScreen(p) {
+    p.background(COLORS.TREE_BARK_DARK); // Simple BG fallback
+    
+    // Try to render background instance if available for nice visual
+    if (gameState.background) gameState.background.render(p);
+    
+    // Overlay
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    // Title
+    p.fill(COLORS.ENERGY_BAR_FILL);
+    p.stroke(0);
+    p.strokeWeight(4);
+    p.textSize(60);
+    p.text("TIMBERMAN", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 60);
+    
+    p.noStroke();
+    p.fill(255);
+    p.textSize(20);
+    p.text("Press ENTER to Start", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+    
+    p.textSize(16);
+    p.fill(200);
+    p.text("Arrows: Move & Chop | ESC: Pause", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 60);
+    
+    // Current Mode
+    p.textSize(14);
+    p.fill(150);
+    // Don't show mode strictly as per instructions? 
+    // "Never display controlMode: Do not show HUMAN/TESTING mode on canvas"
+    // OK, skipping control mode display.
+}
+
+export function renderGameOver(p) {
+    p.fill(0, 0, 0, 180);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    const isWin = gameState.gamePhase === "GAME_OVER_WIN";
+    const title = isWin ? "YOU WIN!" : "GAME OVER";
+    
+    p.fill(isWin ? '#4CAF50' : '#F44336');
+    p.stroke(0);
+    p.strokeWeight(4);
+    p.textSize(50);
+    p.text(title, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 50);
+    
+    p.noStroke();
+    p.fill(255);
+    p.textSize(30);
+    p.text(`Score: ${gameState.score}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 10);
+    
+    p.textSize(18);
+    p.fill(200);
+    p.text("Press R to Restart", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 60);
+}
+
+export function renderPauseScreen(p) {
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.text("PAUSED", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+    p.textSize(20);
+    p.text("Press ESC to Resume", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 40);
+}
+</file>
+
+<file name="background.js">
+/**
+ * Handles the dynamic background rendering including seasonal changes,
+ * clouds, and environment details.
+ */
+
+import { gameState, COLORS, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export class Background {
+    constructor() {
+        this.clouds = [];
+        this.initClouds();
+    }
+
+    initClouds() {
+        for (let i = 0; i < 5; i++) {
+            this.clouds.push({
+                x: Math.random() * CANVAS_WIDTH,
+                y: Math.random() * 150,
+                speed: Math.random() * 0.5 + 0.1,
+                size: Math.random() * 0.5 + 0.5
+            });
+        }
+    }
+
+    update() {
+        // Update seasonal progress based on score
+        // Change season every 20 points
+        const seasonDuration = 50;
+        gameState.currentSeasonIndex = Math.floor(gameState.score / seasonDuration) % COLORS.SEASONS.length;
+
+        // Move clouds
+        this.clouds.forEach(cloud => {
+            cloud.x += cloud.speed;
+            if (cloud.x > CANVAS_WIDTH + 100) {
+                cloud.x = -100;
+                cloud.y = Math.random() * 150;
+            }
+        });
+    }
+
+    render(p) {
+        const season = COLORS.SEASONS[gameState.currentSeasonIndex];
+
+        // Draw Sky Gradient
+        this.drawGradient(p, 0, 0, CANVAS_WIDTH, CANVAS_HEIGHT, 
+            p.color(season.skyTop), p.color(season.skyBottom));
+
+        // Draw Clouds
+        p.noStroke();
+        p.fill(255, 255, 255, 200);
+        this.clouds.forEach(cloud => {
+            p.push();
+            p.translate(cloud.x, cloud.y);
+            p.scale(cloud.size);
+            p.circle(0, 0, 60);
+            p.circle(30, -10, 70);
+            p.circle(60, 0, 60);
+            p.pop();
+        });
+
+        // Draw Mountains / Background Hills
+        p.fill(season.ground[0] * 0.8, season.ground[1] * 0.8, season.ground[2] * 0.8);
+        p.beginShape();
+        p.vertex(0, CANVAS_HEIGHT);
+        p.vertex(0, CANVAS_HEIGHT - 100);
+        p.vertex(CANVAS_WIDTH / 4, CANVAS_HEIGHT - 180);
+        p.vertex(CANVAS_WIDTH / 2, CANVAS_HEIGHT - 120);
+        p.vertex(CANVAS_WIDTH * 0.75, CANVAS_HEIGHT - 200);
+        p.vertex(CANVAS_WIDTH, CANVAS_HEIGHT - 100);
+        p.vertex(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.endShape(p.CLOSE);
+
+        // Draw Ground
+        p.fill(season.ground);
+        p.rect(0, CANVAS_HEIGHT - 50, CANVAS_WIDTH, 50);
+
+        // Draw some details on ground (grass/snow)
+        if (season.name === "Winter") {
+            p.fill(255); // Snow piles
+            p.circle(50, CANVAS_HEIGHT - 10, 30);
+            p.circle(CANVAS_WIDTH - 50, CANVAS_HEIGHT - 20, 40);
+        } else {
+            p.fill(season.leaves); // Grass tufts
+            for(let i=0; i<CANVAS_WIDTH; i+=40) {
+                p.triangle(i, CANVAS_HEIGHT-50, i+5, CANVAS_HEIGHT-60, i+10, CANVAS_HEIGHT-50);
+            }
+        }
+    }
+
+    drawGradient(p, x, y, w, h, c1, c2) {
+        p.noFill();
+        for (let i = y; i <= y + h; i+=2) { // Step 2 for performance
+            let inter = p.map(i, y, y + h, 0, 1);
+            let c = p.lerpColor(c1, c2, inter);
+            p.stroke(c);
+            p.line(x, i, x + w, i);
+        }
+    }
+}
+</file>
+
+<file name="entities.js">
+/**
+ * Game entities including Player, Tree, Particles, and FloatingText.
+ * Contains logic for rendering and updating individual game objects.
+ */
+
+import { gameState, GAME_CONFIG, COLORS, SIDE, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { updatePhysics } from './physics.js';
+
+/* ==========================
+   BASE ENTITY
+   ========================== */
+class Entity {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.dead = false;
+        this.vx = 0;
+        this.vy = 0;
+        this.useGravity = false;
+        this.rotation = 0;
+        this.rotationSpeed = 0;
+    }
+
+    update() {}
+    render(p) {}
+}
+
+/* ==========================
+   PLAYER CLASS
+   ========================== */
+export class Player extends Entity {
+    constructor() {
+        super(CANVAS_WIDTH / 2 - GAME_CONFIG.PLAYER_OFFSET_X, CANVAS_HEIGHT - 120);
+        this.side = SIDE.LEFT;
+        this.width = 60;
+        this.height = 80;
+        
+        // Animation States
+        this.isChopping = false;
+        this.chopTimer = 0;
+        this.chopDuration = 10; // Frames for chop animation
+        this.state = "IDLE"; // IDLE, CHOPPING, DYING
+    }
+
+    moveTo(side) {
+        this.side = side;
+        // Update X position based on side
+        if (this.side === SIDE.LEFT) {
+            this.x = CANVAS_WIDTH / 2 - GAME_CONFIG.PLAYER_OFFSET_X;
+        } else {
+            this.x = CANVAS_WIDTH / 2 + GAME_CONFIG.PLAYER_OFFSET_X;
+        }
+    }
+
+    chop() {
+        this.isChopping = true;
+        this.chopTimer = this.chopDuration;
+        this.state = "CHOPPING";
+    }
+
+    die() {
+        this.state = "DYING";
+        // Create grave stone particle logic here if needed, or handle in game loop
+    }
+
+    update() {
+        if (this.chopTimer > 0) {
+            this.chopTimer--;
+            if (this.chopTimer === 0) {
+                this.isChopping = false;
+                this.state = "IDLE";
+            }
+        }
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        
+        // Flip if on right side
+        if (this.side === SIDE.RIGHT) {
+            p.scale(-1, 1);
+        }
+
+        // Draw Player Character (Geometric Style)
+        
+        if (this.state === "DYING") {
+            // Grave marker
+            p.fill(100);
+            p.rectMode(p.CENTER);
+            p.rect(0, 20, 40, 60, 10, 10, 0, 0);
+            p.fill(200);
+            p.textSize(20);
+            p.textAlign(p.CENTER, p.CENTER);
+            p.text("R.I.P", 0, 20);
+        } else {
+            // --- Normal Player Rendering ---
+            
+            // Animation Offset for chopping
+            let armAngle = 0;
+            let bodyX = 0;
+            
+            if (this.isChopping) {
+                // Simple chop animation using timer
+                const progress = this.chopTimer / this.chopDuration;
+                if (progress > 0.5) {
+                    armAngle = p.map(progress, 1, 0.5, -p.PI/4, p.PI/2);
+                    bodyX = 5;
+                } else {
+                    armAngle = p.map(progress, 0.5, 0, p.PI/2, -p.PI/4);
+                    bodyX = 0;
+                }
+            }
+
+            // Legs
+            p.fill(COLORS.PLAYER_PANTS);
+            p.rectMode(p.CENTER);
+            p.rect(-10 + bodyX, 30, 15, 30); // Back leg
+            p.rect(10 + bodyX, 30, 15, 30);  // Front leg
+            
+            // Body (Shirt)
+            p.fill(COLORS.PLAYER_SHIRT);
+            p.rect(0 + bodyX, 0, 40, 50, 5);
+            
+            // Head
+            p.fill(COLORS.PLAYER_SKIN);
+            p.rect(0 + bodyX, -35, 30, 30, 5);
+            
+            // Beard/Hair
+            p.fill(COLORS.TREE_BARK_DARK);
+            p.rect(0 + bodyX, -45, 32, 10); // Hair
+            p.rect(0 + bodyX, -25, 32, 10); // Beard
+            
+            // Eyes
+            p.fill(0);
+            p.circle(-5 + bodyX, -35, 4);
+            p.circle(5 + bodyX, -35, 4);
+
+            // Arm (Shoulder)
+            p.fill(COLORS.PLAYER_SHIRT);
+            p.circle(10 + bodyX, -10, 15);
+
+            // Axe Assembly
+            p.push();
+            p.translate(10 + bodyX, -10);
+            p.rotate(armAngle);
+            
+            // Arm (Forearm)
+            p.fill(COLORS.PLAYER_SKIN);
+            p.rect(15, 0, 30, 10, 5);
+            
+            // Axe Handle
+            p.fill(COLORS.AXE_HANDLE);
+            p.rect(30, -15, 5, 60);
+            
+            // Axe Head
+            p.fill(COLORS.AXE_HEAD);
+            p.beginShape();
+            p.vertex(28, -25);
+            p.vertex(45, -35);
+            p.vertex(45, -5);
+            p.vertex(28, -15);
+            p.endShape(p.CLOSE);
+            
+            p.pop();
+        }
+
+        p.pop();
+    }
+}
+
+/* ==========================
+   TREE SYSTEM
+   ========================== */
+class TreeSegment {
+    constructor(y, branchSide) {
+        this.y = y; // Visual Y position
+        this.targetY = y;
+        this.branchSide = branchSide; // SIDE.LEFT, SIDE.RIGHT, SIDE.NONE
+        this.hasBranch = (branchSide !== SIDE.NONE);
+        
+        // Texture variations
+        this.textureOffset = Math.floor(Math.random() * 20);
+        this.knotY = Math.random() > 0.7 ? Math.random() * 40 - 20 : null;
+    }
+
+    render(p, season) {
+        p.push();
+        p.translate(CANVAS_WIDTH / 2, this.y);
+
+        // Trunk
+        p.fill(COLORS.TREE_BARK);
+        p.noStroke();
+        p.rectMode(p.CENTER);
+        p.rect(0, 0, GAME_CONFIG.TREE_WIDTH, GAME_CONFIG.SEGMENT_HEIGHT + 1); // +1 to overlap seams
+
+        // Bark texture details
+        p.fill(COLORS.TREE_BARK_DARK);
+        p.rect(-20, this.textureOffset - 10, 5, 20);
+        p.rect(30, -this.textureOffset, 5, 15);
+        p.rect(10, 20, 3, 10);
+
+        // Knot
+        if (this.knotY !== null) {
+            p.fill(COLORS.TREE_BARK_DARK);
+            p.ellipse(15, this.knotY, 12, 8);
+        }
+
+        // Branch
+        if (this.hasBranch) {
+            const dir = this.branchSide === SIDE.LEFT ? -1 : 1;
+            
+            p.push();
+            p.translate((GAME_CONFIG.TREE_WIDTH / 2) * dir, 0);
+            
+            // Main branch wood
+            p.fill(COLORS.TREE_BARK);
+            p.beginShape();
+            p.vertex(0, -10);
+            p.vertex(dir * GAME_CONFIG.BRANCH_LENGTH, -20);
+            p.vertex(dir * GAME_CONFIG.BRANCH_LENGTH, 10);
+            p.vertex(0, 20);
+            p.endShape(p.CLOSE);
+            
+            // Leaves (based on season)
+            const leafColor = season.leaves;
+            p.fill(leafColor[0], leafColor[1], leafColor[2]);
+            
+            // Draw a cluster of leaves at the end of branch
+            const tipX = dir * GAME_CONFIG.BRANCH_LENGTH;
+            p.circle(tipX, -15, 30);
+            p.circle(tipX + (dir * 10), -5, 25);
+            p.circle(tipX, 10, 20);
+            
+            p.pop();
+        }
+
+        p.pop();
+    }
+}
+
+export class Tree {
+    constructor() {
+        this.segments = [];
+        this.segmentCount = 8; // Number of visible segments
+        this.baseY = CANVAS_HEIGHT - 60; // Base position on screen
+        
+        // Initialize segments
+        this.initializeTree();
+        
+        // Animation for falling effect
+        this.fallSpeed = 0;
+        this.isFalling = false;
+    }
+
+    initializeTree() {
+        this.segments = [];
+        // First few segments have no branches to be safe
+        for (let i = 0; i < 3; i++) {
+            this.addSegment(SIDE.NONE);
+        }
+        // Fill rest
+        for (let i = 0; i < this.segmentCount + 2; i++) {
+            this.addNewRandomSegment();
+        }
+        
+        // Align visual positions
+        this.resetVisualPositions();
+    }
+
+    addSegment(branchSide) {
+        // Position logic is relative index based in the array, actual Y calculated in render/reset
+        const newSeg = new TreeSegment(0, branchSide);
+        this.segments.push(newSeg);
+    }
+
+    addNewRandomSegment() {
+        // Logic to prevent impossible scenarios (e.g. Left immediately after Right)
+        const lastSeg = this.segments[this.segments.length - 1];
+        let newSide = SIDE.NONE;
+        
+        const roll = Math.random();
+        
+        // 50% chance of branch
+        if (roll < 0.5) {
+            // Decide side
+            const sideRoll = Math.random();
+            const potentialSide = sideRoll > 0.5 ? SIDE.RIGHT : SIDE.LEFT;
+            
+            // Avoid "climbing ladder" pattern if too fast? 
+            // Actually timberman allows rapid alternating.
+            // But usually we don't want a branch overlapping the previous one if we want it to look nice.
+            // Just ensure random side.
+            newSide = potentialSide;
+        }
+        
+        this.addSegment(newSide);
+    }
+
+    resetVisualPositions() {
+        // Reposition all segments visually to their stack positions
+        for (let i = 0; i < this.segments.length; i++) {
+            this.segments[i].y = this.baseY - (i * GAME_CONFIG.SEGMENT_HEIGHT);
+            this.segments[i].targetY = this.segments[i].y;
+        }
+    }
+
+    chop() {
+        // Remove bottom segment
+        const removed = this.segments.shift();
+        
+        // Add new segment at top
+        this.addNewRandomSegment();
+        
+        // Trigger falling animation logic
+        // We shift the target Ys of all segments down by one height
+        for (let i = 0; i < this.segments.length; i++) {
+            // Reset current Y to be one step higher relative to new index 0
+            // Actually, simplified: Just reset visual positions to 'snap' or interpolate?
+            // Timberman is snappy.
+            // Let's make them 'fall' into place.
+            
+            // Current visual Y needs to be preserved, then tweened to new target.
+            // But since we shifted the array, index 0 is now the old index 1.
+            // Old index 1 was at (baseY - height). It is now at index 0, so target is baseY.
+            // So we don't need to change Y manually, just recalculate target based on index.
+        }
+        
+        // Let's manually set the 'y' of the new array items to where they were visually
+        // So they slide down.
+        // The element at index 0 (was 1) is currently at y = baseY - height.
+        // It needs to go to y = baseY.
+        
+        // Correct approach for smooth fall:
+        // 1. Shift array.
+        // 2. New segment at end gets placed visually at top + height.
+        // 3. All segments get a targetY based on their new index.
+        // 4. Update lerps Y towards targetY.
+        
+        const topIdx = this.segments.length - 1;
+        // Initialize the new top segment's Y position
+        this.segments[topIdx].y = this.baseY - (topIdx * GAME_CONFIG.SEGMENT_HEIGHT) - GAME_CONFIG.SEGMENT_HEIGHT;
+        
+        // Return removed segment for particle generation
+        return removed;
+    }
+
+    update() {
+        // Smoothly interpolate Y positions
+        const speed = 0.4; // 40% distance per frame
+        for (let i = 0; i < this.segments.length; i++) {
+            const target = this.baseY - (i * GAME_CONFIG.SEGMENT_HEIGHT);
+            // Snap if close
+            if (Math.abs(this.segments[i].y - target) < 1) {
+                this.segments[i].y = target;
+            } else {
+                this.segments[i].y += (target - this.segments[i].y) * speed;
+            }
+        }
+    }
+
+    render(p, season) {
+        // Render from top to bottom so bottom overlaps top if needed (though rects don't matter much)
+        // Actually bottom to top is better for painter's algorithm if we have 2.5D, but here 2D flat.
+        for (let i = this.segments.length - 1; i >= 0; i--) {
+            this.segments[i].render(p, season);
+        }
+        
+        // Draw Stump base
+        p.fill(COLORS.TREE_BARK);
+        p.rectMode(p.CENTER);
+        p.rect(CANVAS_WIDTH / 2, CANVAS_HEIGHT - 20, GAME_CONFIG.TREE_WIDTH + 20, 40, 10);
+    }
+}
+
+/* ==========================
+   PARTICLES & EFFECTS
+   ========================== */
+export class WoodChip extends Entity {
+    constructor(x, y, side) {
+        super(x, y);
+        this.useGravity = true;
+        this.vx = side === SIDE.LEFT ? Math.random() * 5 + 2 : -(Math.random() * 5 + 2);
+        this.vy = -(Math.random() * 5 + 5);
+        this.size = Math.random() * 10 + 5;
+        this.color = COLORS.TREE_BARK;
+        this.rotationSpeed = Math.random() * 0.2 - 0.1;
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        p.rotate(this.rotation);
+        p.fill(this.color);
+        p.noStroke();
+        p.rect(0, 0, this.size, this.size);
+        p.pop();
+    }
+}
+
+export class FloatingText extends Entity {
+    constructor(x, y, text, color) {
+        super(x, y);
+        this.text = text;
+        this.color = color;
+        this.vy = -2;
+        this.life = 30;
+        this.alpha = 255;
+    }
+
+    update() {
+        this.y += this.vy;
+        this.life--;
+        this.alpha = (this.life / 30) * 255;
+        if (this.life <= 0) this.dead = true;
+    }
+
+    render(p) {
+        p.push();
+        p.fill(p.red(this.color), p.green(this.color), p.blue(this.color), this.alpha);
+        p.stroke(0, this.alpha);
+        p.strokeWeight(2);
+        p.textSize(24);
+        p.text(this.text, this.x, this.y);
+        p.pop();
+    }
+}
+</file>
+
+<file name="physics.js">
+/**
+ * Physics engine handling collision detection, gravity, and movement updates.
+ * While this game is grid-based/lane-based, we use physics for particles 
+ * and tree falling animations.
+ */
+
+import { gameState, GAME_CONFIG, CANVAS_HEIGHT, SIDE } from './globals.js';
+import { collideRectRect } from 'https://cdn.jsdelivr.net/npm/p5.collide2d@1.0.0/+esm';
+
+/**
+ * Checks collision between the player and the tree branch.
+ * @param {object} player - The player entity
+ * @param {object} treeSegment - The bottom-most tree segment that might hit the player
+ * @returns {boolean} - True if collision detected
+ */
+export function checkPlayerTreeCollision(player, treeSegment) {
+    if (!treeSegment) return false;
+    
+    // In this specific game logic, collision happens if:
+    // 1. The player is on the same side as a branch
+    // 2. The tree segment is the one effectively at "head level"
+    // Since we abstract the tree as a stack, the "collision" is logic-based 
+    // rather than AABB based for the core mechanic, but we verify logical states here.
+    
+    // If the segment has a branch on the player's side
+    if (treeSegment.hasBranch && treeSegment.branchSide === player.side) {
+        return true;
+    }
+    
+    return false;
+}
+
+/**
+ * Updates positions of physics-based entities (particles).
+ */
+export function updatePhysics(entities) {
+    for (let i = entities.length - 1; i >= 0; i--) {
+        const entity = entities[i];
+        
+        // Apply Gravity if entity has mass
+        if (entity.useGravity) {
+            entity.vy += GAME_CONFIG.GRAVITY;
+        }
+        
+        // Apply Velocity
+        entity.x += entity.vx;
+        entity.y += entity.vy;
+        
+        // Apply Rotation
+        if (entity.rotationSpeed) {
+            entity.rotation += entity.rotationSpeed;
+        }
+        
+        // Floor Collision for particles
+        if (entity.y > CANVAS_HEIGHT + 50) { // Off screen bottom
+            entity.dead = true;
+        }
+    }
+}
+
+/**
+ * Calculates screenshake offsets.
+ * @returns {object} {x, y} offset values
+ */
+export function getShakeOffset(p) {
+    if (gameState.shakeTimer > 0) {
+        gameState.shakeTimer--;
+        const mag = gameState.shakeMagnitude;
+        const x = p.random(-mag, mag);
+        const y = p.random(-mag, mag);
+        return { x, y };
+    }
+    return { x: 0, y: 0 };
+}
+
+/**
+ * Triggers a screen shake effect.
+ * @param {number} duration - Frames to shake
+ * @param {number} magnitude - Pixel intensity
+ */
+export function triggerShake(duration, magnitude) {
+    gameState.shakeTimer = duration;
+    gameState.shakeMagnitude = magnitude;
+}
+
+/**
+ * Easing function for smooth animations (e.g. tree falling down).
+ * Ease Out Cubic
+ */
+export function easeOutCubic(x) {
+    return 1 - Math.pow(1 - x, 3);
+}
+</file>
+
+<file name="input.js">
+/**
+ * Input handling module.
+ * Captures keyboard events and exposes them to the game loop.
+ */
+
+import { gameState, KEYS } from './globals.js';
+
+// Queue to store inputs that need processing in the game loop
+// This helps prevent "ghost" inputs or missed inputs between frames
+export const inputQueue = [];
+
+export function handleKeyPress(p) {
+    const k = p.keyCode;
+    gameState.keysPressed[k] = true;
+
+    // Log input
+    if (p.logs && p.logs.inputs) {
+        p.logs.inputs.push({
+            input_type: 'keyPressed',
+            data: { key: p.key, keyCode: k },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+
+    // Global Phase Controls
+    if (k === KEYS.ESC) {
+        if (gameState.gamePhase === "PLAYING") {
+            gameState.gamePhase = "PAUSED";
+        } else if (gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = "PLAYING";
+        }
+    }
+
+    if (k === KEYS.ENTER) {
+        if (gameState.gamePhase === "START") {
+            gameState.gamePhase = "PLAYING";
+        }
+    }
+
+    if (k === KEYS.R) {
+        if (gameState.gamePhase === "GAME_OVER_LOSE" || gameState.gamePhase === "GAME_OVER_WIN") {
+            // Restart is handled in game.js main loop logic usually, or we trigger a reset flag
+            // But checking phase in draw() is better.
+            // We'll set a flag or just reset here if imports allowed (circular dep issue).
+            // Better to let game.js poll for R or expose a reset function in globals which we can't import easily if circular.
+            // We will let game.js handle the R key logic in its update loop by checking keysPressed or using this event.
+            // Actually, we can just export a signal.
+        }
+    }
+
+    // Gameplay Inputs (Only queue if playing)
+    if (gameState.gamePhase === "PLAYING" && gameState.controlMode === "HUMAN") {
+        if (k === KEYS.LEFT || k === KEYS.RIGHT) {
+            inputQueue.push(k);
+        }
+    }
+}
+
+export function handleKeyRelease(p) {
+    gameState.keysPressed[p.keyCode] = false;
+    
+    if (p.logs && p.logs.inputs) {
+        p.logs.inputs.push({
+            input_type: 'keyReleased',
+            data: { key: p.key, keyCode: p.keyCode },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+
+/**
+ * Consumes the next input from the queue.
+ * @returns {number|null} The keycode or null if empty
+ */
+export function consumeInput() {
+    if (inputQueue.length > 0) {
+        return inputQueue.shift();
+    }
+    return null;
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

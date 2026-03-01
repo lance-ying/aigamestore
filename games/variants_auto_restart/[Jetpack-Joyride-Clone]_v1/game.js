@@ -1,0 +1,401 @@
+/**
+ * Main Game Controller.
+ * Initializes p5 instance, runs the game loop, and manages level generation.
+ */
+
+import { gameState, resetGameState, getGameState, CANVAS_WIDTH, CANVAS_HEIGHT, SPEED_INCREMENT, SPAWN_BUFFER, MAX_HEARTS } from './globals.js';
+import { Player, Zapper, Missile, Coin, VehicleToken, Heart, JetpackPickup, GroundEnemy } from './entities.js';
+import { BackgroundManager } from './background.js';
+import { setupInput, handleInput } from './input.js';
+import { updatePhysics, checkRectCollision, checkCircleCollision, checkCircleRectCollision } from './physics.js';
+import { renderStartScreen, renderHUD, renderPausedScreen, renderGameOverScreen } from './ui.js';
+import { spawnExplosion, spawnCoinSparkle } from './particles.js';
+
+// Access p5 from global scope
+const p5 = window.p5;
+
+// Export restartGame for external (e.g., input.js) signaling
+export function restartGame() {
+    // Ensure any pending auto-restart is cancelled immediately if manual restart occurs
+    if (gameState.autoRestartTimeoutId) {
+        clearTimeout(gameState.autoRestartTimeoutId);
+        gameState.autoRestartTimeoutId = null;
+    }
+    
+    resetGameState(); // This will reset autoRestartScheduled and restartRequested flags
+    
+    // Re-initialize player (will be done in updateGameLogic if player is null)
+    gameState.player = null; 
+
+    // Reset spawning timers (these are local to the p5 sketch closure)
+    zapperTimer = 0;
+    missileTimer = 0;
+    coinTimer = 0;
+    enemyTimer = 0;
+    rareItemTimer = 0;
+
+    gameState.gamePhase = 'PLAYING'; // Automatically jump to playing after restart
+}
+
+const gameInstance = new p5(p => {
+    
+    let backgroundManager;
+    
+    // Spawning Timers (local to the p5 sketch closure)
+    let zapperTimer = 0;
+    let missileTimer = 0;
+    let coinTimer = 0;
+    let enemyTimer = 0;
+    let rareItemTimer = 0;
+    
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        resetGameState(); // Initial reset
+        
+        backgroundManager = new BackgroundManager();
+        setupInput(p);
+        
+        gameState.gamePhase = 'START';
+        
+    };
+
+    p.draw = function() {
+        // --- Logic Update ---
+        const currentTime = p.millis();
+        gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = currentTime;
+        gameState.frameCount = p.frameCount;
+
+        // Camera Shake decay
+        if (gameState.cameraShake > 0) {
+            p.translate(p.random(-gameState.cameraShake, gameState.cameraShake), p.random(-gameState.cameraShake, gameState.cameraShake));
+            gameState.cameraShake *= 0.9;
+        }
+
+        // Handle manual restart request (takes priority)
+        if (gameState.restartRequested) {
+            restartGame();
+            return; // Skip the rest of draw cycle to prevent issues during state transition
+        }
+
+        // Phase Handling
+        switch(gameState.gamePhase) {
+            case 'START':
+                backgroundManager.render(p); // Render BG for ambiance
+                renderStartScreen(p);
+                break;
+                
+            case 'PLAYING':
+                updateGameLogic(p);
+                renderGame(p);
+                renderHUD(p);
+                break;
+                
+            case 'PAUSED':
+                renderGame(p);
+                renderPausedScreen(p);
+                break;
+                
+            case 'GAME_OVER_WIN':
+            case 'GAME_OVER_LOSE':
+                renderGame(p);
+                renderGameOverScreen(p);
+
+                // Auto-restart logic
+                if (!gameState.autoRestartScheduled) {
+                    gameState.autoRestartScheduled = true;
+                    gameState.autoRestartTimeoutId = setTimeout(() => {
+                        restartGame();
+                    }, 1000); // 1 second delay
+                }
+                break;
+        }
+    };
+    
+    function updateGameLogic(p) {
+        // 1. Init Player if needed
+        if (!gameState.player) {
+            gameState.player = new Player();
+            gameState.entities.push(gameState.player);
+        }
+
+        // 2. Input Handling
+        let inputActive = handleInput(p);
+
+        // 3. Update Player
+        gameState.player.update(p, inputActive);
+
+        // 4. Update Physics & Entities
+        gameState.gameSpeed += SPEED_INCREMENT;
+        gameState.distanceTraveled += gameState.gameSpeed * 0.1;
+
+        // Background
+        backgroundManager.update();
+
+        // Update Obstacles
+        gameState.obstacles.forEach((obs, index) => {
+            obs.update();
+            if (!obs.active) gameState.obstacles.splice(index, 1);
+        });
+
+        // Update Collectibles
+        gameState.collectibles.forEach((col, index) => {
+            col.update();
+            if (!col.active) gameState.collectibles.splice(index, 1);
+        });
+
+        // Update Projectiles
+        gameState.projectiles.forEach((proj, index) => {
+            proj.update();
+            if (!proj.active) gameState.projectiles.splice(index, 1);
+        });
+
+        // Update Particles
+        for (let i = gameState.particles.length - 1; i >= 0; i--) {
+            gameState.particles[i].update();
+            if (gameState.particles[i].markedForDeletion) {
+                gameState.particles.splice(i, 1);
+            }
+        }
+
+        // 5. Spawning Logic (Procedural Generation)
+        handleSpawning(p);
+
+        // 6. Collision Detection
+        handleCollisions(p);
+        
+        // 7. Check Death
+        if (gameState.player.isDead) {
+            gameState.gamePhase = 'GAME_OVER_LOSE';
+            gameState.cameraShake = 20;
+        }
+    }
+
+    function handleSpawning(p) {
+        // Zappers
+        zapperTimer++;
+        if (zapperTimer > 200 - Math.min(100, gameState.gameSpeed * 10)) {
+            const y = p.random(100, CANVAS_HEIGHT - 100);
+            const type = p.random() > 0.7 ? 'ROTATING' : 'STATIC';
+            const len = p.random(100, 150);
+            const zapper = new Zapper(CANVAS_WIDTH + SPAWN_BUFFER, y, len, p.random(p.TWO_PI), type);
+            gameState.obstacles.push(zapper);
+            zapperTimer = 0;
+        }
+
+        // Missiles
+        missileTimer++;
+        if (missileTimer > 300) {
+            const y = p.random(50, CANVAS_HEIGHT - 50);
+            gameState.obstacles.push(new Missile(y));
+            missileTimer = 0;
+        }
+
+        // Ground Enemies
+        enemyTimer++;
+        if (enemyTimer > 400) {
+            gameState.obstacles.push(new GroundEnemy(CANVAS_WIDTH + SPAWN_BUFFER));
+            enemyTimer = 0;
+        }
+
+        // Coins (Pattern spawning)
+        coinTimer++;
+        if (coinTimer > 150) {
+            spawnCoinPattern(p);
+            coinTimer = 0;
+        }
+        
+        // Rare Items (Hearts, Jetpacks, Vehicles)
+        rareItemTimer++;
+        if (rareItemTimer > 800) {
+            const r = p.random();
+            if (r < 0.4) {
+                gameState.collectibles.push(new Heart(CANVAS_WIDTH + SPAWN_BUFFER, p.random(100, 300)));
+            } else if (r < 0.7) {
+                gameState.collectibles.push(new JetpackPickup(CANVAS_WIDTH + SPAWN_BUFFER, p.random(100, 300)));
+            } else if (!gameState.player.vehicle) {
+                gameState.collectibles.push(new VehicleToken(CANVAS_WIDTH + SPAWN_BUFFER, p.random(100, 300)));
+            }
+            rareItemTimer = 0;
+        }
+    }
+
+    function spawnCoinPattern(p) {
+        const pattern = Math.floor(p.random(3));
+        const startX = CANVAS_WIDTH + SPAWN_BUFFER;
+        const startY = p.random(100, CANVAS_HEIGHT - 100);
+
+        if (pattern === 0) { // Line
+            for (let i = 0; i < 5; i++) {
+                gameState.collectibles.push(new Coin(startX + i * 30, startY));
+            }
+        } else if (pattern === 1) { // Sine wave
+            for (let i = 0; i < 10; i++) {
+                gameState.collectibles.push(new Coin(startX + i * 30, startY + Math.sin(i * 0.5) * 50));
+            }
+        } else if (pattern === 2) { // Block
+            for (let x = 0; x < 3; x++) {
+                for (let y = 0; y < 3; y++) {
+                    gameState.collectibles.push(new Coin(startX + x * 30, startY + y * 30));
+                }
+            }
+        }
+    }
+
+    function handleCollisions(p) {
+        const player = gameState.player;
+        if (!player) return;
+
+        // Player Bounds
+        const playerRect = {
+            x: player.x,
+            y: player.y,
+            width: player.width,
+            height: player.height
+        };
+
+        // Projectiles vs Enemies
+        for (let proj of gameState.projectiles) {
+            if (!proj.active) continue;
+            const projRect = {x: proj.x, y: proj.y, width: proj.width, height: proj.height};
+            
+            for (let obs of gameState.obstacles) {
+                if (!obs.active) continue;
+                if (obs instanceof GroundEnemy) {
+                    const enemyRect = {x: obs.x, y: obs.y, width: obs.width, height: obs.height};
+                    if (checkRectCollision(projRect, enemyRect)) {
+                        obs.active = false;
+                        proj.active = false;
+                        spawnExplosion(obs.x + obs.width/2, obs.y + obs.height/2);
+                        gameState.score += 50;
+                        break; // Projectile used
+                    }
+                }
+            }
+        }
+
+        // Obstacles vs Player
+        for (let obs of gameState.obstacles) {
+            if (player.invincibilityTimer > 0) continue;
+
+            let collision = false;
+            
+            if (obs instanceof Zapper) {
+                 if (p.collideLineRect) {
+                     const x1 = obs.x - Math.sin(obs.angle) * obs.length/2;
+                     const y1 = obs.y + Math.cos(obs.angle) * obs.length/2;
+                     const x2 = obs.x + Math.sin(obs.angle) * obs.length/2;
+                     const y2 = obs.y - Math.cos(obs.angle) * obs.length/2;
+                     collision = p.collideLineRect(x1, y1, x2, y2, player.x, player.y, player.width, player.height);
+                 } else {
+                     // Fallback simple check
+                     if (Math.abs(player.x - obs.x) < 40 && Math.abs(player.y - obs.y) < obs.length/2 + 20) collision = true;
+                 }
+            } else if (obs instanceof Missile) {
+                if (obs.state === 'LAUNCHED') {
+                    const missileRect = {x: obs.x - 20, y: obs.y - 7, width: 40, height: 15};
+                    collision = checkRectCollision(playerRect, missileRect);
+                }
+            } else if (obs instanceof GroundEnemy) {
+                const enemyRect = {x: obs.x, y: obs.y, width: obs.width, height: obs.height};
+                collision = checkRectCollision(playerRect, enemyRect);
+            }
+
+            if (collision && !gameState.debugMode) {
+                if (player.vehicle) {
+                    player.vehicle = null;
+                    player.invincibilityTimer = 60; 
+                    spawnExplosion(player.x, player.y, 20);
+                    gameState.cameraShake = 10;
+                } else {
+                    // Lose Heart
+                    gameState.hearts--;
+                    spawnExplosion(player.x, player.y);
+                    gameState.cameraShake = 10;
+                    player.invincibilityTimer = 90; // 1.5s invincibility
+                    
+                    if (gameState.hearts <= 0) {
+                        player.isDead = true;
+                    }
+                }
+            }
+        }
+
+        // Collectibles
+        for (let col of gameState.collectibles) {
+            if (!col.active) continue;
+            
+            let collected = false;
+            if (col instanceof Coin) {
+                collected = checkCircleRectCollision({x: col.x, y: col.y, radius: col.hitRadius}, playerRect);
+                if (collected) {
+                    col.active = false;
+                    gameState.score += 10;
+                    gameState.coinsCollected++;
+                    spawnCoinSparkle(col.x, col.y);
+                }
+            } else if (col instanceof VehicleToken) {
+                collected = checkRectCollision(
+                    {x: col.x - 20, y: col.y - 20, width: 40, height: 40}, 
+                    playerRect
+                );
+                if (collected) {
+                    col.active = false;
+                    player.vehicle = 'DRAGON';
+                    gameState.cameraShake = 10;
+                    spawnExplosion(player.x, player.y, 50);
+                }
+            } else if (col instanceof Heart) {
+                // Circle-Rect check roughly
+                if (Math.abs(player.x - col.x) < 30 && Math.abs(player.y - col.y) < 30) {
+                    collected = true;
+                    col.active = false;
+                    if (gameState.hearts < MAX_HEARTS) {
+                        gameState.hearts++;
+                    } else {
+                        gameState.score += 100; // Bonus score if full health
+                    }
+                    spawnCoinSparkle(col.x, col.y);
+                }
+            } else if (col instanceof JetpackPickup) {
+                if (Math.abs(player.x - col.x) < 30 && Math.abs(player.y - col.y) < 30) {
+                    collected = true;
+                    col.active = false;
+                    player.jetpackType = 'LASER';
+                    spawnExplosion(player.x, player.y, 10);
+                }
+            }
+        }
+    }
+
+    function renderGame(p) {
+        p.background(50); // Fallback
+        
+        // 1. Background
+        backgroundManager.render(p);
+        
+        // 2. Game World Entities
+        // Collectibles (behind player)
+        gameState.collectibles.forEach(col => col.render(p));
+        
+        // Obstacles
+        gameState.obstacles.forEach(obs => obs.render(p));
+        
+        // Projectiles
+        gameState.projectiles.forEach(proj => proj.render(p));
+        
+        // Particles (behind player mostly)
+        gameState.particles.forEach(part => part.render(p));
+        
+        // Player
+        if (gameState.player && !gameState.player.isDead) {
+            gameState.player.render(p);
+        }
+    }
+});
+
+// Expose instance
+window.gameInstance = gameInstance;

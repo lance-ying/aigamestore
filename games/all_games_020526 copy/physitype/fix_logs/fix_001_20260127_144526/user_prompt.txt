@@ -1,0 +1,1124 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+the letters seem to transform into a weird version of the letter, is there anyway to maintain the visuals of the actual lettering instead of transforming them into blockjs? as well, the blocks dont seem to land on the ground or bounce, all they do is just spawn and fall throught he ground
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>PhysiType</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; font-family: monospace; transition: background 0.2s; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #4488ff; }
+      h1 { color: #fff; font-family: monospace; margin-bottom: 10px; letter-spacing: 2px; }
+      p { color: #888; font-family: monospace; font-size: 12px; margin-bottom: 5px; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 10px;">
+      <h1 id="gameTitle">PhysiType</h1>
+      <p>Type letters. Solve physics puzzles.</p>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN', this)">Play</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="setMode('TEST_1', this)">Test: Drop</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="setMode('TEST_2', this)">Test: Roll</button>
+        <button id="test_3_ModeBtn" class="control-button" onclick="setMode('TEST_3', this)">Test: Stack</button>
+      </div>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+    <script>
+       // Global p5 exposure for module
+       window.p5 = p5;
+       
+       function setMode(mode, btn) {
+         if(window.setControlMode) window.setControlMode(mode);
+         
+         // UI Update
+         document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+         btn.classList.add('active');
+       }
+    </script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const gameState = {
+  gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+  controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2, TEST_3
+  
+  // Physics engine
+  engine: null,
+  world: null,
+  
+  // Game logic
+  currentLevelIndex: 0,
+  score: 0,
+  inputString: "", // The text typed by the player
+  isSimulating: false, // True when physics is running, False when typing
+  
+  // Entities
+  entities: [], // Matter.js bodies wrapped in entity classes
+  targets: [], // Target objects
+  obstacles: [], // Static geometry
+  activeBodies: [], // The letters currently physically simulated
+  
+  // Camera
+  camera: {
+    x: 0,
+    y: 0,
+    zoom: 1
+  },
+  
+  // Input handling
+  cursorPos: 0,
+  
+  // Performance
+  deltaTime: 0,
+  lastFrameTime: 0,
+  frameCount: 0
+};
+
+// Expose globally
+window.getGameState = () => gameState;
+
+// Colors
+export const PALETTE = {
+  background: '#222222',
+  text: '#ffffff',
+  accent: '#4488ff',
+  target: '#ffff00',
+  obstacle: '#444444',
+  letter: '#eeeeee',
+  letterStroke: '#111111'
+};
+
+// Physics Constants
+export const CATEGORIES = {
+  DEFAULT: 0x0001,
+  LETTER: 0x0002,
+  OBSTACLE: 0x0004,
+  TARGET: 0x0008,
+  SENSOR: 0x0010
+};
+</file>
+
+<file name="game.js">
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Engine, World, Bodies, Composite } = Matter;
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { createPhysicsEngine, setupCollisionEvents, clearWorld } from './physics.js';
+import { createLetterBody } from './letter_geometry.js';
+import { Target, Obstacle } from './entities.js';
+import { LEVELS } from './levels.js';
+import { renderGame, renderStartScreen, renderGameOver, renderPaused } from './renderer.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Initialize Physics
+    gameState.engine = createPhysicsEngine();
+    gameState.world = gameState.engine.world;
+    setupCollisionEvents(gameState.engine);
+    
+    // Initialize Logs
+    p.logs = { game_info: [], player_info: [], inputs: [] };
+    
+    logInfo(p, "GAME_INIT", { status: "ready" });
+  };
+
+  p.draw = function() {
+    const now = p.millis();
+    gameState.deltaTime = (now - gameState.lastFrameTime) / 1000;
+    gameState.lastFrameTime = now;
+    gameState.frameCount = p.frameCount;
+    
+    // Update State
+    updateGameLogic(p);
+    
+    // Render
+    switch (gameState.gamePhase) {
+      case "START":
+        renderStartScreen(p);
+        break;
+      case "PLAYING":
+        renderGame(p);
+        break;
+      case "PAUSED":
+        renderGame(p);
+        renderPaused(p);
+        break;
+      case "GAME_OVER_WIN":
+        renderGameOver(p, true);
+        break;
+      case "GAME_OVER_LOSE":
+        renderGameOver(p, false);
+        break;
+    }
+
+    // Auto-test runner
+    runAutomatedTests(p);
+  };
+
+  p.keyPressed = function() {
+    // Log Input
+    p.logs.inputs.push({
+      input_type: "keyPressed",
+      data: { key: p.key, keyCode: p.keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+
+    // Global Controls
+    if (p.keyCode === 27) { // ESC
+      togglePause(p);
+      return false;
+    }
+
+    // Phase Specific
+    if (gameState.gamePhase === "START") {
+      if (p.keyCode === 13) { // ENTER
+        loadLevel(p, 0);
+        gameState.gamePhase = "PLAYING";
+        logInfo(p, "PHASE_CHANGE", { phase: "PLAYING" });
+      }
+    } else if (gameState.gamePhase === "PLAYING") {
+      handlePlayingInput(p);
+    } else if (gameState.gamePhase.startsWith("GAME_OVER")) {
+      if (p.keyCode === 82) { // R
+        resetGame(p);
+      }
+    }
+    
+    return false; // Prevent default
+  };
+});
+
+function updateGameLogic(p) {
+  if (gameState.gamePhase === "PLAYING" || gameState.gamePhase === "PAUSED") {
+    // Physics Step (always update unless paused)
+    if (gameState.gamePhase !== "PAUSED" && gameState.isSimulating) {
+      Engine.update(gameState.engine, 1000 / 60);
+      
+      // Check Level Completion
+      checkWinCondition(p);
+      
+      // Check bodies out of bounds (simple cleanup)
+      cleanupBounds();
+    }
+  }
+}
+
+function handlePlayingInput(p) {
+  // If simulating, only R (Reset Level) is allowed
+  if (gameState.isSimulating) {
+    if (p.keyCode === 82) { // R
+      resetLevel(p);
+    }
+    return;
+  }
+  
+  // Typing Mode
+  if (p.keyCode === 13) { // ENTER
+    startSimulation(p);
+  } else if (p.keyCode === 8) { // BACKSPACE
+    gameState.inputString = gameState.inputString.slice(0, -1);
+  } else if (p.key.length === 1 && /[a-z ]/i.test(p.key)) {
+    // Limit string length to avoid overflow
+    if (gameState.inputString.length < 20) {
+      gameState.inputString += p.key;
+    }
+  }
+}
+
+function startSimulation(p) {
+  if (gameState.inputString.trim().length === 0) return;
+  
+  gameState.isSimulating = true;
+  spawnLetters(p);
+  logInfo(p, "SIMULATION_START", { input: gameState.inputString });
+}
+
+function spawnLetters(p) {
+  const level = LEVELS[gameState.currentLevelIndex];
+  const charWidth = 25; // Spacing
+  let startX = level.spawnXStart;
+  const startY = level.spawnY;
+  
+  for (let i = 0; i < gameState.inputString.length; i++) {
+    const char = gameState.inputString[i];
+    if (char === " ") {
+      startX += charWidth;
+      continue;
+    }
+    
+    const bodies = createLetterBody(startX, startY, char);
+    
+    bodies.forEach(b => {
+      World.add(gameState.world, b);
+      gameState.activeBodies.push(b);
+    });
+    
+    startX += charWidth;
+  }
+}
+
+function loadLevel(p, index) {
+  if (index >= LEVELS.length) {
+    gameState.gamePhase = "GAME_OVER_WIN";
+    logInfo(p, "GAME_COMPLETE", { score: gameState.score });
+    return;
+  }
+  
+  // Reset physics world
+  clearWorld(gameState.world);
+  gameState.activeBodies = [];
+  gameState.obstacles = [];
+  gameState.targets = [];
+  gameState.currentLevelIndex = index;
+  gameState.isSimulating = false;
+  gameState.inputString = "";
+  
+  const levelData = LEVELS[index];
+  
+  // Create Obstacles
+  levelData.obstacles.forEach(obs => {
+    const o = new Obstacle(p, obs.x, obs.y, obs.w, obs.h, obs.angle || 0);
+    gameState.obstacles.push(o);
+  });
+  
+  // Create Targets
+  levelData.targets.forEach(t => {
+    const target = new Target(p, t.x, t.y);
+    gameState.targets.push(target);
+  });
+  
+  logInfo(p, "LEVEL_LOAD", { level: index });
+}
+
+function resetLevel(p) {
+  loadLevel(p, gameState.currentLevelIndex);
+}
+
+function resetGame(p) {
+  gameState.score = 0;
+  loadLevel(p, 0);
+  gameState.gamePhase = "START";
+}
+
+function checkWinCondition(p) {
+  // Check if all targets collected
+  const allCollected = gameState.targets.every(t => t.collected);
+  if (allCollected && gameState.targets.length > 0) {
+    // Success!
+    gameState.score += 100;
+    logInfo(p, "LEVEL_COMPLETE", { level: gameState.currentLevelIndex });
+    
+    // Short delay before next level? For now instant.
+    setTimeout(() => {
+       loadLevel(p, gameState.currentLevelIndex + 1);
+    }, 1000);
+    
+    // To prevent multiple triggers, we could pause simulation or empty targets array immediately
+    // For this implementation, the level reload handles it.
+    // However, since this runs every frame, we need a flag "levelTransitioning"
+    // For simplicity, we just clear targets now to stop re-triggering
+    gameState.targets = []; 
+  }
+}
+
+function cleanupBounds() {
+  // Remove bodies that fall too far
+  for (let i = gameState.activeBodies.length - 1; i >= 0; i--) {
+    const body = gameState.activeBodies[i];
+    if (body.position.y > CANVAS_HEIGHT + 200) {
+      World.remove(gameState.world, body);
+      gameState.activeBodies.splice(i, 1);
+    }
+  }
+}
+
+function togglePause(p) {
+  if (gameState.gamePhase === "PLAYING") {
+    gameState.gamePhase = "PAUSED";
+  } else if (gameState.gamePhase === "PAUSED") {
+    gameState.gamePhase = "PLAYING";
+  }
+}
+
+function logInfo(p, type, data) {
+  p.logs.game_info.push({
+    game_status: gameState.gamePhase,
+    event_type: type,
+    data: data,
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+// Automated Testing System
+let testState = {
+  active: false,
+  timer: 0,
+  step: 0
+};
+
+function runAutomatedTests(p) {
+  if (gameState.controlMode === 'HUMAN') return;
+  
+  if (!testState.active) {
+    testState.active = true;
+    testState.timer = p.frameCount;
+    testState.step = 0;
+    console.log("Starting Auto Test: " + gameState.controlMode);
+    
+    // Ensure we are in playing mode
+    if (gameState.gamePhase === "START") {
+      loadLevel(p, 0);
+      gameState.gamePhase = "PLAYING";
+    }
+  }
+  
+  const elapsed = p.frameCount - testState.timer;
+  
+  if (gameState.controlMode === 'TEST_1') {
+    // Test 1: Drop 'l' on level 1
+    if (testState.step === 0 && elapsed > 10) {
+       loadLevel(p, 0); // Force level 1
+       gameState.inputString = "l";
+       testState.step++;
+       testState.timer = p.frameCount;
+    }
+    if (testState.step === 1 && elapsed > 20) {
+      startSimulation(p);
+      testState.step++;
+    }
+    // Wait for win
+  }
+  
+  if (gameState.controlMode === 'TEST_2') {
+    // Test 2: Roll 'o' on level 2
+    if (testState.step === 0 && elapsed > 10) {
+      loadLevel(p, 1); // Level 2
+      gameState.inputString = "o";
+      testState.step++;
+      testState.timer = p.frameCount;
+    }
+    if (testState.step === 1 && elapsed > 20) {
+      startSimulation(p);
+      testState.step++;
+    }
+  }
+
+  if (gameState.controlMode === 'TEST_3') {
+    // Test 3: Interactions "oo"
+    if (testState.step === 0 && elapsed > 10) {
+      loadLevel(p, 0);
+      gameState.inputString = "oo";
+      testState.step++;
+      testState.timer = p.frameCount;
+    }
+    if (testState.step === 1 && elapsed > 20) {
+      startSimulation(p);
+      testState.step++;
+    }
+  }
+}
+
+// Expose setControlMode
+window.setControlMode = (mode) => {
+  gameState.controlMode = mode;
+  // Reset for clean test state
+  if (gameInstance) {
+     const p = gameInstance;
+     resetGame(p);
+     testState.active = false;
+  }
+};
+</file>
+
+<file name="renderer.js">
+import { gameState, PALETTE } from './globals.js';
+
+export function drawBody(p, body) {
+  p.beginShape();
+  const vertices = body.vertices;
+  for (let i = 0; i < vertices.length; i++) {
+    p.vertex(vertices[i].x, vertices[i].y);
+  }
+  p.endShape(p.CLOSE);
+}
+
+export function renderGame(p) {
+  // Clear background
+  p.background(PALETTE.background);
+  
+  p.push();
+  // Apply Camera
+  // For this simple prototype, we might keep camera static unless we want to support panning
+  // Let's implement simple centering if needed, but 600x400 fits our levels
+  // p.translate(-gameState.camera.x, -gameState.camera.y);
+
+  // Draw input line (spawn area)
+  renderSpawnLine(p);
+
+  // Draw obstacles
+  gameState.obstacles.forEach(obs => obs.render(p));
+
+  // Draw targets
+  gameState.targets.forEach(target => target.render(p));
+
+  // Draw active letters
+  p.fill(PALETTE.letter);
+  p.stroke(PALETTE.letterStroke);
+  p.strokeWeight(1);
+  
+  if (gameState.isSimulating) {
+    gameState.activeBodies.forEach(body => {
+      // Handle compound bodies
+      if (body.parts && body.parts.length > 1) {
+        body.parts.forEach(part => {
+          if (part !== body) drawBody(p, part);
+        });
+      } else {
+        drawBody(p, body);
+      }
+    });
+  } else {
+    // Render text preview
+    renderInputPreview(p);
+  }
+
+  p.pop();
+
+  // Draw UI Overlay
+  renderUI(p);
+}
+
+function renderSpawnLine(p) {
+  const currentLevel = getCurrentLevel();
+  if (!currentLevel) return;
+
+  p.stroke(255, 255, 255, 50);
+  p.strokeWeight(1);
+  p.line(0, currentLevel.spawnY, 600, currentLevel.spawnY);
+  
+  // Marker for start text pos
+  p.fill(255, 255, 255, 50);
+  p.noStroke();
+  p.circle(currentLevel.spawnXStart, currentLevel.spawnY, 4);
+}
+
+function renderInputPreview(p) {
+  const currentLevel = getCurrentLevel();
+  if (!currentLevel) return;
+
+  p.textAlign(p.LEFT, p.CENTER);
+  p.textSize(30);
+  p.noStroke();
+  p.fill(PALETTE.text);
+  
+  // Monospace font for alignment with physics spacing roughly
+  p.textFont('monospace'); 
+  
+  // Draw text at spawn line
+  // We need to match the spacing we use for spawning
+  // Spacing = 20px per char roughly?
+  const charWidth = 25;
+  
+  let x = currentLevel.spawnXStart;
+  const y = currentLevel.spawnY;
+  
+  for (let i = 0; i < gameState.inputString.length; i++) {
+    const char = gameState.inputString[i];
+    p.text(char, x, y - 15); // Draw slightly above line
+    x += charWidth;
+  }
+  
+  // Cursor
+  if (p.frameCount % 60 < 30) {
+    const cursorX = currentLevel.spawnXStart + (gameState.inputString.length * charWidth);
+    p.rect(cursorX, y - 30, 2, 30);
+  }
+}
+
+function renderUI(p) {
+  // Top bar
+  p.noStroke();
+  p.fill(0, 0, 0, 100);
+  p.rect(0, 0, 600, 40);
+  
+  p.fill(PALETTE.text);
+  p.textAlign(p.LEFT, p.CENTER);
+  p.textSize(16);
+  p.text(`Level ${gameState.currentLevelIndex + 1}`, 10, 20);
+  
+  const levelDesc = getCurrentLevel()?.description || "";
+  p.textAlign(p.CENTER, p.CENTER);
+  p.text(levelDesc, 300, 20);
+  
+  p.textAlign(p.RIGHT, p.CENTER);
+  p.text(`Score: ${gameState.score}`, 590, 20);
+
+  // Instructions at bottom if empty input
+  if (!gameState.isSimulating && gameState.inputString.length === 0) {
+    p.textAlign(p.CENTER, p.BOTTOM);
+    p.textSize(14);
+    p.fill(150);
+    p.text("Type letters (a-z). Press ENTER to drop.", 300, 390);
+  }
+}
+
+import { LEVELS } from './levels.js';
+function getCurrentLevel() {
+  return LEVELS[gameState.currentLevelIndex];
+}
+
+export function renderStartScreen(p) {
+  p.background(PALETTE.background);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.fill(PALETTE.text);
+  
+  p.textSize(48);
+  p.text("PhysiType", 300, 150);
+  
+  p.textSize(18);
+  p.text("Where words have weight.", 300, 200);
+  
+  p.textSize(24);
+  if (p.frameCount % 60 < 40) {
+    p.text("PRESS ENTER TO START", 300, 300);
+  }
+  
+  p.textSize(14);
+  p.fill(150);
+  p.text("Controls: A-Z to type, ENTER to drop, R to retry level", 300, 350);
+}
+
+export function renderGameOver(p, win) {
+  p.push();
+  p.fill(0, 0, 0, 200);
+  p.rect(0, 0, 600, 400);
+  
+  p.textAlign(p.CENTER, p.CENTER);
+  p.fill(win ? PALETTE.target : '#ff5555');
+  p.textSize(48);
+  p.text(win ? "ALL LEVELS CLEARED!" : "GAME OVER", 300, 180);
+  
+  p.fill(PALETTE.text);
+  p.textSize(24);
+  p.text(`Final Score: ${gameState.score}`, 300, 230);
+  
+  p.textSize(18);
+  p.text("Press R to Restart", 300, 280);
+  p.pop();
+}
+
+export function renderPaused(p) {
+  p.push();
+  p.fill(0, 0, 0, 150);
+  p.rect(0, 0, 600, 400);
+  p.fill(PALETTE.text);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(32);
+  p.text("PAUSED", 300, 200);
+  p.pop();
+}
+</file>
+
+<file name="entities.js">
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { World, Bodies, Body } = Matter;
+import { gameState, CATEGORIES, PALETTE } from './globals.js';
+import { drawBody } from './renderer.js';
+
+export class Target {
+  constructor(p, x, y) {
+    this.p = p;
+    this.x = x;
+    this.y = y;
+    this.radius = 10;
+    this.collected = false;
+    this.pulsePhase = 0;
+    
+    this.body = Bodies.circle(x, y, this.radius, {
+      isStatic: true,
+      label: 'target',
+      isSensor: true, // Don't physically block letters
+      collisionFilter: {
+        category: CATEGORIES.TARGET,
+        mask: CATEGORIES.LETTER
+      }
+    });
+    
+    World.add(gameState.world, this.body);
+  }
+  
+  collect() {
+    if (!this.collected) {
+      this.collected = true;
+      // Visual feedback handled in render
+      // Remove from physics world immediately to prevent double triggers
+      World.remove(gameState.world, this.body);
+    }
+  }
+  
+  render(p) {
+    if (this.collected) return;
+    
+    this.pulsePhase += 0.1;
+    const pulse = Math.sin(this.pulsePhase) * 2;
+    
+    p.push();
+    p.translate(this.x, this.y);
+    p.noStroke();
+    
+    // Glow
+    p.fill(255, 255, 0, 100);
+    p.circle(0, 0, (this.radius * 2) + 10 + pulse);
+    
+    // Core
+    p.fill(PALETTE.target);
+    p.circle(0, 0, (this.radius * 2) + pulse);
+    
+    p.pop();
+  }
+}
+
+export class Obstacle {
+  constructor(p, x, y, w, h, angle = 0) {
+    this.p = p;
+    this.w = w;
+    this.h = h;
+    
+    this.body = Bodies.rectangle(x, y, w, h, {
+      isStatic: true,
+      label: 'obstacle',
+      angle: angle,
+      friction: 0.8,
+      collisionFilter: {
+        category: CATEGORIES.OBSTACLE,
+        mask: CATEGORIES.LETTER
+      }
+    });
+    
+    World.add(gameState.world, this.body);
+  }
+  
+  render(p) {
+    p.push();
+    p.fill(PALETTE.obstacle);
+    p.noStroke();
+    drawBody(p, this.body);
+    p.pop();
+  }
+}
+</file>
+
+<file name="levels.js">
+export const LEVELS = [
+  {
+    // Level 1: Basics
+    id: 1,
+    description: "Drop a line.",
+    spawnY: 100,
+    spawnXStart: 200,
+    targets: [{x: 300, y: 350}],
+    obstacles: [
+      {x: 300, y: 380, w: 600, h: 40} // Floor
+    ]
+  },
+  {
+    // Level 2: Rolling
+    id: 2,
+    description: "Let it roll.",
+    spawnY: 100,
+    spawnXStart: 100,
+    targets: [{x: 500, y: 350}],
+    obstacles: [
+      {x: 300, y: 380, w: 600, h: 40}, // Floor
+      {x: 100, y: 200, w: 200, h: 20, angle: 0.4} // Ramp down-right
+    ]
+  },
+  {
+    // Level 3: Bridge or Gap
+    id: 3,
+    description: "Bridge the gap.",
+    spawnY: 100,
+    spawnXStart: 150,
+    targets: [{x: 450, y: 250}],
+    obstacles: [
+      {x: 150, y: 300, w: 200, h: 20}, // Left platform
+      {x: 450, y: 300, w: 200, h: 20}  // Right platform
+    ]
+  },
+  {
+    // Level 4: The Funnel
+    id: 4,
+    description: "Funnel down.",
+    spawnY: 50,
+    spawnXStart: 300,
+    targets: [{x: 300, y: 350}],
+    obstacles: [
+      {x: 200, y: 200, w: 300, h: 20, angle: 0.8}, // Left wall
+      {x: 400, y: 200, w: 300, h: 20, angle: -0.8}, // Right wall
+      {x: 300, y: 380, w: 100, h: 20} // Catch basin
+    ]
+  },
+  {
+    // Level 5: Domino
+    id: 5,
+    description: "Knock it over.",
+    spawnY: 100,
+    spawnXStart: 100,
+    targets: [{x: 550, y: 350}],
+    obstacles: [
+      {x: 300, y: 380, w: 600, h: 40},
+      {x: 400, y: 300, w: 20, h: 120}, // Tall block blocking target
+    ]
+  }
+];
+</file>
+
+<file name="letter_geometry.js">
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Bodies, Body, Composite } = Matter;
+import { CATEGORIES } from './globals.js';
+
+// Base size unit for letters
+const S = 30; // Scale factor
+const W = 5;  // Stroke width for physics bodies
+
+/**
+ * Creates a compound body representing a letter.
+ * x, y: Spawn center position
+ * char: The character 'a'-'z'
+ */
+export function createLetterBody(x, y, char) {
+  const options = {
+    label: 'letter',
+    friction: 0.5,
+    restitution: 0.2, // Low bounce
+    density: 0.002,
+    collisionFilter: {
+      category: CATEGORIES.LETTER,
+      mask: CATEGORIES.OBSTACLE | CATEGORIES.TARGET | CATEGORIES.LETTER
+    },
+    render: { visible: false } // We render manually
+  };
+
+  const parts = getLetterParts(x, y, char);
+  
+  if (!parts || parts.length === 0) {
+    // Fallback block for unknown chars
+    return Bodies.rectangle(x, y, S, S, options);
+  }
+
+  // If it's a single part, just return it (wrapping in array check inside Body.create logic handled by Matter?)
+  // Actually Body.create with parts automatically calculates hull.
+  // For 'i' and 'j', we might want separate bodies (dot separate), but to simplify, we can attach them or just return a composite?
+  // Game design choice: Let's make dots separate bodies for fun! 
+  // Function returns ARRAY of bodies.
+  
+  return parts.map(p => {
+    // If the part is a config object for Bodies.rectangle/circle, create it
+    // But getLetterParts will return actual Bodies to allow complex positioning
+    // We need to reset their position relative to (x,y)
+    return p;
+  });
+}
+
+// Helper to create parts. Returns Array of Matter Bodies.
+function getLetterParts(cx, cy, char) {
+  const bodies = [];
+  const common = { friction: 0.5, restitution: 0.2, density: 0.002, label: 'letter' };
+  
+  // Offset helpers
+  const box = (x, y, w, h) => Bodies.rectangle(cx + x, cy + y, w, h, common);
+  const circ = (x, y, r) => Bodies.circle(cx + x, cy + y, r, common);
+
+  switch(char.toLowerCase()) {
+    case 'a':
+      bodies.push(circ(0, S/4, S/2)); // Loop
+      bodies.push(box(S/2, S/4, W, S)); // Stick
+      break;
+    case 'b':
+      bodies.push(box(-S/3, 0, W, S*1.5)); // Left Stick
+      bodies.push(circ(S/6, S/4, S/2.2)); // Bottom Loop
+      break;
+    case 'c':
+      // Approximate C with 3 rects
+      bodies.push(box(0, -S/2, S, W)); // Top
+      bodies.push(box(-S/2, 0, W, S)); // Left
+      bodies.push(box(0, S/2, S, W)); // Bottom
+      break;
+    case 'd':
+      bodies.push(circ(-S/6, S/4, S/2.2)); // Bottom Loop
+      bodies.push(box(S/3, -S/4, W, S*1.5)); // Right Stick
+      break;
+    case 'e':
+      bodies.push(box(-S/4, 0, W, S)); // Back
+      bodies.push(box(0, -S/2, S, W)); // Top
+      bodies.push(box(0, 0, S, W)); // Middle
+      bodies.push(box(0, S/2, S, W)); // Bottom
+      break;
+    case 'f':
+      bodies.push(box(-S/4, 0, W, S*1.5)); // Vertical
+      bodies.push(box(S/4, -S/1.5, S/1.5, W)); // Top
+      bodies.push(box(S/4, -S/4, S/1.5, W)); // Middle
+      break;
+    case 'g':
+      bodies.push(circ(0, -S/4, S/2.2)); // Top Loop
+      bodies.push(box(S/2, 0, W, S*1.5)); // Right descender
+      bodies.push(box(0, S/1.5, S, W)); // Bottom hook
+      break;
+    case 'h':
+      bodies.push(box(-S/3, -S/4, W, S*1.5)); // Left
+      bodies.push(box(S/3, 0, W, S)); // Right
+      bodies.push(box(0, -S/4, S, W)); // Cross
+      break;
+    case 'i':
+      // Dot is separate!
+      bodies.push(box(0, S/4, W, S)); // Stick
+      bodies.push(circ(0, -S/1.5, W)); // Dot (separate body)
+      break;
+    case 'j':
+      bodies.push(box(S/4, 0, W, S*1.5)); // Stick
+      bodies.push(box(0, S/1.5, S/2, W)); // Hook
+      bodies.push(circ(S/4, -S/1.5, W)); // Dot
+      break;
+    case 'k':
+      bodies.push(box(-S/3, 0, W, S*1.5)); // Stick
+      bodies.push(Bodies.fromVertices(cx + S/6, cy - S/4, [
+        {x: 0, y: 0}, {x: S/2, y: -S/2}, {x: 0, y: S/2}
+      ], common)); // Top branch (simplified)
+       bodies.push(Bodies.fromVertices(cx + S/6, cy + S/4, [
+        {x: 0, y: 0}, {x: S/2, y: S/2}, {x: 0, y: -S/2}
+      ], common)); // Bottom branch
+      break;
+    case 'l':
+      bodies.push(box(0, -S/4, W, S*1.5)); // Just a stick
+      break;
+    case 'm':
+      bodies.push(box(-S/2, 0, W, S));
+      bodies.push(box(0, 0, W, S));
+      bodies.push(box(S/2, 0, W, S));
+      bodies.push(box(-S/4, -S/2, S/2, W));
+      bodies.push(box(S/4, -S/2, S/2, W));
+      break;
+    case 'n':
+      bodies.push(box(-S/3, 0, W, S));
+      bodies.push(box(S/3, 0, W, S));
+      bodies.push(box(0, -S/2, S, W));
+      break;
+    case 'o':
+      bodies.push(circ(0, 0, S/2));
+      break;
+    case 'p':
+      bodies.push(box(-S/3, S/4, W, S*1.5)); // Stick down
+      bodies.push(circ(S/6, -S/4, S/2.2)); // Loop up
+      break;
+    case 'q':
+      bodies.push(circ(-S/6, -S/4, S/2.2)); // Loop up
+      bodies.push(box(S/3, S/4, W, S*1.5)); // Stick down
+      break;
+    case 'r':
+      bodies.push(box(-S/4, 0, W, S));
+      bodies.push(box(S/4, -S/2, S/1.5, W));
+      break;
+    case 's':
+      bodies.push(circ(0, -S/4, S/3)); // Top
+      bodies.push(circ(0, S/4, S/3)); // Bottom
+      // S is hard, two circles slightly offset?
+      // Or 3 rects zigzag
+      break;
+    case 't':
+      bodies.push(box(0, 0, W, S*1.2));
+      bodies.push(box(0, -S/4, S, W));
+      break;
+    case 'u':
+      bodies.push(box(-S/3, -S/4, W, S));
+      bodies.push(box(S/3, -S/4, W, S));
+      bodies.push(box(0, S/4, S, W));
+      break;
+    case 'v':
+      // V shape from vertices
+      const vShape = Bodies.fromVertices(cx, cy, [
+        {x: -S/2, y: -S/2}, {x: 0, y: S/2}, {x: S/2, y: -S/2},
+        {x: S/2-W, y: -S/2}, {x: 0, y: S/2-W}, {x: -S/2+W, y: -S/2}
+      ], common);
+      if(vShape) bodies.push(vShape);
+      else bodies.push(box(0,0,S,S)); // Fallback
+      break;
+    case 'w':
+      bodies.push(box(-S/2, 0, W, S));
+      bodies.push(box(0, 0, W, S));
+      bodies.push(box(S/2, 0, W, S));
+      bodies.push(box(-S/4, S/2, S/2, W));
+      bodies.push(box(S/4, S/2, S/2, W));
+      break;
+    case 'x':
+      // Cross
+      const x1 = box(0, 0, W, S*1.2);
+      Body.rotate(x1, Math.PI/4);
+      const x2 = box(0, 0, W, S*1.2);
+      Body.rotate(x2, -Math.PI/4);
+      bodies.push(x1);
+      bodies.push(x2);
+      break;
+    case 'y':
+      bodies.push(box(-S/4, -S/2, W, S/1.5)); // Left arm
+      bodies.push(box(S/4, -S/2, W, S/1.5)); // Right arm
+      // Rotate them slightly in join? Keeping simple for robustness
+      bodies.push(box(0, S/4, W, S)); // Stem
+      break;
+    case 'z':
+      bodies.push(box(0, -S/2, S, W));
+      bodies.push(box(0, S/2, S, W));
+      const diag = box(0, 0, W, S*1.2);
+      Body.rotate(diag, -Math.PI/4);
+      bodies.push(diag);
+      break;
+    default:
+      bodies.push(box(0, 0, S, S)); // Box
+  }
+
+  // Before returning, if there are multiple parts that should be ONE body (not i, j), join them.
+  // Exception: i, j, x (cross) might be better as compound.
+  // Matter.Body.create({ parts: [...] }) creates a single rigid body from parts.
+  
+  const singleBodyChars = ['i', 'j', '!', '?', ':']; 
+  if (singleBodyChars.includes(char.toLowerCase())) {
+     // Return the array of separate bodies (e.g. dot and stick fall separately)
+     return bodies;
+  } else {
+     // Create a single compound body
+     if (bodies.length === 1) return [bodies[0]];
+     
+     // Note: Body.create with parts modifies the parts positions relative to the new center.
+     // This can be tricky.
+     // For this game, it's safer to return separate bodies if we don't strictly need them rigid, 
+     // BUT we want letters like 'o' or 'd' to hold together.
+     
+     const compound = Body.create({
+       parts: bodies,
+       label: 'letter',
+       friction: 0.5,
+       restitution: 0.2,
+       density: 0.002
+     });
+     
+     // Reset position because compound body centers itself at (0,0) of parts?
+     // Matter.js recenters the body. We need to move it back to cx, cy?
+     // Actually, if we created parts at absolute world coords, the compound body is created there.
+     // We don't need to force position again unless it shifted.
+     
+     return [compound];
+  }
+}
+</file>
+
+<file name="physics.js">
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Engine, World, Events, Body, Vector } = Matter;
+import { gameState, CATEGORIES } from './globals.js';
+import { Target } from './entities.js';
+
+export function createPhysicsEngine() {
+  const engine = Engine.create();
+  engine.gravity.y = 1.0; // Standard gravity
+  engine.gravity.scale = 0.001;
+  
+  // Optimize constraint iterations for stable stacks
+  engine.constraintIterations = 4;
+  engine.positionIterations = 8;
+  engine.velocityIterations = 8;
+
+  return engine;
+}
+
+export function setupCollisionEvents(engine) {
+  Events.on(engine, 'collisionStart', (event) => {
+    const pairs = event.pairs;
+    
+    for (let i = 0; i < pairs.length; i++) {
+      const pair = pairs[i];
+      const bodyA = pair.bodyA;
+      const bodyB = pair.bodyB;
+
+      // Check collision between LETTER and TARGET
+      if (checkCollisionType(bodyA, bodyB, 'letter', 'target')) {
+        const targetBody = bodyA.label === 'target' ? bodyA : bodyB;
+        handleTargetHit(targetBody);
+      }
+    }
+  });
+}
+
+function checkCollisionType(bodyA, bodyB, labelA, labelB) {
+  return (bodyA.label === labelA && bodyB.label === labelB) ||
+         (bodyA.label === labelB && bodyB.label === labelA);
+}
+
+function handleTargetHit(targetBody) {
+  // Find the target entity associated with this body
+  const targetEntity = gameState.targets.find(t => t.body === targetBody);
+  
+  if (targetEntity && !targetEntity.collected) {
+    targetEntity.collect();
+  }
+}
+
+// Cleanup function to remove bodies safely
+export function clearWorld(world) {
+  World.clear(world, false); // Keep the world, clear bodies
+  // Note: We need to be careful not to clear the engine itself if p5 is managing the loop
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

@@ -1,0 +1,458 @@
+<analysis>
+- Issue identified:
+    1.  **Centering**: The game is not centered because `html` and `body` have fixed dimensions (600x400) matching the canvas, rather than filling the viewport and using flexbox to center the content.
+    2.  **Left Lane Bug**: In `input.js`, the left input handler calls `player.changeLane(1)` (move right) immediately followed by `player.changeLane(-1)` (move left), effectively cancelling the movement or preventing movement into the left-most lane from the center.
+    3.  **Game Speed**: The game speed constants in `globals.js` are too low (0.4 start, 1.2 max), and the max speed check in `game.js` uses a hardcoded value instead of the constant.
+- Files affected: `index.html`, `globals.js`, `game.js`, `input.js`
+- Changes needed:
+    1.  **index.html**: Update CSS to set `width/height: 100%` for body/html and use `justify-content: center` to center the game. Update `.control-buttons` to flow naturally below the game instead of using absolute positioning which was tuned for the fixed body size.
+    2.  **globals.js**: Increase `GAME_SPEED_START` to 0.7 and `GAME_SPEED_MAX` to 1.8.
+    3.  **game.js**: Import `GAME_SPEED_MAX` and use it in the update loop to cap speed.
+    4.  **input.js**: Remove the erroneous `player.changeLane(1)` call in the left input handler.
+</analysis>
+
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Blades of Brim Clone</title>
+    <style>
+      html, body { 
+          margin: 0; 
+          padding: 0; 
+          width: 100%;
+          height: 100%;
+          overflow: hidden; 
+          background: #222; 
+          font-family: Arial, sans-serif;
+      }
+      body { 
+          display: flex; 
+          flex-direction: column; 
+          align-items: center; 
+          justify-content: center;
+      }
+      #game-container {
+          position: relative;
+          width: 600px;
+          height: 400px;
+          background: #000;
+          box-shadow: 0 0 20px rgba(0,0,0,0.5);
+          flex-shrink: 0;
+      }
+      canvas { display: block; }
+      .control-buttons { 
+          display: flex; 
+          gap: 10px; 
+          margin: 10px 0; 
+          z-index: 100;
+          width: 100%;
+          justify-content: center;
+      }
+      .control-button { 
+          padding: 8px 16px; 
+          cursor: pointer; 
+          background: #444; 
+          color: #fff; 
+          border: 1px solid #666; 
+          border-radius: 4px; 
+          font-size: 12px;
+      }
+      .control-button:hover { background: #555; }
+      .control-button:active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div id="game-container">
+        <!-- Game Canvas and UI Overlay will be injected here -->
+    </div>
+    
+    <div class="control-buttons">
+        <button class="control-button" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button class="control-button" onclick="window.setControlMode('TEST_1')">TEST 1 (Survival)</button>
+        <button class="control-button" onclick="window.setControlMode('TEST_2')">TEST 2 (Combat)</button>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/seedrandom@3.0.5/seedrandom.min.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</code>
+
+<code filename="globals.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// Game Configuration
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+export const GRAVITY = -0.05;
+export const JUMP_FORCE = 0.8;
+export const LANE_WIDTH = 3.0;
+export const GAME_SPEED_START = 0.7;
+export const GAME_SPEED_MAX = 1.8;
+export const CHUNK_LENGTH = 20;
+export const VISIBLE_CHUNKS = 10;
+export const RENDER_DISTANCE = CHUNK_LENGTH * VISIBLE_CHUNKS;
+
+// Game State Object
+export const gameState = {
+    // Core Status
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    frameCount: 0,
+    deltaTime: 0,
+    lastFrameTime: 0,
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2
+
+    // Game Objects
+    player: null,
+    entities: [], // Enemies, Collectibles
+    worldChunks: [], // Ground segments
+    
+    // Systems
+    scene: null,
+    camera: null,
+    renderer: null,
+    gameContainer: null,
+    
+    // Lighting
+    lights: [],
+    ambientLight: null,
+    directionalLight: null,
+
+    // Progression
+    score: 0,
+    distance: 0,
+    gameSpeed: GAME_SPEED_START,
+    difficultyMultiplier: 1.0,
+    
+    // Input State (Global Access for Test Agents)
+    input: {
+        left: false,
+        right: false,
+        up: false,
+        down: false,
+        attack: false,
+        pause: false,
+        start: false,
+        restart: false
+    }
+};
+
+// Global Logs
+export const logs = {
+    game_info: [],
+    player_info: [],
+    inputs: []
+};
+
+// Expose globally
+window.gameState = gameState;
+window.logs = logs;
+window.getGameState = () => gameState;
+
+// Initialization Helper
+export function resetGameState() {
+    gameState.score = 0;
+    gameState.distance = 0;
+    gameState.gameSpeed = GAME_SPEED_START;
+    gameState.entities = [];
+    gameState.worldChunks = [];
+    gameState.frameCount = 0;
+    
+    // Clear logs for new session if desired, or keep history
+    // Keeping history is safer for analysis
+}
+</code>
+
+<code filename="game.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, resetGameState, GAME_SPEED_MAX } from './globals.js';
+import { setupInput, processInput } from './input.js';
+import { Player, Collectible, Enemy, Obstacle } from './entities.js';
+import { updateWorld } from './world.js';
+import { setupUI, renderUI } from './ui.js';
+import { checkAABB } from './utils.js';
+import { updateTestAgent } from './test_agent.js';
+
+// Setup Three.js
+function init() {
+    // Container
+    const container = document.getElementById('game-container') || document.body;
+    gameState.gameContainer = container;
+    if (!document.getElementById('game-container')) {
+        // Create if missing (fallback)
+        const div = document.createElement('div');
+        div.id = 'game-container';
+        div.style.width = `${CANVAS_WIDTH}px`;
+        div.style.height = `${CANVAS_HEIGHT}px`;
+        div.style.position = 'relative';
+        div.style.overflow = 'hidden';
+        document.body.appendChild(div);
+        gameState.gameContainer = div;
+    }
+
+    // Renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    gameState.gameContainer.appendChild(renderer.domElement);
+    gameState.renderer = renderer;
+
+    // Scene
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87CEEB); // Sky Blue
+    scene.fog = new THREE.Fog(0x87CEEB, 20, 50);
+    gameState.scene = scene;
+
+    // Camera
+    const camera = new THREE.PerspectiveCamera(60, CANVAS_WIDTH / CANVAS_HEIGHT, 0.1, 100);
+    camera.position.set(0, 5, 8);
+    camera.lookAt(0, 0, -5);
+    gameState.camera = camera;
+
+    // Lights
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(10, 20, 10);
+    dirLight.castShadow = true;
+    dirLight.shadow.camera.top = 20;
+    dirLight.shadow.camera.bottom = -20;
+    dirLight.shadow.camera.left = -20;
+    dirLight.shadow.camera.right = 20;
+    scene.add(dirLight);
+
+    // Setup Systems
+    setupInput();
+    setupUI();
+    
+    // Seed RNG
+    Math.seedrandom('42');
+
+    // Start Loop
+    requestAnimationFrame(gameLoop);
+}
+
+// Main Loop
+function gameLoop(time) {
+    requestAnimationFrame(gameLoop);
+
+    const dt = Math.min((time - gameState.lastFrameTime) / 1000, 0.1); // Cap dt
+    gameState.lastFrameTime = time;
+    gameState.deltaTime = dt;
+    gameState.frameCount++;
+
+    processInput();
+    updateTestAgent(); // AI Override if enabled
+
+    if (gameState.gamePhase === 'PLAYING') {
+        updateGame(dt);
+    }
+    
+    // Camera follow
+    if (gameState.player && gameState.player.mesh) {
+        const pPos = gameState.player.mesh.position;
+        // Smooth follow X
+        gameState.camera.position.x += (pPos.x * 0.5 - gameState.camera.position.x) * 5 * dt;
+        gameState.camera.position.z = pPos.z + 8;
+        gameState.camera.lookAt(pPos.x * 0.2, pPos.y + 1, pPos.z - 5);
+    }
+
+    gameState.renderer.render(gameState.scene, gameState.camera);
+    renderUI();
+}
+
+function updateGame(dt) {
+    // Initialize Player if needed
+    if (!gameState.player) {
+        resetGameState();
+        gameState.player = new Player();
+    }
+
+    // Move Player Forward (World Space)
+    gameState.player.mesh.position.z -= gameState.gameSpeed * 10 * dt;
+    gameState.distance = -gameState.player.mesh.position.z;
+    
+    // Increase speed over time
+    if (gameState.gameSpeed < GAME_SPEED_MAX) {
+        gameState.gameSpeed += 0.005 * dt;
+    }
+
+    // World Generation
+    updateWorld(gameState.player.mesh.position.z);
+
+    // Update Entities
+    gameState.player.update(dt);
+    
+    // Filter dead entities
+    gameState.entities = gameState.entities.filter(e => e.active);
+
+    gameState.entities.forEach(entity => {
+        entity.update(dt);
+        
+        // Check collision with player
+        if (entity.active && checkAABB(gameState.player.bbox, entity.bbox)) {
+            if (entity instanceof Collectible) {
+                entity.collect();
+            } else if (entity instanceof Obstacle) {
+                gameState.player.takeDamage(100); // Instant kill for walls
+            } else if (entity instanceof Enemy) {
+                if (!gameState.player.isAttacking) {
+                    gameState.player.takeDamage(30);
+                    entity.die(); // Enemy dies on impact but hurts player
+                }
+            }
+        }
+    });
+}
+
+// Start
+init();
+
+// Global hooks for buttons
+window.setControlMode = (mode) => {
+    gameState.controlMode = mode;
+    console.log(`Control Mode set to: ${mode}`);
+    // Restart game to apply clean state
+    gameState.gamePhase = 'START';
+    resetGameState();
+    if (gameState.player) {
+        gameState.scene.remove(gameState.player.mesh);
+        gameState.player = null;
+    }
+    // Remove all entities
+    gameState.entities.forEach(e => e.destroy());
+    gameState.entities = [];
+    gameState.worldChunks.forEach(c => c.destroy());
+    gameState.worldChunks = [];
+};
+</code>
+
+<code filename="input.js">
+import { gameState, logs } from './globals.js';
+
+export function setupInput() {
+    window.addEventListener('keydown', (e) => {
+        handleKey(e.key, e.code, true);
+    });
+
+    window.addEventListener('keyup', (e) => {
+        handleKey(e.key, e.code, false);
+    });
+}
+
+function handleKey(key, code, isPressed) {
+    const input = gameState.input;
+    
+    // Log Input
+    if (isPressed) {
+        logs.inputs.push({
+            type: 'keydown',
+            key: key,
+            code: code,
+            frame: gameState.frameCount,
+            time: Date.now()
+        });
+    }
+
+    // Mapping
+    switch(code) {
+        case 'ArrowLeft':
+        case 'KeyA':
+            input.left = isPressed;
+            break;
+        case 'ArrowRight':
+        case 'KeyD':
+            input.right = isPressed;
+            break;
+        case 'ArrowUp':
+        case 'KeyW':
+            input.up = isPressed;
+            break;
+        case 'ArrowDown':
+        case 'KeyS':
+            input.down = isPressed;
+            break;
+        case 'Space':
+            input.attack = isPressed;
+            break;
+        case 'Enter':
+            input.start = isPressed;
+            break;
+        case 'Escape':
+            // Toggle pause only on down press
+            if (isPressed) input.pause = !input.pause; 
+            break;
+        case 'KeyR':
+            input.restart = isPressed;
+            break;
+    }
+}
+
+export function processInput() {
+    // Phase Transitions
+    if (gameState.input.start && gameState.gamePhase === 'START') {
+        gameState.gamePhase = 'PLAYING';
+    }
+    
+    if (gameState.input.pause && gameState.gamePhase === 'PLAYING') {
+        gameState.gamePhase = 'PAUSED';
+    } else if (!gameState.input.pause && gameState.gamePhase === 'PAUSED') {
+        // This toggle logic in handleKey handles the flip, 
+        // but we need to ensure we don't flip-flop every frame.
+        // Simplified: ESC sets a flag, logic here handles state.
+        // Correct implementation: handleKey toggles a 'pauseRequest' or similar.
+        // For simplicity: KeyDown on Escape executes logic directly usually.
+        // Let's rely on KeyDown event in handleKey for Pause toggle to avoid bounce.
+    }
+    
+    if (gameState.gamePhase === 'PAUSED' && !gameState.input.pause) {
+         gameState.gamePhase = 'PLAYING';
+    }
+
+    if (gameState.input.restart && (gameState.gamePhase === 'GAME_OVER_WIN' || gameState.gamePhase === 'GAME_OVER_LOSE')) {
+        window.location.reload(); // Simple restart
+    }
+
+    // Player Control
+    if (gameState.gamePhase === 'PLAYING' && gameState.player) {
+        const player = gameState.player;
+        
+        // Lane changing (needs single press detection)
+        if (gameState.input.left) {
+            if (!player.wasLeft) {
+                // Corrected: Left key decreases index (moves left)
+                player.changeLane(-1);
+            }
+            player.wasLeft = true;
+        } else {
+            player.wasLeft = false;
+        }
+
+        if (gameState.input.right) {
+            if (!player.wasRight) {
+                player.changeLane(1);
+            }
+            player.wasRight = true;
+        } else {
+            player.wasRight = false;
+        }
+
+        if (gameState.input.up) {
+            player.jump();
+        }
+
+        if (gameState.input.down) {
+            player.roll();
+        }
+
+        if (gameState.input.attack) {
+            player.attack();
+        }
+    }
+}
+</code>

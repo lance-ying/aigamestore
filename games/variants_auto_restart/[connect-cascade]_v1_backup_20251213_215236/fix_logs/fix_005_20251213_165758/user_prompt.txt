@@ -1,0 +1,1309 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you make this game more visually distinctive?  and can you add cool elemental powers for each color dot that matches visually? 
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 600px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Connect Cascade</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif;">Connect Cascade is a color-matching puzzle game where you connect adjacent dots of the same color to clear them from the grid. Form squares to clear all dots of that color! Complete level objectives like clearing specific colored dots or dropping anchors to the bottom before running out of moves. Progress through 5 increasingly challenging levels that test your strategic thinking and pattern recognition.</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif;">TAP-BASED CONTROLS: Arrow Keys: Single tap moves cursor one cell | Space: Tap once to start path, move with arrows to build, tap again to execute | Shift: Cancel current path | Enter: Start game | Escape: Pause/unpause | R: Return to main menu</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+// globals.js - Global game state and constants
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 600;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const gameState = {
+  gamePhase: GAME_PHASES.START,
+  controlMode: "HUMAN",
+  player: null,
+  entities: [],
+  score: 0,
+  totalScore: 0,
+  levelStartTotalScore: 0, // Track score at start of level for retries
+  highScore: 0,
+  currentLevel: 1,
+  currentMoves: 0,
+  maxMoves: 0,
+  grid: [],
+  gridRows: 6,
+  gridCols: 6,
+  cursorX: 0,
+  cursorY: 0,
+  currentSelectedDot: null,
+  currentPath: [],
+  levelObjectives: {},
+  animationQueue: [],
+  isAnimating: false,
+  colors: [],
+  levelConfig: null,
+  // Input state tracking for tap-based controls
+  keysPressed: new Set(),
+  lastInputTime: 0,
+  inputCooldown: 100 // milliseconds between inputs
+};
+
+export const DOT_COLORS = {
+  RED: [255, 50, 50],
+  BLUE: [50, 100, 255],
+  GREEN: [50, 255, 100],
+  YELLOW: [255, 220, 50],
+  PURPLE: [200, 80, 255],
+  ORANGE: [255, 150, 50],
+  ANCHOR: [80, 80, 80]
+};
+
+export const SCORE_VALUES = {
+  REGULAR_DOT: 10,
+  SQUARE_DOT: 50,
+  ANCHOR_DROP: 50,
+  LEVEL_COMPLETE: 200,
+  MOVES_REMAINING: 25
+};
+
+// Expose gameState globally
+if (typeof window !== 'undefined') {
+  window.getGameState = () => gameState;
+}
+</file>
+
+<file name="game.js">
+// game.js - Main game file
+import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { LEVEL_CONFIGS, getLevelConfig } from './levels.js';
+import { initializeGrid } from './grid.js';
+import { handleKeyPressed, handleKeyReleased } from './input.js';
+import { renderStartScreen, renderPlayingScreen, renderGameOverScreen } from './render.js';
+
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    
+    // Initialize logs
+    p.logs = {
+      "game_info": [],
+      "inputs": [],
+      "player_info": []
+    };
+    
+    // Load high score
+    if (typeof localStorage !== 'undefined') {
+      const savedHighScore = localStorage.getItem('connectCascadeHighScore');
+      if (savedHighScore) {
+        gameState.highScore = parseInt(savedHighScore);
+      }
+    }
+    
+    // Initialize first level configuration
+    const config = getLevelConfig(gameState.currentLevel);
+    gameState.levelConfig = config;
+    gameState.currentMoves = config.movesLimit;
+    gameState.maxMoves = config.movesLimit;
+    gameState.levelObjectives = JSON.parse(JSON.stringify(config.objectives));
+    gameState.score = 0;
+    gameState.totalScore = 0;
+    gameState.levelStartTotalScore = 0;
+    initializeGrid(p, config);
+    
+    p.logs.game_info.push({
+      data: { phase: "START", level: gameState.currentLevel },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+
+  p.draw = function() {
+    
+    // Render based on game phase
+    if (gameState.gamePhase === GAME_PHASES.START) {
+      renderStartScreen(p);
+    } else if (gameState.gamePhase === GAME_PHASES.PLAYING || gameState.gamePhase === GAME_PHASES.PAUSED) {
+      renderPlayingScreen(p);
+    } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+      renderGameOverScreen(p);
+    }
+    
+    // Log player info
+    if (p.frameCount % 10 === 0 && gameState.gamePhase === GAME_PHASES.PLAYING) {
+      p.logs.player_info.push({
+        screen_x: gameState.cursorX,
+        screen_y: gameState.cursorY,
+        game_x: gameState.cursorX,
+        game_y: gameState.cursorY,
+        framecount: p.frameCount
+      });
+    }
+  };
+
+  p.keyPressed = function() {
+    handleKeyPressed(p, p.key, p.keyCode);
+    return false;
+  };
+
+  p.keyReleased = function() {
+    handleKeyReleased(p, p.key, p.keyCode);
+    return false;
+  };
+
+  
+});
+
+// Expose globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  // Since only "HUMAN" mode remains, we can simplify this.
+  // The function is primarily used to reset the game to level 1 and ensure the button is active.
+  gameState.controlMode = 'HUMAN'; // Always set to HUMAN
+  
+  // Update button states
+  document.querySelectorAll('.control-button').forEach(btn => {
+    btn.classList.remove('active');
+  });
+  
+  // Only the human mode button should exist and be active
+  document.getElementById('humanModeBtn').classList.add('active');
+  
+  // Reset game when switching modes (or clicking the human mode button)
+  gameState.gamePhase = GAME_PHASES.START;
+  gameState.currentLevel = 1;
+  gameState.totalScore = 0;
+  gameState.levelStartTotalScore = 0;
+  const config = getLevelConfig(gameState.currentLevel);
+  gameState.levelConfig = config;
+  gameState.currentMoves = config.movesLimit;
+  gameState.maxMoves = config.movesLimit;
+  gameState.levelObjectives = JSON.parse(JSON.stringify(config.objectives));
+  gameState.score = 0;
+  gameState.cursorX = 0;
+  gameState.cursorY = 0;
+  gameState.currentSelectedDot = null;
+  gameState.currentPath = [];
+  gameState.isAnimating = false;
+  gameState.keysPressed.clear(); // Reset key state
+  initializeGrid(gameInstance, config);
+};
+</file>
+
+<file name="grid.js">
+// grid.js - Grid management functions
+import { gameState, DOT_COLORS } from './globals.js';
+import { Dot } from './dot.js';
+import { getColorName } from './levels.js';
+
+export function initializeGrid(p, config) {
+  const { gridRows, gridCols, colors, anchors } = config;
+  gameState.grid = [];
+  gameState.gridRows = gridRows;
+  gameState.gridCols = gridCols;
+  gameState.colors = colors;
+
+  // Create empty grid
+  for (let row = 0; row < gridRows; row++) {
+    gameState.grid[row] = [];
+    for (let col = 0; col < gridCols; col++) {
+      gameState.grid[row][col] = null;
+    }
+  }
+
+  // Place anchor dots if any
+  const anchorPositions = [];
+  if (anchors > 0) {
+    for (let i = 0; i < anchors; i++) {
+      let row, col;
+      do {
+        row = Math.floor(p.random(0, Math.min(3, gridRows)));
+        col = Math.floor(p.random(gridCols));
+      } while (anchorPositions.some(pos => pos.row === row && pos.col === col));
+      anchorPositions.push({ row, col });
+    }
+  }
+
+  // Fill grid with dots
+  for (let row = 0; row < gridRows; row++) {
+    for (let col = 0; col < gridCols; col++) {
+      const isAnchor = anchorPositions.some(pos => pos.row === row && pos.col === col);
+      let color;
+      if (isAnchor) {
+        color = DOT_COLORS.ANCHOR;
+      } else {
+        color = colors[Math.floor(p.random(colors.length))];
+      }
+      const dot = new Dot(col, row, color, isAnchor ? 'anchor' : 'normal');
+      gameState.grid[row][col] = dot;
+    }
+  }
+}
+
+export function getDotAtPosition(gridX, gridY) {
+  if (gridY < 0 || gridY >= gameState.gridRows || gridX < 0 || gridX >= gameState.gridCols) {
+    return null;
+  }
+  return gameState.grid[gridY][gridX];
+}
+
+export function areDotsAdjacent(dot1, dot2) {
+  const dx = Math.abs(dot1.gridX - dot2.gridX);
+  const dy = Math.abs(dot1.gridY - dot2.gridY);
+  return (dx === 1 && dy === 0) || (dx === 0 && dy === 1);
+}
+
+export function colorsMatch(color1, color2) {
+  return color1[0] === color2[0] && color1[1] === color2[1] && color1[2] === color2[2];
+}
+
+export function isSquareFormed(path, selectedDot) {
+  if (path.length < 4) return false;
+  const lastDot = path[path.length - 1];
+  return areDotsAdjacent(lastDot, selectedDot);
+}
+
+export function clearDots(p, dotsToRemove) {
+  for (let dot of dotsToRemove) {
+    if (gameState.grid[dot.gridY] && gameState.grid[dot.gridY][dot.gridX] === dot) {
+      gameState.grid[dot.gridY][dot.gridX] = null;
+      dot.isClearing = true;
+      
+      // Update objectives
+      const colorName = getColorName(dot.color);
+      if (gameState.levelObjectives[colorName]) {
+        gameState.levelObjectives[colorName].current++;
+      }
+    }
+  }
+}
+
+export function applyGravity(p) {
+  const movements = [];
+  
+  for (let col = 0; col < gameState.gridCols; col++) {
+    let writeRow = gameState.gridRows - 1;
+    
+    for (let row = gameState.gridRows - 1; row >= 0; row--) {
+      const dot = gameState.grid[row][col];
+      if (dot !== null) {
+        if (writeRow !== row) {
+          gameState.grid[writeRow][col] = dot;
+          gameState.grid[row][col] = null;
+          dot.gridY = writeRow;
+          dot.isFalling = true;
+          movements.push({ dot, fromRow: row, toRow: writeRow });
+        }
+        writeRow--;
+      }
+    }
+  }
+  
+  return movements;
+}
+
+export function fillEmptySpaces(p) {
+  const newDots = [];
+  
+  for (let col = 0; col < gameState.gridCols; col++) {
+    for (let row = 0; row < gameState.gridRows; row++) {
+      if (gameState.grid[row][col] === null) {
+        const color = gameState.colors[Math.floor(p.random(gameState.colors.length))];
+        const dot = new Dot(col, row, color, 'normal');
+        gameState.grid[row][col] = dot;
+        dot.isFalling = true;
+        newDots.push(dot);
+      }
+    }
+  }
+  
+  return newDots;
+}
+
+export function checkAnchorObjective() {
+  if (!gameState.levelObjectives.anchor) return;
+  
+  let anchorsAtBottom = 0;
+  const bottomRow = gameState.gridRows - 1;
+  
+  for (let col = 0; col < gameState.gridCols; col++) {
+    const dot = gameState.grid[bottomRow][col];
+    if (dot && dot.type === 'anchor') {
+      anchorsAtBottom++;
+    }
+  }
+  
+  gameState.levelObjectives.anchor.current = anchorsAtBottom;
+}
+</file>
+
+<file name="render.js">
+// render.js - Rendering functions
+import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { LEVEL_CONFIGS } from './levels.js';
+
+const CELL_SIZE = 45;
+
+function getGridOffsets() {
+  const gridWidth = gameState.gridCols * CELL_SIZE;
+  const gridHeight = gameState.gridRows * CELL_SIZE;
+  
+  // Center horizontally
+  const x = (CANVAS_WIDTH - gridWidth) / 2;
+  
+  // Center vertically but ensure space for top UI
+  // UI takes up approx 80-90px with 3 objectives
+  let y = (CANVAS_HEIGHT - gridHeight) / 2;
+  y = Math.max(100, y); // Minimum top margin
+  
+  return { x, y };
+}
+
+export function calculateDotPosition(gridX, gridY) {
+  const offsets = getGridOffsets();
+  return {
+    x: offsets.x + gridX * CELL_SIZE + CELL_SIZE / 2,
+    y: offsets.y + gridY * CELL_SIZE + CELL_SIZE / 2
+  };
+}
+
+export function renderStartScreen(p) {
+  p.background(20, 25, 35);
+  
+  p.noStroke();
+  p.fill(255, 255, 255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text("Connect Cascade", CANVAS_WIDTH / 2, 80);
+  
+  p.textSize(16);
+  p.fill(200, 200, 200);
+  const description = "Connect adjacent dots of the same color!\nForm squares to clear all dots of that color.\nComplete objectives before moves run out.";
+  p.text(description, CANVAS_WIDTH / 2, 150);
+  
+  p.textSize(14);
+  p.fill(150, 150, 150);
+  const instructions = "Arrow Keys: Move cursor\nSpace: Select & connect dots\nShift: Cancel path\nEsc: Pause";
+  p.text(instructions, CANVAS_WIDTH / 2, 240);
+  
+  p.textSize(20);
+  p.fill(100, 255, 100);
+  p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 330);
+  
+  if (gameState.highScore > 0) {
+    p.textSize(16);
+    p.fill(255, 200, 50);
+    p.text("HIGH SCORE: " + gameState.highScore, CANVAS_WIDTH / 2, 370);
+  }
+}
+
+export function renderPlayingScreen(p) {
+  p.background(20, 25, 35);
+  
+  // Draw UI
+  renderUI(p);
+  
+  const offsets = getGridOffsets();
+  const startX = offsets.x;
+  const startY = offsets.y;
+  const gridWidth = gameState.gridCols * CELL_SIZE;
+  const gridHeight = gameState.gridRows * CELL_SIZE;
+  
+  // Draw grid lines
+  p.stroke(60, 60, 80);
+  p.strokeWeight(1);
+  for (let row = 0; row <= gameState.gridRows; row++) {
+    const y = startY + row * CELL_SIZE;
+    p.line(startX, y, startX + gridWidth, y);
+  }
+  for (let col = 0; col <= gameState.gridCols; col++) {
+    const x = startX + col * CELL_SIZE;
+    p.line(x, startY, x, startY + gridHeight);
+  }
+  
+  // Update and draw dots
+  for (let row = 0; row < gameState.gridRows; row++) {
+    for (let col = 0; col < gameState.gridCols; col++) {
+      const dot = gameState.grid[row][col];
+      if (dot) {
+        const pos = calculateDotPosition(col, row);
+        dot.setTarget(pos.x, pos.y, dot.isClearing ? 0 : 35);
+        dot.update();
+        
+        if (dot.alpha > 0) {
+          renderDot(p, dot);
+        }
+      }
+    }
+  }
+  
+  // Draw cursor
+  renderCursor(p);
+  
+  // Draw path
+  renderPath(p);
+  
+  // Draw paused indicator
+  if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+    p.noStroke();
+    p.fill(255, 255, 255);
+    p.textAlign(p.RIGHT, p.TOP);
+    p.textSize(16);
+    p.text("PAUSED", CANVAS_WIDTH - 10, 10);
+  }
+}
+
+function renderUI(p) {
+  p.noStroke();
+  p.fill(255, 255, 255);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(16);
+  p.text("SCORE: " + gameState.score, 10, 10);
+  
+  p.textAlign(p.RIGHT, p.TOP);
+  p.text("MOVES: " + gameState.currentMoves, CANVAS_WIDTH - 10, 10);
+  
+  p.textAlign(p.CENTER, p.TOP);
+  p.text("LEVEL: " + gameState.currentLevel, CANVAS_WIDTH / 2, 10);
+  
+  // Objectives
+  p.textSize(12);
+  p.textAlign(p.LEFT, p.TOP);
+  let yOffset = 40;
+  for (let key in gameState.levelObjectives) {
+    const obj = gameState.levelObjectives[key];
+    const progress = obj.current + "/" + obj.target;
+    const text = obj.description + ": " + progress;
+    const color = obj.current >= obj.target ? [100, 255, 100] : [200, 200, 200];
+    p.fill(...color);
+    p.text(text, 10, yOffset);
+    yOffset += 16;
+  }
+}
+
+function renderDot(p, dot) {
+  if (dot.size <= 0) return;
+  
+  p.noStroke();
+  p.fill(...dot.color, dot.alpha);
+  p.circle(dot.x, dot.y, dot.size);
+  
+  // Draw anchor icon
+  if (dot.type === 'anchor') {
+    p.fill(255, 255, 255, dot.alpha);
+    const anchorSize = dot.size * 0.4;
+    p.push();
+    p.translate(dot.x, dot.y);
+    // Simple anchor shape
+    p.rect(-anchorSize / 4, -anchorSize / 2, anchorSize / 2, anchorSize * 0.8);
+    p.circle(-anchorSize / 2, anchorSize / 4, anchorSize / 2);
+    p.circle(anchorSize / 2, anchorSize / 4, anchorSize / 2);
+    p.pop();
+  }
+  
+  // Highlight if selected
+  if (dot === gameState.currentSelectedDot) {
+    p.stroke(255, 255, 100);
+    p.strokeWeight(4);
+    p.noFill();
+    p.circle(dot.x, dot.y, dot.size + 8);
+  }
+  
+  // Highlight if in path
+  if (gameState.currentPath.includes(dot) && dot !== gameState.currentSelectedDot) {
+    p.stroke(255, 255, 255, 150);
+    p.strokeWeight(2);
+    p.noFill();
+    p.circle(dot.x, dot.y, dot.size + 4);
+  }
+}
+
+function renderCursor(p) {
+  const pos = calculateDotPosition(gameState.cursorX, gameState.cursorY);
+  p.stroke(180, 180, 180);
+  p.strokeWeight(2);
+  p.noFill();
+  p.rect(pos.x - CELL_SIZE / 2, pos.y - CELL_SIZE / 2, CELL_SIZE, CELL_SIZE);
+}
+
+function renderPath(p) {
+  if (gameState.currentPath.length > 1) {
+    p.stroke(255, 255, 255, 200);
+    p.strokeWeight(5);
+    p.noFill();
+    p.beginShape();
+    for (let dot of gameState.currentPath) {
+      const pos = calculateDotPosition(dot.gridX, dot.gridY);
+      p.vertex(pos.x, pos.y);
+    }
+    p.endShape();
+  }
+}
+
+export function renderGameOverScreen(p) {
+  p.background(20, 25, 35);
+  
+  const isWin = gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN;
+  
+  p.noStroke();
+  p.fill(255, 255, 255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text(isWin ? "LEVEL COMPLETE!" : "GAME OVER!", CANVAS_WIDTH / 2, 80);
+  
+  p.textSize(24);
+  p.fill(200, 200, 200);
+  p.text("Final Score: " + gameState.totalScore, CANVAS_WIDTH / 2, 150);
+  
+  // Show objectives
+  p.textSize(16);
+  let yOffset = 200;
+  for (let key in gameState.levelObjectives) {
+    const obj = gameState.levelObjectives[key];
+    const progress = obj.current + "/" + obj.target;
+    const text = obj.description + ": " + progress;
+    const color = obj.current >= obj.target ? [100, 255, 100] : [255, 100, 100];
+    p.fill(...color);
+    p.text(text, CANVAS_WIDTH / 2, yOffset);
+    yOffset += 24;
+  }
+  
+  // Stars for win
+  if (isWin) {
+    const movesLeft = gameState.currentMoves;
+    const stars = movesLeft >= 11 ? 3 : movesLeft >= 6 ? 2 : 1;
+    p.textSize(20);
+    p.fill(255, 200, 50);
+    p.text("★".repeat(stars) + "☆".repeat(3 - stars), CANVAS_WIDTH / 2, yOffset + 20);
+  }
+  
+  p.textSize(20);
+  p.fill(100, 255, 100);
+  
+  let actionText = "PRESS R TO RESTART";
+  if (isWin) {
+    if (gameState.currentLevel < LEVEL_CONFIGS.length) {
+      actionText = "PRESS R FOR NEXT LEVEL";
+    } else {
+      actionText = "PRESS R TO RETURN TO MENU";
+    }
+  } else {
+    actionText = "PRESS R TO RETRY LEVEL";
+  }
+  
+  p.text(actionText, CANVAS_WIDTH / 2, CANVAS_HEIGHT - 60);
+  
+  if (isWin && gameState.currentLevel < LEVEL_CONFIGS.length) {
+    // p.textSize(16);
+    // p.fill(200, 200, 200);
+    // p.text("(Next level available)", CANVAS_WIDTH / 2, CANVAS_HEIGHT - 30);
+  }
+}
+</file>
+
+<file name="testing.js">
+// testing.js - Automated testing controllers
+import { gameState, GAME_PHASES } from './globals.js';
+
+export function getTestAction(p) {
+  if (gameState.controlMode === "TEST_1") {
+    return getTest1Action(p);
+  } else if (gameState.controlMode === "TEST_2") {
+    return getTest2Action(p);
+  }
+  return null;
+}
+
+function getTest1Action(p) {
+  // Basic testing - just start and move around
+  if (gameState.gamePhase === GAME_PHASES.START) {
+    if (p.frameCount % 60 === 30) {
+      return { keyCode: 13, type: 'press' }; // ENTER
+    }
+  } else if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+    const cycle = Math.floor(p.frameCount / 30) % 8;
+    if (p.frameCount % 30 === 0) {
+      if (cycle < 4) {
+        return { keyCode: 37 + cycle, type: 'press' }; // Arrow keys
+      } else if (cycle === 4) {
+        return { keyCode: 32, type: 'press' }; // Space - select
+      } else if (cycle === 5) {
+        return { keyCode: 39, type: 'press' }; // Right arrow - extend
+      } else if (cycle === 7) {
+        return { keyCode: 32, type: 'press' }; // Space - confirm
+      }
+    }
+  }
+  return null;
+}
+
+function getTest2Action(p) {
+  // Win testing - make smart moves
+  if (gameState.gamePhase === GAME_PHASES.START) {
+    if (p.frameCount % 60 === 30) {
+      return { keyCode: 13, type: 'press' };
+    }
+  } else if (gameState.gamePhase === GAME_PHASES.PLAYING && !gameState.isAnimating) {
+    // Simple strategy: find any valid 2-dot path
+    if (gameState.currentSelectedDot === null) {
+      // Find a dot with an adjacent same-color dot
+      for (let row = 0; row < gameState.gridRows; row++) {
+        for (let col = 0; col < gameState.gridCols; col++) {
+          const dot = gameState.grid[row][col];
+          if (!dot) continue;
+          
+          // Check right neighbor
+          if (col < gameState.gridCols - 1) {
+            const right = gameState.grid[row][col + 1];
+            if (right && dot.color[0] === right.color[0] && 
+                dot.color[1] === right.color[1] && 
+                dot.color[2] === right.color[2]) {
+              // Move cursor to this dot
+              if (gameState.cursorX !== col || gameState.cursorY !== row) {
+                if (gameState.cursorX < col) return { keyCode: 39, type: 'press' };
+                if (gameState.cursorX > col) return { keyCode: 37, type: 'press' };
+                if (gameState.cursorY < row) return { keyCode: 40, type: 'press' };
+                if (gameState.cursorY > row) return { keyCode: 38, type: 'press' };
+              } else {
+                return { keyCode: 32, type: 'press' }; // Select
+              }
+            }
+          }
+          
+          // Check down neighbor
+          if (row < gameState.gridRows - 1) {
+            const down = gameState.grid[row + 1][col];
+            if (down && dot.color[0] === down.color[0] && 
+                dot.color[1] === down.color[1] && 
+                dot.color[2] === down.color[2]) {
+              if (gameState.cursorX !== col || gameState.cursorY !== row) {
+                if (gameState.cursorX < col) return { keyCode: 39, type: 'press' };
+                if (gameState.cursorX > col) return { keyCode: 37, type: 'press' };
+                if (gameState.cursorY < row) return { keyCode: 40, type: 'press' };
+                if (gameState.cursorY > row) return { keyCode: 38, type: 'press' };
+              } else {
+                return { keyCode: 32, type: 'press' };
+              }
+            }
+          }
+        }
+      }
+    } else if (gameState.currentPath.length === 1) {
+      // Move to adjacent same-color dot
+      const dot = gameState.currentPath[0];
+      const directions = [
+        { dx: 1, dy: 0, key: 39 },
+        { dx: 0, dy: 1, key: 40 },
+        { dx: -1, dy: 0, key: 37 },
+        { dx: 0, dy: -1, key: 38 }
+      ];
+      
+      for (let dir of directions) {
+        const newX = dot.gridX + dir.dx;
+        const newY = dot.gridY + dir.dy;
+        if (newX >= 0 && newX < gameState.gridCols && 
+            newY >= 0 && newY < gameState.gridRows) {
+          const neighbor = gameState.grid[newY][newX];
+          if (neighbor && dot.color[0] === neighbor.color[0] && 
+              dot.color[1] === neighbor.color[1] && 
+              dot.color[2] === neighbor.color[2]) {
+            return { keyCode: dir.key, type: 'press' };
+          }
+        }
+      }
+    } else if (gameState.currentPath.length >= 2) {
+      return { keyCode: 32, type: 'press' }; // Complete path
+    }
+  } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || 
+             gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+    if (p.frameCount % 120 === 60) {
+      return { keyCode: 82, type: 'press' }; // R
+    }
+  }
+  return null;
+}
+</file>
+
+<file name="dot.js">
+// dot.js - Dot class
+export class Dot {
+  constructor(gridX, gridY, color, type = 'normal') {
+    this.gridX = gridX;
+    this.gridY = gridY;
+    this.color = color;
+    this.type = type; // 'normal' or 'anchor'
+    this.x = 0;
+    this.y = 0;
+    this.targetX = 0;
+    this.targetY = 0;
+    this.size = 0;
+    this.targetSize = 0;
+    this.alpha = 255;
+    this.isClearing = false;
+    this.isFalling = false;
+  }
+
+  update() {
+    // Smooth position interpolation
+    const lerpSpeed = 0.2;
+    this.x += (this.targetX - this.x) * lerpSpeed;
+    this.y += (this.targetY - this.y) * lerpSpeed;
+    this.size += (this.targetSize - this.size) * lerpSpeed;
+  }
+
+  setTarget(x, y, size) {
+    this.targetX = x;
+    this.targetY = y;
+    this.targetSize = size;
+  }
+}
+</file>
+
+<file name="levels.js">
+// levels.js - Level configurations
+import { DOT_COLORS } from './globals.js';
+
+export const LEVEL_CONFIGS = [
+  // EASY LEVELS (2)
+  {
+    level: 1,
+    gridRows: 8,
+    gridCols: 8,
+    colors: [DOT_COLORS.RED, DOT_COLORS.BLUE, DOT_COLORS.GREEN, DOT_COLORS.YELLOW],
+    movesLimit: 30,
+    objectives: {
+      red: { target: 20, current: 0, description: "Clear 20 Red dots" },
+      blue: { target: 20, current: 0, description: "Clear 20 Blue dots" }
+    },
+    anchors: 0
+  },
+  {
+    level: 2,
+    gridRows: 8,
+    gridCols: 8,
+    colors: [DOT_COLORS.RED, DOT_COLORS.BLUE, DOT_COLORS.GREEN, DOT_COLORS.YELLOW],
+    movesLimit: 35,
+    objectives: {
+      green: { target: 20, current: 0, description: "Clear 20 Green dots" },
+      yellow: { target: 20, current: 0, description: "Clear 20 Yellow dots" }
+    },
+    anchors: 0
+  },
+  // MEDIUM LEVELS (2)
+  {
+    level: 3,
+    gridRows: 9,
+    gridCols: 9,
+    colors: [DOT_COLORS.RED, DOT_COLORS.BLUE, DOT_COLORS.GREEN, DOT_COLORS.YELLOW, DOT_COLORS.PURPLE],
+    movesLimit: 40,
+    objectives: {
+      purple: { target: 25, current: 0, description: "Clear 25 Purple dots" },
+      red: { target: 25, current: 0, description: "Clear 25 Red dots" }
+    },
+    anchors: 0
+  },
+  {
+    level: 4,
+    gridRows: 9,
+    gridCols: 9,
+    colors: [DOT_COLORS.RED, DOT_COLORS.BLUE, DOT_COLORS.GREEN, DOT_COLORS.YELLOW, DOT_COLORS.PURPLE],
+    movesLimit: 45,
+    objectives: {
+      anchor: { target: 3, current: 0, description: "Drop 3 Anchors to bottom" },
+      blue: { target: 30, current: 0, description: "Clear 30 Blue dots" }
+    },
+    anchors: 3
+  },
+  // HARD LEVELS (2)
+  {
+    level: 5,
+    gridRows: 10,
+    gridCols: 10,
+    colors: [DOT_COLORS.RED, DOT_COLORS.BLUE, DOT_COLORS.GREEN, DOT_COLORS.YELLOW, DOT_COLORS.PURPLE, DOT_COLORS.ORANGE],
+    movesLimit: 50,
+    objectives: {
+      anchor: { target: 5, current: 0, description: "Drop 5 Anchors to bottom" },
+      orange: { target: 25, current: 0, description: "Clear 25 Orange dots" }
+    },
+    anchors: 5
+  },
+  {
+    level: 6,
+    gridRows: 10,
+    gridCols: 10,
+    colors: [DOT_COLORS.RED, DOT_COLORS.BLUE, DOT_COLORS.GREEN, DOT_COLORS.YELLOW, DOT_COLORS.PURPLE, DOT_COLORS.ORANGE],
+    movesLimit: 60,
+    objectives: {
+      red: { target: 30, current: 0, description: "Clear 30 Red dots" },
+      green: { target: 30, current: 0, description: "Clear 30 Green dots" },
+      blue: { target: 30, current: 0, description: "Clear 30 Blue dots" }
+    },
+    anchors: 0
+  }
+];
+
+export function getLevelConfig(level) {
+  return LEVEL_CONFIGS[level - 1] || LEVEL_CONFIGS[0];
+}
+
+export function getColorName(colorArray) {
+  const colorStr = colorArray.join(',');
+  const entries = Object.entries(DOT_COLORS);
+  for (let [name, color] of entries) {
+    if (color.join(',') === colorStr) {
+      return name.toLowerCase();
+    }
+  }
+  return 'unknown';
+}
+</file>
+
+<file name="input.js">
+// input.js - Input handling (TAP-BASED for VLM compatibility)
+import { gameState, GAME_PHASES } from './globals.js';
+import { getDotAtPosition, areDotsAdjacent, colorsMatch, isSquareFormed, clearDots, applyGravity, fillEmptySpaces, checkAnchorObjective, initializeGrid } from './grid.js';
+import { getColorName, getLevelConfig, LEVEL_CONFIGS } from './levels.js';
+import { SCORE_VALUES } from './globals.js';
+
+export function handleKeyPressed(p, key, keyCode) {
+  // Log input
+  p.logs.inputs.push({
+    input_type: "keyPressed",
+    data: { key, keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+
+  // TAP-BASED INPUT: Ignore if key is already pressed (prevent key repeat)
+  const keyId = `${keyCode}`;
+  if (gameState.keysPressed.has(keyId)) {
+    return; // Key is being held, ignore repeat events
+  }
+  
+  // Mark key as pressed
+  gameState.keysPressed.add(keyId);
+  
+  // Check input cooldown for movement/action keys
+  const now = Date.now();
+  const isMovementOrAction = (keyCode >= 37 && keyCode <= 40) || keyCode === 32 || keyCode === 16;
+  if (isMovementOrAction && (now - gameState.lastInputTime) < gameState.inputCooldown) {
+    return; // Too soon after last input
+  }
+
+  // gameState.controlMode will always be "HUMAN" now, so no need for this check.
+
+  if (gameState.gamePhase === GAME_PHASES.START) {
+    if (keyCode === 13) { // ENTER
+      startGame(p);
+    }
+  } else if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+    if (keyCode === 27) { // ESC
+      pauseGame(p);
+    } else if (keyCode === 32) { // SPACE
+      handleSpacePress(p);
+      gameState.lastInputTime = now;
+    } else if (keyCode === 16) { // SHIFT
+      handleShiftPress(p);
+      gameState.lastInputTime = now;
+    } else if (keyCode >= 37 && keyCode <= 40) { // ARROW KEYS
+      handleArrowPress(p, keyCode);
+      gameState.lastInputTime = now;
+    }
+  } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+    if (keyCode === 27) { // ESC
+      unpauseGame(p);
+    }
+  } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+    if (keyCode === 82) { // R
+      handleGameEndInput(p);
+    }
+  }
+}
+
+export function handleKeyReleased(p, key, keyCode) {
+  p.logs.inputs.push({
+    input_type: "keyReleased",
+    data: { key, keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+
+  // TAP-BASED INPUT: Clear key from pressed set
+  const keyId = `${keyCode}`;
+  gameState.keysPressed.delete(keyId);
+
+  // gameState.controlMode will always be "HUMAN" now, so no need for this check.
+}
+
+function startGame(p) {
+  gameState.gamePhase = GAME_PHASES.PLAYING;
+  p.logs.game_info.push({
+    data: { phase: "PLAYING", level: gameState.currentLevel },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function pauseGame(p) {
+  gameState.gamePhase = GAME_PHASES.PAUSED;
+  p.logs.game_info.push({
+    data: { phase: "PAUSED" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function unpauseGame(p) {
+  gameState.gamePhase = GAME_PHASES.PLAYING;
+  p.logs.game_info.push({
+    data: { phase: "PLAYING" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function loadLevel(p, levelNum) {
+  gameState.currentLevel = levelNum;
+  const config = getLevelConfig(levelNum);
+  gameState.levelConfig = config;
+  gameState.currentMoves = config.movesLimit;
+  gameState.maxMoves = config.movesLimit;
+  gameState.levelObjectives = JSON.parse(JSON.stringify(config.objectives));
+  gameState.score = 0;
+  gameState.cursorX = 0;
+  gameState.cursorY = 0;
+  gameState.currentSelectedDot = null;
+  gameState.currentPath = [];
+  gameState.isAnimating = false;
+  gameState.keysPressed.clear();
+  
+  initializeGrid(p, config);
+  gameState.gamePhase = GAME_PHASES.PLAYING;
+  
+  p.logs.game_info.push({
+    data: { phase: "PLAYING", level: levelNum },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function handleGameEndInput(p) {
+  if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN) {
+    if (gameState.currentLevel < LEVEL_CONFIGS.length) {
+      // Advance to next level
+      gameState.levelStartTotalScore = gameState.totalScore;
+      loadLevel(p, gameState.currentLevel + 1);
+    } else {
+      // Game Complete - Return to start
+      returnToStart(p);
+    }
+  } else {
+    // Lose - Retry level
+    // Restore score to what it was at start of level
+    gameState.totalScore = gameState.levelStartTotalScore;
+    loadLevel(p, gameState.currentLevel);
+  }
+}
+
+function returnToStart(p) {
+  gameState.gamePhase = GAME_PHASES.START;
+  gameState.currentLevel = 1;
+  gameState.totalScore = 0;
+  gameState.levelStartTotalScore = 0;
+  gameState.keysPressed.clear(); // Reset key state
+  
+  // Re-initialize level 1 for the background
+  const config = getLevelConfig(1);
+  gameState.levelConfig = config;
+  initializeGrid(p, config);
+  
+  p.logs.game_info.push({
+    data: { phase: "START" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function handleSpacePress(p) {
+  if (gameState.isAnimating) return;
+  
+  // TAP-BASED: Single tap performs discrete action
+  // If no path started, start building at current cursor position
+  if (gameState.currentPath.length === 0) {
+    const currentDot = getDotAtPosition(gameState.cursorX, gameState.cursorY);
+    if (currentDot && currentDot.type !== 'anchor') {
+      gameState.currentPath = [currentDot];
+      gameState.currentSelectedDot = currentDot;
+    }
+  } else if (gameState.currentPath.length >= 2) {
+    // Path has at least 2 dots, execute it
+    executeMove(p);
+  } else if (gameState.currentPath.length === 1) {
+    // Single dot selected, pressing space again cancels it
+    cancelPath();
+  }
+}
+
+function handleShiftPress(p) {
+  if (gameState.currentPath.length > 0 && !gameState.isAnimating) {
+    cancelPath();
+  }
+}
+
+function handleArrowPress(p, keyCode) {
+  if (gameState.isAnimating) return;
+  
+  // Store old position
+  const oldX = gameState.cursorX;
+  const oldY = gameState.cursorY;
+  
+  // TAP-BASED: Single tap moves cursor by ONE grid cell
+  // (For grid-based puzzle games, 1 cell per tap is the correct substantial movement)
+  if (keyCode === 37) gameState.cursorX = Math.max(0, gameState.cursorX - 1); // LEFT
+  if (keyCode === 39) gameState.cursorX = Math.min(gameState.gridCols - 1, gameState.cursorX + 1); // RIGHT
+  if (keyCode === 38) gameState.cursorY = Math.max(0, gameState.cursorY - 1); // UP
+  if (keyCode === 40) gameState.cursorY = Math.min(gameState.gridRows - 1, gameState.cursorY + 1); // DOWN
+  
+  // Check if cursor actually moved
+  if (oldX === gameState.cursorX && oldY === gameState.cursorY) {
+    return;
+  }
+  
+  // Only auto-build path if we have a path started (after first space press)
+  if (gameState.currentPath.length === 0) {
+    // No path started, just moving cursor
+    return;
+  }
+  
+  // Auto-build path based on cursor position
+  const currentDot = getDotAtPosition(gameState.cursorX, gameState.cursorY);
+  
+  if (!currentDot) {
+    // Moved to empty space, cancel path
+    cancelPath();
+    return;
+  }
+  
+  const lastDot = gameState.currentPath[gameState.currentPath.length - 1];
+  
+  // Check if backtracking to previous dot in path
+  if (gameState.currentPath.length > 1) {
+    const prevDot = gameState.currentPath[gameState.currentPath.length - 2];
+    if (currentDot === prevDot) {
+      // Remove last dot from path (backtrack)
+      gameState.currentPath.pop();
+      if (gameState.currentPath.length === 0) {
+        gameState.currentSelectedDot = null;
+      }
+      return;
+    }
+  }
+  
+  // Check if moving away from path entirely (not adjacent to last dot)
+  if (!areDotsAdjacent(lastDot, currentDot)) {
+    // Moving too far, cancel current path
+    cancelPath();
+    return;
+  }
+  
+  // Check if can extend path (adjacent, same color, not already in path)
+  if (areDotsAdjacent(lastDot, currentDot) && 
+      colorsMatch(lastDot.color, currentDot.color) &&
+      !gameState.currentPath.includes(currentDot)) {
+    
+    if (currentDot.type !== 'anchor') {
+      gameState.currentPath.push(currentDot);
+    }
+  } else if (!colorsMatch(lastDot.color, currentDot.color)) {
+    // Different color, cancel path
+    cancelPath();
+  }
+}
+
+function cancelPath() {
+  gameState.currentSelectedDot = null;
+  gameState.currentPath = [];
+}
+
+function executeMove(p) {
+  const path = gameState.currentPath;
+  const selectedDot = gameState.currentSelectedDot;
+  
+  // Check for square
+  const isSquare = isSquareFormed(path, selectedDot);
+  let dotsToRemove = [...path];
+  let score = 0;
+  
+  if (isSquare) {
+    // Clear all dots of this color
+    const targetColor = selectedDot.color;
+    dotsToRemove = [];
+    for (let row = 0; row < gameState.gridRows; row++) {
+      for (let col = 0; col < gameState.gridCols; col++) {
+        const dot = gameState.grid[row][col];
+        if (dot && colorsMatch(dot.color, targetColor)) {
+          dotsToRemove.push(dot);
+        }
+      }
+    }
+    score = dotsToRemove.length * SCORE_VALUES.SQUARE_DOT;
+  } else {
+    score = dotsToRemove.length * SCORE_VALUES.REGULAR_DOT;
+  }
+  
+  gameState.score += score;
+  gameState.totalScore += score;
+  
+  // Clear dots
+  clearDots(p, dotsToRemove);
+  
+  // Start animation
+  gameState.isAnimating = true;
+  setTimeout(() => {
+    applyGravity(p);
+    setTimeout(() => {
+      fillEmptySpaces(p);
+      checkAnchorObjective();
+      gameState.isAnimating = false;
+      
+      // Decrement moves
+      gameState.currentMoves--;
+      
+      // Check win/lose conditions
+      checkGameConditions(p);
+    }, 300);
+  }, 300);
+  
+  cancelPath();
+}
+
+function checkGameConditions(p) {
+  // Check if all objectives met
+  let allObjectivesMet = true;
+  for (let key in gameState.levelObjectives) {
+    if (gameState.levelObjectives[key].current < gameState.levelObjectives[key].target) {
+      allObjectivesMet = false;
+      break;
+    }
+  }
+  
+  if (allObjectivesMet && gameState.currentMoves >= 0) {
+    // Win
+    const movesBonus = gameState.currentMoves * SCORE_VALUES.MOVES_REMAINING;
+    gameState.score += SCORE_VALUES.LEVEL_COMPLETE + movesBonus;
+    gameState.totalScore += SCORE_VALUES.LEVEL_COMPLETE + movesBonus;
+    
+    // Update high score
+    if (gameState.totalScore > gameState.highScore) {
+      gameState.highScore = gameState.totalScore;
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('connectCascadeHighScore', gameState.highScore);
+      }
+    }
+    
+    gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
+    p.logs.game_info.push({
+      data: { phase: "GAME_OVER_WIN", score: gameState.score, level: gameState.currentLevel },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    // Submit score to parent
+    if (typeof window.submitScore === 'function') {
+      window.submitScore(gameState.totalScore);
+    }
+  } else if (gameState.currentMoves <= 0 && !allObjectivesMet) {
+    // Lose
+    gameState.gamePhase = GAME_PHASES.GAME_OVER_LOSE;
+    p.logs.game_info.push({
+      data: { phase: "GAME_OVER_LOSE", score: gameState.score, level: gameState.currentLevel },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    // Submit score to parent
+    if (typeof window.submitScore === 'function') {
+      window.submitScore(gameState.totalScore);
+    }
+  }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

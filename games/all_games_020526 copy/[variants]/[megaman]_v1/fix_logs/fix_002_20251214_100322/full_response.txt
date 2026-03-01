@@ -1,0 +1,162 @@
+<analysis>
+- Issue identified: The `updatePhysics` function is called in `game.js` but has not been imported from `physics.js`, where it is defined and exported. This results in an `Uncaught ReferenceError`.
+- Files affected: `game.js`
+- Changes needed: Add `updatePhysics` to the import statement in `game.js` to resolve the `ReferenceError`.
+</analysis>
+<code filename="game.js">
+import { gameState, GAME_PHASES, CONTROL_MODES, CANVAS_WIDTH, CANVAS_HEIGHT, getGameState } from './globals.js';
+import { Player } from './player.js';
+import { handleKeyPressed, getKeys, resetGame, autoRestartGame, startGame } from './input.js'; // Import resetGame, autoRestartGame, and startGame
+import { drawStartScreen, drawGame, drawGameOver } from './rendering.js'; // Import rendering functions
+import { updatePhysics, updateParticles } from './physics.js'; // Import physics functions
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Game state is imported from globals
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Initialize logs
+    p.logs = {
+      game_info: [],
+      inputs: [],
+      player_info: []
+    };
+
+    // Initialize game state
+    gameState.player = new Player(100, 100);
+    gameState.entities = [gameState.player];
+    gameState.unlockedWeapons = ['BUSTER'];
+    gameState.currentWeapon = 0;
+    
+    p.logs.game_info.push({
+      data: { phase: GAME_PHASES.START, message: "Game initialized" },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+
+  p.draw = function() {
+    // Single background call
+    p.background(20, 20, 40);
+
+    if (gameState.gamePhase === GAME_PHASES.START) {
+      drawStartScreen(p);
+      // Ensure auto-restart timer is cleared if we manually navigate back to start
+      if (gameState.autoRestartTimer !== null) {
+        gameState.autoRestartTimer = null;
+      }
+    } else if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      updateGame(p);
+      drawGame(p);
+      // Ensure auto-restart timer is cleared if we manually navigate back to playing
+      if (gameState.autoRestartTimer !== null) {
+        gameState.autoRestartTimer = null;
+      }
+    } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+      drawGame(p);
+      // Ensure auto-restart timer is cleared if we manually navigate back to paused
+      if (gameState.autoRestartTimer !== null) {
+        gameState.autoRestartTimer = null;
+      }
+    } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+      drawGameOver(p, gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN);
+
+      // Auto-restart logic
+      if (gameState.autoRestartTimer === null) {
+        // Start the timer when game over state is first entered
+        gameState.autoRestartTimer = p.frameCount;
+      }
+
+      // Auto-restart after 1 second (60 frames at 60fps)
+      const framesToWait = p.frameRate(); // This should be 60 for 1 second
+      if (p.frameCount - gameState.autoRestartTimer > framesToWait) {
+        autoRestartGame(p); // Call the new auto-restart function
+        // autoRestartGame will also clear gameState.autoRestartTimer
+      }
+    }
+  };
+
+  function updateGame(p) {
+    if (!gameState.currentStage) return;
+
+    const keys = getKeys(p);
+
+    // Update player
+    if (gameState.player) {
+      gameState.player.update(p, keys);
+      
+      // Log player info periodically
+      if (p.frameCount % 30 === 0) {
+        p.logs.player_info.push({
+          screen_x: gameState.player.x - gameState.camera.x,
+          screen_y: gameState.player.y - gameState.camera.y,
+          game_x: gameState.player.x,
+          game_y: gameState.player.y,
+          framecount: p.frameCount
+        });
+      }
+
+      // Update camera
+      const targetCameraX = gameState.player.x - CANVAS_WIDTH / 2;
+      gameState.camera.x = p.constrain(targetCameraX, 0, 
+        Math.max(0, gameState.currentStage.width - CANVAS_WIDTH));
+    }
+
+    // Update entities
+    for (let entity of gameState.entities) {
+      if (entity !== gameState.player) {
+        entity.update(p);
+      }
+    }
+
+    // Update stage
+    gameState.currentStage.update(p);
+
+    // Update physics
+    updatePhysics(p);
+    updateParticles(p);
+  }
+
+  p.keyPressed = function() {
+    handleKeyPressed(p);
+  };
+}, document.body);
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame(gameInstance); // Pass p5 instance
+    }
+    if (typeof startGame === 'function') { // startGame is now exported from input.js
+      startGame(gameInstance); // Pass p5 instance
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Control mode setter
+window.setControlMode = function(mode) {
+  // Only allow setting to HUMAN mode
+  if (mode === CONTROL_MODES.HUMAN) {
+    gameState.controlMode = mode;
+    
+    // Update button styles
+    const buttons = document.querySelectorAll('.control-button');
+    buttons.forEach(btn => btn.classList.remove('active'));
+    
+    document.getElementById('humanModeBtn').classList.add('active');
+  }
+};
+</code>

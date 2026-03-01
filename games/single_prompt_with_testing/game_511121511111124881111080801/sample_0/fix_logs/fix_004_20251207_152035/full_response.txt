@@ -1,0 +1,347 @@
+<analysis>
+- Issue identified: The `isKeyJustPressed` function relies on comparing the exact frame count of the key press event with the current update frame. Due to the asynchronous nature of browser events and the game loop, these frame counts often mismatch (off by one), causing Jump (Space) and Shoot (Z) inputs to be ignored.
+- Files affected: `input.js` and `game.js`.
+- Changes needed:
+  1.  Modify `input.js` to use a boolean flag approach (`justPressedState`) instead of checking frame timestamps.
+  2.  Add a `clearInputFrame()` function in `input.js` to reset these flags.
+  3.  Update `game.js` to call `clearInputFrame()` at the end of the `draw` loop to ensure inputs are consumed exactly once per frame.
+</analysis>
+
+<code filename="input.js">
+/**
+ * Cavern Tale - Input Manager
+ * Handles keyboard state tracking and control mapping.
+ */
+
+import { gameState } from './globals.js';
+
+// Key Codes
+export const KEYS = {
+    ENTER: 13,
+    ESC: 27,
+    SPACE: 32,
+    LEFT: 37,
+    UP: 38,
+    RIGHT: 39,
+    DOWN: 40,
+    SHIFT: 16,
+    Z: 90,
+    R: 82
+};
+
+const keyState = {};
+const justPressedState = {}; // Track keys pressed this frame
+
+/**
+ * Updates global key state on KeyPressed event
+ * @param {number} keyCode 
+ * @param {Object} p - p5 instance
+ */
+export function handleKeyDown(keyCode, p) {
+    // Only register as "just pressed" if it wasn't already held down
+    if (!keyState[keyCode]) {
+        justPressedState[keyCode] = true;
+    }
+    
+    keyState[keyCode] = true;
+    
+    // Log input
+    if (p.logs && p.logs.inputs) {
+        p.logs.inputs.push({
+            type: 'DOWN',
+            key: keyCode,
+            frame: p.frameCount,
+            time: Date.now()
+        });
+    }
+
+    // Global Game Phase Controls
+    if (keyCode === KEYS.ENTER) {
+        if (gameState.gamePhase === "START") {
+            gameState.gamePhase = "PLAYING";
+        }
+    }
+    
+    if (keyCode === KEYS.ESC) {
+        if (gameState.gamePhase === "PLAYING") {
+            gameState.gamePhase = "PAUSED";
+        } else if (gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = "PLAYING";
+        }
+    }
+    
+    if (keyCode === KEYS.R) {
+        if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+            // Trigger restart
+            // Reset is handled in game.js main loop usually, or we can flag it
+            window.gameInstance.resetGame();
+        }
+    }
+}
+
+/**
+ * Updates global key state on KeyReleased event
+ * @param {number} keyCode 
+ * @param {Object} p - p5 instance
+ */
+export function handleKeyUp(keyCode, p) {
+    keyState[keyCode] = false;
+    justPressedState[keyCode] = false; // Clear justPressed on release
+    
+    // Log input
+    if (p.logs && p.logs.inputs) {
+        p.logs.inputs.push({
+            type: 'UP',
+            key: keyCode,
+            frame: p.frameCount,
+            time: Date.now()
+        });
+    }
+}
+
+/**
+ * Checks if a key is currently held down.
+ * @param {number} keyCode 
+ * @returns {boolean}
+ */
+export function isKeyDown(keyCode) {
+    return !!keyState[keyCode];
+}
+
+/**
+ * Checks if a key was pressed specifically on the current frame (trigger once).
+ * @param {number} keyCode 
+ * @param {number} currentFrame - Ignored in new implementation, kept for compatibility
+ * @returns {boolean}
+ */
+export function isKeyJustPressed(keyCode, currentFrame) {
+    return !!justPressedState[keyCode];
+}
+
+/**
+ * Clears the "just pressed" flags. Should be called at the end of the game loop.
+ */
+export function clearInputFrame() {
+    for (const key in justPressedState) {
+        justPressedState[key] = false;
+    }
+}
+</code>
+
+<code filename="game.js">
+/**
+ * Cavern Tale - Main Game Loop
+ * Initializes p5.js instance, manages gameloop, and coordinates rendering.
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, FPS, PALETTE } from './globals.js';
+import { handleKeyDown, handleKeyUp, clearInputFrame } from './input.js';
+import { Level } from './level.js';
+import { renderHUD, renderStartScreen, renderPauseScreen, renderGameOverScreen } from './ui.js';
+import { Player } from './entities.js';
+
+// Setup p5 in instance mode
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    p.logs = {
+        game_info: [],
+        inputs: [],
+        player_info: []
+    };
+
+    // --- SETUP ---
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(FPS);
+        p.noSmooth(); // Pixel art style
+        
+        // Seeding
+        p.randomSeed(42);
+        
+        // Initialize Game State
+        window.getGameState().gamePhase = "START";
+        
+        // Log start
+        p.logs.game_info.push({
+            event: "INITIALIZED",
+            timestamp: Date.now()
+        });
+    };
+
+    // --- MAIN DRAW LOOP ---
+    p.draw = function() {
+        // Time management
+        const now = p.millis();
+        gameState.deltaTime = (now - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = now;
+        gameState.frameCount = p.frameCount;
+        
+        // Clear background
+        p.background(PALETTE.BACKGROUND);
+        
+        // State Machine
+        switch (gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                break;
+                
+            case "PLAYING":
+                updateGame(p);
+                renderGame(p);
+                renderHUD(p);
+                break;
+                
+            case "PAUSED":
+                renderGame(p); // Render frozen game state
+                renderHUD(p);
+                renderPauseScreen(p);
+                break;
+                
+            case "GAME_OVER_WIN":
+                renderGame(p);
+                renderGameOverScreen(p, true);
+                break;
+                
+            case "GAME_OVER_LOSE":
+                renderGame(p);
+                renderGameOverScreen(p, false);
+                break;
+        }
+        
+        // Reset single-frame input flags at the end of the frame
+        clearInputFrame();
+    };
+
+    // --- INPUTS ---
+    p.keyPressed = function() {
+        handleKeyDown(p.keyCode, p);
+    };
+
+    p.keyReleased = function() {
+        handleKeyUp(p.keyCode, p);
+    };
+    
+    // --- HELPER METHODS ---
+    p.resetGame = function() {
+        gameState.reset();
+        gameState.gamePhase = "START";
+        // Re-init level
+        gameState.level = new Level();
+    };
+    
+    // Expose reset for input handler
+    window.gameInstance = p;
+});
+
+// --- GAME LOGIC ---
+
+function updateGame(p) {
+    // 1. Initialize Level if needed (lazy load)
+    if (!gameState.level) {
+        gameState.level = new Level();
+    }
+    
+    // 2. Update Entities
+    // We use a backwards loop for safe removal or filter approach. 
+    // Filter approach is cleaner for readability.
+    
+    // Projectiles
+    gameState.projectiles = gameState.projectiles.filter(e => e.active);
+    gameState.projectiles.forEach(e => e.update(p));
+    
+    // Enemies
+    gameState.enemies = gameState.enemies.filter(e => e.active);
+    gameState.enemies.forEach(e => e.update(p));
+    
+    // Collectibles
+    gameState.collectibles = gameState.collectibles.filter(e => e.active);
+    gameState.collectibles.forEach(e => e.update(p));
+    
+    // Player
+    if (gameState.player && gameState.player.active) {
+        gameState.player.update(p);
+        
+        // Log player info periodically
+        if (p.frameCount % 10 === 0) {
+            p.logs.player_info.push({
+                x: gameState.player.x,
+                y: gameState.player.y,
+                hp: gameState.player.health,
+                lvl: gameState.player.weaponLevel,
+                frame: p.frameCount
+            });
+        }
+    }
+    
+    // Particles & Text
+    gameState.particles.forEach(e => e.update());
+    gameState.particles = gameState.particles.filter(e => !e.dead);
+    
+    gameState.floatingTexts.forEach(e => e.update());
+    gameState.floatingTexts = gameState.floatingTexts.filter(e => !e.dead);
+    
+    // 3. Camera System
+    updateCamera();
+}
+
+function updateCamera() {
+    if (!gameState.player) return;
+    
+    // Center camera on player
+    let targetX = gameState.player.x - CANVAS_WIDTH / 2;
+    let targetY = gameState.player.y - CANVAS_HEIGHT / 2;
+    
+    // Smooth lerp
+    gameState.camera.x += (targetX - gameState.camera.x) * 0.1;
+    gameState.camera.y += (targetY - gameState.camera.y) * 0.1;
+    
+    // Clamp to level bounds
+    if (gameState.level) {
+        gameState.camera.x = Math.max(0, Math.min(gameState.camera.x, gameState.level.widthPx - CANVAS_WIDTH));
+        gameState.camera.y = Math.max(0, Math.min(gameState.camera.y, gameState.level.heightPx - CANVAS_HEIGHT));
+    }
+}
+
+function renderGame(p) {
+    if (!gameState.level) return;
+    
+    p.push();
+    // Apply Camera Transform
+    p.translate(-Math.floor(gameState.camera.x), -Math.floor(gameState.camera.y));
+    
+    // 1. Level
+    gameState.level.render(p, gameState.camera);
+    
+    // 2. Collectibles
+    gameState.collectibles.forEach(e => e.render(p));
+    
+    // 3. Enemies
+    gameState.enemies.forEach(e => e.render(p));
+    
+    // 4. Player
+    if (gameState.player && gameState.player.active) {
+        gameState.player.render(p);
+    }
+    
+    // 5. Projectiles
+    gameState.projectiles.forEach(e => e.render(p));
+    
+    // 6. Effects
+    gameState.particles.forEach(e => e.render(p));
+    gameState.floatingTexts.forEach(e => e.render(p));
+    
+    p.pop();
+}
+
+// Global control mode setter for HTML buttons
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+    // If switching to test, ensure game is running or resets if needed
+    if (mode.startsWith("TEST") && gameState.gamePhase === "START") {
+        gameState.gamePhase = "PLAYING";
+    }
+};
+</code>

@@ -1,0 +1,2233 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+z is used for both plant switching and plant collecting, can you make a designiated button to collect falling sun, and can you make the zombies way slower, and I want you to make 6 designated levels, and each level should last 1 minute, and the color of the grass should be different for each level, and there should be 2 easy levels, 2 medium levels, and 2 hard levels, can you do all of this? 
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Plants vs Zombies - Tower Defense</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Plants vs Zombies - Tower Defense</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic testing)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Defend your lawn from waves of approaching zombies! Plant sunflowers to generate sun resources, then use sun to plant offensive units like peashooters. Zombies march down 5 lanes toward your house - if any reach the left side, you lose. Collect falling sun and strategically place plants to stop all zombies in each wave to win. Each plant has unique abilities and costs, so manage your resources wisely!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Keys (↑↓): Navigate plant selection menu | Space: Select/confirm plant choice | Arrow Keys (←→↑↓): Move plant placement cursor on lawn | Space: Place selected plant at cursor position | Shift: Switch between grid cursor and menu mode | Z: Collect falling sun (when near cursor) | Enter: Start game from title screen | ESC: Pause/unpause game | R: Restart game (from game over screen)</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+// automated_testing_controller.js - Automated testing logic
+
+import { gameState, getGridPosition, GRID_ROWS, GRID_COLS, GRID_OFFSET_X, GRID_OFFSET_Y, CELL_WIDTH, CELL_HEIGHT } from './globals.js';
+import { getPlantCost } from './game_logic.js';
+
+let testState = {
+  phase: 'INIT',
+  targetPlant: null,
+  plantingQueue: [],
+  sunCollectTarget: null,
+  actionCooldown: 0,
+  plantPlacementAttempts: 0,
+  sunCollectionAttempts: 0
+};
+
+// TEST_1: Basic plant placement and sun collection
+function getTest1Action(gameState) {
+  if (gameState.gamePhase !== "PLAYING") {
+    if (gameState.gamePhase === "START") {
+      return { keyCode: 13 }; // ENTER to start
+    }
+    return null;
+  }
+  
+  // Cooldown between actions
+  if (testState.actionCooldown > 0) {
+    testState.actionCooldown--;
+    return null;
+  }
+  
+  // Priority 1: Collect sun if available and close
+  if (gameState.sunDrops.length > 0) {
+    const nearestSun = findNearestSun(gameState);
+    if (nearestSun) {
+      // Move cursor to sun position
+      const targetRow = Math.floor((nearestSun.y - GRID_OFFSET_Y) / CELL_HEIGHT);
+      const targetCol = Math.floor((nearestSun.x - GRID_OFFSET_X) / CELL_WIDTH);
+      
+      if (Math.abs(gameState.cursorRow - targetRow) > 0) {
+        testState.actionCooldown = 3;
+        return { keyCode: gameState.cursorRow < targetRow ? 40 : 38 }; // DOWN or UP
+      }
+      if (Math.abs(gameState.cursorCol - targetCol) > 0) {
+        testState.actionCooldown = 3;
+        return { keyCode: gameState.cursorCol < targetCol ? 39 : 37 }; // RIGHT or LEFT
+      }
+      
+      // At position, collect
+      testState.actionCooldown = 5;
+      testState.sunCollectionAttempts++;
+      return { keyCode: 32 }; // SPACE to collect
+    }
+  }
+  
+  // Priority 2: Plant sunflowers for economy
+  if (gameState.sun >= 50 && testState.plantPlacementAttempts < 5) {
+    // Select sunflower if not selected (index 0)
+    if (gameState.selectedPlantIndex !== 0) {
+      testState.actionCooldown = 5;
+      return { keyCode: 90 }; // Z to cycle plants
+    }
+    
+    // Find empty spot in back rows (better for economy)
+    const targetSpot = findEmptySpot([3, 4, 2], [0, 1, 2, 3]);
+    if (targetSpot) {
+      // Move cursor to target
+      if (gameState.cursorRow !== targetSpot.row) {
+        testState.actionCooldown = 3;
+        return { keyCode: gameState.cursorRow < targetSpot.row ? 40 : 38 };
+      }
+      if (gameState.cursorCol !== targetSpot.col) {
+        testState.actionCooldown = 3;
+        return { keyCode: gameState.cursorCol < targetSpot.col ? 39 : 37 };
+      }
+      
+      // Place plant
+      testState.actionCooldown = 10;
+      testState.plantPlacementAttempts++;
+      return { keyCode: 32 }; // SPACE to place
+    }
+  }
+  
+  // Random exploration
+  const actions = [37, 38, 39, 40, 90];
+  testState.actionCooldown = 5;
+  return { keyCode: actions[Math.floor(Math.random() * actions.length)] };
+}
+
+// TEST_2: Win strategy
+function getTest2Action(gameState) {
+  if (gameState.gamePhase !== "PLAYING") {
+    if (gameState.gamePhase === "START") {
+      return { keyCode: 13 }; // ENTER to start
+    }
+    return null;
+  }
+  
+  // Cooldown between actions
+  if (testState.actionCooldown > 0) {
+    testState.actionCooldown--;
+    return null;
+  }
+  
+  // Priority 1: Collect all sun aggressively
+  if (gameState.sunDrops.length > 0) {
+    const nearestSun = findNearestSun(gameState);
+    if (nearestSun) {
+      const targetRow = Math.max(0, Math.min(GRID_ROWS - 1, Math.floor((nearestSun.y - GRID_OFFSET_Y) / CELL_HEIGHT)));
+      const targetCol = Math.max(0, Math.min(GRID_COLS - 1, Math.floor((nearestSun.x - GRID_OFFSET_X) / CELL_WIDTH)));
+      
+      if (Math.abs(gameState.cursorRow - targetRow) > 0) {
+        testState.actionCooldown = 2;
+        return { keyCode: gameState.cursorRow < targetRow ? 40 : 38 };
+      }
+      if (Math.abs(gameState.cursorCol - targetCol) > 0) {
+        testState.actionCooldown = 2;
+        return { keyCode: gameState.cursorCol < targetCol ? 39 : 37 };
+      }
+      
+      testState.actionCooldown = 3;
+      return { keyCode: 32 }; // SPACE to collect
+    }
+  }
+  
+  // Priority 2: Build economy (sunflowers in back)
+  const sunflowerCount = countPlantsOfType('SUNFLOWER');
+  if (sunflowerCount < 8 && gameState.sun >= 50) {
+    return buildPlant(0, [3, 4, 2], [0, 1, 2, 3, 4]); // Index 0 is sunflower
+  }
+  
+  // Priority 3: Defend lanes with zombies
+  const threatenedLanes = getThreatenedLanes(gameState);
+  if (threatenedLanes.length > 0 && gameState.sun >= 100) {
+    // Place peashooters in threatened lanes
+    const lane = threatenedLanes[0];
+    const targetSpot = findEmptySpotInRow(lane, [2, 3, 4, 5]);
+    if (targetSpot) {
+      return placePlantAt(1, targetSpot.row, targetSpot.col); // Index 1 is peashooter
+    }
+  }
+  
+  // Priority 4: General defense (peashooters in all lanes)
+  if (gameState.sun >= 100) {
+    const defenseSpot = findEmptySpot([0, 1, 2, 3, 4], [2, 3, 4]);
+    if (defenseSpot) {
+      return placePlantAt(1, defenseSpot.row, defenseSpot.col);
+    }
+  }
+  
+  // Priority 5: Place wallnuts as shields
+  if (gameState.sun >= 50 && gameState.zombies.length > 3) {
+    const shieldSpot = findEmptySpot([0, 1, 2, 3, 4], [5, 6]);
+    if (shieldSpot) {
+      return placePlantAt(2, shieldSpot.row, shieldSpot.col); // Index 2 is wallnut
+    }
+  }
+  
+  return null;
+}
+
+// Helper functions
+function findNearestSun(gameState) {
+  let nearest = null;
+  let nearestDist = Infinity;
+  
+  const cursorPos = getGridPosition(gameState.cursorRow, gameState.cursorCol);
+  
+  gameState.sunDrops.forEach(sun => {
+    const dx = sun.x - cursorPos.x;
+    const dy = sun.y - cursorPos.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    
+    if (dist < nearestDist) {
+      nearest = sun;
+      nearestDist = dist;
+    }
+  });
+  
+  return nearest;
+}
+
+function findEmptySpot(rowPriority, colPriority) {
+  for (const row of rowPriority) {
+    for (const col of colPriority) {
+      if (row >= 0 && row < GRID_ROWS && col >= 0 && col < GRID_COLS) {
+        if (gameState.plants[row][col] === null) {
+          return { row, col };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function findEmptySpotInRow(row, colPriority) {
+  for (const col of colPriority) {
+    if (col >= 0 && col < GRID_COLS && gameState.plants[row][col] === null) {
+      return { row, col };
+    }
+  }
+  return null;
+}
+
+function countPlantsOfType(type) {
+  let count = 0;
+  for (let row = 0; row < GRID_ROWS; row++) {
+    for (let col = 0; col < GRID_COLS; col++) {
+      const plant = gameState.plants[row][col];
+      if (plant && plant.type === type) {
+        count++;
+      }
+    }
+  }
+  return count;
+}
+
+function getThreatenedLanes(gameState) {
+  const threatened = new Set();
+  gameState.zombies.forEach(zombie => {
+    if (zombie.x < 400) {
+      threatened.add(zombie.row);
+    }
+  });
+  return Array.from(threatened);
+}
+
+function buildPlant(plantIndex, rowPriority, colPriority) {
+  if (gameState.selectedPlantIndex !== plantIndex) {
+    testState.actionCooldown = 3;
+    return { keyCode: 90 }; // Z to cycle
+  }
+  
+  const spot = findEmptySpot(rowPriority, colPriority);
+  if (!spot) return null;
+  
+  return placePlantAt(plantIndex, spot.row, spot.col);
+}
+
+function placePlantAt(plantIndex, row, col) {
+  // Select plant if not selected
+  if (gameState.selectedPlantIndex !== plantIndex) {
+    testState.actionCooldown = 5;
+    return { keyCode: 90 }; // Z to cycle
+  }
+  
+  // Move cursor to target position
+  if (gameState.cursorRow !== row) {
+    testState.actionCooldown = 2;
+    return { keyCode: gameState.cursorRow < row ? 40 : 38 };
+  }
+  if (gameState.cursorCol !== col) {
+    testState.actionCooldown = 2;
+    return { keyCode: gameState.cursorCol < col ? 39 : 37 };
+  }
+  
+  // Place plant
+  testState.actionCooldown = 8;
+  return { keyCode: 32 }; // SPACE to place
+}
+
+export function get_automated_testing_action(gameState) {
+  switch (gameState.controlMode) {
+    case "TEST_1":
+      return getTest1Action(gameState);
+    case "TEST_2":
+      return getTest2Action(gameState);
+    default:
+      return null;
+  }
+}
+
+window.get_automated_testing_action = get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+// globals.js - Global constants and game state
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Grid configuration
+export const GRID_ROWS = 5;
+export const GRID_COLS = 9;
+export const GRID_OFFSET_X = 100;
+export const GRID_OFFSET_Y = 50;
+export const CELL_WIDTH = 50;
+export const CELL_HEIGHT = 60;
+
+// Color palette
+export const COLORS = {
+  BG: [20, 20, 30],
+  LAWN_LIGHT: [120, 200, 120],
+  LAWN_DARK: [140, 220, 140],
+  HUD_BG: [40, 30, 20],
+  HUD_BORDER: [60, 40, 30],
+  ACCENT: [255, 255, 0],
+  DANGER: [255, 100, 100]
+};
+
+// Plant types configuration
+export const PLANT_TYPES = {
+  SUNFLOWER: {
+    name: 'Sunflower',
+    cost: 50,
+    cooldown: 480,
+    icon: '🌻'
+  },
+  PEASHOOTER: {
+    name: 'Peashooter',
+    cost: 100,
+    cooldown: 480,
+    icon: '🌱'
+  },
+  WALLNUT: {
+    name: 'Wallnut',
+    cost: 50,
+    cooldown: 1800,
+    icon: '🥜'
+  },
+  CHERRY_BOMB: {
+    name: 'Cherry Bomb',
+    cost: 150,
+    cooldown: 3000,
+    icon: '🍒'
+  }
+};
+
+export const PLANT_KEYS = ['SUNFLOWER', 'PEASHOOTER', 'WALLNUT', 'CHERRY_BOMB'];
+
+// Game balance constants
+export const INITIAL_SUN = 150;
+export const SUN_VALUE = 25;
+export const SUN_FALL_INTERVAL = 180; // frames
+export const SUNFLOWER_PRODUCTION_INTERVAL = 480; // frames (8 seconds at 60fps)
+
+// Plant costs (for backward compatibility)
+export const PLANT_COSTS = {
+  SUNFLOWER: 50,
+  PEASHOOTER: 100,
+  WALLNUT: 50,
+  CHERRY_BOMB: 150
+};
+
+// Zombie wave configuration
+export const ZOMBIE_WAVES = [
+  { count: 5, interval: 180, types: ['BASIC'] },
+  { count: 8, interval: 150, types: ['BASIC', 'CONE'] },
+  { count: 10, interval: 120, types: ['BASIC', 'CONE', 'BUCKET'] }
+];
+
+// Game state object
+export const gameState = {
+  // Core state
+  gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+  controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2, etc.
+  
+  // Entities
+  player: null,
+  entities: [],
+  plants: [], // 2D grid of plants [row][col]
+  zombies: [],
+  projectiles: [],
+  particles: [],
+  sunDrops: [],
+  
+  // Resources
+  sun: INITIAL_SUN,
+  score: 0,
+  
+  // Game progress
+  currentWave: 0,
+  zombiesSpawned: 0,
+  zombiesKilled: 0,
+  totalZombiesInWave: 0,
+  waveComplete: false,
+  waveSpawnTimer: 0,
+  sunFallTimer: 0,
+  totalWaves: ZOMBIE_WAVES.length,
+  
+  // UI state
+  selectedPlantIndex: -1,
+  cursorRow: 2,
+  cursorCol: 4,
+  plantCooldowns: {
+    SUNFLOWER: 0,
+    PEASHOOTER: 0,
+    WALLNUT: 0,
+    CHERRY_BOMB: 0
+  },
+  
+  // Performance tracking
+  frameCount: 0,
+  lastFrameTime: 0,
+  deltaTime: 0,
+  
+  // Physics
+  gravity: 0.3,
+  
+  // Camera
+  cameraX: 0,
+  cameraY: 0
+};
+
+// Initialize plants grid
+for (let row = 0; row < GRID_ROWS; row++) {
+  gameState.plants[row] = [];
+  for (let col = 0; col < GRID_COLS; col++) {
+    gameState.plants[row][col] = null;
+  }
+}
+
+// Expose game state globally
+export function getGameState() {
+  return gameState;
+}
+
+window.getGameState = getGameState;
+
+// Helper function to get grid position from row/col
+export function getGridPosition(row, col) {
+  return {
+    x: GRID_OFFSET_X + col * CELL_WIDTH + CELL_WIDTH / 2,
+    y: GRID_OFFSET_Y + row * CELL_HEIGHT + CELL_HEIGHT / 2
+  };
+}
+
+// Helper function to check if position is valid grid cell
+export function isValidGridPosition(row, col) {
+  return row >= 0 && row < GRID_ROWS && col >= 0 && col < GRID_COLS;
+}
+
+// Helper function to get row from y position
+export function getRowFromY(y) {
+  return Math.floor((y - GRID_OFFSET_Y) / CELL_HEIGHT);
+}
+
+// Helper function to get col from x position
+export function getColFromX(x) {
+  return Math.floor((x - GRID_OFFSET_X) / CELL_WIDTH);
+}
+</file>
+
+<file name="game.js">
+// game.js - Main game loop and p5.js instance
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { handleKeyPress, handleKeyRelease } from './input.js';
+import { updateGame } from './game_logic.js';
+import { 
+  renderStartScreen, 
+  renderGame, 
+  renderPauseScreen, 
+  renderGameOver 
+} from './ui.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Initialize logs
+  p.logs = {
+    "game_info": [],
+    "inputs": [],
+    "player_info": []
+  };
+  
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Initialize game state
+    gameState.gamePhase = "START";
+    gameState.controlMode = "HUMAN";
+    gameState.frameCount = 0;
+    gameState.lastFrameTime = p.millis();
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: { gamePhase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+  
+  p.draw = function() {
+    // Update frame count and delta time
+    gameState.frameCount = p.frameCount;
+    const currentTime = p.millis();
+    gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+    gameState.lastFrameTime = currentTime;
+    
+    // Handle automated testing
+    if (gameState.controlMode !== "HUMAN") {
+      const action = get_automated_testing_action(gameState);
+      if (action && action.keyCode) {
+        // Simulate key press
+        p.keyCode = action.keyCode;
+        handleKeyPress(p);
+        
+        // Simulate key release after a few frames
+        setTimeout(() => {
+          p.keyCode = action.keyCode;
+          handleKeyRelease(p);
+        }, 50);
+      }
+    }
+    
+    // Render based on game phase
+    switch (gameState.gamePhase) {
+      case "START":
+        renderStartScreen(p);
+        break;
+      case "PLAYING":
+        updateGame(p);
+        renderGame(p);
+        break;
+      case "PAUSED":
+        updateGame(p);
+        renderGame(p);
+        renderPauseScreen(p);
+        break;
+      case "GAME_OVER_WIN":
+      case "GAME_OVER_LOSE":
+        renderGame(p);
+        renderGameOver(p);
+        break;
+    }
+  };
+  
+  p.keyPressed = function() {
+    handleKeyPress(p);
+    return false; // Prevent default behavior
+  };
+  
+  p.keyReleased = function() {
+    handleKeyRelease(p);
+    return false; // Prevent default behavior
+  };
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+
+// Control mode management
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  document.querySelectorAll('.control-button').forEach(btn => {
+    btn.classList.remove('active');
+  });
+  
+  const buttonMap = {
+    'HUMAN': 'humanModeBtn',
+    'TEST_1': 'test_1_ModeBtn',
+    'TEST_2': 'test_2_ModeBtn'
+  };
+  
+  const buttonId = buttonMap[mode];
+  if (buttonId) {
+    const button = document.getElementById(buttonId);
+    if (button) {
+      button.classList.add('active');
+    }
+  }
+  
+  // Log mode change
+  if (gameInstance.logs && gameInstance.logs.game_info) {
+    gameInstance.logs.game_info.push({
+      data: { controlMode: mode },
+      framecount: gameState.frameCount,
+      timestamp: Date.now()
+    });
+  }
+};
+</file>
+
+<file name="ui.js">
+// ui.js - UI rendering
+
+import { 
+  gameState, 
+  PLANT_TYPES,
+  PLANT_KEYS,
+  CANVAS_WIDTH, 
+  CANVAS_HEIGHT,
+  GRID_ROWS,
+  GRID_COLS,
+  GRID_OFFSET_X,
+  GRID_OFFSET_Y,
+  CELL_WIDTH,
+  CELL_HEIGHT,
+  COLORS,
+  getGridPosition
+} from './globals.js';
+
+export function renderBackground(p) {
+  p.background(COLORS.BG);
+  
+  // Draw Lawn Grid
+  for (let c = 0; c < GRID_COLS; c++) {
+    for (let r = 0; r < GRID_ROWS; r++) {
+      const x = GRID_OFFSET_X + c * CELL_WIDTH;
+      const y = GRID_OFFSET_Y + r * CELL_HEIGHT;
+      
+      // Checkerboard pattern
+      if ((c + r) % 2 === 0) {
+        p.fill(COLORS.LAWN_LIGHT);
+      } else {
+        p.fill(COLORS.LAWN_DARK);
+      }
+      p.noStroke();
+      p.rect(x, y, CELL_WIDTH, CELL_HEIGHT);
+    }
+  }
+  
+  // Lane lines (subtle)
+  p.stroke(0, 30);
+  p.strokeWeight(2);
+  for (let r = 0; r <= GRID_ROWS; r++) {
+    const y = GRID_OFFSET_Y + r * CELL_HEIGHT;
+    p.line(GRID_OFFSET_X, y, GRID_OFFSET_X + GRID_COLS * CELL_WIDTH, y);
+  }
+  
+  // Draw house on the left
+  p.fill(150, 100, 80);
+  p.stroke(100, 70, 50);
+  p.strokeWeight(2);
+  p.rect(10, 100, 70, 200, 5);
+  
+  // Windows
+  p.fill(200, 200, 100);
+  p.rect(25, 120, 20, 25);
+  p.rect(55, 120, 20, 25);
+  p.rect(25, 160, 20, 25);
+  p.rect(55, 160, 20, 25);
+  
+  // Door
+  p.fill(100, 50, 30);
+  p.rect(35, 220, 25, 40);
+}
+
+export function renderHUD(p) {
+  // Top Bar Background
+  p.fill(COLORS.HUD_BG);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, GRID_OFFSET_Y - 10);
+  
+  // Sun Counter
+  p.fill(COLORS.HUD_BORDER);
+  p.rect(10, 5, 80, 40, 5);
+  p.fill(COLORS.ACCENT);
+  p.noStroke();
+  p.circle(30, 25, 25); // Sun Icon
+  p.fill(0);
+  p.textAlign(p.LEFT, p.CENTER);
+  p.textSize(16);
+  p.text(Math.floor(gameState.sun), 50, 25);
+  
+  // Plant Cards
+  const cardWidth = 60;
+  const cardHeight = 45;
+  const startX = 110;
+  
+  PLANT_KEYS.forEach((key, index) => {
+    const type = PLANT_TYPES[key];
+    const x = startX + index * (cardWidth + 10);
+    const y = 5;
+    
+    // Selection highlight
+    if (index === gameState.selectedPlantIndex) {
+      p.stroke(255, 255, 0); // Yellow border for selected
+      p.strokeWeight(3);
+    } else {
+      p.stroke(0);
+      p.strokeWeight(1);
+    }
+    
+    // Card BG - Check affordability
+    if (gameState.sun >= type.cost) {
+      p.fill(200); 
+    } else {
+      p.fill(150, 100, 100); // Reddish tint if expensive
+    }
+    p.rect(x, y, cardWidth, cardHeight, 4);
+    
+    // Plant Icon (render actual plant preview)
+    p.push();
+    p.translate(x + cardWidth/2, y + cardHeight/2 - 5);
+    p.scale(0.5);
+    renderPlantIcon(p, key);
+    p.pop();
+    
+    // Cost
+    p.textSize(10);
+    p.fill(0);
+    p.noStroke();
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text(type.cost, x + cardWidth/2, y + cardHeight - 8);
+    
+    // Cooldown Overlay
+    const cd = gameState.plantCooldowns[key];
+    if (cd > 0) {
+      const maxCd = type.cooldown;
+      const ratio = cd / maxCd;
+      p.fill(0, 0, 0, 150);
+      p.noStroke();
+      p.rect(x, y + cardHeight * (1-ratio), cardWidth, cardHeight * ratio);
+    }
+  });
+  
+  // Wave Progress
+  p.fill(255);
+  p.noStroke();
+  p.textAlign(p.RIGHT, p.CENTER);
+  p.textSize(14);
+  p.text(`Wave: ${gameState.currentWave + 1}/${gameState.totalWaves}`, CANVAS_WIDTH - 20, 25);
+}
+
+function renderPlantIcon(p, plantType) {
+  switch (plantType) {
+    case 'SUNFLOWER':
+      // Sunflower icon
+      p.fill(255, 220, 0);
+      p.stroke(200, 180, 0);
+      p.strokeWeight(2);
+      for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * p.TWO_PI;
+        const px = p.cos(angle) * 12;
+        const py = p.sin(angle) * 12;
+        p.circle(px, py, 8);
+      }
+      p.fill(255, 180, 0);
+      p.circle(0, 0, 15);
+      break;
+    case 'PEASHOOTER':
+      // Peashooter icon
+      p.fill(100, 200, 100);
+      p.stroke(70, 170, 70);
+      p.strokeWeight(2);
+      p.circle(0, 0, 25);
+      p.fill(50, 100, 50);
+      p.noStroke();
+      p.circle(10, 0, 10);
+      break;
+    case 'WALLNUT':
+      // Wallnut icon
+      p.fill(139, 90, 43);
+      p.stroke(101, 67, 33);
+      p.strokeWeight(2);
+      p.circle(0, 0, 28);
+      break;
+    case 'CHERRY_BOMB':
+      // Cherry Bomb icon
+      p.fill(200, 0, 0);
+      p.stroke(150, 0, 0);
+      p.strokeWeight(2);
+      p.circle(-6, 0, 15);
+      p.circle(6, 0, 15);
+      break;
+  }
+}
+
+export function renderCursor(p) {
+  if (gameState.gamePhase !== "PLAYING") return;
+  
+  const { cursorRow, cursorCol } = gameState;
+  const x = GRID_OFFSET_X + cursorCol * CELL_WIDTH;
+  const y = GRID_OFFSET_Y + cursorRow * CELL_HEIGHT;
+  
+  // Pulsing alpha
+  const alpha = 100 + p.sin(p.frameCount * 0.1) * 50;
+  
+  p.noFill();
+  p.stroke(255, alpha);
+  p.strokeWeight(4);
+  p.rect(x, y, CELL_WIDTH, CELL_HEIGHT);
+  
+  // Crosshair markers
+  p.line(x + CELL_WIDTH/2 - 5, y + CELL_HEIGHT/2, x + CELL_WIDTH/2 + 5, y + CELL_HEIGHT/2);
+  p.line(x + CELL_WIDTH/2, y + CELL_HEIGHT/2 - 5, x + CELL_WIDTH/2, y + CELL_HEIGHT/2 + 5);
+  
+  // Show plant preview if plant is selected
+  if (gameState.selectedPlantIndex >= 0) {
+    const plantKey = PLANT_KEYS[gameState.selectedPlantIndex];
+    const pos = getGridPosition(cursorRow, cursorCol);
+    p.push();
+    p.translate(pos.x, pos.y);
+    p.scale(0.6);
+    renderPlantIcon(p, plantKey);
+    p.pop();
+  }
+}
+
+export function renderStartScreen(p) {
+  p.background(0, 0, 0, 200);
+  p.fill(COLORS.LAWN_LIGHT);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text("GARDEN DEFENDERS", CANVAS_WIDTH/2, 100);
+  p.textSize(24);
+  p.fill(255);
+  p.text("Pixel Patch", CANVAS_WIDTH/2, 140);
+  
+  p.textSize(18);
+  p.text("Press ENTER to Start", CANVAS_WIDTH/2, 250);
+  
+  p.textSize(14);
+  p.fill(200);
+  p.text("ARROWS to Move | SPACE to Plant/Collect", CANVAS_WIDTH/2, 300);
+  p.text("Z to Switch Plants | SHIFT+SPACE to Dig", CANVAS_WIDTH/2, 320);
+}
+
+export function renderGameOver(p) {
+  p.background(0, 0, 0, 220);
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  const win = gameState.gamePhase === "GAME_OVER_WIN";
+  
+  if (win) {
+    p.fill(COLORS.ACCENT);
+    p.textSize(48);
+    p.text("VICTORY!", CANVAS_WIDTH/2, 150);
+    p.textSize(24);
+    p.fill(255);
+    p.text("The lawn is safe... for now.", CANVAS_WIDTH/2, 200);
+  } else {
+    p.fill(COLORS.DANGER);
+    p.textSize(48);
+    p.text("GAME OVER", CANVAS_WIDTH/2, 150);
+    p.textSize(24);
+    p.fill(255);
+    p.text("The zombies ate your brains!", CANVAS_WIDTH/2, 200);
+  }
+  
+  p.textSize(18);
+  p.fill(200);
+  p.text("Press R to Restart", CANVAS_WIDTH/2, 300);
+}
+
+export function renderPauseScreen(p) {
+  p.fill(0, 0, 0, 150);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(40);
+  p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+  p.textSize(16);
+  p.text("Press ESC to Resume", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+}
+
+export function renderGame(p) {
+  // Render background first
+  renderBackground(p);
+  
+  // Render all entities
+  gameState.entities.forEach(entity => {
+    if (entity.active) {
+      entity.render(p);
+    }
+  });
+  
+  // Render cursor
+  renderCursor(p);
+  
+  // Render HUD on top
+  renderHUD(p);
+}
+</file>
+
+<file name="entities.js">
+// entities.js - Entity classes for plants, zombies, projectiles, etc.
+
+import { 
+  gameState, 
+  GRID_ROWS, 
+  GRID_COLS,
+  getGridPosition,
+  CELL_WIDTH,
+  CELL_HEIGHT,
+  SUNFLOWER_PRODUCTION_INTERVAL,
+  SUN_VALUE,
+  CANVAS_WIDTH,
+  CANVAS_HEIGHT
+} from './globals.js';
+
+// Base Entity class
+export class Entity {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.width = 40;
+    this.height = 40;
+    this.active = true;
+  }
+  
+  update(p) {
+    // Override in subclasses
+  }
+  
+  render(p) {
+    // Override in subclasses
+  }
+  
+  destroy() {
+    this.active = false;
+    const index = gameState.entities.indexOf(this);
+    if (index > -1) {
+      gameState.entities.splice(index, 1);
+    }
+  }
+}
+
+// Plant base class
+export class Plant extends Entity {
+  constructor(row, col, type) {
+    const pos = getGridPosition(row, col);
+    super(pos.x, pos.y);
+    this.row = row;
+    this.col = col;
+    this.type = type;
+    this.health = 100;
+    this.maxHealth = 100;
+    this.attackTimer = 0;
+    this.productionTimer = 0;
+    
+    gameState.plants[row][col] = this;
+    gameState.entities.push(this);
+  }
+  
+  takeDamage(amount) {
+    this.health -= amount;
+    if (this.health <= 0) {
+      this.die();
+    }
+  }
+  
+  die() {
+    gameState.plants[this.row][this.col] = null;
+    this.destroy();
+    
+    // Create death particles
+    for (let i = 0; i < 8; i++) {
+      gameState.particles.push(new Particle(this.x, this.y, [100, 200, 100]));
+    }
+  }
+  
+  update(p) {
+    // Override in subclasses
+  }
+  
+  renderHealthBar(p) {
+    if (this.health < this.maxHealth) {
+      const barWidth = 35;
+      const barHeight = 4;
+      const barX = this.x - barWidth / 2;
+      const barY = this.y - this.height / 2 - 10;
+      
+      // Background
+      p.fill(100, 0, 0);
+      p.noStroke();
+      p.rect(barX, barY, barWidth, barHeight);
+      
+      // Health
+      p.fill(0, 255, 0);
+      p.rect(barX, barY, barWidth * (this.health / this.maxHealth), barHeight);
+      
+      // Border
+      p.noFill();
+      p.stroke(0);
+      p.strokeWeight(1);
+      p.rect(barX, barY, barWidth, barHeight);
+    }
+  }
+}
+
+// Sunflower - generates sun
+export class Sunflower extends Plant {
+  constructor(row, col) {
+    super(row, col, 'SUNFLOWER');
+    this.health = 100;
+    this.maxHealth = 100;
+    this.productionTimer = SUNFLOWER_PRODUCTION_INTERVAL;
+  }
+  
+  update(p) {
+    this.productionTimer--;
+    if (this.productionTimer <= 0) {
+      this.produceSun();
+      this.productionTimer = SUNFLOWER_PRODUCTION_INTERVAL;
+    }
+  }
+  
+  produceSun() {
+    const sun = new SunDrop(this.x, this.y, true);
+    gameState.sunDrops.push(sun);
+  }
+  
+  render(p) {
+    p.push();
+    p.translate(this.x, this.y);
+    
+    // Stem
+    p.fill(50, 150, 50);
+    p.noStroke();
+    p.rect(-3, 5, 6, 15);
+    
+    // Petals (yellow)
+    p.fill(255, 220, 0);
+    p.stroke(200, 180, 0);
+    p.strokeWeight(2);
+    for (let i = 0; i < 8; i++) {
+      const angle = (i / 8) * p.TWO_PI;
+      const px = p.cos(angle) * 12;
+      const py = p.sin(angle) * 12;
+      p.circle(px, py, 10);
+    }
+    
+    // Center
+    p.fill(255, 180, 0);
+    p.stroke(200, 140, 0);
+    p.strokeWeight(2);
+    p.circle(0, 0, 18);
+    
+    // Face
+    p.fill(0);
+    p.noStroke();
+    p.circle(-5, -2, 3); // left eye
+    p.circle(5, -2, 3);  // right eye
+    p.arc(0, 3, 10, 8, 0, p.PI); // smile
+    
+    p.pop();
+    
+    this.renderHealthBar(p);
+  }
+}
+
+// Peashooter - shoots peas at zombies
+export class Peashooter extends Plant {
+  constructor(row, col) {
+    super(row, col, 'PEASHOOTER');
+    this.health = 100;
+    this.maxHealth = 100;
+    this.attackTimer = 0;
+    this.attackRate = 90; // frames between shots
+  }
+  
+  update(p) {
+    this.attackTimer++;
+    
+    // Check if there's a zombie in this row
+    const zombieInRow = gameState.zombies.some(z => z.row === this.row && z.x > this.x);
+    
+    if (zombieInRow && this.attackTimer >= this.attackRate) {
+      this.shoot();
+      this.attackTimer = 0;
+    }
+  }
+  
+  shoot() {
+    const projectile = new Pea(this.x + 20, this.y, this.row);
+    gameState.projectiles.push(projectile);
+  }
+  
+  render(p) {
+    p.push();
+    p.translate(this.x, this.y);
+    
+    // Stem
+    p.fill(50, 150, 50);
+    p.noStroke();
+    p.rect(-3, 5, 6, 15);
+    
+    // Head
+    p.fill(100, 200, 100);
+    p.stroke(70, 170, 70);
+    p.strokeWeight(2);
+    p.circle(0, 0, 28);
+    
+    // Mouth/shooter
+    p.fill(50, 100, 50);
+    p.noStroke();
+    p.circle(12, 0, 12);
+    
+    // Eyes
+    p.fill(255);
+    p.circle(-6, -4, 8);
+    p.circle(6, -4, 8);
+    p.fill(0);
+    p.circle(-6, -4, 4);
+    p.circle(6, -4, 4);
+    
+    p.pop();
+    
+    this.renderHealthBar(p);
+  }
+}
+
+// Wallnut - defensive plant with high health
+export class Wallnut extends Plant {
+  constructor(row, col) {
+    super(row, col, 'WALLNUT');
+    this.health = 400;
+    this.maxHealth = 400;
+  }
+  
+  update(p) {
+    // Wallnut doesn't do anything, just blocks
+  }
+  
+  render(p) {
+    p.push();
+    p.translate(this.x, this.y);
+    
+    // Determine crack level based on health
+    const healthPercent = this.health / this.maxHealth;
+    let crackLevel = 0;
+    if (healthPercent < 0.3) crackLevel = 2;
+    else if (healthPercent < 0.6) crackLevel = 1;
+    
+    // Shell
+    p.fill(139, 90, 43);
+    p.stroke(101, 67, 33);
+    p.strokeWeight(2);
+    p.circle(0, 0, 35);
+    
+    // Shell pattern
+    p.noFill();
+    p.stroke(101, 67, 33);
+    p.strokeWeight(1);
+    p.arc(-10, -5, 15, 15, 0, p.PI);
+    p.arc(10, -5, 15, 15, 0, p.PI);
+    p.arc(0, 5, 15, 15, p.PI, p.TWO_PI);
+    
+    // Eyes
+    p.fill(255);
+    p.noStroke();
+    p.circle(-8, -5, 6);
+    p.circle(8, -5, 6);
+    p.fill(0);
+    p.circle(-8, -5, 3);
+    p.circle(8, -5, 3);
+    
+    // Draw cracks based on damage
+    if (crackLevel > 0) {
+      p.stroke(80, 50, 20);
+      p.strokeWeight(2);
+      p.line(-12, -8, -5, 0);
+      p.line(12, -8, 5, 0);
+    }
+    if (crackLevel > 1) {
+      p.line(-8, 10, 0, 5);
+      p.line(8, 10, 0, 5);
+    }
+    
+    p.pop();
+    
+    this.renderHealthBar(p);
+  }
+}
+
+// Cherry Bomb - explosive plant
+export class CherryBomb extends Plant {
+  constructor(row, col) {
+    super(row, col, 'CHERRY_BOMB');
+    this.health = 100;
+    this.maxHealth = 100;
+    this.fuseTimer = 90; // explodes after 1.5 seconds
+    this.pulsePhase = 0;
+  }
+  
+  update(p) {
+    this.fuseTimer--;
+    this.pulsePhase += 0.3;
+    
+    if (this.fuseTimer <= 0) {
+      this.explode();
+    }
+  }
+  
+  explode() {
+    // Damage all zombies in 3x3 area
+    const explosionRadius = 150;
+    
+    gameState.zombies.forEach(zombie => {
+      const dx = zombie.x - this.x;
+      const dy = zombie.y - this.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      if (distance < explosionRadius) {
+        zombie.takeDamage(1800); // Instant kill
+      }
+    });
+    
+    // Create explosion particles
+    for (let i = 0; i < 30; i++) {
+      const angle = (i / 30) * Math.PI * 2;
+      const speed = 3 + Math.random() * 3;
+      const particle = new Particle(this.x, this.y, [255, 100, 0]);
+      particle.vx = Math.cos(angle) * speed;
+      particle.vy = Math.sin(angle) * speed;
+      gameState.particles.push(particle);
+    }
+    
+    this.die();
+  }
+  
+  render(p) {
+    p.push();
+    p.translate(this.x, this.y);
+    
+    // Pulsing effect as it's about to explode
+    const pulseScale = 1 + Math.sin(this.pulsePhase) * 0.1;
+    p.scale(pulseScale);
+    
+    // Two cherries
+    const positions = [
+      { x: -8, y: -3 },
+      { x: 8, y: -3 }
+    ];
+    
+    positions.forEach(pos => {
+      // Cherry body
+      p.fill(200, 0, 0);
+      p.stroke(150, 0, 0);
+      p.strokeWeight(2);
+      p.circle(pos.x, pos.y, 18);
+      
+      // Highlight
+      p.fill(255, 100, 100);
+      p.noStroke();
+      p.circle(pos.x - 4, pos.y - 4, 5);
+      
+      // Eyes (angry)
+      p.fill(255);
+      p.circle(pos.x - 3, pos.y, 4);
+      p.circle(pos.x + 3, pos.y, 4);
+      p.fill(0);
+      p.circle(pos.x - 3, pos.y, 2);
+      p.circle(pos.x + 3, pos.y, 2);
+    });
+    
+    // Stem
+    p.stroke(50, 150, 50);
+    p.strokeWeight(3);
+    p.noFill();
+    p.arc(0, -8, 20, 10, p.PI, p.TWO_PI);
+    
+    // Fuse timer indicator
+    if (this.fuseTimer < 45) {
+      p.fill(255, 200, 0);
+      p.noStroke();
+      p.textSize(10);
+      p.textAlign(p.CENTER, p.CENTER);
+      p.text(Math.ceil(this.fuseTimer / 60), 0, 15);
+    }
+    
+    p.pop();
+    
+    this.renderHealthBar(p);
+  }
+}
+
+// Zombie base class
+export class Zombie extends Entity {
+  constructor(row, type = 'BASIC') {
+    const pos = getGridPosition(row, GRID_COLS);
+    super(pos.x + 50, pos.y);
+    this.row = row;
+    this.type = type;
+    this.width = 35;
+    this.height = 50;
+    this.speed = 0.3;
+    this.health = 100;
+    this.maxHealth = 100;
+    this.damage = 20;
+    this.attackRate = 60; // frames between attacks
+    this.attackTimer = 0;
+    this.isEating = false;
+    this.targetPlant = null;
+    this.walkPhase = 0;
+    
+    gameState.zombies.push(this);
+    gameState.entities.push(this);
+  }
+  
+  update(p) {
+    // Check for plant in front
+    this.checkForPlant();
+    
+    if (this.isEating && this.targetPlant) {
+      // Attack plant
+      this.attackTimer++;
+      if (this.attackTimer >= this.attackRate) {
+        this.attackPlant();
+        this.attackTimer = 0;
+      }
+    } else {
+      // Move left
+      this.x -= this.speed;
+      this.walkPhase += 0.1;
+      this.isEating = false;
+      this.targetPlant = null;
+      
+      // Check if reached house
+      if (this.x < 50) {
+        this.reachHouse();
+      }
+    }
+  }
+  
+  checkForPlant() {
+    // Check all plants in this row
+    for (let col = 0; col < GRID_COLS; col++) {
+      const plant = gameState.plants[this.row][col];
+      if (plant && plant.active) {
+        const distance = Math.abs(this.x - plant.x);
+        if (distance < 40) {
+          this.isEating = true;
+          this.targetPlant = plant;
+          return;
+        }
+      }
+    }
+  }
+  
+  attackPlant() {
+    if (this.targetPlant && this.targetPlant.active) {
+      this.targetPlant.takeDamage(this.damage);
+    }
+  }
+  
+  takeDamage(amount) {
+    this.health -= amount;
+    if (this.health <= 0) {
+      this.die();
+    }
+  }
+  
+  die() {
+    gameState.zombiesKilled++;
+    gameState.score += 10;
+    
+    const index = gameState.zombies.indexOf(this);
+    if (index > -1) {
+      gameState.zombies.splice(index, 1);
+    }
+    
+    // Create death particles
+    for (let i = 0; i < 10; i++) {
+      gameState.particles.push(new Particle(this.x, this.y, [100, 100, 100]));
+    }
+    
+    this.destroy();
+  }
+  
+  reachHouse() {
+    // Game over - zombie reached the house
+    gameState.gamePhase = "GAME_OVER_LOSE";
+    this.die();
+  }
+  
+  renderHealthBar(p) {
+    const barWidth = 30;
+    const barHeight = 4;
+    const barX = this.x - barWidth / 2;
+    const barY = this.y - this.height / 2 - 8;
+    
+    // Background
+    p.fill(100, 0, 0);
+    p.noStroke();
+    p.rect(barX, barY, barWidth, barHeight);
+    
+    // Health
+    p.fill(255, 0, 0);
+    p.rect(barX, barY, barWidth * (this.health / this.maxHealth), barHeight);
+    
+    // Border
+    p.noFill();
+    p.stroke(0);
+    p.strokeWeight(1);
+    p.rect(barX, barY, barWidth, barHeight);
+  }
+}
+
+// Basic Zombie
+export class BasicZombie extends Zombie {
+  constructor(row) {
+    super(row, 'BASIC');
+    this.health = 100;
+    this.maxHealth = 100;
+    this.speed = 0.3;
+  }
+  
+  render(p) {
+    p.push();
+    p.translate(this.x, this.y);
+    
+    // Body
+    p.fill(100, 150, 100);
+    p.stroke(70, 120, 70);
+    p.strokeWeight(2);
+    p.rect(-12, -5, 24, 25, 5);
+    
+    // Head
+    p.fill(150, 200, 150);
+    p.circle(0, -18, 20);
+    
+    // Eyes
+    p.fill(255, 0, 0);
+    p.noStroke();
+    p.circle(-5, -18, 4);
+    p.circle(5, -18, 4);
+    
+    // Mouth
+    p.stroke(0);
+    p.strokeWeight(2);
+    p.noFill();
+    p.arc(0, -15, 10, 8, 0, p.PI);
+    
+    // Arms (walking animation)
+    const armSwing = Math.sin(this.walkPhase) * 15;
+    p.stroke(100, 150, 100);
+    p.strokeWeight(4);
+    p.line(-10, 0, -15, 10 + armSwing);
+    p.line(10, 0, 15, 10 - armSwing);
+    
+    // Legs
+    p.line(-6, 20, -8, 30 - armSwing);
+    p.line(6, 20, 8, 30 + armSwing);
+    
+    p.pop();
+    
+    this.renderHealthBar(p);
+  }
+}
+
+// Cone Zombie - wears a cone for extra protection
+export class ConeZombie extends Zombie {
+  constructor(row) {
+    super(row, 'CONE');
+    this.health = 200;
+    this.maxHealth = 200;
+    this.speed = 0.3;
+  }
+  
+  render(p) {
+    p.push();
+    p.translate(this.x, this.y);
+    
+    // Body
+    p.fill(100, 150, 100);
+    p.stroke(70, 120, 70);
+    p.strokeWeight(2);
+    p.rect(-12, -5, 24, 25, 5);
+    
+    // Head
+    p.fill(150, 200, 150);
+    p.circle(0, -18, 20);
+    
+    // Cone
+    p.fill(255, 150, 0);
+    p.stroke(200, 100, 0);
+    p.strokeWeight(2);
+    p.triangle(-10, -25, 10, -25, 0, -35);
+    
+    // Eyes
+    p.fill(255, 0, 0);
+    p.noStroke();
+    p.circle(-5, -18, 4);
+    p.circle(5, -18, 4);
+    
+    // Mouth
+    p.stroke(0);
+    p.strokeWeight(2);
+    p.noFill();
+    p.arc(0, -15, 10, 8, 0, p.PI);
+    
+    // Arms
+    const armSwing = Math.sin(this.walkPhase) * 15;
+    p.stroke(100, 150, 100);
+    p.strokeWeight(4);
+    p.line(-10, 0, -15, 10 + armSwing);
+    p.line(10, 0, 15, 10 - armSwing);
+    
+    // Legs
+    p.line(-6, 20, -8, 30 - armSwing);
+    p.line(6, 20, 8, 30 + armSwing);
+    
+    p.pop();
+    
+    this.renderHealthBar(p);
+  }
+}
+
+// Bucket Zombie - wears a bucket for maximum protection
+export class BucketZombie extends Zombie {
+  constructor(row) {
+    super(row, 'BUCKET');
+    this.health = 400;
+    this.maxHealth = 400;
+    this.speed = 0.25;
+  }
+  
+  render(p) {
+    p.push();
+    p.translate(this.x, this.y);
+    
+    // Body
+    p.fill(100, 150, 100);
+    p.stroke(70, 120, 70);
+    p.strokeWeight(2);
+    p.rect(-12, -5, 24, 25, 5);
+    
+    // Head
+    p.fill(150, 200, 150);
+    p.circle(0, -18, 20);
+    
+    // Bucket
+    p.fill(150, 150, 150);
+    p.stroke(100, 100, 100);
+    p.strokeWeight(2);
+    p.rect(-12, -32, 24, 14, 0, 0, 5, 5);
+    
+    // Eyes
+    p.fill(255, 0, 0);
+    p.noStroke();
+    p.circle(-5, -18, 4);
+    p.circle(5, -18, 4);
+    
+    // Mouth
+    p.stroke(0);
+    p.strokeWeight(2);
+    p.noFill();
+    p.arc(0, -15, 10, 8, 0, p.PI);
+    
+    // Arms
+    const armSwing = Math.sin(this.walkPhase) * 15;
+    p.stroke(100, 150, 100);
+    p.strokeWeight(4);
+    p.line(-10, 0, -15, 10 + armSwing);
+    p.line(10, 0, 15, 10 - armSwing);
+    
+    // Legs
+    p.line(-6, 20, -8, 30 - armSwing);
+    p.line(6, 20, 8, 30 + armSwing);
+    
+    p.pop();
+    
+    this.renderHealthBar(p);
+  }
+}
+
+// Projectile - Pea shot by Peashooter
+export class Pea extends Entity {
+  constructor(x, y, row) {
+    super(x, y);
+    this.row = row;
+    this.width = 8;
+    this.height = 8;
+    this.speed = 4;
+    this.damage = 20;
+    
+    gameState.projectiles.push(this);
+    gameState.entities.push(this);
+  }
+  
+  update(p) {
+    this.x += this.speed;
+    
+    // Check collision with zombies
+    for (const zombie of gameState.zombies) {
+      if (zombie.row === this.row) {
+        const dx = this.x - zombie.x;
+        const dy = this.y - zombie.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        if (distance < 25) {
+          zombie.takeDamage(this.damage);
+          this.destroy();
+          
+          // Impact particle
+          gameState.particles.push(new Particle(this.x, this.y, [150, 255, 150]));
+          return;
+        }
+      }
+    }
+    
+    // Remove if off screen
+    if (this.x > CANVAS_WIDTH + 50) {
+      this.destroy();
+    }
+  }
+  
+  destroy() {
+    const index = gameState.projectiles.indexOf(this);
+    if (index > -1) {
+      gameState.projectiles.splice(index, 1);
+    }
+    super.destroy();
+  }
+  
+  render(p) {
+    p.fill(150, 255, 150);
+    p.stroke(100, 200, 100);
+    p.strokeWeight(2);
+    p.circle(this.x, this.y, 8);
+  }
+}
+
+// Sun drop - collectible resource
+export class SunDrop extends Entity {
+  constructor(x, y, fromPlant = false) {
+    super(x, y);
+    this.width = 30;
+    this.height = 30;
+    this.value = SUN_VALUE;
+    this.lifetime = fromPlant ? 240 : 600; // 4 seconds for plant sun, 10 for sky sun
+    this.age = 0;
+    this.vy = fromPlant ? -2 : 1;
+    this.targetY = fromPlant ? y - 30 : Math.random() * (CANVAS_HEIGHT - 100) + 50;
+    this.falling = !fromPlant;
+    this.pulsePhase = Math.random() * Math.PI * 2;
+    
+    gameState.sunDrops.push(this);
+    gameState.entities.push(this);
+  }
+  
+  update(p) {
+    this.age++;
+    this.pulsePhase += 0.1;
+    
+    // Movement
+    if (this.falling) {
+      this.y += this.vy;
+      if (this.y >= this.targetY) {
+        this.y = this.targetY;
+        this.vy = 0;
+        this.falling = false;
+      }
+    } else if (this.vy !== 0) {
+      this.y += this.vy;
+      this.vy *= 0.9;
+      if (Math.abs(this.vy) < 0.1) {
+        this.vy = 0;
+      }
+    }
+    
+    // Expire
+    if (this.age >= this.lifetime) {
+      this.destroy();
+    }
+  }
+  
+  collect() {
+    gameState.sun += this.value;
+    this.destroy();
+    
+    // Particle effect
+    for (let i = 0; i < 5; i++) {
+      gameState.particles.push(new Particle(this.x, this.y, [255, 255, 0]));
+    }
+  }
+  
+  destroy() {
+    const index = gameState.sunDrops.indexOf(this);
+    if (index > -1) {
+      gameState.sunDrops.splice(index, 1);
+    }
+    super.destroy();
+  }
+  
+  render(p) {
+    p.push();
+    p.translate(this.x, this.y);
+    
+    // Pulsing scale
+    const scale = 1 + Math.sin(this.pulsePhase) * 0.1;
+    p.scale(scale);
+    
+    // Sun rays
+    p.fill(255, 255, 150, 100);
+    p.noStroke();
+    for (let i = 0; i < 8; i++) {
+      p.push();
+      p.rotate((i / 8) * p.TWO_PI);
+      p.triangle(0, 0, -5, -20, 5, -20);
+      p.pop();
+    }
+    
+    // Sun body
+    p.fill(255, 255, 0);
+    p.stroke(255, 220, 0);
+    p.strokeWeight(2);
+    p.circle(0, 0, 25);
+    
+    // Highlight
+    p.fill(255, 255, 150);
+    p.noStroke();
+    p.circle(-5, -5, 8);
+    
+    // Value text
+    p.fill(255, 150, 0);
+    p.stroke(255, 100, 0);
+    p.strokeWeight(1);
+    p.textSize(10);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text(this.value, 0, 0);
+    
+    p.pop();
+  }
+}
+
+// Particle effect
+export class Particle extends Entity {
+  constructor(x, y, color) {
+    super(x, y);
+    this.vx = (Math.random() - 0.5) * 4;
+    this.vy = (Math.random() - 0.5) * 4 - 2;
+    this.lifetime = 30 + Math.random() * 20;
+    this.age = 0;
+    this.size = Math.random() * 4 + 2;
+    this.color = color;
+    
+    gameState.particles.push(this);
+    gameState.entities.push(this);
+  }
+  
+  update(p) {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.vy += gameState.gravity * 0.5;
+    this.age++;
+    
+    if (this.age >= this.lifetime) {
+      this.destroy();
+    }
+  }
+  
+  destroy() {
+    const index = gameState.particles.indexOf(this);
+    if (index > -1) {
+      gameState.particles.splice(index, 1);
+    }
+    super.destroy();
+  }
+  
+  render(p) {
+    const alpha = (1 - this.age / this.lifetime) * 255;
+    p.fill(this.color[0], this.color[1], this.color[2], alpha);
+    p.noStroke();
+    p.circle(this.x, this.y, this.size);
+  }
+}
+</file>
+
+<file name="game_logic.js">
+// game_logic.js - Core game logic and state management
+
+import { 
+  gameState, 
+  GRID_ROWS, 
+  GRID_COLS,
+  INITIAL_SUN,
+  SUN_FALL_INTERVAL,
+  ZOMBIE_WAVES,
+  getGridPosition
+} from './globals.js';
+import { 
+  BasicZombie, 
+  ConeZombie, 
+  BucketZombie,
+  SunDrop 
+} from './entities.js';
+
+export function startGame() {
+  gameState.gamePhase = "PLAYING";
+  
+  // Initialize game state
+  gameState.sun = INITIAL_SUN;
+  gameState.score = 0;
+  gameState.currentWave = 0;
+  gameState.zombiesSpawned = 0;
+  gameState.zombiesKilled = 0;
+  gameState.waveComplete = false;
+  gameState.waveSpawnTimer = 0;
+  gameState.sunFallTimer = SUN_FALL_INTERVAL;
+  
+  // Reset cooldowns
+  gameState.plantCooldowns = {
+    SUNFLOWER: 0,
+    PEASHOOTER: 0,
+    WALLNUT: 0,
+    CHERRY_BOMB: 0
+  };
+  
+  // Clear entities
+  gameState.plants = [];
+  for (let row = 0; row < GRID_ROWS; row++) {
+    gameState.plants[row] = [];
+    for (let col = 0; col < GRID_COLS; col++) {
+      gameState.plants[row][col] = null;
+    }
+  }
+  gameState.zombies = [];
+  gameState.projectiles = [];
+  gameState.particles = [];
+  gameState.sunDrops = [];
+  gameState.entities = [];
+  
+  // Reset cursor
+  gameState.cursorRow = 2;
+  gameState.cursorCol = 4;
+  gameState.selectedPlantIndex = -1;
+  
+  // Start first wave
+  startWave(0);
+}
+
+export function resetGame() {
+  gameState.gamePhase = "START";
+  
+  // Clear all entities
+  gameState.plants = [];
+  for (let row = 0; row < GRID_ROWS; row++) {
+    gameState.plants[row] = [];
+    for (let col = 0; col < GRID_COLS; col++) {
+      gameState.plants[row][col] = null;
+    }
+  }
+  gameState.zombies = [];
+  gameState.projectiles = [];
+  gameState.particles = [];
+  gameState.sunDrops = [];
+  gameState.entities = [];
+  
+  gameState.sun = INITIAL_SUN;
+  gameState.score = 0;
+  gameState.currentWave = 0;
+  gameState.zombiesSpawned = 0;
+  gameState.zombiesKilled = 0;
+  gameState.selectedPlantIndex = -1;
+}
+
+export function togglePause() {
+  if (gameState.gamePhase === "PLAYING") {
+    gameState.gamePhase = "PAUSED";
+  } else if (gameState.gamePhase === "PAUSED") {
+    gameState.gamePhase = "PLAYING";
+  }
+}
+
+export function updateGame(p) {
+  // Update sun fall timer
+  gameState.sunFallTimer--;
+  if (gameState.sunFallTimer <= 0) {
+    spawnSunFromSky();
+    gameState.sunFallTimer = SUN_FALL_INTERVAL;
+  }
+  
+  // Update cooldowns
+  Object.keys(gameState.plantCooldowns).forEach(key => {
+    if (gameState.plantCooldowns[key] > 0) {
+      gameState.plantCooldowns[key]--;
+    }
+  });
+  
+  // Update wave spawning
+  updateWaveSpawning();
+  
+  // Update all entities
+  gameState.entities.forEach(entity => {
+    if (entity.active) {
+      entity.update(p);
+    }
+  });
+  
+  // Check win condition
+  checkWinCondition();
+}
+
+function startWave(waveIndex) {
+  if (waveIndex >= ZOMBIE_WAVES.length) {
+    // All waves complete - WIN!
+    gameState.gamePhase = "GAME_OVER_WIN";
+    return;
+  }
+  
+  gameState.currentWave = waveIndex;
+  gameState.zombiesSpawned = 0;
+  gameState.zombiesKilled = 0;
+  gameState.waveComplete = false;
+  gameState.waveSpawnTimer = 0;
+  
+  const wave = ZOMBIE_WAVES[waveIndex];
+  gameState.totalZombiesInWave = wave.count;
+}
+
+function updateWaveSpawning() {
+  if (gameState.currentWave >= ZOMBIE_WAVES.length) return;
+  if (gameState.waveComplete) return;
+  
+  const wave = ZOMBIE_WAVES[gameState.currentWave];
+  
+  if (gameState.zombiesSpawned < wave.count) {
+    gameState.waveSpawnTimer++;
+    
+    if (gameState.waveSpawnTimer >= wave.interval) {
+      spawnZombie(wave.types);
+      gameState.zombiesSpawned++;
+      gameState.waveSpawnTimer = 0;
+    }
+  } else {
+    // All zombies spawned for this wave
+    gameState.waveComplete = true;
+  }
+}
+
+function spawnZombie(types) {
+  // Random row
+  const row = Math.floor(Math.random() * GRID_ROWS);
+  
+  // Random zombie type from available types
+  const type = types[Math.floor(Math.random() * types.length)];
+  
+  let zombie;
+  switch (type) {
+    case 'BASIC':
+      zombie = new BasicZombie(row);
+      break;
+    case 'CONE':
+      zombie = new ConeZombie(row);
+      break;
+    case 'BUCKET':
+      zombie = new BucketZombie(row);
+      break;
+    default:
+      zombie = new BasicZombie(row);
+  }
+}
+
+function spawnSunFromSky() {
+  const x = Math.random() * 400 + 100;
+  const sun = new SunDrop(x, -30, false);
+  gameState.sunDrops.push(sun);
+}
+
+function checkWinCondition() {
+  if (gameState.waveComplete && gameState.zombies.length === 0) {
+    // Wave complete and all zombies dead
+    if (gameState.currentWave < ZOMBIE_WAVES.length - 1) {
+      // Start next wave
+      startWave(gameState.currentWave + 1);
+    } else {
+      // All waves complete - WIN!
+      gameState.gamePhase = "GAME_OVER_WIN";
+    }
+  }
+}
+
+export function getPlantCost(type) {
+  const costs = {
+    'SUNFLOWER': 50,
+    'PEASHOOTER': 100,
+    'WALLNUT': 50,
+    'CHERRY_BOMB': 150
+  };
+  return costs[type] || 0;
+}
+</file>
+
+<file name="input.js">
+// input.js - Input handling
+
+import { gameState, PLANT_KEYS, PLANT_TYPES } from './globals.js';
+import { startGame, resetGame, togglePause } from './game_logic.js';
+import { getGridPosition } from './globals.js';
+
+// Key state tracking
+const keys = {};
+
+export function handleKeyPress(p) {
+  keys[p.keyCode] = true;
+  
+  // Log input
+  if (p.logs && p.logs.inputs) {
+    p.logs.inputs.push({
+      input_type: 'keyPressed',
+      data: { key: p.key, keyCode: p.keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+  
+  // Phase control keys
+  if (p.keyCode === 13) { // ENTER
+    if (gameState.gamePhase === "START") {
+      startGame();
+    }
+  }
+  
+  if (p.keyCode === 27) { // ESC
+    if (gameState.gamePhase === "PLAYING") {
+      togglePause();
+    } else if (gameState.gamePhase === "PAUSED") {
+      togglePause();
+    }
+  }
+  
+  if (p.keyCode === 82) { // R - Restart
+    if (gameState.gamePhase === "GAME_OVER_WIN" || 
+        gameState.gamePhase === "GAME_OVER_LOSE") {
+      resetGame();
+    }
+  }
+  
+  // Gameplay keys (only during PLAYING phase)
+  if (gameState.gamePhase === "PLAYING") {
+    handleGameplayInput(p);
+  }
+}
+
+export function handleKeyRelease(p) {
+  keys[p.keyCode] = false;
+  
+  // Log input
+  if (p.logs && p.logs.inputs) {
+    p.logs.inputs.push({
+      input_type: 'keyReleased',
+      data: { key: p.key, keyCode: p.keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+
+function handleGameplayInput(p) {
+  // Cursor Movement
+  if (p.keyCode === 37) { // LEFT
+    if (gameState.cursorCol > 0) {
+      gameState.cursorCol--;
+    }
+  }
+  
+  if (p.keyCode === 39) { // RIGHT
+    if (gameState.cursorCol < 8) {
+      gameState.cursorCol++;
+    }
+  }
+  
+  if (p.keyCode === 38) { // UP
+    if (gameState.cursorRow > 0) {
+      gameState.cursorRow--;
+    }
+  }
+  
+  if (p.keyCode === 40) { // DOWN
+    if (gameState.cursorRow < 4) {
+      gameState.cursorRow++;
+    }
+  }
+  
+  // Cycle Plants (Z)
+  if (p.keyCode === 90) { // Z
+    gameState.selectedPlantIndex = (gameState.selectedPlantIndex + 1) % PLANT_KEYS.length;
+  }
+  
+  // Action (Space)
+  if (p.keyCode === 32) { // SPACE
+    // Check for SHIFT key for Shovel mode
+    if (p.keyIsDown && p.keyIsDown(16)) {
+      handleShovel();
+    } else {
+      handlePlanting();
+    }
+  }
+}
+
+function handlePlanting() {
+  if (gameState.selectedPlantIndex < 0) {
+    // Try to collect sun if no plant selected
+    collectNearestSun();
+    return;
+  }
+  
+  const plantKey = PLANT_KEYS[gameState.selectedPlantIndex];
+  const plantType = PLANT_TYPES[plantKey];
+  const { cursorRow, cursorCol, sun, plants, plantCooldowns } = gameState;
+  
+  // Check if cell is occupied
+  if (plants[cursorRow][cursorCol] !== null) {
+    return; // Cell occupied
+  }
+  
+  // Check cooldown
+  if (plantCooldowns[plantKey] > 0) {
+    return; // Plant on cooldown
+  }
+  
+  // Check if we have enough sun
+  if (sun < plantType.cost) {
+    return; // Not enough sun
+  }
+  
+  // Place plant
+  import('./entities.js').then(module => {
+    let plant = null;
+    switch (plantKey) {
+      case 'SUNFLOWER':
+        plant = new module.Sunflower(cursorRow, cursorCol);
+        break;
+      case 'PEASHOOTER':
+        plant = new module.Peashooter(cursorRow, cursorCol);
+        break;
+      case 'WALLNUT':
+        plant = new module.Wallnut(cursorRow, cursorCol);
+        break;
+      case 'CHERRY_BOMB':
+        plant = new module.CherryBomb(cursorRow, cursorCol);
+        break;
+    }
+    
+    if (plant) {
+      gameState.sun -= plantType.cost;
+      gameState.plantCooldowns[plantKey] = plantType.cooldown;
+    }
+  });
+}
+
+function handleShovel() {
+  const { cursorRow, cursorCol, plants } = gameState;
+  const plant = plants[cursorRow][cursorCol];
+  
+  if (plant) {
+    plant.die();
+  }
+}
+
+function collectNearestSun() {
+  const cursorPos = getGridPosition(gameState.cursorRow, gameState.cursorCol);
+  
+  let nearestSun = null;
+  let nearestDistance = Infinity;
+  
+  gameState.sunDrops.forEach(sun => {
+    const dx = sun.x - cursorPos.x;
+    const dy = sun.y - cursorPos.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    
+    if (distance < 80 && distance < nearestDistance) {
+      nearestSun = sun;
+      nearestDistance = distance;
+    }
+  });
+  
+  if (nearestSun) {
+    nearestSun.collect();
+  }
+}
+
+export function isKeyPressed(keyCode) {
+  return keys[keyCode] === true;
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

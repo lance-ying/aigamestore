@@ -1,0 +1,290 @@
+<analysis>
+- Issue identified: The auto-restart mechanism, triggered after a game over, incorrectly sets the game phase back to "START" (the main menu screen) instead of immediately starting a new game in "PLAYING" mode. This is because the `restartGame` function, used by both manual and auto-restart, defaults to setting the phase to "START".
+- Files affected:
+    - `game.js`
+    - `input.js`
+- Changes needed: Modify the `restartGame` function to accept a parameter that dictates whether the game should immediately transition to "PLAYING" or return to "START" after a restart. Update calls to `restartGame` in `game.js` (for auto-restart) and `input.js` (for manual restarts via 'R' key and 'Enter' after game over) to pass the appropriate boolean flag. This will ensure auto-restarts and 'Enter' after game over go straight to gameplay, while 'R' key still returns to the start screen.
+</analysis>
+<code filename="game.js">
+/**
+ * Main Game Entry Point and Loop
+ */
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, COLOR_BG, WIN_DISTANCE, logGameInfo } from './globals.js';
+import { initRandom } from './utils.js';
+import { Player } from './entities.js';
+import { initLevel, updateLevelGeneration } from './level.js';
+import { updatePhysics } from './physics.js';
+import { setupInput, restartGame } from './input.js';
+import { setupUI, renderUI } from './ui.js';
+import { setupCamera, updateCamera } from './camera.js';
+
+// Setup basic three.js scene
+function setupScene() {
+    const container = document.getElementById('game-container') || document.body;
+    
+    // Create container if not exists for strict sizing
+    if (container === document.body) {
+        const div = document.createElement('div');
+        div.id = 'game-container';
+        div.style.width = `${CANVAS_WIDTH}px`;
+        div.style.height = `${CANVAS_HEIGHT}px`;
+        div.style.position = 'relative';
+        div.style.overflow = 'hidden';
+        document.body.appendChild(div);
+        gameState.gameContainer = div;
+    } else {
+        gameState.gameContainer = container;
+    }
+
+    // Renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+    renderer.shadowMap.enabled = true;
+    gameState.gameContainer.appendChild(renderer.domElement);
+    gameState.renderer = renderer;
+
+    // Scene
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(COLOR_BG);
+    scene.fog = new THREE.FogExp2(COLOR_BG, 0.02);
+    gameState.scene = scene;
+
+    // Lights
+    const ambient = new THREE.AmbientLight(0xffffff, 0.2);
+    scene.add(ambient);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(10, 20, 10);
+    dirLight.castShadow = true;
+    dirLight.shadow.camera.top = 20;
+    dirLight.shadow.camera.bottom = -20;
+    dirLight.shadow.camera.left = -20;
+    dirLight.shadow.camera.right = 20;
+    scene.add(dirLight);
+}
+
+// Initialization
+function init() {
+    initRandom(42);
+    setupScene();
+    setupCamera();
+    setupUI();
+    setupInput();
+
+    // Create Player
+    gameState.player = new Player();
+    gameState.entities.push(gameState.player);
+    gameState.scene.add(gameState.player.mesh);
+
+    // Initial Level
+    initLevel();
+    
+    // Listen for restart
+    window.addEventListener("game-restart", () => {
+        initLevel();
+    });
+    
+    logGameInfo("Game Initialized");
+    
+    // Start Loop
+    requestAnimationFrame(gameLoop);
+}
+
+let lastTime = performance.now();
+
+function gameLoop(time) {
+    const dt = Math.min((time - lastTime) / 1000, 0.1); // Cap dt
+    lastTime = time;
+    
+    gameState.deltaTime = dt;
+    gameState.frameCount++;
+
+    update(dt);
+    render();
+    
+    requestAnimationFrame(gameLoop);
+}
+
+function update(dt) {
+    if (gameState.gamePhase === "PLAYING") {
+        // Update Player
+        if (gameState.player) {
+            gameState.player.update(dt);
+            
+            // Win condition check
+            if (gameState.player.position.z >= WIN_DISTANCE) {
+                gameState.gamePhase = "GAME_OVER_WIN";
+                logGameInfo("Level Complete", { score: gameState.score });
+            }
+        }
+        
+        // Update Physics
+        updatePhysics(dt);
+        
+        // Update Entities
+        gameState.collectibles.forEach(e => e.update(dt));
+        gameState.particles.forEach(e => e.update(dt));
+        gameState.tiles.forEach(e => e.update(dt));
+        
+        // Level Gen
+        updateLevelGeneration();
+    } else if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+        // Auto-restart logic
+        if (!gameState.autoRestartScheduled) {
+            gameState.autoRestartScheduled = true;
+            // Schedule restart after 1 second (1000ms)
+            gameState.autoRestartTimeoutId = setTimeout(() => {
+                restartGame(true); // Pass true to start playing immediately after auto-restart
+            }, 1000); 
+            logGameInfo("Auto-restart scheduled");
+        }
+    }
+    
+    // Update Camera always to ensure it snaps back on restart/menu screens
+    updateCamera(dt);
+    
+    // UI Update is continuous in render, but logic can go here
+}
+
+function render() {
+    gameState.renderer.render(gameState.scene, gameState.camera);
+    renderUI();
+}
+
+// Start
+init();
+</code>
+<code filename="input.js">
+/**
+ * Input handling system
+ */
+import { gameState, logs } from './globals.js';
+
+export function setupInput() {
+    const handleKey = (e, isDown) => {
+        const code = e.code;
+        const key = e.key;
+        
+        // Log raw input
+        if (isDown) { // Only log keydown to save space/spam
+            logs.inputs.push({
+                type: 'keydown',
+                key: key,
+                code: code,
+                framecount: gameState.frameCount,
+                timestamp: Date.now()
+            });
+        }
+
+        // Map keys to state
+        if (code === 'ArrowLeft') gameState.keys.ArrowLeft = isDown;
+        if (code === 'ArrowRight') gameState.keys.ArrowRight = isDown;
+        if (code === 'ArrowUp') gameState.keys.ArrowUp = isDown;
+        if (code === 'ArrowDown') gameState.keys.ArrowDown = isDown;
+        if (code === 'KeyA') gameState.keys.KeyA = isDown;
+        if (code === 'KeyD') gameState.keys.KeyD = isDown;
+        if (code === 'KeyW') gameState.keys.KeyW = isDown;
+        if (code === 'KeyS') gameState.keys.KeyS = isDown;
+        if (code === 'Space') gameState.keys.Space = isDown;
+        if (code === 'ShiftLeft' || code === 'ShiftRight') gameState.keys.Shift = isDown;
+        if (code === 'KeyZ') gameState.keys.KeyZ = isDown;
+
+        // Game Flow Control Keys (Key Down Events only)
+        if (isDown) {
+            handleGameFlowKeys(e);
+        }
+    };
+
+    window.addEventListener('keydown', (e) => handleKey(e, true));
+    window.addEventListener('keyup', (e) => handleKey(e, false));
+}
+
+function handleGameFlowKeys(e) {
+    const code = e.keyCode;
+
+    // ENTER to Start
+    if (code === 13) { // Enter
+        if (gameState.gamePhase === "START") {
+            gameState.gamePhase = "PLAYING";
+            gameState.startTime = Date.now();
+            console.log("Game Started");
+        } else if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+             // If Enter is pressed after game over, restart and start playing immediately
+             restartGame(true);
+        }
+    }
+
+    // ESC to Pause
+    if (code === 27) { // Escape
+        if (gameState.gamePhase === "PLAYING") {
+            gameState.gamePhase = "PAUSED";
+        } else if (gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = "PLAYING";
+        }
+    }
+
+    // R to Restart
+    if (code === 82) { // R
+        // Manual restart via 'R' key should go back to the start screen
+        restartGame(false); 
+    }
+}
+
+export function restartGame(startImmediately = false) {
+    console.log(`Restarting Game (startImmediately: ${startImmediately})...`);
+    
+    // Clear any pending auto-restart if a manual restart is triggered
+    if (gameState.autoRestartTimeoutId) {
+        clearTimeout(gameState.autoRestartTimeoutId);
+        gameState.autoRestartTimeoutId = null;
+        gameState.autoRestartScheduled = false; // Reset the flag
+        console.log("Auto-restart cancelled by manual restart.");
+    }
+
+    // Reset phase based on 'startImmediately' flag
+    gameState.gamePhase = startImmediately ? "PLAYING" : "START";
+    
+    // If starting immediately, reset the start time
+    if (startImmediately) {
+        gameState.startTime = Date.now();
+    }
+
+    // Reset Player
+    if (gameState.player) {
+        gameState.player.reset();
+    }
+    
+    // Reset Score
+    gameState.score = 0;
+    gameState.distance = 0;
+    gameState.combo = 0;
+    
+    // Reset Level (handled in game loop via reset flag usually, or direct manipulation)
+    // We will signal the level manager to reset in the update loop or do it here if possible.
+    // Let's rely on game.js monitoring the phase transition to rebuild the world.
+    
+    // Clean up entities
+    gameState.collectibles.forEach(c => gameState.scene.remove(c.mesh));
+    gameState.tiles.forEach(t => gameState.scene.remove(t.mesh));
+    gameState.particles.forEach(p => gameState.scene.remove(p.mesh));
+    
+    gameState.collectibles = [];
+    gameState.tiles = [];
+    gameState.particles = [];
+    gameState.entities = [];
+    
+    // Re-add player to entities
+    if (gameState.player) {
+        gameState.entities.push(gameState.player);
+    }
+    
+    // Reset auto-restart flags after a full game reset, in case this was the auto-restart call itself.
+    // This ensures the flags are clean for the next game over.
+    gameState.autoRestartScheduled = false;
+    gameState.autoRestartTimeoutId = null; 
+
+    // Trigger initialization of initial tiles
+    window.dispatchEvent(new CustomEvent("game-restart"));
+}
+</code>

@@ -1,0 +1,540 @@
+<analysis>
+- Issue identified: 
+    1. Camera follows player's X and Y bounce, causing motion sickness/unsteadiness.
+    2. Player ball is too small for user preference.
+    3. Game speed is constant, needs progression.
+    4. Camera is too close.
+    5. Initial difficulty is too low.
+- Files affected: `globals.js`, `entities.js`, `level.js`, `camera.js`.
+- Changes needed:
+    - `globals.js`: Update camera offset (further back). Add dynamic speed/spacing functions based on level.
+    - `entities.js`: Increase Player radius. Update input handling to use dynamic speed.
+    - `level.js`: Use dynamic spacing for tile generation. Increase initial lateral randomization for higher difficulty.
+    - `camera.js`: Modify update logic to keep camera X and Y fixed relative to the world (steady), only following Z.
+</analysis>
+
+<code filename="globals.js">
+/**
+ * Global constants and state management for Neon Hop
+ */
+
+// Canvas dimensions hard constrained
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Game constants
+export const WORLD_GRAVITY = -0.05;
+export const BOUNCE_FORCE = 0.8;
+
+// Speed and Spacing Logic
+export const BASE_SPEED = 0.3125; // Exact sync: 10 units / 32 frames flight time
+export function getSpeed(level) {
+    // Increase speed by ~6% per level
+    return BASE_SPEED + (Math.max(1, level) - 1) * 0.02;
+}
+export function getSpacing(level) {
+    // Physics sync: Distance = Speed * 32 frames (derived from gravity and bounce force)
+    return getSpeed(level) * 32;
+}
+
+export const LATERAL_SPEED = 0.4;
+export const LATERAL_FRICTION = 0.9;
+export const MAX_LATERAL_SPEED = 0.5;
+export const TILE_SIZE = 4;
+// TILE_SPACING removed as constant, use getSpacing(level)
+
+export const WIN_DISTANCE = Infinity; // Endless mode
+export const LEVEL_LENGTH = 500; // New level every 500m
+
+// Colors
+export const COLOR_BG = 0x110515; // Deep purple/black
+export const COLOR_PLAYER = 0x00ffff; // Cyan
+export const COLOR_TILE_BASE = 0x2a1a3a;
+export const COLOR_TILE_EMISSIVE = 0xff00ff; // Magenta
+export const COLOR_COLLECTIBLE = 0xffd700; // Gold
+
+// Level Palettes
+export const PALETTES = [
+    { base: 0x2a1a3a, emissive: 0xff00ff, bg: 0x110515 }, // Level 1: Neon Purple
+    { base: 0x001a33, emissive: 0x00ffff, bg: 0x000510 }, // Level 2: Cyber Blue
+    { base: 0x330000, emissive: 0xff3300, bg: 0x1a0500 }, // Level 3: Magma Red
+    { base: 0x002200, emissive: 0x33ff00, bg: 0x001100 }, // Level 4: Matrix Green
+    { base: 0x222222, emissive: 0xffffff, bg: 0x000000 }, // Level 5: Monochrome
+];
+
+// Game State Object
+export const gameState = {
+    // Core state
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2, TEST_3
+    
+    // Time tracking
+    frameCount: 0,
+    deltaTime: 0,
+    lastFrameTime: 0,
+    startTime: 0,
+    
+    // Three.js core
+    scene: null,
+    camera: null,
+    renderer: null,
+    gameContainer: null,
+    
+    // Lighting
+    lights: [],
+    ambientLight: null,
+    directionalLight: null,
+    
+    // Game entities and data
+    player: null,
+    entities: [],      // Generic entity list for updates
+    tiles: [],         // Specific list for platform logic
+    collectibles: [],  // Points
+    particles: [],     // Visual effects
+    
+    // Physics
+    gravity: { x: 0, y: WORLD_GRAVITY, z: 0 },
+    
+    // Scoring
+    score: 0,
+    distance: 0,
+    level: 1,
+    combo: 0,
+    maxCombo: 0,
+    
+    // Camera state
+    cameraOffset: { x: 0, y: 16, z: -25 }, // Further back and higher
+    cameraLookAtOffset: { x: 0, y: 0, z: 10 },
+    
+    // Input state
+    keys: {
+        ArrowLeft: false,
+        ArrowRight: false,
+        ArrowUp: false,
+        ArrowDown: false,
+        KeyA: false,
+        KeyD: false,
+        KeyW: false,
+        KeyS: false,
+        Space: false,
+        Shift: false,
+        KeyZ: false
+    }
+};
+
+// Global accessor as required
+window.getGameState = () => gameState;
+
+// Logging system (write-only)
+export const logs = {
+    game_info: [],
+    player_info: [],
+    inputs: []
+};
+window.logs = logs;
+
+// Helper to log game info
+export function logGameInfo(info, data = {}) {
+    logs.game_info.push({
+        info: info,
+        data: data,
+        game_status: gameState.gamePhase,
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+}
+</code>
+
+<code filename="entities.js">
+/**
+ * Game entities: Player, Tile, Collectible
+ */
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, COLOR_PLAYER, COLOR_TILE_BASE, COLOR_TILE_EMISSIVE, TILE_SIZE, getSpeed, LATERAL_SPEED, LATERAL_FRICTION, MAX_LATERAL_SPEED } from './globals.js';
+import { Particle } from './particles.js';
+import { clamp, lerp } from './utils.js';
+
+export class Player {
+    constructor() {
+        this.radius = 0.9; // Larger ball
+        this.position = new THREE.Vector3(0, 0.9, 0); // Corrected initial Y position based on radius
+        this.velocity = new THREE.Vector3(0, 0, getSpeed(1));
+        
+        // Mesh
+        const geometry = new THREE.SphereGeometry(this.radius, 32, 32);
+        const material = new THREE.MeshStandardMaterial({
+            color: COLOR_PLAYER,
+            emissive: COLOR_PLAYER,
+            emissiveIntensity: 0.5,
+            roughness: 0.1,
+            metalness: 0.5
+        });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.castShadow = true;
+        this.mesh.receiveShadow = true;
+        
+        // Light
+        this.light = new THREE.PointLight(COLOR_PLAYER, 1, 10);
+        this.mesh.add(this.light);
+        
+        this.reset();
+    }
+    
+    reset() {
+        this.position.set(0, this.radius, 0); // Reset to radius height
+        this.velocity.set(0, 0, getSpeed(1));
+        this.mesh.position.copy(this.position);
+        this.rotationSpeed = 0;
+    }
+    
+    update(dt) {
+        // Movement Logic is partly handled in physics, but control logic is here
+        this.handleInput(dt);
+        
+        // Rotate ball based on movement
+        this.mesh.rotation.x -= this.velocity.z * 0.5;
+        this.mesh.rotation.z -= this.velocity.x * 0.5;
+        
+        // Update Log
+        if (gameState.frameCount % 10 === 0) {
+            if (window.logs && window.logs.player_info) {
+                 window.logs.player_info.push({
+                     x: this.position.x,
+                     y: this.position.y,
+                     z: this.position.z,
+                     frame: gameState.frameCount
+                 });
+            }
+        }
+    }
+    
+    handleInput(dt) {
+        // Control Mode Switching
+        if (gameState.controlMode === "HUMAN") {
+            this.handleHumanInput(dt);
+        } else if (gameState.controlMode.startsWith("TEST")) {
+            this.handleAIInput(dt);
+        }
+    }
+    
+    handleHumanInput(dt) {
+        const keys = gameState.keys;
+        const left = keys.ArrowLeft || keys.KeyA;
+        const right = keys.ArrowRight || keys.KeyD;
+        
+        // Acceleration (Flipped controls as per user feedback)
+        if (left) this.velocity.x += LATERAL_SPEED * 0.1; // Left arrow now adds to X, moving right
+        if (right) this.velocity.x -= LATERAL_SPEED * 0.1; // Right arrow now subtracts from X, moving left
+        
+        // Friction / Damping
+        this.velocity.x *= LATERAL_FRICTION;
+        
+        // Clamping
+        this.velocity.x = clamp(this.velocity.x, -MAX_LATERAL_SPEED, MAX_LATERAL_SPEED);
+        
+        // Progressive Forward Speed
+        this.velocity.z = getSpeed(gameState.level);
+    }
+    
+    handleAIInput(dt) {
+        // Simple AI: Look at next tile and steer towards x
+        // Find closest tile in front of player
+        const pz = this.position.z;
+        const upcomingTiles = gameState.tiles.filter(t => t.position.z > pz).sort((a, b) => a.position.z - b.position.z);
+        
+        if (upcomingTiles.length > 0) {
+            const target = upcomingTiles[0];
+            const targetX = target.position.x;
+            
+            // Suicide for Test 3
+            if (gameState.controlMode === "TEST_3") {
+                this.velocity.x = 0.5; // Hard right
+                return;
+            }
+            
+            // Steer
+            const diff = targetX - this.position.x;
+            if (Math.abs(diff) > 0.1) {
+                this.velocity.x += Math.sign(diff) * LATERAL_SPEED * 0.15;
+            }
+            
+            this.velocity.x *= LATERAL_FRICTION;
+            this.velocity.x = clamp(this.velocity.x, -MAX_LATERAL_SPEED, MAX_LATERAL_SPEED);
+        }
+        this.velocity.z = getSpeed(gameState.level);
+    }
+    
+    spawnParticles(pos, count, color) {
+        for(let i=0; i<count; i++) {
+            new Particle(pos, color, 0.1, 1.0);
+        }
+    }
+}
+
+export class Tile {
+    constructor(x, z, palette = null) {
+        this.size = TILE_SIZE;
+        this.position = new THREE.Vector3(x, -0.5, z); // Top surface at y=0 relative to origin, but mesh center is -0.5
+        
+        const geometry = new THREE.BoxGeometry(this.size, 1, this.size);
+        
+        // Use provided palette or default globals
+        const baseColor = palette ? palette.base : COLOR_TILE_BASE;
+        const emissiveColor = palette ? palette.emissive : COLOR_TILE_EMISSIVE;
+        
+        const material = new THREE.MeshStandardMaterial({
+            color: baseColor,
+            emissive: emissiveColor,
+            emissiveIntensity: 0.2,
+            roughness: 0.2,
+            metalness: 0.8
+        });
+        
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.copy(this.position);
+        this.mesh.receiveShadow = true;
+        
+        // Add a wireframe for the "neon" look
+        const edges = new THREE.EdgesGeometry(geometry);
+        const lineMat = new THREE.LineBasicMaterial({ color: emissiveColor });
+        const wireframe = new THREE.LineSegments(edges, lineMat);
+        this.mesh.add(wireframe);
+        
+        // Animation state
+        this.targetScale = 1;
+        this.currentScale = 0; // Pop in effect
+        
+        gameState.scene.add(this.mesh);
+        gameState.tiles.push(this);
+    }
+    
+    update(dt) {
+        // Pop in animation
+        if (this.currentScale < this.targetScale) {
+            this.currentScale = lerp(this.currentScale, this.targetScale, dt * 5);
+            this.mesh.scale.setScalar(this.currentScale);
+        }
+        
+        // Pulse if active
+        // Cleanup if far behind
+        if (gameState.player && this.position.z < gameState.player.position.z - 20) {
+            this.destroy();
+        }
+    }
+    
+    onLand() {
+        this.mesh.material.emissiveIntensity = 2.0; // Flash
+        // Reset slowly in update? simplified:
+        setTimeout(() => {
+             if(this.mesh) this.mesh.material.emissiveIntensity = 0.2;
+        }, 200);
+    }
+    
+    destroy() {
+        gameState.scene.remove(this.mesh);
+        this.mesh.geometry.dispose();
+        if (this.mesh.material) this.mesh.material.dispose();
+        
+        const idx = gameState.tiles.indexOf(this);
+        if (idx > -1) gameState.tiles.splice(idx, 1);
+    }
+}
+
+export class Collectible {
+    constructor(x, z) {
+        this.position = new THREE.Vector3(x, 1.5, z);
+        
+        const geometry = new THREE.OctahedronGeometry(0.3);
+        const material = new THREE.MeshStandardMaterial({
+            color: 0xffd700,
+            emissive: 0xffa500,
+            emissiveIntensity: 0.8
+        });
+        
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.copy(this.position);
+        
+        gameState.scene.add(this.mesh);
+        gameState.collectibles.push(this);
+        
+        this.t = Math.random() * 100;
+    }
+    
+    update(dt) {
+        this.t += dt;
+        // Float and rotate
+        this.mesh.rotation.y += 2 * dt;
+        this.mesh.position.y = 1.5 + Math.sin(this.t * 2) * 0.3;
+        
+        // Check collision
+        if (gameState.player) {
+            const dist = this.mesh.position.distanceTo(gameState.player.position);
+            if (dist < 1.0 + gameState.player.radius) { // Adjust for player size
+                this.collect();
+            }
+        }
+        
+        // Despawn
+        if (gameState.player && this.position.z < gameState.player.position.z - 10) {
+            this.destroy();
+        }
+    }
+    
+    collect() {
+        gameState.score += 50;
+        // Particle effect
+        if (gameState.player.spawnParticles) {
+            gameState.player.spawnParticles(this.position, 5, 0xffd700);
+        }
+        this.destroy();
+    }
+    
+    destroy() {
+        gameState.scene.remove(this.mesh);
+        const idx = gameState.collectibles.indexOf(this);
+        if (idx > -1) gameState.collectibles.splice(idx, 1);
+    }
+}
+</code>
+
+<code filename="level.js">
+/**
+ * Procedural Level Generation
+ */
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, getSpacing, getSpeed, LEVEL_LENGTH, PALETTES, COLOR_BG } from './globals.js';
+import { Tile, Collectible } from './entities.js';
+import { randomRange, randomInt, lerp } from './utils.js';
+
+let nextSpawnZ = 0;
+let lastX = 0;
+
+export function initLevel() {
+    nextSpawnZ = 0;
+    lastX = 0;
+    gameState.level = 1;
+    
+    // Reset background to initial
+    if (gameState.scene) {
+        gameState.scene.background = new THREE.Color(COLOR_BG);
+        gameState.scene.fog = new THREE.FogExp2(COLOR_BG, 0.02);
+    }
+    
+    // Spawn initial platform
+    new Tile(0, 0, PALETTES[0]);
+    nextSpawnZ += getSpacing(1);
+    
+    // Pre-spawn some tiles
+    for (let i = 0; i < 10; i++) {
+        spawnNextTile();
+    }
+}
+
+export function updateLevelGeneration() {
+    if (!gameState.player) return;
+    
+    const playerZ = gameState.player.position.z;
+    const renderDistance = 100;
+    
+    // Generate ahead
+    while (nextSpawnZ < playerZ + renderDistance) {
+        spawnNextTile();
+    }
+    
+    // Update Environment (Level Transition)
+    updateEnvironment(playerZ);
+}
+
+function updateEnvironment(playerZ) {
+    // Determine current level based on player position
+    const currentLevel = Math.floor(playerZ / LEVEL_LENGTH) + 1;
+    gameState.level = currentLevel;
+    
+    // Get palette for current level
+    const paletteIndex = (currentLevel - 1) % PALETTES.length;
+    const targetBgHex = PALETTES[paletteIndex].bg;
+    
+    // Smoothly lerp background color
+    if (gameState.scene) {
+        const currentBg = gameState.scene.background;
+        const targetBg = new THREE.Color(targetBgHex);
+        
+        currentBg.lerp(targetBg, 0.05);
+        gameState.scene.fog.color.copy(currentBg);
+    }
+}
+
+function spawnNextTile() {
+    // Determine level for this specific tile
+    const tileLevel = Math.floor(nextSpawnZ / LEVEL_LENGTH) + 1;
+    const paletteIndex = (tileLevel - 1) % PALETTES.length;
+    const palette = PALETTES[paletteIndex];
+    
+    // Difficulty Scaling
+    // Base deviation increased to 7 (was 4) to make initial levels harder
+    const difficultyMultiplier = Math.min(tileLevel - 1, 10);
+    const maxDev = Math.min(7 + (difficultyMultiplier * 1.5), 14);
+    
+    // Determine next position
+    let nextX = lastX + randomRange(-maxDev, maxDev);
+    
+    // Clamp to lane width
+    const laneWidth = 12;
+    if (nextX > laneWidth) nextX = laneWidth;
+    if (nextX < -laneWidth) nextX = -laneWidth;
+    
+    lastX = nextX;
+    
+    new Tile(nextX, nextSpawnZ, palette);
+    
+    // Chance for collectible
+    if (Math.random() > 0.7) {
+        new Collectible(nextX, nextSpawnZ);
+    }
+    
+    // Calculate spacing based on the speed of the level this tile belongs to
+    // This ensures the jump arc matches the distance
+    nextSpawnZ += getSpacing(tileLevel);
+}
+</code>
+
+<code filename="camera.js">
+/**
+ * Camera controller
+ */
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+
+export function setupCamera() {
+    // 60 degrees FOV, Aspect ratio handled in setup
+    gameState.camera = new THREE.PerspectiveCamera(60, gameState.renderer.domElement.width / gameState.renderer.domElement.height, 0.1, 500);
+    gameState.camera.position.set(0, 10, -10);
+    gameState.camera.lookAt(0, 0, 0);
+}
+
+export function updateCamera(dt) {
+    const player = gameState.player;
+    if (!player) return;
+
+    // Steady Camera Logic
+    // We only follow the player's Z position.
+    // X and Y are fixed relative to the world origin (X=0) or a fixed height offset.
+    // This prevents the camera from bouncing up/down or swaying left/right.
+    
+    const targetZ = player.position.z + gameState.cameraOffset.z;
+    const targetX = gameState.cameraOffset.x; // Fixed X (0)
+    const targetY = gameState.cameraOffset.y; // Fixed Y (absolute height)
+    
+    // Smooth lerp for Z to follow player speed changes smoothly
+    gameState.camera.position.z += (targetZ - gameState.camera.position.z) * 5 * dt;
+    
+    // Lerp X/Y to fixed positions (handles initial transition or resets)
+    gameState.camera.position.x += (targetX - gameState.camera.position.x) * 2 * dt;
+    gameState.camera.position.y += (targetY - gameState.camera.position.y) * 2 * dt;
+    
+    // Look ahead of player, but keep the look target steady in X/Y to avoid rotation wobble
+    // Looking at the center of the lane (x=0) ahead of the player
+    const lookTarget = new THREE.Vector3(0, 0, player.position.z + 20);
+    gameState.camera.lookAt(lookTarget);
+}
+</code>

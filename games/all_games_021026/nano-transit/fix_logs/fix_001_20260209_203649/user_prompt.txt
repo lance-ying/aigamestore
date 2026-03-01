@@ -1,0 +1,1466 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+when the game is paused, I don't want to see the game be grayed out or see any paused press esc to resume 
+
+but I also don't want the hud/cursor to disappear when the game is paused
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Game</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; font-family: sans-serif; transition: background 0.2s; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setControlMode('HUMAN')">Human Mode</button>
+        <button id="test1ModeBtn" class="control-button" onclick="setControlMode('TEST_1')">TEST (Connection)</button>
+        <button id="test2ModeBtn" class="control-button" onclick="setControlMode('TEST_2')">TEST (AutoPlay)</button>
+      </div>
+      
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 10px auto; line-height: 1.4; font-size: 14px;">
+        Design a transit map for a growing city. Connect stations with colored lines to transport passengers. Avoid overcrowding stations to keep the city moving.
+      </p>
+      <p id="gameControls" style="color: #aaa; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4; font-size: 12px;">
+        <strong>Arrows</strong>: Move Cursor | <strong>Z</strong>: Switch Line | <strong>Space</strong>: Connect/Build | <strong>Shift+Space</strong>: Undo | <strong>ESC</strong>: Pause
+      </p>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    
+    <script type="module">
+        import { gameState } from './globals.js';
+        
+        window.setControlMode = function(mode) {
+            if (!gameState) return;
+            gameState.controlMode = mode;
+            
+            // Update UI
+            document.querySelectorAll('.control-button').forEach(btn => btn.classList.remove('active'));
+            if (mode === 'HUMAN') document.getElementById('humanModeBtn').classList.add('active');
+            if (mode === 'TEST_1') document.getElementById('test1ModeBtn').classList.add('active');
+            if (mode === 'TEST_2') document.getElementById('test2ModeBtn').classList.add('active');
+            
+            // Focus canvas
+            document.querySelector('canvas').focus();
+        };
+    </script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+/**
+ * automated_testing_controller.js
+ * Controls automated testing actions based on gameState.
+ */
+
+import { gameState, GAME_PHASES, SHAPES } from './globals.js';
+import { distance } from './utils.js';
+
+let step = 0;
+let waitTimer = 0;
+
+export function get_automated_testing_action(gameState) {
+    const mode = gameState.controlMode;
+    
+    // Always start game if in Start Screen
+    if (gameState.gamePhase === GAME_PHASES.START) {
+        return { keyCode: 13 }; // ENTER
+    }
+    
+    if (gameState.gamePhase !== GAME_PHASES.PLAYING) return null;
+
+    if (mode === "TEST_1") {
+        // Basic Connection Test
+        // 1. Move to Station 0
+        // 2. Press Space
+        // 3. Move to Station 1
+        // 4. Press Space
+        return runConnectionTest(gameState);
+    } 
+    else if (mode === "TEST_2") {
+        // Win/Play Strategy
+        return runAutoPlayStrategy(gameState);
+    }
+
+    return null;
+}
+
+function runConnectionTest(state) {
+    const stations = state.stations;
+    if (stations.length < 2) return null;
+    
+    const targetA = stations[0];
+    const targetB = stations[1];
+    
+    // Simple state machine via static vars or checking state
+    // Check if line 0 has station 0
+    const line = state.lines[0];
+    const hasA = line.stations.includes(targetA);
+    const hasB = line.stations.includes(targetB);
+    
+    const cursor = state.cursor;
+    
+    if (!hasA) {
+        // Move to A
+        if (distance(cursor.x, cursor.y, targetA.x, targetA.y) > 5) {
+            return moveTowards(cursor, targetA);
+        } else {
+            return { keyCode: 32 }; // Space
+        }
+    } else if (!hasB) {
+        // Move to B
+        if (distance(cursor.x, cursor.y, targetB.x, targetB.y) > 5) {
+            return moveTowards(cursor, targetB);
+        } else {
+            return { keyCode: 32 }; // Space
+        }
+    }
+    
+    return null; // Test done
+}
+
+function runAutoPlayStrategy(state) {
+    // Primitive AI: 
+    // Find nearest unconnected station to any existing line endpoint
+    // If no lines, start one.
+    
+    // Just connect random stations for simulation
+    const stations = state.stations;
+    if (stations.length === 0) return null;
+
+    const cursor = state.cursor;
+    
+    // Pick a target station based on step counter (mocking state)
+    // In real implementation, this would need a persistent AI state
+    const targetIdx = Math.floor((Date.now() / 2000) % stations.length);
+    const target = stations[targetIdx];
+    
+    if (distance(cursor.x, cursor.y, target.x, target.y) > 10) {
+        return moveTowards(cursor, target);
+    } else {
+        // Press space occasionally
+        if (Math.random() < 0.1) return { keyCode: 32 };
+    }
+    
+    return null;
+}
+
+function moveTowards(cursor, target) {
+    const dx = target.x - cursor.x;
+    const dy = target.y - cursor.y;
+    
+    if (Math.abs(dx) > Math.abs(dy)) {
+        return dx > 0 ? { keyCode: 39 } : { keyCode: 37 };
+    } else {
+        return dy > 0 ? { keyCode: 40 } : { keyCode: 38 };
+    }
+}
+</file>
+
+<file name="globals.js">
+/**
+ * globals.js
+ * Contains global constants, configuration, and the main gameState object.
+ */
+
+// Canvas Dimensions
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Game Configuration
+export const CONFIG = {
+    // Timing
+    FPS: 60,
+    INITIAL_SPAWN_DELAY: 2000,
+    STATION_SPAWN_INTERVAL_START: 15000,
+    PASSENGER_SPAWN_INTERVAL_START: 2000,
+    
+    // Limits
+    MAX_LINES: 3,
+    MAX_STATIONS: 20,
+    STATION_CAPACITY: 6,
+    TRAIN_CAPACITY: 4,
+    OVERCROWD_TIMER_MS: 10000, // Time before game over when overcrowded
+    
+    // Physics / Movement
+    CURSOR_SPEED: 6,
+    TRAIN_SPEED: 2.5,
+    
+    // Scoring
+    SCORE_PER_DELIVERY: 10,
+    
+    // Visuals
+    STATION_RADIUS: 15,
+    PASSENGER_SIZE: 6,
+    LINE_WIDTH: 6
+};
+
+// Colors
+export const COLORS = {
+    BACKGROUND: [245, 245, 240], // Off-white paper look
+    TEXT: [50, 50, 50],
+    UI_OVERLAY: [0, 0, 0, 150],
+    
+    // Line Colors (Red, Blue, Green, Yellow, etc.)
+    LINES: [
+        [220, 50, 50],   // Red
+        [50, 50, 220],   // Blue
+        [50, 180, 50],   // Green
+        [220, 160, 20],  // Yellow
+        [150, 50, 150]   // Purple
+    ],
+    
+    STATION_BORDER: [40, 40, 40],
+    STATION_FILL: [255, 255, 255],
+    CURSOR: [80, 80, 80],
+    
+    OVERCROWD_WARNING: [200, 200, 200]
+};
+
+// Enums
+export const SHAPES = {
+    CIRCLE: 0,
+    SQUARE: 1,
+    TRIANGLE: 2
+    // Potential expansion: CROSS, DIAMOND, STAR
+};
+
+export const GAME_PHASES = {
+    START: "START",
+    PLAYING: "PLAYING",
+    PAUSED: "PAUSED",
+    GAME_OVER_WIN: "GAME_OVER_WIN",
+    GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+// Global Game State
+export const gameState = {
+    // System
+    gamePhase: GAME_PHASES.START,
+    controlMode: "HUMAN",
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Input
+    cursor: { x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT / 2, activeLineIndex: 0 },
+    
+    // Entities
+    stations: [],
+    lines: [],
+    trains: [],
+    passengers: [], // Floating passengers (animations), waiting ones are in stations
+    particles: [],
+    
+    // Logic
+    score: 0,
+    passengersDelivered: 0,
+    timeSinceStart: 0,
+    
+    // Timers
+    nextStationTimer: 0,
+    nextPassengerTimer: 0,
+    
+    // Map Logic
+    networkGraph: null, // Routing table
+    
+    // Camera / View (Shake effect)
+    shakeAmount: 0
+};
+
+// Expose globally
+export function getGameState() {
+    return gameState;
+}
+window.getGameState = getGameState;
+
+// Initialize logs if not present
+if (!window.p5) {
+    // Mock for testing environment if p5 not loaded yet
+    window.plogs = { game_info: [], inputs: [], player_info: [] };
+}
+</file>
+
+<file name="line.js">
+/**
+ * line.js
+ * Represents a transit line (collection of stations).
+ */
+
+import { COLORS, CONFIG } from './globals.js';
+import { setStrokeColor } from './utils.js';
+
+export class Line {
+    constructor(index) {
+        this.index = index;
+        this.stations = []; // Array of Station objects
+        this.isLoop = false;
+        this.color = COLORS.LINES[index];
+    }
+
+    addStation(station) {
+        // Prevent immediate duplicate
+        if (this.stations.length > 0 && this.stations[this.stations.length - 1] === station) {
+            return false;
+        }
+        this.stations.push(station);
+        return true;
+    }
+    
+    removeLastStation() {
+        if (this.stations.length > 0) {
+            this.stations.pop();
+        }
+    }
+
+    render(p) {
+        if (this.stations.length < 2) return;
+
+        p.noFill();
+        setStrokeColor(p, this.color);
+        p.strokeWeight(CONFIG.LINE_WIDTH);
+        p.strokeJoin(p.ROUND);
+        p.strokeCap(p.ROUND);
+
+        p.beginShape();
+        this.stations.forEach(st => {
+            p.vertex(st.x, st.y);
+        });
+        
+        if (this.isLoop) {
+            p.endShape(p.CLOSE);
+        } else {
+            p.endShape();
+        }
+        
+        // Draw terminals (caps)
+        if (!this.isLoop) {
+            const start = this.stations[0];
+            const end = this.stations[this.stations.length - 1];
+            p.fill(255);
+            p.strokeWeight(2);
+            p.circle(start.x, start.y, 6);
+            p.circle(end.x, end.y, 6);
+        }
+    }
+}
+</file>
+
+<file name="game.js">
+/**
+ * game.js
+ * Main game entry point and p5.js instance setup.
+ */
+
+import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS, getGameState } from './globals.js';
+import { initInput, handleInput } from './input.js';
+import { renderUI, renderCursor, renderStartScreen, renderGameOver } from './ui.js';
+import { initGameLogic, updateGameLogic } from './game_logic.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+// Expose get_automated_testing_action globally as required
+window.get_automated_testing_action = get_automated_testing_action;
+
+const p5 = window.p5;
+
+const gameInstance = new p5(p => {
+    
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        // Initialize Inputs
+        initInput(p);
+        
+        // Initialize Game Logic Entities
+        initGameLogic(p);
+        
+        // Log start
+        p.logs.game_info.push({
+            data: { gamePhase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    };
+
+    p.draw = function() {
+        // Global Time Management
+        const now = p.millis();
+        gameState.deltaTime = (now - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = now;
+        gameState.frameCount = p.frameCount;
+        
+        // Testing Hook
+        handleAutomatedTesting(p);
+        
+        // Input Handling
+        handleInput(p);
+
+        // Rendering
+        p.background(COLORS.BACKGROUND);
+        
+        switch (gameState.gamePhase) {
+            case GAME_PHASES.START:
+                renderStartScreen(p);
+                break;
+                
+            case GAME_PHASES.PLAYING:
+                updateGameLogic(p);
+                renderGameWorld(p);
+                renderUI(p);
+                renderCursor(p);
+                break;
+                
+            case GAME_PHASES.PAUSED:
+                renderGameWorld(p);
+                renderUI(p);
+                break;
+                
+            case GAME_PHASES.GAME_OVER_WIN:
+            case GAME_PHASES.GAME_OVER_LOSE:
+                renderGameWorld(p);
+                renderGameOver(p);
+                break;
+        }
+    };
+    
+    // Helper to separate World rendering
+    function renderGameWorld(p) {
+        // Draw Lines
+        gameState.lines.forEach(line => line.render(p));
+        
+        // Draw Trains (Under stations? Or Over? Usually Over lines, under stations)
+        gameState.trains.forEach(train => train.render(p));
+        
+        // Draw Stations
+        gameState.stations.forEach(station => station.render(p));
+        
+        // Draw Particles
+        gameState.particles.forEach(part => part.render(p));
+    }
+    
+    // Logic for Automated Testing Inputs
+    function handleAutomatedTesting(p) {
+        // Only run if control mode is NOT human
+        if (gameState.controlMode === "HUMAN") return;
+        
+        const action = get_automated_testing_action(gameState);
+        if (action) {
+            // Simulate Key Press
+            p.keyCode = action.keyCode;
+            p.keyPressed();
+            
+            // Release immediately for single trigger actions, or hold logic could be complex
+            // For this simple game, we tap keys.
+            setTimeout(() => {
+                p.keyCode = action.keyCode;
+                p.keyReleased();
+            }, 50);
+        }
+    }
+});
+
+// Expose instance
+window.gameInstance = gameInstance;
+</file>
+
+<file name="ui.js">
+/**
+ * ui.js
+ * Rendering for HUD, Start Screen, Pause, etc.
+ */
+
+import { CANVAS_WIDTH, CANVAS_HEIGHT, COLORS, gameState, CONFIG } from './globals.js';
+import { setFillColor } from './utils.js';
+
+export function renderUI(p) {
+    // Top Bar HUD
+    p.push();
+    
+    // Score
+    p.fill(COLORS.TEXT);
+    p.textSize(16);
+    p.textAlign(p.LEFT, p.TOP);
+    p.text(`Passengers: ${gameState.passengersDelivered}`, 20, 15);
+    
+    // Clock / Time
+    const minutes = Math.floor(gameState.timeSinceStart / 60);
+    const seconds = Math.floor(gameState.timeSinceStart % 60);
+    const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    p.textAlign(p.RIGHT, p.TOP);
+    p.text(timeStr, CANVAS_WIDTH - 20, 15);
+
+    // Line Selector (Bottom)
+    drawLineSelector(p);
+    
+    p.pop();
+}
+
+function drawLineSelector(p) {
+    const count = CONFIG.MAX_LINES;
+    const spacing = 40;
+    const startX = CANVAS_WIDTH / 2 - ((count - 1) * spacing) / 2;
+    const y = CANVAS_HEIGHT - 30;
+
+    for (let i = 0; i < count; i++) {
+        const x = startX + i * spacing;
+        const isActive = gameState.cursor.activeLineIndex === i;
+        
+        // Circle bubble
+        if (isActive) {
+            p.stroke(0);
+            p.strokeWeight(2);
+            p.fill(255);
+            p.circle(x, y, 28);
+        }
+        
+        // Inner Color
+        setFillColor(p, COLORS.LINES[i]);
+        p.noStroke();
+        p.circle(x, y, isActive ? 20 : 16);
+        
+        // Number
+        p.fill(255);
+        p.textSize(10);
+        p.textAlign(p.CENTER, p.CENTER);
+        p.text(i + 1, x, y);
+    }
+    
+    p.fill(COLORS.TEXT);
+    p.textSize(12);
+    p.textAlign(p.CENTER, p.BOTTOM);
+    p.text("Active Line (Z to Switch)", CANVAS_WIDTH / 2, CANVAS_HEIGHT - 55);
+}
+
+export function renderCursor(p) {
+    const c = gameState.cursor;
+    const activeColor = COLORS.LINES[c.activeLineIndex];
+    
+    p.push();
+    p.translate(c.x, c.y);
+    
+    // Crosshair
+    p.stroke(activeColor[0], activeColor[1], activeColor[2]);
+    p.strokeWeight(2);
+    p.line(-10, 0, 10, 0);
+    p.line(0, -10, 0, 10);
+    
+    // Ring
+    p.noFill();
+    p.circle(0, 0, 15);
+    
+    p.pop();
+}
+
+export function renderStartScreen(p) {
+    p.background(COLORS.BACKGROUND);
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    p.fill(COLORS.TEXT);
+    p.textSize(40);
+    p.text("press enter to begin", CANVAS_WIDTH/2, CANVAS_HEIGHT/3); // Replaced game title with "press enter to begin"
+    
+    p.textSize(16);
+    p.text("Connect stations. Transport passengers. Keep the city moving.", CANVAS_WIDTH/2, CANVAS_HEIGHT/2); // Preserved tagline
+    
+    // Removed original "PRESS ENTER TO START" text
+    // Removed original p5.js rendered controls text, as HTML controls are preserved
+}
+
+export function renderGameOver(p) {
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(255);
+    p.textSize(40);
+    p.text("GAME OVER", CANVAS_WIDTH/2, CANVAS_HEIGHT/3);
+    
+    p.textSize(24);
+    p.text(`Total Passengers Delivered: ${gameState.passengersDelivered}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    
+    p.textSize(18);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT * 0.7);
+}
+</file>
+
+<file name="passenger.js">
+/**
+ * passenger.js
+ * Simple passenger data structure and renderer.
+ */
+
+import { SHAPES, COLORS } from './globals.js';
+import { setFillColor } from './utils.js';
+
+export class Passenger {
+    constructor(targetType) {
+        this.targetType = targetType;
+        // Visual randomness
+        this.id = Math.random(); 
+    }
+
+    // Render relative to a container (station or train)
+    renderAt(p, x, y) {
+        p.push();
+        p.translate(x, y);
+        
+        p.noStroke();
+        setFillColor(p, COLORS.TEXT); // Passengers are dark usually
+        
+        const s = 5; // Size
+        
+        if (this.targetType === SHAPES.CIRCLE) {
+            p.circle(0, 0, s);
+        } else if (this.targetType === SHAPES.SQUARE) {
+            p.rectMode(p.CENTER);
+            p.rect(0, 0, s, s);
+        } else if (this.targetType === SHAPES.TRIANGLE) {
+            p.triangle(0, -s/2, s/2, s/2, -s/2, s/2);
+        }
+        
+        p.pop();
+    }
+}
+</file>
+
+<file name="pathfinding.js">
+/**
+ * pathfinding.js
+ * Implements routing logic for passengers to find their way across the metro network.
+ */
+
+import { gameState, SHAPES } from './globals.js';
+
+/**
+ * Rebuilds the routing table for the entire network.
+ * This is an expensive operation, so it should be called only when the network topology changes
+ * (Line added, Line extended, Line removed).
+ * 
+ * Routing Table Structure:
+ * routeTable[startStationID][targetShapeType] = {
+ *    nextStationId: number, // The next station to go to
+ *    lineIndex: number      // The line to take to get there
+ * }
+ */
+export function rebuildRoutingTable() {
+    const table = {};
+    
+    // Initialize table for all stations
+    gameState.stations.forEach(station => {
+        table[station.id] = {};
+        // Initialize for each shape type
+        Object.values(SHAPES).forEach(shape => {
+            table[station.id][shape] = null;
+        });
+    });
+
+    // For each station (source), find path to nearest station of each TYPE (target)
+    gameState.stations.forEach(sourceStation => {
+        Object.values(SHAPES).forEach(targetShape => {
+            // BFS to find the path
+            const route = findRoute(sourceStation, targetShape);
+            if (route) {
+                table[sourceStation.id][targetShape] = route;
+            }
+        });
+    });
+
+    gameState.networkGraph = table;
+}
+
+/**
+ * BFS to find the first step towards the nearest station of targetShape.
+ */
+function findRoute(startStation, targetShape) {
+    // If start is already the target type, no travel needed (shouldn't happen for spawning logic, but good for safety)
+    if (startStation.type === targetShape) return null;
+
+    const queue = [{ station: startStation, firstStep: null }];
+    const visited = new Set();
+    visited.add(startStation.id);
+
+    while (queue.length > 0) {
+        const { station, firstStep } = queue.shift();
+
+        // Check neighbors
+        const neighbors = getConnectedNeighbors(station);
+        
+        for (const neighborInfo of neighbors) {
+            const neighbor = neighborInfo.station;
+            const lineIdx = neighborInfo.lineIndex;
+
+            if (visited.has(neighbor.id)) continue;
+            visited.add(neighbor.id);
+
+            // Calculate the first step taken to get here
+            // If we are at the source, this neighbor IS the first step.
+            // If we are deeper, the first step is preserved.
+            const nextStep = firstStep || { nextStationId: neighbor.id, lineIndex: lineIdx };
+
+            // Found target?
+            if (neighbor.type === targetShape) {
+                return nextStep;
+            }
+
+            queue.push({ station: neighbor, firstStep: nextStep });
+        }
+    }
+
+    return null; // No path found
+}
+
+/**
+ * Returns list of { station, lineIndex } connected to the given station
+ */
+function getConnectedNeighbors(station) {
+    const neighbors = [];
+    
+    gameState.lines.forEach((line, lineIdx) => {
+        const idx = line.stations.indexOf(station);
+        if (idx !== -1) {
+            // Check previous
+            if (idx > 0) {
+                neighbors.push({ station: line.stations[idx - 1], lineIndex: lineIdx });
+            }
+            // Check next
+            if (idx < line.stations.length - 1) {
+                neighbors.push({ station: line.stations[idx + 1], lineIndex: lineIdx });
+            }
+            // Handle Loops: if last connects to first
+            if (line.isLoop) {
+                if (idx === 0) {
+                     neighbors.push({ station: line.stations[line.stations.length - 1], lineIndex: lineIdx });
+                }
+                if (idx === line.stations.length - 1) {
+                    neighbors.push({ station: line.stations[0], lineIndex: lineIdx });
+                }
+            }
+        }
+    });
+    
+    return neighbors;
+}
+</file>
+
+<file name="utils.js">
+/**
+ * utils.js
+ * Helper functions for geometry, math, and general utilities.
+ */
+
+import { CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function distSq(x1, y1, x2, y2) {
+    return (x2 - x1) ** 2 + (y2 - y1) ** 2;
+}
+
+export function distance(x1, y1, x2, y2) {
+    return Math.sqrt(distSq(x1, y1, x2, y2));
+}
+
+export function lerp(start, end, amt) {
+    return start + (end - start) * amt;
+}
+
+// Check if a point is within canvas with padding
+export function isWithinBounds(x, y, padding = 20) {
+    return (
+        x >= padding &&
+        x <= CANVAS_WIDTH - padding &&
+        y >= padding &&
+        y <= CANVAS_HEIGHT - padding
+    );
+}
+
+// Generate a unique ID
+let idCounter = 0;
+export function generateID() {
+    return ++idCounter;
+}
+
+// Get random position far from existing points
+export function getValidSpawnPosition(existingPoints, minDistance, p) {
+    let attempts = 0;
+    while (attempts < 50) {
+        const x = p.random(40, CANVAS_WIDTH - 40);
+        const y = p.random(40, CANVAS_HEIGHT - 40);
+        
+        let valid = true;
+        for (const point of existingPoints) {
+            if (distance(x, y, point.x, point.y) < minDistance) {
+                valid = false;
+                break;
+            }
+        }
+        
+        if (valid) return { x, y };
+        attempts++;
+    }
+    return null; // Failed to find position
+}
+
+// Ease out function for animations
+export function easeOutQuad(x) {
+    return 1 - (1 - x) * (1 - x);
+}
+
+// Color helpers
+export function setStrokeColor(p, colorArr, alpha = 255) {
+    p.stroke(colorArr[0], colorArr[1], colorArr[2], alpha);
+}
+
+export function setFillColor(p, colorArr, alpha = 255) {
+    p.fill(colorArr[0], colorArr[1], colorArr[2], alpha);
+}
+</file>
+
+<file name="station.js">
+/**
+ * station.js
+ * Station entity definition.
+ */
+
+import { CONFIG, COLORS, SHAPES, gameState, GAME_PHASES } from './globals.js';
+import { generateID, setStrokeColor, setFillColor } from './utils.js';
+
+export class Station {
+    constructor(x, y, type) {
+        this.id = generateID();
+        this.x = x;
+        this.y = y;
+        this.type = type; // SHAPES enum
+        this.passengers = []; // Array of Passengers waiting
+        this.capacity = CONFIG.STATION_CAPACITY;
+        
+        // Overcrowding
+        this.overcrowdTimer = 0;
+        this.isOvercrowded = false;
+        
+        // Animation
+        this.spawnScale = 0; // 0 to 1 for pop-in effect
+    }
+
+    update(dt) {
+        // Spawn animation
+        if (this.spawnScale < 1) {
+            this.spawnScale = Math.min(1, this.spawnScale + dt * 2);
+        }
+
+        // Overcrowding Logic
+        if (this.passengers.length > this.capacity) {
+            this.isOvercrowded = true;
+            this.overcrowdTimer += dt * 1000;
+            
+            // Check Lose Condition
+            if (this.overcrowdTimer > CONFIG.OVERCROWD_TIMER_MS) {
+                if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+                    gameState.gamePhase = GAME_PHASES.GAME_OVER_LOSE;
+                }
+            }
+        } else {
+            this.isOvercrowded = false;
+            this.overcrowdTimer = Math.max(0, this.overcrowdTimer - dt * 500); // Cooldown
+        }
+    }
+
+    addPassenger(passenger) {
+        this.passengers.push(passenger);
+    }
+
+    removePassenger(passenger) {
+        const index = this.passengers.indexOf(passenger);
+        if (index > -1) {
+            this.passengers.splice(index, 1);
+        }
+    }
+
+    render(p) {
+        const r = CONFIG.STATION_RADIUS * this.spawnScale;
+        
+        p.push();
+        p.translate(this.x, this.y);
+        
+        // Draw Overcrowd Timer (Arc around station)
+        if (this.overcrowdTimer > 0) {
+            p.noFill();
+            p.strokeWeight(4);
+            const ratio = this.overcrowdTimer / CONFIG.OVERCROWD_TIMER_MS;
+            
+            // Pulse red if critical
+            if (ratio > 0.7 && p.frameCount % 20 < 10) {
+                setStrokeColor(p, [255, 0, 0]);
+            } else {
+                setStrokeColor(p, COLORS.OVERCROWD_WARNING);
+            }
+            
+            p.arc(0, 0, r * 3.5, r * 3.5, -p.PI / 2, -p.PI / 2 + ratio * p.TWO_PI);
+        }
+
+        // Draw Station Shape
+        p.strokeWeight(3);
+        setStrokeColor(p, COLORS.STATION_BORDER);
+        setFillColor(p, COLORS.STATION_FILL);
+
+        if (this.type === SHAPES.CIRCLE) {
+            p.circle(0, 0, r * 2);
+        } else if (this.type === SHAPES.SQUARE) {
+            p.rectMode(p.CENTER);
+            p.rect(0, 0, r * 1.8, r * 1.8);
+        } else if (this.type === SHAPES.TRIANGLE) {
+            p.triangle(0, -r, r, r * 0.8, -r, r * 0.8);
+        }
+
+        // Draw Waiting Passengers
+        this.renderPassengers(p, r);
+
+        p.pop();
+    }
+
+    renderPassengers(p, stationRadius) {
+        // Passengers arrange themselves to the side of the station
+        const spacing = 10;
+        const startX = stationRadius + 10;
+        
+        this.passengers.forEach((pass, i) => {
+            // Group into rows of 3
+            const row = Math.floor(i / 3);
+            const col = i % 3;
+            
+            const px = startX + row * spacing;
+            const py = (col - 1) * spacing;
+            
+            pass.renderAt(p, px, py);
+        });
+    }
+}
+</file>
+
+<file name="game_logic.js">
+/**
+ * game_logic.js
+ * Handles core game mechanics: interactions, spawning, and line management.
+ */
+
+import { gameState, CONFIG, SHAPES } from './globals.js';
+import { Station } from './station.js';
+import { Passenger } from './passenger.js';
+import { Train } from './train.js';
+import { Line } from './line.js';
+import { getValidSpawnPosition, distance, isWithinBounds } from './utils.js';
+import { rebuildRoutingTable } from './pathfinding.js';
+
+export function initGameLogic(p) {
+    // Initial Spawn
+    spawnStation(p, SHAPES.CIRCLE);
+    spawnStation(p, SHAPES.SQUARE);
+    spawnStation(p, SHAPES.TRIANGLE);
+
+    // Init lines
+    for (let i = 0; i < CONFIG.MAX_LINES; i++) {
+        gameState.lines.push(new Line(i));
+        // Give one train per line initially
+        gameState.trains.push(new Train(i));
+    }
+}
+
+export function updateGameLogic(p) {
+    const dt = gameState.deltaTime;
+    gameState.timeSinceStart += dt;
+
+    // 1. Spawn Stations
+    gameState.nextStationTimer -= dt * 1000;
+    if (gameState.nextStationTimer <= 0 && gameState.stations.length < CONFIG.MAX_STATIONS) {
+        const type = Math.floor(p.random(0, 3));
+        spawnStation(p, type);
+        // Reset timer (gets faster over time)
+        const difficultyMod = Math.min(0.5, gameState.timeSinceStart / 300); // Max 50% faster
+        gameState.nextStationTimer = CONFIG.STATION_SPAWN_INTERVAL_START * (1 - difficultyMod);
+    }
+
+    // 2. Spawn Passengers
+    gameState.nextPassengerTimer -= dt * 1000;
+    if (gameState.nextPassengerTimer <= 0) {
+        spawnPassenger(p);
+        const difficultyMod = Math.min(0.7, gameState.timeSinceStart / 180); 
+        gameState.nextPassengerTimer = CONFIG.PASSENGER_SPAWN_INTERVAL_START * (1 - difficultyMod);
+    }
+
+    // 3. Update Entities
+    gameState.stations.forEach(st => st.update(dt));
+    gameState.trains.forEach(tr => tr.update(dt));
+    
+    // Update Particles
+    for (let i = gameState.particles.length - 1; i >= 0; i--) {
+        const part = gameState.particles[i];
+        part.update();
+        if (part.life <= 0) gameState.particles.splice(i, 1);
+    }
+}
+
+function spawnStation(p, type) {
+    const pos = getValidSpawnPosition(gameState.stations, 80, p);
+    if (pos) {
+        const station = new Station(pos.x, pos.y, type);
+        gameState.stations.push(station);
+        p.logs.game_info.push({ event: "STATION_SPAWN", id: station.id, type: type });
+    }
+}
+
+function spawnPassenger(p) {
+    if (gameState.stations.length < 2) return;
+    
+    // Pick random station
+    const station = p.random(gameState.stations);
+    
+    // Pick random destination different from current station type
+    let targetType = station.type;
+    while (targetType === station.type) {
+        targetType = Math.floor(p.random(0, 3));
+    }
+    
+    station.addPassenger(new Passenger(targetType));
+}
+
+// Interaction Handlers
+
+export function handleLineSwitch() {
+    gameState.cursor.activeLineIndex = (gameState.cursor.activeLineIndex + 1) % CONFIG.MAX_LINES;
+}
+
+export function handleStationInteraction() {
+    const cursor = gameState.cursor;
+    const line = gameState.lines[cursor.activeLineIndex];
+    
+    // Find station under cursor
+    let targetStation = null;
+    for (const st of gameState.stations) {
+        if (distance(cursor.x, cursor.y, st.x, st.y) < CONFIG.STATION_RADIUS * 1.5) {
+            targetStation = st;
+            break;
+        }
+    }
+
+    if (targetStation) {
+        // Logic:
+        // 1. If line empty, start line.
+        // 2. If line has stations, append to end.
+        // 3. If line ends at X, and we click X, ignore?
+        // 4. Constraints: No instant teleport, but for prototype, we allow connecting any station to end.
+        
+        // Check if we are closing a loop
+        if (line.stations.length > 2 && targetStation === line.stations[0] && !line.isLoop) {
+             line.isLoop = true;
+             rebuildRoutingTable();
+             return;
+        }
+
+        // Standard append
+        if (!line.stations.includes(targetStation)) {
+            // Check distance logic or allow any? Mini Metro allows any drag.
+            // We allow connection.
+            const added = line.addStation(targetStation);
+            if (added) {
+                rebuildRoutingTable();
+            }
+        }
+    }
+}
+
+export function handleDeletion() {
+    const line = gameState.lines[gameState.cursor.activeLineIndex];
+    if (line.stations.length > 0) {
+        if (line.isLoop) {
+            line.isLoop = false;
+        } else {
+            line.removeLastStation();
+        }
+        rebuildRoutingTable();
+    }
+}
+</file>
+
+<file name="train.js">
+/**
+ * train.js
+ * Train entity that moves along lines carrying passengers.
+ */
+
+import { CONFIG, COLORS, gameState, SHAPES } from './globals.js';
+import { distance, lerp, setFillColor } from './utils.js';
+
+export class Train {
+    constructor(lineIndex) {
+        this.lineIndex = lineIndex;
+        this.passengers = [];
+        this.capacity = CONFIG.TRAIN_CAPACITY;
+        
+        // Movement state
+        this.currentStationIndex = 0;
+        this.nextStationIndex = 1;
+        this.progress = 0; // 0.0 to 1.0 along segment
+        this.direction = 1; // 1 = forward, -1 = backward
+        this.state = "MOVING"; // MOVING, DWELLING
+        this.dwellTimer = 0;
+        this.dwellDuration = 1.0; // Seconds to wait at station
+        
+        // Position for rendering
+        this.x = 0;
+        this.y = 0;
+        this.angle = 0;
+    }
+
+    update(dt) {
+        const line = gameState.lines[this.lineIndex];
+        if (!line || line.stations.length < 2) return;
+
+        // Ensure indices valid (if line modified)
+        if (this.currentStationIndex >= line.stations.length) {
+            this.currentStationIndex = line.stations.length - 1;
+            this.nextStationIndex = this.currentStationIndex - 1;
+            this.direction = -1;
+            this.progress = 0;
+        }
+
+        if (this.state === "MOVING") {
+            this.handleMoving(dt, line);
+        } else if (this.state === "DWELLING") {
+            this.handleDwelling(dt, line);
+        }
+    }
+
+    handleMoving(dt, line) {
+        const stA = line.stations[this.currentStationIndex];
+        const stB = line.stations[this.nextStationIndex];
+        
+        // Calculate segment length
+        const dist = distance(stA.x, stA.y, stB.x, stB.y);
+        const speed = CONFIG.TRAIN_SPEED * 20; // Scale speed
+        
+        // Update progress
+        const increment = (speed * dt) / dist;
+        this.progress += increment;
+
+        // Interpolate position
+        this.x = lerp(stA.x, stB.x, this.progress);
+        this.y = lerp(stA.y, stB.y, this.progress);
+        this.angle = Math.atan2(stB.y - stA.y, stB.x - stA.x);
+
+        // Arrived?
+        if (this.progress >= 1.0) {
+            this.progress = 0;
+            this.currentStationIndex = this.nextStationIndex;
+            this.state = "DWELLING";
+            this.dwellTimer = 0;
+            
+            // Snap to station
+            this.x = stB.x;
+            this.y = stB.y;
+        }
+    }
+
+    handleDwelling(dt, line) {
+        this.dwellTimer += dt;
+        
+        // Exchange passengers happen instantly at start of dwell (simple)
+        if (this.dwellTimer <= dt) { 
+            this.exchangePassengers(line.stations[this.currentStationIndex]);
+        }
+
+        if (this.dwellTimer >= this.dwellDuration) {
+            this.state = "MOVING";
+            this.determineNextStation(line);
+        }
+    }
+
+    determineNextStation(line) {
+        // Logic for next station
+        if (this.direction === 1) {
+            if (this.currentStationIndex < line.stations.length - 1) {
+                this.nextStationIndex = this.currentStationIndex + 1;
+            } else {
+                // End of line
+                if (line.isLoop) {
+                    this.nextStationIndex = 0; // Loop around
+                } else {
+                    this.direction = -1;
+                    this.nextStationIndex = this.currentStationIndex - 1;
+                }
+            }
+        } else {
+            if (this.currentStationIndex > 0) {
+                this.nextStationIndex = this.currentStationIndex - 1;
+            } else {
+                // Start of line
+                if (line.isLoop) {
+                     this.nextStationIndex = line.stations.length - 1; // Loop back
+                } else {
+                    this.direction = 1;
+                    this.nextStationIndex = this.currentStationIndex + 1;
+                }
+            }
+        }
+    }
+
+    exchangePassengers(station) {
+        // 1. Unload passengers
+        for (let i = this.passengers.length - 1; i >= 0; i--) {
+            const pass = this.passengers[i];
+            
+            // Arrived at destination?
+            if (pass.targetType === station.type) {
+                this.passengers.splice(i, 1);
+                gameState.passengersDelivered++;
+                gameState.score += CONFIG.SCORE_PER_DELIVERY;
+                // Add visual effect here?
+                gameState.particles.push(new ScoreParticle(station.x, station.y));
+            } else {
+                // Check transfer?
+                // If the next step in their route suggests changing lines, unload here.
+                // Re-check route from CURRENT station
+                if (gameState.networkGraph && gameState.networkGraph[station.id]) {
+                    const route = gameState.networkGraph[station.id][pass.targetType];
+                    // If route says take different line, get off
+                    if (route && route.lineIndex !== this.lineIndex) {
+                        this.passengers.splice(i, 1);
+                        station.addPassenger(pass); // Wait at station again
+                    }
+                }
+            }
+        }
+
+        // 2. Load passengers
+        // Capacity check
+        const space = this.capacity - this.passengers.length;
+        if (space <= 0) return;
+
+        // Iterate waiting passengers
+        // Only pick up those whose path includes this line NEXT
+        const boarding = [];
+        for (const pass of station.passengers) {
+            if (boarding.length >= space) break;
+
+            if (gameState.networkGraph && gameState.networkGraph[station.id]) {
+                const route = gameState.networkGraph[station.id][pass.targetType];
+                if (route && route.lineIndex === this.lineIndex) {
+                    // Correct direction check could be added here for realism, 
+                    // but for simplicity, they board if the line is correct. 
+                    // (They might travel wrong way for a bit, but will eventually get there).
+                    boarding.push(pass);
+                }
+            }
+        }
+
+        // Move from station to train
+        boarding.forEach(pass => {
+            station.removePassenger(pass);
+            this.passengers.push(pass);
+        });
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        p.rotate(this.angle);
+        
+        // Draw Train Body
+        setFillColor(p, COLORS.LINES[this.lineIndex]);
+        p.noStroke();
+        p.rectMode(p.CENTER);
+        p.rect(0, 0, 24, 12, 4);
+        
+        // Draw Passengers inside
+        p.fill(255);
+        this.passengers.forEach((pass, i) => {
+            const xOff = -8 + i * 5;
+            p.circle(xOff, 0, 3);
+        });
+        
+        p.pop();
+    }
+}
+
+class ScoreParticle {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.life = 1.0;
+        this.vy = -1;
+    }
+    
+    update() {
+        this.y += this.vy;
+        this.life -= 0.02;
+    }
+    
+    render(p) {
+        if (this.life <= 0) return;
+        p.fill(50, 200, 50, this.life * 255);
+        p.noStroke();
+        p.textSize(12);
+        p.text("+10", this.x, this.y);
+    }
+}
+</file>
+
+<file name="input.js">
+/**
+ * input.js
+ * Handles keyboard input, state changes, and cursor movement.
+ */
+
+import { gameState, GAME_PHASES, CONFIG, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { handleStationInteraction, handleLineSwitch, handleDeletion } from './game_logic.js';
+
+// Input State
+const keys = {};
+
+export function initInput(p) {
+    p.keyPressed = function() {
+        keys[p.keyCode] = true;
+        
+        // Logging
+        p.logs.inputs.push({
+            input_type: 'keyPressed',
+            data: { key: p.key, keyCode: p.keyCode },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+
+        // Global State Controls
+        if (p.keyCode === 13) { // ENTER
+            if (gameState.gamePhase === GAME_PHASES.START) {
+                gameState.gamePhase = GAME_PHASES.PLAYING;
+                p.logs.game_info.push({ event: "GAME_START", timestamp: Date.now() });
+            }
+        }
+        
+        if (p.keyCode === 27) { // ESC
+            if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+                gameState.gamePhase = GAME_PHASES.PAUSED;
+            } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+                gameState.gamePhase = GAME_PHASES.PLAYING;
+            }
+        }
+        
+        if (p.keyCode === 82) { // R
+            if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || 
+                gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+                // Restart logic handled in game.js via signal or direct check
+                window.location.reload(); // Simple reload for full reset, or implement soft reset
+            }
+        }
+
+        // Gameplay Controls
+        if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+            if (p.keyCode === 90) { // Z
+                handleLineSwitch();
+            }
+            
+            if (p.keyCode === 32) { // SPACE
+                const isShift = keys[16];
+                if (isShift) {
+                    handleDeletion();
+                } else {
+                    handleStationInteraction();
+                }
+            }
+        }
+    };
+
+    p.keyReleased = function() {
+        keys[p.keyCode] = false;
+        
+        p.logs.inputs.push({
+            input_type: 'keyReleased',
+            data: { key: p.key, keyCode: p.keyCode },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    };
+}
+
+export function handleInput(p) {
+    // Continuous Input Handling (Cursor Movement)
+    if (gameState.gamePhase !== GAME_PHASES.PLAYING) return;
+
+    let dx = 0;
+    let dy = 0;
+    const speed = CONFIG.CURSOR_SPEED;
+
+    if (keys[37]) dx -= speed; // Left
+    if (keys[39]) dx += speed; // Right
+    if (keys[38]) dy -= speed; // Up
+    if (keys[40]) dy += speed; // Down
+
+    // Diagonal correction
+    if (dx !== 0 && dy !== 0) {
+        dx *= 0.707;
+        dy *= 0.707;
+    }
+
+    gameState.cursor.x += dx;
+    gameState.cursor.y += dy;
+
+    // Constrain cursor
+    gameState.cursor.x = Math.max(0, Math.min(CANVAS_WIDTH, gameState.cursor.x));
+    gameState.cursor.y = Math.max(0, Math.min(CANVAS_HEIGHT, gameState.cursor.y));
+}
+
+// Helper to check key state externally
+export function isKeyDown(keyCode) {
+    return !!keys[keyCode];
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

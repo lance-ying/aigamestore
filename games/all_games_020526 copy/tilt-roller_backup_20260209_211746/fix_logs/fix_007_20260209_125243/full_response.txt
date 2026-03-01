@@ -1,0 +1,225 @@
+<analysis>
+- Issue identified: The player ball looks flat ("2d") likely due to a combination of high ambient lighting, a texture that doesn't accentuate curvature (simple stripes/badges), and possibly material settings that lack specular highlights. The user perceives the rotation as a 2D sprite rotation rather than 3D rolling.
+- Files affected: `entities.js`, `renderer.js`
+- Changes needed:
+    1.  **entities.js**:
+        -   Update `createBallTexture` to generate a high-contrast checkerboard pattern which clearly demonstrates spherical mapping and rotation.
+        -   Increase `SphereGeometry` segments to 64 for a smoother silhouette.
+        -   Adjust `MeshStandardMaterial` roughness to 0.2 to add specular highlights (shininess), enhancing the 3D volume perception.
+    2.  **renderer.js**:
+        -   Decrease `AmbientLight` intensity from 0.6 to 0.4 to increase contrast and make shadows/shading more visible on the ball.
+</analysis>
+
+<code filename="entities.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CONFIG } from './globals.js';
+import { AABB } from './utils.js';
+
+// Helper to create a texture for the ball
+function createBallTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    
+    // Background Color (Base)
+    ctx.fillStyle = '#' + new THREE.Color(CONFIG.COLORS.BALL).getHexString();
+    ctx.fillRect(0, 0, 512, 256);
+    
+    // Checkerboard Pattern
+    const rows = 4;
+    const cols = 8;
+    const cellW = 512 / cols;
+    const cellH = 256 / rows;
+    
+    ctx.fillStyle = '#FFFFFF';
+    
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            // Checker pattern logic
+            if ((x + y) % 2 === 0) {
+                ctx.fillRect(x * cellW, y * cellH, cellW, cellH);
+            }
+        }
+    }
+    
+    // Add numbers/text to make orientation obvious
+    ctx.fillStyle = '#222222';
+    ctx.font = 'bold 30px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    
+    // Draw numbers on the white squares
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            if ((x + y) % 2 === 0) {
+                ctx.fillText(`${x}-${y}`, x * cellW + cellW/2, y * cellH + cellH/2);
+            }
+        }
+    }
+    
+    // Add a distinct equator line
+    ctx.strokeStyle = '#222222';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(0, 128);
+    ctx.lineTo(512, 128);
+    ctx.stroke();
+    
+    const texture = new THREE.CanvasTexture(canvas);
+    return texture;
+}
+
+export class PlayerBall {
+    constructor(startPos) {
+        this.position = startPos.clone();
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        this.onGround = false;
+        
+        // Mesh - Increased segments for smoother sphere
+        const geometry = new THREE.SphereGeometry(CONFIG.BALL_RADIUS, 64, 64);
+        
+        // Use texture with checkerboard
+        const texture = createBallTexture();
+        
+        const material = new THREE.MeshStandardMaterial({ 
+            map: texture,
+            roughness: 0.2, // Shinier to show curvature
+            metalness: 0.1,
+            color: 0xffffff
+        });
+        
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.copy(this.position);
+        this.mesh.castShadow = true;
+        this.mesh.receiveShadow = true;
+    }
+}
+
+export class LevelBlock {
+    constructor(pos, size, type = 'FLOOR') {
+        this.position = pos.clone();
+        this.size = size.clone();
+        this.type = 'BOX'; // Physics type
+        
+        // AABB
+        this.aabb = new AABB(pos, size);
+        
+        // Mesh
+        const geometry = new THREE.BoxGeometry(size.x, size.y, size.z);
+        const color = type === 'FLOOR' ? CONFIG.COLORS.FLOOR : CONFIG.COLORS.WALL;
+        const material = new THREE.MeshStandardMaterial({ 
+            color: color,
+            roughness: 0.8 
+        });
+        
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.copy(pos);
+        this.mesh.receiveShadow = true;
+        this.mesh.castShadow = true;
+    }
+}
+
+export class GoalZone {
+    constructor(pos, radius) {
+        this.position = pos.clone();
+        this.radius = radius;
+        
+        // Visuals
+        const geometry = new THREE.CylinderGeometry(radius, radius, 0.2, 32);
+        const material = new THREE.MeshStandardMaterial({ 
+            color: CONFIG.COLORS.GOAL,
+            emissive: 0x2E7D32,
+            emissiveIntensity: 0.5,
+            transparent: true,
+            opacity: 0.8
+        });
+        
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.copy(pos);
+        
+        // Particle effect beam
+        const beamGeo = new THREE.CylinderGeometry(radius * 0.8, radius * 0.8, 10, 32, 1, true);
+        const beamMat = new THREE.MeshBasicMaterial({
+            color: CONFIG.COLORS.GOAL,
+            transparent: true,
+            opacity: 0.2,
+            side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending
+        });
+        this.beam = new THREE.Mesh(beamGeo, beamMat);
+        this.beam.position.y = 5;
+        this.mesh.add(this.beam);
+    }
+    
+    update(time) {
+        // Pulse effect
+        this.mesh.material.opacity = 0.6 + Math.sin(time * 3) * 0.2;
+        this.beam.material.opacity = 0.15 + Math.sin(time * 2) * 0.05;
+    }
+}
+</code>
+
+<code filename="renderer.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CONFIG } from './globals.js';
+
+export function setupRenderer() {
+    // Scene
+    gameState.scene = new THREE.Scene();
+    gameState.scene.background = new THREE.Color(CONFIG.COLORS.BACKGROUND);
+    gameState.scene.fog = new THREE.Fog(CONFIG.COLORS.BACKGROUND, 20, 60);
+    
+    // Camera
+    gameState.camera = new THREE.PerspectiveCamera(
+        60,
+        CONFIG.CANVAS_WIDTH / CONFIG.CANVAS_HEIGHT,
+        0.1,
+        1000
+    );
+    
+    // Renderer
+    gameState.renderer = new THREE.WebGLRenderer({ antialias: true });
+    gameState.renderer.setSize(CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
+    gameState.renderer.shadowMap.enabled = true;
+    gameState.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    
+    // DOM
+    gameState.gameContainer = document.getElementById('game-container');
+    // Ensure container exists if not present in HTML (fallback)
+    if (!gameState.gameContainer) {
+        gameState.gameContainer = document.createElement('div');
+        gameState.gameContainer.id = 'game-container';
+        gameState.gameContainer.style.width = CONFIG.CANVAS_WIDTH + 'px';
+        gameState.gameContainer.style.height = CONFIG.CANVAS_HEIGHT + 'px';
+        gameState.gameContainer.style.position = 'relative';
+        gameState.gameContainer.style.overflow = 'hidden';
+        document.body.appendChild(gameState.gameContainer);
+    }
+    
+    gameState.gameContainer.appendChild(gameState.renderer.domElement);
+}
+
+export function setupLighting() {
+    // Ambient - Reduced intensity to increase contrast and volume perception
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+    gameState.scene.add(ambientLight);
+    
+    // Directional (Sun)
+    const sunLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    sunLight.position.set(20, 50, 20);
+    sunLight.castShadow = true;
+    
+    // Shadow config
+    sunLight.shadow.mapSize.width = CONFIG.SHADOW_MAP_SIZE;
+    sunLight.shadow.mapSize.height = CONFIG.SHADOW_MAP_SIZE;
+    sunLight.shadow.camera.near = 0.5;
+    sunLight.shadow.camera.far = 100;
+    sunLight.shadow.camera.left = -30;
+    sunLight.shadow.camera.right = 30;
+    sunLight.shadow.camera.top = 30;
+    sunLight.shadow.camera.bottom = -30;
+    
+    gameState.scene.add(sunLight);
+}
+</code>

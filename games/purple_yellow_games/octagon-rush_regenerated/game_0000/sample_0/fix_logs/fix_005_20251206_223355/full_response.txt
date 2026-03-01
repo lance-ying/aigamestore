@@ -1,0 +1,394 @@
+<analysis>
+- Issue identified:
+    1. The player ship remains vertically aligned with the screen regardless of the tunnel's rotation, breaking the visual illusion that the ship is adhering to the surface of the octagon tiles.
+    2. "Random deaths" where the user sees no obstacle are likely caused by poor visibility of "Gap" obstacles (holes). The dark tunnel colors against the dark background make holes nearly invisible, causing players to fall into them without realizing.
+- Files affected: `globals.js`, `entities.js`, `physics.js`
+- Changes needed:
+    1. In `entities.js` (Player.render): Rotate the player's drawing context by `gameState.tunnelRotation` so the ship tilts to stay perpendicular to the current floor panel.
+    2. In `globals.js`: Lighten the `TUNNEL_FILL` colors to increase contrast against the dark `BACKGROUND`, making black "Gap" holes clearly visible.
+    3. In `physics.js`: Harden the collision index calculation with a robust modulo operation to ensure array bounds are always respected, preventing any potential edge-case logic errors.
+</analysis>
+
+<code filename="globals.js">
+/**
+ * Global constants and game state management.
+ */
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const FPS = 60;
+
+// Game Geometry Constants
+export const OCTAGON_SIDES = 8;
+export const SEGMENT_DEPTH = 100; // Distance between slices
+export const VIEW_DISTANCE = 1000; // How far we render
+export const INITIAL_SPEED = 8;
+export const MAX_SPEED = 20;
+export const ROTATION_SPEED = 0.1; // Radians per frame
+export const TUNNEL_RADIUS = 250; // Visual radius of the tunnel
+
+// Colors
+export const COLORS = {
+    BACKGROUND: [10, 10, 15],
+    TUNNEL_LINES: [0, 255, 255, 100],
+    // Increased brightness for tunnel fill to make gaps (showing dark BG) more visible
+    TUNNEL_FILL_1: [40, 50, 70], 
+    TUNNEL_FILL_2: [30, 40, 60],
+    PLAYER: [255, 50, 50],
+    PLAYER_SHIELD: [50, 255, 50, 100],
+    OBSTACLE: [255, 150, 0],
+    GAP: [0, 0, 0], // Holes
+    TEXT: [255, 255, 255],
+    HUD_BG: [0, 0, 0, 150]
+};
+
+// Game State Object
+export const gameState = {
+    // Core state
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2, TEST_3
+    
+    // Performance
+    frameCount: 0,
+    deltaTime: 0,
+    lastFrameTime: 0,
+    
+    // Game Entities
+    player: null,
+    tunnelSegments: [],
+    particles: [],
+    
+    // Gameplay Variables
+    score: 0,
+    timeRemaining: 60, // Seconds
+    currentSpeed: INITIAL_SPEED,
+    tunnelRotation: 0, // Current rotation of the world in radians
+    targetRotation: 0, // Target rotation for smooth transitions
+    difficultyLevel: 1,
+    
+    // Input State
+    keys: {},
+    
+    // Camera/Visuals
+    cameraShake: 0
+};
+
+// Expose gameState globally
+window.getGameState = () => gameState;
+
+// Logging Utility (Write-only as per constraints)
+export function logGameEvent(p, type, data) {
+    if (!p.logs) return;
+    
+    const entry = {
+        type: type,
+        data: data,
+        framecount: p.frameCount,
+        timestamp: Date.now()
+    };
+    
+    if (type === 'input') p.logs.inputs.push(entry);
+    else if (type === 'player') p.logs.player_info.push(entry);
+    else p.logs.game_info.push(entry);
+}
+</code>
+
+<code filename="entities.js">
+/**
+ * Game entities: Player, Tunnel Segments, Obstacles.
+ */
+import { 
+    gameState, 
+    COLORS, 
+    TUNNEL_RADIUS, 
+    OCTAGON_SIDES, 
+    CANVAS_WIDTH, 
+    CANVAS_HEIGHT,
+    logGameEvent
+} from './globals.js';
+import { project3D, getOctagonVertices, normalizeAngle } from './math_utils.js';
+
+// ----- PLAYER -----
+export class Player {
+    constructor() {
+        this.width = 30;
+        this.height = 30;
+        this.isTop = false; // false = floor (bottom), true = ceiling (top)
+        this.flipProgress = 0; // 0 to 1 for animation
+        this.isFlipping = false;
+        
+        // 2D projected collision polygon
+        this.collisionPoly = [];
+        
+        // Visuals
+        this.color = [...COLORS.PLAYER];
+    }
+
+    flip() {
+        if (!this.isFlipping) {
+            this.isFlipping = true;
+            this.isTop = !this.isTop;
+            // Animation handled in update
+        }
+    }
+
+    update() {
+        // Handle flip animation
+        if (this.isFlipping) {
+            this.flipProgress += 0.1;
+            if (this.flipProgress >= 1) {
+                this.flipProgress = 0;
+                this.isFlipping = false;
+            }
+        }
+    }
+
+    render(p) {
+        // Calculate position based on flip state
+        // The player is visually at fixed X, but Y changes based on flip
+        // We use project3D to place the player in the tunnel "space" at z=50 (close to camera)
+        
+        const playerZ = 50;
+        const radius = TUNNEL_RADIUS - 30; // Slightly inside the walls
+        
+        // Interpolate Y position for smooth flip
+        let worldY = radius;
+        if (this.isTop) worldY = -radius;
+        if (this.isFlipping) {
+             // Lerp between radius and -radius
+             const startY = this.isTop ? radius : -radius;
+             const endY = this.isTop ? -radius : radius;
+             worldY = startY + (endY - startY) * this.flipProgress;
+        }
+
+        const proj = project3D(0, worldY, playerZ);
+        
+        p.push();
+        p.translate(proj.x, proj.y);
+        
+        // Rotate the ship to match the tunnel rotation
+        // This makes the ship look like it's attached to the angled tiles
+        p.rotate(gameState.tunnelRotation);
+        
+        // Draw Player Shape (Triangle/Ship)
+        p.fill(this.color);
+        p.stroke(255);
+        p.strokeWeight(2);
+        
+        const size = 15;
+        if (this.isTop) {
+            // If on ceiling, point down
+            p.triangle(-size, -size, size, -size, 0, size); 
+        } else {
+            // If on floor, point up
+            p.triangle(-size, size, size, size, 0, -size); 
+        }
+        
+        // Update collision poly for debugging/physics (unrotated for simplicity or rotated?)
+        // The collision logic in physics.js is angular, so this poly is mostly for debug visuals
+        // We'll keep the poly axis-aligned for simplicity in this context as it's not used for core physics
+        this.collisionPoly = [
+            p.createVector(proj.x - size, proj.y - size),
+            p.createVector(proj.x + size, proj.y - size),
+            p.createVector(proj.x + size, proj.y + size),
+            p.createVector(proj.x - size, proj.y + size)
+        ];
+        
+        p.pop();
+        
+        // Log player state occasionally
+        if (p.frameCount % 60 === 0) {
+            logGameEvent(p, 'player', { 
+                isTop: this.isTop, 
+                rotation: gameState.tunnelRotation 
+            });
+        }
+    }
+}
+
+// ----- TUNNEL SEGMENT -----
+export class TunnelSegment {
+    constructor(z, index) {
+        this.z = z;
+        this.index = index;
+        this.walls = new Array(8).fill(0); // 0 = Clear, 1 = Wall/Obstacle, 2 = Gap
+        this.generated = false;
+        
+        // Procedural Generation
+        if (index > 5) { // Leave first few segments clear
+            this.generateObstacles();
+        }
+    }
+    
+    generateObstacles() {
+        const r = Math.random();
+        // Difficulty scaling
+        const difficulty = gameState.difficultyLevel;
+        const hazardChance = 0.3 + (difficulty * 0.05);
+        
+        if (r < hazardChance) {
+            // Pick a random side
+            const side = Math.floor(Math.random() * 8);
+            
+            // Type: 1 = Obstacle (Bump), 2 = Gap (Hole)
+            const type = Math.random() > 0.7 ? 2 : 1;
+            
+            this.walls[side] = type;
+            
+            // Sometimes add a second obstacle
+            if (Math.random() > 0.5) {
+                const side2 = (side + 4) % 8; // Opposite side
+                this.walls[side2] = Math.random() > 0.7 ? 2 : 1;
+            }
+        }
+    }
+    
+    update(speed) {
+        this.z -= speed;
+    }
+    
+    render(p, nextSegment) {
+        if (this.z < -500) return; // Too close to render (behind camera)
+        
+        // We need the rotation of the tunnel
+        const rotation = gameState.tunnelRotation;
+        
+        // Get vertices for this ring and the next ring (to form walls)
+        const currentVerts = getOctagonVertices(this.z, TUNNEL_RADIUS, rotation);
+        const nextVerts = getOctagonVertices(nextSegment.z, TUNNEL_RADIUS, rotation);
+        
+        // Project to 2D
+        const p1 = currentVerts.map(v => project3D(v.x, v.y, v.z));
+        const p2 = nextVerts.map(v => project3D(v.x, v.y, v.z));
+        
+        p.strokeWeight(2);
+        
+        // Draw each face
+        for (let i = 0; i < OCTAGON_SIDES; i++) {
+            const nextI = (i + 1) % OCTAGON_SIDES;
+            
+            // Determine type of wall
+            const type = this.walls[i];
+            
+            // Gap: Don't draw the floor panel
+            if (type === 2) continue;
+            
+            // Define Quad coordinates
+            const poly = [
+                p.createVector(p1[i].x, p1[i].y),
+                p.createVector(p1[nextI].x, p1[nextI].y),
+                p.createVector(p2[nextI].x, p2[nextI].y),
+                p.createVector(p2[i].x, p2[i].y)
+            ];
+            
+            // Color based on alternating segments
+            const isAlt = this.index % 2 === 0;
+            const baseColor = isAlt ? COLORS.TUNNEL_FILL_1 : COLORS.TUNNEL_FILL_2;
+            
+            // Draw Wall Panel
+            p.fill(baseColor);
+            p.stroke(COLORS.TUNNEL_LINES);
+            
+            if (type === 1) {
+                // Obstacle: Draw a distinct shape ON the panel or color it differently
+                p.fill(COLORS.OBSTACLE);
+            }
+            
+            p.beginShape();
+            poly.forEach(v => p.vertex(v.x, v.y));
+            p.endShape(p.CLOSE);
+            
+            // If Obstacle (Bump), draw extra visual
+            if (type === 1) {
+                p.stroke(255, 0, 0);
+                p.line(poly[0].x, poly[0].y, poly[2].x, poly[2].y);
+                p.line(poly[1].x, poly[1].y, poly[3].x, poly[3].y);
+            }
+        }
+    }
+}
+</code>
+
+<code filename="physics.js">
+/**
+ * Collision detection and physics logic.
+ */
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, TUNNEL_RADIUS, SEGMENT_DEPTH, logGameEvent } from './globals.js';
+import { normalizeAngle, ANGLE_OFFSET } from './math_utils.js';
+
+export function checkCollisions(p) {
+    if (gameState.gamePhase !== "PLAYING") return;
+
+    const player = gameState.player;
+    if (!player) return;
+    
+    // Invincible while flipping (mid-air)
+    if (player.isFlipping) return;
+
+    // The player effectively resides at z = 50.
+    const playerZ = 50;
+
+    // Find segment overlapping player
+    const activeSegment = gameState.tunnelSegments.find(seg => 
+        seg.z <= playerZ && seg.z + SEGMENT_DEPTH > playerZ
+    );
+
+    if (activeSegment) {
+        // Determine which tunnel facet the player is currently "on".
+        
+        let playerScreenAngle = Math.PI / 2; // Bottom (6 o'clock)
+        if (player.isTop) playerScreenAngle = -Math.PI / 2; // Top (12 o'clock)
+        
+        // Normalize
+        playerScreenAngle = normalizeAngle(playerScreenAngle);
+        
+        // Tunnel Rotation
+        const tunnelRot = normalizeAngle(gameState.tunnelRotation);
+        
+        // Relative Angle
+        let relativeAngle = normalizeAngle(playerScreenAngle - tunnelRot);
+        
+        // Calculate the index directly from the relative angle.
+        const step = Math.PI / 4;
+        
+        // Shift relative angle to align with our indexing
+        let adjustedAngle = relativeAngle - ANGLE_OFFSET;
+        adjustedAngle = normalizeAngle(adjustedAngle);
+        
+        // Map to 0-7
+        let rawIndex = adjustedAngle / step;
+        
+        // Robust modulo logic to handle negative numbers correctly
+        let index = Math.floor(rawIndex);
+        index = ((index % 8) + 8) % 8;
+        
+        // Check the wall type at this index
+        const wallType = activeSegment.walls[index];
+        
+        // 0 = Safe, 1 = Obstacle, 2 = Gap
+        if (wallType === 1) {
+            // Hit Obstacle
+            handleCollision(p, "HIT_OBSTACLE");
+        } else if (wallType === 2) {
+            // Hit Gap -> Fall
+            handleCollision(p, "FELL_IN_GAP");
+        }
+    }
+}
+
+function handleCollision(p, cause) {
+    console.log("Collision: " + cause);
+    logGameEvent(p, 'collision', { cause: cause, score: gameState.score });
+    
+    // Create explosion effect
+    gameState.particles.push(
+        gameState.particleSystem.spawn(0, gameState.player.isTop ? -200 : 200, 50, 20, 'explosion')
+    );
+    
+    // Shake screen
+    gameState.cameraShake = 20;
+    
+    // End Game
+    gameState.gamePhase = "GAME_OVER_LOSE";
+}
+</code>

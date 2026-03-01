@@ -1,0 +1,233 @@
+<analysis>
+- Issue identified:
+    1. Platforms need to be larger for later levels, but Levels 1 and 2 must remain unchanged.
+    2. Level 4 is impossible because the walls on the final platform (Goal) block the entrance path (likely due to the path entering from a side where a wall is forced).
+    3. Level 3 is too easy/broken because the random seed generates a path that loops back to the start (spawn next to goal).
+    4. General bug: Segments aligned along the X-axis generate walls at their ends (caps) instead of sides, blocking the path.
+- Files affected: `level_gen.js`
+- Changes needed:
+    1. In `generate`: Use a dynamic `pathWidth` and `platformSize` that increases for levels > 2.
+    2. In `generate`: Change the RNG seed for Level 3 to ensure a better layout (avoiding the loop-back).
+    3. In `generate`: Calculate the entrance direction for the End Platform and pass a `skipMask` to `createPlatform` to prevent generating a wall on the entrance side.
+    4. In `createPlatform`: Generalize the wall generation logic to correctly place walls on the Z-axis for X-aligned segments (fixing the "cap" bug) for all levels/segments.
+    5. In `createPlatform`: Implement `skipMask` logic to remove specific walls.
+</analysis>
+
+<code filename="level_gen.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CONFIG } from './globals.js';
+import { LevelBlock, GoalZone } from './entities.js';
+import { RNG } from './utils.js';
+
+export class LevelGenerator {
+    constructor() {
+        this.rng = null;
+    }
+
+    generate(levelIndex) {
+        // Change seed for Level 3 to avoid "spawn next to goal" looping issue
+        const seed = levelIndex === 3 ? 1337 : levelIndex * 42;
+        this.rng = new RNG(seed);
+        
+        // Cleanup existing
+        this.clearLevel();
+        
+        // Init world container
+        gameState.worldContainer = new THREE.Group();
+        gameState.scene.add(gameState.worldContainer);
+        
+        // Level parameters
+        // Make platforms bigger for levels > 2 without affecting 1 & 2
+        const isEarlyLevel = levelIndex <= 2;
+        const pathWidth = isEarlyLevel ? 12 : 18;
+        const startSize = isEarlyLevel ? 12 : 20;
+        const endSize = isEarlyLevel ? 14 : 24;
+
+        const segmentCount = 5 + Math.floor(levelIndex * 1.5);
+        let currentPos = new THREE.Vector3(0, 0, 0);
+        let direction = new THREE.Vector3(0, 0, -1); // Forward
+        
+        // Start Platform
+        this.createPlatform(currentPos, startSize, startSize, true);
+        gameState.playerSpawn = currentPos.clone().add(new THREE.Vector3(0, 2, 0));
+        
+        // Generate path
+        for (let i = 0; i < segmentCount; i++) {
+            // Move forward
+            const length = this.rng.rangeInt(15, 25);
+            
+            // For Level 3, we pre-calculate the turn to avoid blocking walls
+            let turnDir = null;
+            if (levelIndex === 3 && i < segmentCount - 1) {
+                const r = this.rng.random();
+                if (r < 0.4) turnDir = 'LEFT';
+                else if (r < 0.8) turnDir = 'RIGHT';
+                else turnDir = 'NONE';
+            }
+
+            const nextPos = currentPos.clone().add(direction.clone().multiplyScalar(length));
+            const midPos = currentPos.clone().lerp(nextPos, 0.5);
+            
+            // Create Corridor
+            // Adjust midPos based on orientation to align boxes correctly
+            if (Math.abs(direction.z) > 0.5) {
+                // Moving Z
+                this.createPlatform(midPos, pathWidth, length, false, turnDir, direction);
+            } else {
+                // Moving X
+                this.createPlatform(midPos, length, pathWidth, false, turnDir, direction);
+            }
+            
+            currentPos = nextPos;
+            
+            // Turn?
+            if (i < segmentCount - 1) {
+                if (levelIndex === 3) {
+                    // Use pre-calculated turn
+                    if (turnDir === 'LEFT') {
+                        const temp = direction.x; direction.x = direction.z; direction.z = -temp;
+                    } else if (turnDir === 'RIGHT') {
+                        const temp = direction.x; direction.x = -direction.z; direction.z = temp;
+                    }
+                } else {
+                    // Original Logic for other levels
+                    const turn = this.rng.random();
+                    if (turn < 0.4) {
+                        // Turn Left
+                        const temp = direction.x;
+                        direction.x = direction.z;
+                        direction.z = -temp;
+                    } else if (turn < 0.8) {
+                        // Turn Right
+                        const temp = direction.x;
+                        direction.x = -direction.z;
+                        direction.z = temp;
+                    }
+                }
+            }
+        }
+        
+        // End Platform
+        // Calculate entrance mask to skip walls blocking the path
+        const skipMask = { negX: false, posX: false, negZ: false, posZ: false };
+        if (direction.x > 0.5) skipMask.negX = true; // Moving East, enter from West
+        else if (direction.x < -0.5) skipMask.posX = true; // Moving West, enter from East
+        else if (direction.z > 0.5) skipMask.negZ = true; // Moving South, enter from North
+        else if (direction.z < -0.5) skipMask.posZ = true; // Moving North, enter from South
+
+        this.createPlatform(currentPos, endSize, endSize, true, null, null, skipMask);
+        
+        // Goal
+        gameState.goal = new GoalZone(currentPos.clone().add(new THREE.Vector3(0, 0.6, 0)), 1.5);
+        gameState.worldContainer.add(gameState.goal.mesh);
+    }
+    
+    createPlatform(center, width, depth, isSafeZone, turnDir = null, moveDir = null, skipMask = null) {
+        const thickness = 1;
+        
+        // Floor
+        const floor = new LevelBlock(
+            center, 
+            new THREE.Vector3(width, thickness, depth), 
+            'FLOOR'
+        );
+        this.addToLevel(floor);
+        
+        // Walls
+        const wallHeight = 1.5;
+        const wallThickness = 0.5;
+        
+        // Generalize wall placement logic:
+        // If width > depth, it's X-aligned (walls on Z).
+        // If depth >= width, it's Z-aligned (walls on X).
+        const isXAligned = width > depth;
+
+        if (isXAligned) {
+            // X-Aligned Segment (Moving along X axis) -> Walls at +/- Z
+            
+            let skipPosZ = skipMask ? skipMask.posZ : false;
+            let skipNegZ = skipMask ? skipMask.negZ : false;
+            
+            if (turnDir && moveDir) {
+                if (moveDir.x > 0.5) { // Moving +X
+                    // Left is -Z, Right is +Z
+                    if (turnDir === 'LEFT') skipNegZ = true;
+                    if (turnDir === 'RIGHT') skipPosZ = true;
+                } else if (moveDir.x < -0.5) { // Moving -X
+                    // Left is +Z, Right is -Z
+                    if (turnDir === 'LEFT') skipPosZ = true;
+                    if (turnDir === 'RIGHT') skipNegZ = true;
+                }
+            }
+
+            const hasNegZ = !skipNegZ && (isSafeZone || this.rng.random() > 0.1);
+            if (hasNegZ) {
+                const pos = center.clone().add(new THREE.Vector3(0, wallHeight/2, -depth/2 - wallThickness/2));
+                const wall = new LevelBlock(pos, new THREE.Vector3(width, wallHeight + thickness, wallThickness), 'WALL');
+                this.addToLevel(wall);
+            }
+
+            const hasPosZ = !skipPosZ && (isSafeZone || this.rng.random() > 0.1);
+            if (hasPosZ) {
+                const pos = center.clone().add(new THREE.Vector3(0, wallHeight/2, depth/2 + wallThickness/2));
+                const wall = new LevelBlock(pos, new THREE.Vector3(width, wallHeight + thickness, wallThickness), 'WALL');
+                this.addToLevel(wall);
+            }
+
+        } else {
+            // Z-Aligned Segment (Moving along Z axis) -> Walls at +/- X
+            
+            let skipPosX = skipMask ? skipMask.posX : false;
+            let skipNegX = skipMask ? skipMask.negX : false;
+            
+            if (turnDir && moveDir) {
+                // Moving Z
+                if (moveDir.z < -0.5) { // North (-Z)
+                    // Left is -X, Right is +X
+                    if (turnDir === 'LEFT') skipNegX = true;
+                    if (turnDir === 'RIGHT') skipPosX = true;
+                } else if (moveDir.z > 0.5) { // South (+Z)
+                    // Left is +X, Right is -X
+                    if (turnDir === 'LEFT') skipPosX = true;
+                    if (turnDir === 'RIGHT') skipNegX = true;
+                }
+            }
+
+            const hasLeftWall = !skipNegX && (isSafeZone || this.rng.random() > 0.1);
+            if (hasLeftWall) {
+                const leftPos = center.clone().add(new THREE.Vector3(-width/2 - wallThickness/2, wallHeight/2, 0));
+                const leftWall = new LevelBlock(
+                    leftPos,
+                    new THREE.Vector3(wallThickness, wallHeight + thickness, depth),
+                    'WALL'
+                );
+                this.addToLevel(leftWall);
+            }
+            
+            const hasRightWall = !skipPosX && (isSafeZone || this.rng.random() > 0.1);
+            if (hasRightWall) {
+                const rightPos = center.clone().add(new THREE.Vector3(width/2 + wallThickness/2, wallHeight/2, 0));
+                const rightWall = new LevelBlock(
+                    rightPos,
+                    new THREE.Vector3(wallThickness, wallHeight + thickness, depth),
+                    'WALL'
+                );
+                this.addToLevel(rightWall);
+            }
+        }
+    }
+
+    addToLevel(block) {
+        gameState.levelObjects.push(block);
+        gameState.worldContainer.add(block.mesh);
+    }
+
+    clearLevel() {
+        if (gameState.worldContainer) {
+            gameState.scene.remove(gameState.worldContainer);
+        }
+        gameState.levelObjects = [];
+        gameState.goal = null;
+    }
+}
+</code>

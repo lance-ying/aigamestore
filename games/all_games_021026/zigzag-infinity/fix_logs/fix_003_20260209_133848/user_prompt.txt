@@ -1,0 +1,1274 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you move the ball a bit further up so that its mnore in the center, right now its kind of close tot eh bottom so its ard to foresee the future path
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Game</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #111; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+      canvas { border: 2px solid #333; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; justify-content: center; }
+      .control-button { 
+          padding: 10px 20px; 
+          cursor: pointer; 
+          background: #333; 
+          color: #eee; 
+          border: 1px solid #555; 
+          border-radius: 6px; 
+          font-weight: bold;
+          transition: all 0.2s ease;
+      }
+      .control-button:hover { background: #444; }
+      .control-button.active { background: #2575fc; border-color: #2575fc; color: #fff; box-shadow: 0 0 10px rgba(37, 117, 252, 0.4); }
+      
+      h1 { color: #fff; margin-bottom: 10px; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }
+      p { color: #aaa; max-width: 600px; text-align: center; margin: 5px 0; font-size: 14px; }
+      .instructions { color: #888; margin-bottom: 20px; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div>
+      <h1 id="gameTitle" style="display: none;"></h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN', this)">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="setMode('TEST_1', this)">Auto Play (Smart)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="setMode('TEST_2', this)">Stress Test (Random)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">A fast-paced isometric runner. Control a sphere, switch directions to stay on the procedurally generated wall, collect diamonds, and go as far as you can!</p>
+      <p class="instructions">Space/Arrows to turn. Don't fall off.</p>
+    </div>
+    
+    <!-- Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+    
+    <script>
+        function setMode(mode, btn) {
+            // Update active button state
+            document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            
+            // Call game function
+            if (window.setControlMode) {
+                window.setControlMode(mode);
+            }
+        }
+    </script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+/**
+ * Automated Testing Controller
+ */
+
+import { BLOCK_SIZE } from './globals.js';
+import { getGridKey } from './iso_math.js';
+
+let lastActionFrame = 0;
+
+export function get_automated_testing_action(gameState) {
+    const player = gameState.player;
+    if (!player) return null;
+
+    if (gameState.controlMode === "TEST_1") {
+        // SMART STRATEGY: Look ahead and switch if void
+        // Look 1 block ahead in current direction
+        
+        // Determine current direction vector
+        let nextGridX = Math.round(player.x / BLOCK_SIZE);
+        let nextGridZ = Math.round(player.z / BLOCK_SIZE);
+        
+        // Current direction: 0 = +X, 1 = +Z
+        if (player.direction === 0) {
+            nextGridX += 1;
+        } else {
+            nextGridZ += 1;
+        }
+        
+        const key = getGridKey(nextGridX, nextGridZ);
+        
+        // Also check one more step to be safe (since we are moving continuously)
+        // If immediate next is missing, we MUST switch
+        // But since we are on the edge, we might need to check if we are *approaching* the edge.
+        
+        // Check if the block ahead exists
+        if (!gameState.blocks.has(key)) {
+            // Path blocked or ends in this direction. Switch!
+            // Wait, we need to make sure we don't switch endlessly if both are blocked (which shouldn't happen in valid path)
+            // But we need to switch only once per tile.
+            
+            // Debounce: Don't switch if we just switched? 
+            // Better: Check if we are close to the center of the current tile.
+            // If we are past the center, and next is void, switch.
+            
+            // Normalized position within tile [0, 1]
+            // Actually, physics is simple. If (next block is invalid), switch.
+            // But if we switch, we go the other way. We assume the other way is valid (procedural generation guarantees one valid path).
+            
+            // To prevent spamming switch every frame while looking at void:
+            // Check if we are "aligned" enough to switch safely? 
+            // No, just switch. The logic is: "If I keep going, I die. So turn."
+            
+            // Only switch if enough time passed since last switch to avoid 1-frame flip-flop if both forward and side are tricky?
+            // Actually, if we switch, 'player.direction' changes. So on next frame, we look at a DIFFERENT 'nextGrid'.
+            // If that 'nextGrid' is valid, we won't switch back.
+            // So simply returning switch action is fine.
+            
+            // But we only want to switch once per decision point.
+            // Let's add a small cooldown.
+            if (gameState.frameCount - lastActionFrame > 10) {
+                lastActionFrame = gameState.frameCount;
+                return { switch: true };
+            }
+        }
+    } 
+    else if (gameState.controlMode === "TEST_2") {
+        // RANDOM / STRESS
+        // Switch randomly
+        if (Math.random() < 0.05 && gameState.frameCount - lastActionFrame > 15) {
+            lastActionFrame = gameState.frameCount;
+            return { switch: true };
+        }
+    }
+    
+    return null;
+}
+</file>
+
+<file name="level_manager.js">
+/**
+ * Procedural generation of the ZigZag path.
+ */
+
+import { gameState, BLOCK_SIZE, getGameState } from './globals.js';
+import { Block, Collectible } from './entities.js';
+import { getGridKey } from './iso_math.js';
+
+export class LevelManager {
+    constructor() {
+        this.currentGenX = 0;
+        this.currentGenZ = 0;
+        this.lastDirection = 0; // 0 for X, 1 for Z
+        this.sectionLength = 0;
+        
+        // Keep track of visited blocks to drop them
+        this.lastPlayerGridKey = null;
+    }
+
+    init() {
+        // Create initial platform
+        // 3x3 start area so player doesn't fall immediately
+        for (let x = -1; x <= 1; x++) {
+            for (let z = -1; z <= 1; z++) {
+                this.addBlock(x, z);
+            }
+        }
+        
+        // Start generating path from (0,0) outwards
+        this.currentGenX = 0;
+        this.currentGenZ = 0;
+        
+        // Pre-generate some path
+        for (let i = 0; i < 20; i++) {
+            this.generateNextBlock();
+        }
+    }
+
+    addBlock(x, z) {
+        const key = getGridKey(x, z);
+        if (!gameState.blocks.has(key)) {
+            gameState.blocks.set(key, new Block(x, z));
+        }
+    }
+
+    generateNextBlock() {
+        // Decide whether to switch direction
+        // Limit segment length
+        if (this.sectionLength > 2) {
+             if (Math.random() < 0.4) {
+                 this.switchGenDirection();
+             }
+        }
+        
+        if (this.sectionLength > 8) {
+             this.switchGenDirection();
+        }
+
+        // Move in current direction
+        if (this.lastDirection === 0) {
+            this.currentGenX++;
+        } else {
+            this.currentGenZ++;
+        }
+        
+        this.sectionLength++;
+        this.addBlock(this.currentGenX, this.currentGenZ);
+
+        // Chance to add collectible
+        if (Math.random() < 0.15) {
+            gameState.collectibles.push(new Collectible(this.currentGenX, this.currentGenZ));
+        }
+    }
+
+    switchGenDirection() {
+        this.lastDirection = this.lastDirection === 0 ? 1 : 0;
+        this.sectionLength = 0;
+    }
+
+    update(player) {
+        // Generate more blocks as player moves
+        // Simple distance check: if head of generation is close to player, generate more
+        const dist = Math.abs(player.x/BLOCK_SIZE - this.currentGenX) + Math.abs(player.z/BLOCK_SIZE - this.currentGenZ);
+        if (dist < 30) {
+            for(let i=0; i<5; i++) {
+                this.generateNextBlock();
+            }
+        }
+
+        // Handle falling blocks logic
+        // Identify the block the player just left
+        const pGridX = Math.round(player.x / BLOCK_SIZE);
+        const pGridZ = Math.round(player.z / BLOCK_SIZE);
+        const currentKey = getGridKey(pGridX, pGridZ);
+
+        if (this.lastPlayerGridKey && this.lastPlayerGridKey !== currentKey) {
+            // Player moved to a new block
+            // Find blocks "behind" the player to drop
+            // We can iterate all blocks and drop those that are far behind
+            // Optimization: Just drop the one we left?
+            // "ZigZag" style usually drops the whole tail.
+            
+            // Let's iterate keys and drop blocks strictly "less" than current pos in the relevant axis?
+            // Since path zigzags, "less" is tricky.
+            // Better: Drop blocks that are effectively unreachable or passed.
+            // A simple heuristic: Any block with gridX < pGridX AND gridZ < pGridZ is definitely behind?
+            // No, because of zigzag.
+            
+            // Just drop blocks based on a delay queue or just distance.
+            // Actually, the game mechanic usually drops the block immediately after you leave it.
+            
+            // Let's implement delayed drop for the block we just left.
+            const previousBlock = gameState.blocks.get(this.lastPlayerGridKey);
+            if (previousBlock) {
+                 previousBlock.triggerFall(20); // Delay 20 frames
+                 gameState.fallingBlocks.push(previousBlock);
+                 gameState.blocks.delete(this.lastPlayerGridKey);
+                 
+                 // Increment score for every block passed
+                 gameState.score++;
+            }
+        }
+        this.lastPlayerGridKey = currentKey;
+        
+        // Clean up falling blocks that are way down
+        for (let i = gameState.fallingBlocks.length - 1; i >= 0; i--) {
+            const block = gameState.fallingBlocks[i];
+            block.update();
+            if (block.y < -500) {
+                gameState.fallingBlocks.splice(i, 1);
+            }
+        }
+        
+        // Clean up collectibles
+        for (let i = gameState.collectibles.length - 1; i >= 0; i--) {
+            const c = gameState.collectibles[i];
+            // Remove if far behind
+            if (c.gridX < pGridX - 5 && c.gridZ < pGridZ - 5) {
+                gameState.collectibles.splice(i, 1);
+            }
+        }
+    }
+
+    reset() {
+        this.currentGenX = 0;
+        this.currentGenZ = 0;
+        this.lastDirection = 0;
+        this.sectionLength = 0;
+        this.lastPlayerGridKey = null;
+        this.init();
+    }
+}
+</file>
+
+<file name="globals.js">
+/**
+ * Global constants and state management for ZigZag Infinity.
+ */
+
+// Canvas Dimensions
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Game World Configuration
+export const BLOCK_SIZE = 25; // Size of the cubes side
+export const BALL_RADIUS = 10;
+export const CAMERA_SMOOTHING = 0.1;
+export const INITIAL_SPEED = 3.0;
+export const SPEED_INCREMENT = 0.001; // Speed increases slightly over time
+export const GRAVITY = 0.8;
+export const FALL_THRESHOLD = -200; // Y position to trigger death
+
+// Isometric Projection Constants
+// We use a standard 2:1 isometric ratio
+// x_screen = (x_world - z_world) * cos(30)
+// y_screen = (x_world + z_world) * sin(30) - y_world
+// But simpler integer math often uses: x = (x-y), y = (x+y)/2.
+// Let's stick to trig for smooth movement.
+export const ISO_ANGLE = 0.523599; // 30 degrees in radians
+export const COS_30 = Math.cos(ISO_ANGLE);
+export const SIN_30 = Math.sin(ISO_ANGLE);
+
+// Colors (Palette)
+export const COLORS = {
+    BACKGROUND_TOP: [50, 50, 70],
+    BACKGROUND_BOTTOM: [20, 20, 30],
+    BLOCK_TOP: [220, 220, 220],
+    BLOCK_LEFT: [180, 180, 180],
+    BLOCK_RIGHT: [140, 140, 140],
+    BALL: [40, 180, 255],
+    BALL_SHADOW: [0, 0, 0, 100],
+    DIAMOND: [255, 105, 180],
+    TEXT: [255, 255, 255],
+    ACCENT: [255, 200, 50]
+};
+
+// Global Game State
+export const gameState = {
+    // Phase Management
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2
+
+    // Entities
+    player: null,
+    blocks: new Map(), // Use Map for O(1) lookup by "x,z" key
+    fallingBlocks: [], // Blocks that are currently animating falling away
+    collectibles: [],
+    particles: [],
+
+    // Camera
+    camera: {
+        x: 0,
+        y: 0,
+        zoom: 1.0,
+        shake: 0
+    },
+
+    // Scoring & Progression
+    score: 0,
+    highScore: 0,
+    speed: INITIAL_SPEED,
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Performance / Debug
+    debugMode: false
+};
+
+// Expose gameState globally
+export function getGameState() {
+    return gameState;
+}
+window.getGameState = getGameState;
+
+// Reset Game State for new session
+export function resetGameState() {
+    gameState.gamePhase = "START";
+    gameState.score = 0;
+    gameState.speed = INITIAL_SPEED;
+    gameState.blocks.clear();
+    gameState.fallingBlocks = [];
+    gameState.collectibles = [];
+    gameState.particles = [];
+    gameState.camera.x = 0;
+    gameState.camera.y = 0;
+    gameState.camera.shake = 0;
+}
+</file>
+
+<file name="game.js">
+/**
+ * Main Game Loop and Setup
+ */
+
+import { 
+    gameState, getGameState, resetGameState,
+    CANVAS_WIDTH, CANVAS_HEIGHT, COLORS, BLOCK_SIZE
+} from './globals.js';
+import { Player } from './entities.js';
+import { LevelManager } from './level_manager.js';
+import { handleInput, keyPressed } from './input.js';
+import { updateCamera, checkCollisions } from './physics.js';
+import { renderUI } from './ui.js';
+import { updateParticles, renderParticles } from './particles.js';
+import { worldToScreen } from './iso_math.js'; // imported for any util needs
+
+const p5 = window.p5;
+const levelManager = new LevelManager();
+
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+    // Restart game if needed
+    if (window.gameInstance) {
+        window.gameInstance.resetGame();
+    }
+};
+
+let gameInstance = new p5(p => {
+    
+    // Initialize Logs
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        // Initial Reset
+        p.resetGame();
+        
+        p.logs.game_info.push({
+            event: "Game Initialized",
+            timestamp: Date.now()
+        });
+    };
+
+    // Exposed reset function on p5 instance
+    p.resetGame = function() {
+        resetGameState();
+        levelManager.reset();
+        
+        // Spawn player at 0,0,0
+        gameState.player = new Player(0, 0, 0);
+        
+        // Update high score
+        if (gameState.score > gameState.highScore) {
+            gameState.highScore = gameState.score;
+        }
+    };
+
+    p.draw = function() {
+        // 1. Update Phase
+        handleInput(p);
+        
+        // Update Game Logic
+        if (gameState.gamePhase === "PLAYING") {
+            gameState.frameCount++;
+            
+            // Entities
+            if (gameState.player) gameState.player.update(p);
+            levelManager.update(gameState.player);
+            gameState.collectibles.forEach(c => c.update(p));
+            
+            // Physics
+            checkCollisions();
+            updateCamera();
+            
+            // Particles
+            updateParticles();
+        }
+        else if (gameState.gamePhase === "GAME_OVER_LOSE") {
+            // Still update player for falling animation
+            if (gameState.player) gameState.player.update(p);
+            updateParticles();
+            // Camera slows down or stops? Let's keep it updating slightly
+             updateCamera();
+        }
+
+        // 2. Render
+        drawBackground(p);
+
+        // Sorting for Isometric Rendering (Painter's Algorithm)
+        // We need to draw things from "back" to "front".
+        // In our case (X+Z+Y) or similar depth metric.
+        // Screen Y increases as (X+Z) increases. 
+        // So generally, objects with lower Screen Y should be drawn first?
+        // Wait, worldToScreen: y_screen = (x+z)*sin - y.
+        // Larger x,z means LARGER y_screen (lower on screen).
+        // Standard approach: Draw objects with smaller (x+z) first (further back).
+        // Then draw objects with larger (x+z).
+        
+        // Gather all renderable objects
+        let renderList = [];
+        
+        // Blocks
+        // We subtract BLOCK_SIZE from depth to ensure floor blocks are drawn before entities on top of them (like the player)
+        gameState.blocks.forEach(block => {
+            renderList.push({ type: 'block', obj: block, depth: block.x + block.z + block.y - BLOCK_SIZE }); 
+        });
+        
+        // Falling blocks
+        gameState.fallingBlocks.forEach(block => {
+             renderList.push({ type: 'block', obj: block, depth: block.x + block.z + block.y - BLOCK_SIZE });
+        });
+        
+        // Collectibles
+        gameState.collectibles.forEach(c => {
+             renderList.push({ type: 'collectible', obj: c, depth: c.x + c.z + c.y });
+        });
+        
+        // Player
+        if (gameState.player) {
+             renderList.push({ type: 'player', obj: gameState.player, depth: gameState.player.x + gameState.player.z + gameState.player.y });
+        }
+        
+        // Particles (usually drawn last on top, but for true 3D they should sort)
+        // For simplicity, particles draw last (on top) for arcade feel.
+        
+        // Sort
+        renderList.sort((a, b) => a.depth - b.depth);
+        
+        // Draw Sorted
+        renderList.forEach(item => {
+            item.obj.render(p);
+        });
+        
+        // Particles on top
+        renderParticles(p);
+
+        // UI
+        renderUI(p);
+        
+        // Logging Player Info
+        if (gameState.gamePhase === "PLAYING" && gameState.player && p.frameCount % 5 === 0) {
+            p.logs.player_info.push({
+                x: gameState.player.x,
+                y: gameState.player.y,
+                z: gameState.player.z,
+                score: gameState.score,
+                frameCount: p.frameCount
+            });
+        }
+    };
+
+    p.keyPressed = function() {
+        keyPressed(p);
+    };
+
+    function drawBackground(p) {
+        // Gradient Background
+        // Interpolate from top to bottom
+        p.noFill();
+        for (let i = 0; i <= CANVAS_HEIGHT; i+=10) {
+            let inter = p.map(i, 0, CANVAS_HEIGHT, 0, 1);
+            let c = p.lerpColor(
+                p.color(COLORS.BACKGROUND_TOP), 
+                p.color(COLORS.BACKGROUND_BOTTOM), 
+                inter
+            );
+            p.fill(c);
+            p.noStroke();
+            p.rect(0, i, CANVAS_WIDTH, 10);
+        }
+    }
+});
+
+// Expose instance
+window.gameInstance = gameInstance;
+</file>
+
+<file name="ui.js">
+/**
+ * UI Rendering.
+ */
+
+import { CANVAS_WIDTH, CANVAS_HEIGHT, COLORS, gameState } from './globals.js';
+
+export function renderUI(p) {
+    p.push();
+    
+    // HUD (Score) - Always visible in PLAYING/PAUSED/GAMEOVER
+    if (gameState.gamePhase !== "START") {
+        p.textAlign(p.LEFT, p.TOP);
+        p.textSize(32);
+        p.fill(COLORS.TEXT);
+        p.stroke(0);
+        p.strokeWeight(3);
+        p.text(gameState.score, 20, 20);
+        
+        // High Score
+        if (gameState.highScore > 0) {
+            p.textSize(16);
+            p.fill(COLORS.ACCENT);
+            p.strokeWeight(2);
+            p.text(`BEST: ${gameState.highScore}`, 20, 60);
+        }
+    }
+    
+    p.pop();
+
+    if (gameState.gamePhase === "START") {
+        drawOverlay(p, 0.6);
+        p.push();
+        p.textAlign(p.CENTER, p.CENTER);
+        p.fill(COLORS.TEXT);
+        
+        // Replaced game title with "press enter to begin"
+        p.textSize(50); // Make it prominent
+        p.noStroke(); // Keep it simple and clean
+        p.text("press enter to begin", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+        
+        p.textSize(14);
+        p.fill(200);
+        p.text("Space / Arrow Keys to Switch Direction", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60); // Adjusted position
+        p.pop();
+    }
+    else if (gameState.gamePhase === "GAME_OVER_LOSE") {
+        drawOverlay(p, 0.5);
+        p.push();
+        p.textAlign(p.CENTER, p.CENTER);
+        
+        p.fill(255, 100, 100);
+        p.textSize(50);
+        p.stroke(0);
+        p.strokeWeight(3);
+        p.text("GAME OVER", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 30);
+        
+        p.fill(COLORS.TEXT);
+        p.noStroke();
+        p.textSize(30);
+        p.text(`Score: ${gameState.score}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 20);
+        
+        p.textSize(20);
+        p.fill(200);
+        p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60);
+        p.pop();
+    }
+}
+
+function drawOverlay(p, alpha) {
+    p.push();
+    p.fill(0, 0, 0, alpha * 255);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.pop();
+}
+</file>
+
+<file name="entities.js">
+/**
+ * Game Entities: Player, Block, Collectible
+ */
+
+import { 
+    BLOCK_SIZE, BALL_RADIUS, COLORS, GRAVITY, FALL_THRESHOLD, gameState,
+    SPEED_INCREMENT
+} from './globals.js';
+import { worldToScreen, applyCamera, isOnScreen } from './iso_math.js';
+import { createExplosion, createSparkle } from './particles.js';
+
+/**
+ * The Player Sphere
+ */
+export class Player {
+    constructor(x, y, z) {
+        this.x = x;
+        this.y = y;
+        this.z = z;
+        this.vx = 0;
+        this.vz = 0;
+        this.vy = 0; // Vertical velocity for falling
+        this.radius = BALL_RADIUS;
+        
+        // 0 = Moving +X (Right), 1 = Moving +Z (Left)
+        this.direction = 0; 
+        this.isDead = false;
+        
+        // Initial velocity
+        this.updateVelocity();
+    }
+
+    switchDirection() {
+        if (this.isDead) return;
+        this.direction = this.direction === 0 ? 1 : 0;
+        this.updateVelocity();
+    }
+
+    updateVelocity() {
+        if (this.direction === 0) {
+            this.vx = gameState.speed;
+            this.vz = 0;
+        } else {
+            this.vx = 0;
+            this.vz = gameState.speed;
+        }
+    }
+
+    update(p) {
+        if (gameState.gamePhase === "PLAYING") {
+            // Move horizontally
+            this.x += this.vx;
+            this.z += this.vz;
+            
+            // Increase global game speed slightly
+            gameState.speed += SPEED_INCREMENT;
+            if (!this.isDead) {
+                this.updateVelocity(); // Apply new speed
+            }
+        }
+
+        // Apply Gravity if falling
+        if (this.isDead) {
+            this.vy -= GRAVITY;
+            this.y += this.vy;
+
+            // Check if fallen too far
+            if (this.y < FALL_THRESHOLD) {
+                this.finalizeDeath();
+            }
+        }
+    }
+
+    startFalling() {
+        if (!this.isDead) {
+            this.isDead = true;
+            this.vx = this.vx * 0.5; // Retain some forward momentum
+            this.vz = this.vz * 0.5;
+            this.vy = 0;
+            
+            // Trigger game over logic phase transition handled in finalizeDeath
+            // But we render the fall first
+        }
+    }
+
+    finalizeDeath() {
+        if (gameState.gamePhase !== "GAME_OVER_LOSE") {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+            createExplosion(this.x, this.y, this.z, COLORS.BALL);
+        }
+    }
+
+    render(p) {
+        const screenPos = worldToScreen(this.x, this.y, this.z);
+        const drawPos = applyCamera(screenPos.x, screenPos.y);
+
+        // Draw shadow (only if close to ground)
+        if (this.y > -50) {
+            const shadowY = worldToScreen(this.x, 0, this.z).y; // Shadow at y=0
+            const drawShadow = applyCamera(screenPos.x, shadowY);
+            p.noStroke();
+            p.fill(COLORS.BALL_SHADOW);
+            p.ellipse(drawShadow.x, drawShadow.y, this.radius * 2, this.radius);
+        }
+
+        // Draw Ball
+        p.noStroke();
+        // Gradient fill for pseudo-3D look
+        // We simulate a light source from top-left
+        p.fill(COLORS.BALL);
+        p.circle(drawPos.x, drawPos.y - this.radius, this.radius * 2);
+
+        // Highlight
+        p.fill(255, 255, 255, 100);
+        p.circle(drawPos.x - 3, drawPos.y - this.radius - 3, this.radius * 0.8);
+    }
+}
+
+/**
+ * A static block in the wall.
+ */
+export class Block {
+    constructor(gridX, gridZ) {
+        this.gridX = gridX;
+        this.gridZ = gridZ;
+        
+        // World coordinates (center of top face)
+        this.x = gridX * BLOCK_SIZE;
+        this.y = 0; // Top face is at y=0 (surface level)
+        this.z = gridZ * BLOCK_SIZE;
+
+        this.size = BLOCK_SIZE;
+        this.color = COLORS.BLOCK_TOP;
+        
+        this.isFalling = false;
+        this.fallVelocity = 0;
+        this.fallDelay = 0; // Frames before falling
+    }
+
+    triggerFall(delay) {
+        this.isFalling = true;
+        this.fallDelay = delay;
+    }
+
+    update() {
+        if (this.isFalling) {
+            if (this.fallDelay > 0) {
+                this.fallDelay--;
+            } else {
+                this.fallVelocity += GRAVITY;
+                this.y -= this.fallVelocity; // y decreases (down)
+            }
+        }
+    }
+
+    render(p) {
+        // Optimization: Don't render if far off screen
+        const screenPos = worldToScreen(this.x, this.y, this.z);
+        const finalPos = applyCamera(screenPos.x, screenPos.y);
+        
+        if (!isOnScreen(finalPos.x, finalPos.y, 100)) return;
+
+        // Draw Isometric Cube
+        const halfSize = this.size / 2;
+        // Vertices relative to center (x, z) at height y
+        // Top Face: (x-h, z-h), (x+h, z-h), (x+h, z+h), (x-h, z+h)
+        
+        // We need to transform these 4 corners to screen space
+        const p1 = worldToScreen(this.x - halfSize, this.y, this.z - halfSize); // Back
+        const p2 = worldToScreen(this.x + halfSize, this.y, this.z - halfSize); // Right
+        const p3 = worldToScreen(this.x + halfSize, this.y, this.z + halfSize); // Front
+        const p4 = worldToScreen(this.x - halfSize, this.y, this.z + halfSize); // Left
+
+        // Bottom vertices (just shift y down by height)
+        // Note: In our coordinate system, y is up. So bottom is y - size.
+        const h = this.size;
+        
+        const p1b = worldToScreen(this.x - halfSize, this.y - h, this.z - halfSize);
+        const p2b = worldToScreen(this.x + halfSize, this.y - h, this.z - halfSize);
+        const p3b = worldToScreen(this.x + halfSize, this.y - h, this.z + halfSize);
+        const p4b = worldToScreen(this.x - halfSize, this.y - h, this.z + halfSize);
+        
+        const c1 = applyCamera(p1.x, p1.y);
+        const c2 = applyCamera(p2.x, p2.y);
+        const c3 = applyCamera(p3.x, p3.y);
+        const c4 = applyCamera(p4.x, p4.y);
+        
+        const c2b = applyCamera(p2b.x, p2b.y);
+        const c3b = applyCamera(p3b.x, p3b.y);
+        const c4b = applyCamera(p4b.x, p4b.y);
+
+        p.noStroke();
+
+        // Top Face
+        p.fill(COLORS.BLOCK_TOP);
+        p.quad(c1.x, c1.y, c2.x, c2.y, c3.x, c3.y, c4.x, c4.y);
+
+        // Right Face (Side 1) - defined by p2, p3, p3b, p2b
+        p.fill(COLORS.BLOCK_RIGHT);
+        p.quad(c2.x, c2.y, c3.x, c3.y, c3b.x, c3b.y, c2b.x, c2b.y);
+
+        // Left Face (Side 2) - defined by p3, p4, p4b, p3b
+        p.fill(COLORS.BLOCK_LEFT);
+        p.quad(c4.x, c4.y, c3.x, c3.y, c3b.x, c3b.y, c4b.x, c4b.y);
+    }
+}
+
+/**
+ * Collectible Diamond
+ */
+export class Collectible {
+    constructor(gridX, gridZ) {
+        this.gridX = gridX;
+        this.gridZ = gridZ;
+        this.x = gridX * BLOCK_SIZE;
+        this.y = 15; // Float above block
+        this.z = gridZ * BLOCK_SIZE;
+        this.baseY = 15;
+        this.rotation = 0;
+        this.bobOffset = 0;
+        this.collected = false;
+    }
+
+    update(p) {
+        this.rotation += 0.05;
+        this.bobOffset = Math.sin(p.frameCount * 0.1) * 5;
+        this.y = this.baseY + this.bobOffset;
+    }
+
+    collect() {
+        this.collected = true;
+        gameState.score += 2; // Bonus points
+        createSparkle(this.x, this.y, this.z, COLORS.DIAMOND);
+    }
+
+    render(p) {
+        if (this.collected) return;
+
+        const screenPos = worldToScreen(this.x, this.y, this.z);
+        const finalPos = applyCamera(screenPos.x, screenPos.y);
+
+        if (!isOnScreen(finalPos.x, finalPos.y)) return;
+
+        p.push();
+        p.translate(finalPos.x, finalPos.y);
+        // Fake 3D rotation by scaling width
+        const widthScale = Math.abs(Math.cos(this.rotation));
+        
+        p.fill(COLORS.DIAMOND);
+        p.stroke(255);
+        p.strokeWeight(1);
+        
+        // Draw diamond shape
+        p.beginShape();
+        p.vertex(0, -15);
+        p.vertex(10 * widthScale, 0);
+        p.vertex(0, 15);
+        p.vertex(-10 * widthScale, 0);
+        p.endShape(p.CLOSE);
+
+        p.pop();
+    }
+}
+</file>
+
+<file name="physics.js">
+/**
+ * Collision detection and physics updates.
+ */
+
+import { gameState, BLOCK_SIZE, BALL_RADIUS } from './globals.js';
+import { getGridKey, worldToScreen } from './iso_math.js';
+
+export function checkCollisions() {
+    const player = gameState.player;
+    if (!player || player.isDead) return;
+
+    // 1. Check if player is on a block
+    // We check the point directly under the ball
+    // Tolerance: Allow the ball to be slightly off-center, but center must be on a block
+    
+    // Calculate grid position
+    // We use Math.round to find the nearest block center
+    const gridX = Math.round(player.x / BLOCK_SIZE);
+    const gridZ = Math.round(player.z / BLOCK_SIZE);
+    
+    const key = getGridKey(gridX, gridZ);
+    
+    if (!gameState.blocks.has(key)) {
+        // No block under center of ball
+        // Check strict bounds? 
+        // ZigZag usually allows the ball to be "on" the block as long as the center is within the square
+        // Actually, simpler: check if `abs(player.x - block.x) < size/2 + radius` etc?
+        // Since we snap to grid, checking existence of block at rounded coord is effectively checking if center is inside the voronoi region of that block.
+        // It's a good approximation.
+        
+        player.startFalling();
+    }
+
+    // 2. Collectibles
+    for (const c of gameState.collectibles) {
+        if (!c.collected) {
+            const dx = player.x - c.x;
+            const dz = player.z - c.z;
+            const dist = Math.sqrt(dx*dx + dz*dz);
+            if (dist < BALL_RADIUS + 15) { // 15 is approx radius of diamond
+                c.collect();
+            }
+        }
+    }
+}
+
+export function updateCamera() {
+    const player = gameState.player;
+    if (!player) return;
+
+    const target = worldToScreen(player.x, player.y, player.z);
+    
+    // Smooth follow
+    // We want the player to be slightly offset so they can see ahead
+    // "Ahead" depends on direction, but generally we want player in center-ish
+    
+    // Convert target to screen coordinates relative to center
+    // Screen X, Screen Y
+    // gameState.camera.x/y are offsets subtracted from canvas center
+    
+    // We want: CANVAS_WIDTH/2 = (screenX - camX)
+    // => camX = screenX - CANVAS_WIDTH/2  (This puts player at center)
+    // But screenX is already calculated from (0,0).
+    
+    // Let's look at applyCamera: x + (W/2 - camX)
+    // To center: camX should be screenX.
+    
+    // We want to lerp camera.x to screenX
+    const smoothing = 0.1;
+    
+    // Only follow if not super dead (to keep seeing the fall)
+    if (player.y > -200) {
+        // Calculate the "Iso" position of the player without camera
+        const pIso = worldToScreen(player.x, player.y, player.z);
+        
+        gameState.camera.x += (pIso.x - gameState.camera.x) * smoothing;
+        gameState.camera.y += (pIso.y - gameState.camera.y) * smoothing;
+    }
+    
+    // Apply shake
+    if (gameState.camera.shake > 0) {
+        gameState.camera.x += (Math.random() - 0.5) * gameState.camera.shake;
+        gameState.camera.y += (Math.random() - 0.5) * gameState.camera.shake;
+        gameState.camera.shake *= 0.9;
+        if (gameState.camera.shake < 0.5) gameState.camera.shake = 0;
+    }
+}
+</file>
+
+<file name="particles.js">
+/**
+ * Particle System for visual effects.
+ */
+
+import { gameState, GRAVITY, COLORS } from './globals.js';
+import { worldToScreen, applyCamera } from './iso_math.js';
+
+export class Particle {
+    constructor(x, y, z, color) {
+        this.x = x;
+        this.y = y;
+        this.z = z;
+        this.color = color;
+        
+        // Random velocities
+        const angle = Math.random() * Math.PI * 2;
+        const speed = Math.random() * 2 + 1;
+        this.vx = Math.cos(angle) * speed;
+        this.vz = Math.sin(angle) * speed;
+        this.vy = Math.random() * 5 + 5; // Initial upward burst
+        
+        this.life = 1.0;
+        this.decay = Math.random() * 0.03 + 0.01;
+        this.size = Math.random() * 5 + 3;
+    }
+
+    update() {
+        this.x += this.vx;
+        this.z += this.vz;
+        this.y += this.vy;
+        this.vy -= GRAVITY * 0.5; // lighter gravity for particles
+
+        this.life -= this.decay;
+    }
+
+    render(p) {
+        if (this.life <= 0) return;
+
+        const screenPos = worldToScreen(this.x, this.y, this.z);
+        const finalPos = applyCamera(screenPos.x, screenPos.y);
+
+        p.noStroke();
+        // Use color with alpha
+        const r = this.color[0];
+        const g = this.color[1];
+        const b = this.color[2];
+        p.fill(r, g, b, this.life * 255);
+        
+        p.circle(finalPos.x, finalPos.y, this.size * this.life);
+    }
+}
+
+export function createExplosion(x, y, z, color) {
+    for (let i = 0; i < 20; i++) {
+        gameState.particles.push(new Particle(x, y, z, color));
+    }
+}
+
+export function createSparkle(x, y, z, color) {
+    for (let i = 0; i < 10; i++) {
+        gameState.particles.push(new Particle(x, y, z, color));
+    }
+}
+
+export function updateParticles() {
+    for (let i = gameState.particles.length - 1; i >= 0; i--) {
+        const p = gameState.particles[i];
+        p.update();
+        if (p.life <= 0) {
+            gameState.particles.splice(i, 1);
+        }
+    }
+}
+
+export function renderParticles(p) {
+    gameState.particles.forEach(part => part.render(p));
+}
+</file>
+
+<file name="iso_math.js">
+/**
+ * Helper functions for Isometric Projection calculations.
+ * Converts 3D world coordinates to 2D screen coordinates.
+ */
+
+import { BLOCK_SIZE, COS_30, SIN_30, CANVAS_WIDTH, CANVAS_HEIGHT, gameState } from './globals.js';
+
+/**
+ * Converts 3D world coordinates to 2D screen coordinates.
+ * @param {number} x - World X position
+ * @param {number} y - World Y position (Height, Up is Positive)
+ * @param {number} z - World Z position
+ * @returns {object} {x, y} Screen coordinates
+ */
+export function worldToScreen(x, y, z) {
+    // Isometric transformation
+    // Center of the screen is (0,0) before translation
+    
+    // Rotate 45 degrees around Y axis effectively for iso view
+    // Screen X corresponds to difference between X and Z
+    // Screen Y corresponds to sum of X and Z, minus height Y
+    
+    const isoX = (x - z) * COS_30;
+    const isoY = (x + z) * SIN_30 - y;
+
+    return {
+        x: isoX,
+        y: isoY
+    };
+}
+
+/**
+ * Applies camera offset to screen coordinates.
+ * @param {number} screenX 
+ * @param {number} screenY 
+ * @returns {object} {x, y} Adjusted coordinates
+ */
+export function applyCamera(screenX, screenY) {
+    const cx = CANVAS_WIDTH / 2 - gameState.camera.x;
+    const cy = CANVAS_HEIGHT / 2 - gameState.camera.y + 100; // +100 to push the view down a bit
+
+    return {
+        x: screenX + cx,
+        y: screenY + cy
+    };
+}
+
+/**
+ * Checks if a point in screen space is approximately on screen.
+ * Used for culling off-screen entities.
+ * @param {number} sx - Screen X
+ * @param {number} sy - Screen Y
+ * @param {number} margin - Buffer margin
+ */
+export function isOnScreen(sx, sy, margin = 100) {
+    return (
+        sx >= -margin &&
+        sx <= CANVAS_WIDTH + margin &&
+        sy >= -margin &&
+        sy <= CANVAS_HEIGHT + margin
+    );
+}
+
+/**
+ * Utility to get a unique key for grid coordinates
+ */
+export function getGridKey(gridX, gridZ) {
+    return `${Math.floor(gridX)},${Math.floor(gridZ)}`;
+}
+</file>
+
+<file name="input.js">
+/**
+ * Input handling.
+ */
+
+import { gameState, getGameState } from './globals.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+export function handleInput(p) {
+    // Phase controls
+    if (p.keyIsDown(13)) { // ENTER
+        if (gameState.gamePhase === "START") {
+            gameState.gamePhase = "PLAYING";
+            logGameInfo(p, "Phase Change: PLAYING");
+        }
+    }
+
+    if (p.keyIsDown(27)) { // ESC
+        // Debounce simple
+        if (p.frameCount % 10 === 0) {
+             if (gameState.gamePhase === "PLAYING") gameState.gamePhase = "PAUSED";
+             else if (gameState.gamePhase === "PAUSED") gameState.gamePhase = "PLAYING";
+        }
+    }
+
+    if (p.keyIsDown(82)) { // R
+        if (gameState.gamePhase === "GAME_OVER_LOSE") {
+            // Restart is handled in game.js via function call usually, or we flag it
+            // For now, we'll let game.js check this or expose reset
+            window.gameInstance.resetGame();
+        }
+    }
+    
+    // Automated Input injection
+    if (gameState.controlMode !== "HUMAN" && gameState.gamePhase === "PLAYING") {
+        const action = get_automated_testing_action(gameState);
+        if (action && action.switch) {
+            if (gameState.player) gameState.player.switchDirection();
+        }
+        return;
+    }
+}
+
+export function keyPressed(p) {
+    // Log input
+    if (p.logs) {
+        p.logs.inputs.push({
+            type: 'keyPressed',
+            key: p.key,
+            keyCode: p.keyCode,
+            frameCount: p.frameCount
+        });
+    }
+
+    // Gameplay Controls
+    // Space(32), Arrows(37-40), Z(90), Shift(16)
+    const validKeys = [32, 37, 38, 39, 40, 90, 16];
+    
+    if (gameState.gamePhase === "PLAYING" && gameState.controlMode === "HUMAN") {
+        if (validKeys.includes(p.keyCode)) {
+            if (gameState.player) {
+                gameState.player.switchDirection();
+            }
+        }
+    }
+}
+
+function logGameInfo(p, info) {
+    if (p.logs) {
+        p.logs.game_info.push({
+            info: info,
+            timestamp: Date.now(),
+            frameCount: p.frameCount
+        });
+    }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

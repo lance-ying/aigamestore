@@ -1,0 +1,1915 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+the auto restart should not put me back to the enter start screen, can you fix that
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; } /* active button for current control mode */
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+      </div>
+      <!-- Game Description -->
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">A puzzle game where you place geometric blocks on a 9x9 grid to clear rows and columns for points. Strategically place three available blocks to maximize your score and earn combos. The game ends when no more blocks can be placed.</p>
+      <!-- Game Controls -->
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Left/Right: Move the selected block horizontally<br>Arrow Down: Move the selected block down<br>Z: Cycle through available blocks<br>Space: Drop the block immediately<br>Enter: Start the game from the start screen<br>Esc: Pause/unpause the game<br>R: Restart the game when game is over</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+import { gameState, GRID_SIZE, MIN_SCORE_TO_WIN } from './globals.js';
+import { canPlaceBlock } from './utils.js';
+import { KEY_LEFT, KEY_UP, KEY_RIGHT, KEY_DOWN, KEY_SPACE, KEY_Z } from './input.js';
+
+// Helper function to check if we're stuck in the same position
+function isStuck(history, currentPos, threshold = 60) {
+  if (history.length < threshold) return false;
+  
+  const recentHistory = history.slice(-threshold);
+  const uniquePositions = new Set(recentHistory.map(pos => `${pos.x},${pos.y},${pos.blockIndex}`));
+  
+  return uniquePositions.size < 3; // If we have less than 3 unique positions, we're probably stuck
+}
+
+// Basic testing with sticky keys
+function getStickyKeysAction(gameState) {
+  // Only take actions during PLAYING phase
+  if (gameState.gamePhase !== "PLAYING") return null;
+  
+  // Track position to detect if we're stuck
+  gameState.actionHistory.push({
+    x: gameState.currentBlock.x,
+    y: gameState.currentBlock.y,
+    blockIndex: gameState.selectedBlockIndex
+  });
+  
+  // If we're stuck, take a random action
+  if (isStuck(gameState.actionHistory, gameState.currentBlock)) {
+    const randomAction = Math.floor(Math.random() * 6);
+    switch (randomAction) {
+      case 0: return KEY_LEFT;
+      case 1: return KEY_RIGHT;
+      case 2: return KEY_UP;
+      case 3: return KEY_DOWN;
+      case 4: return KEY_Z;
+      case 5: return KEY_SPACE;
+    }
+  }
+  
+  // Every 30 frames, change the action
+  gameState.framesSinceLastAction++;
+  if (gameState.framesSinceLastAction >= 30) {
+    gameState.framesSinceLastAction = 0;
+    
+    // Choose a random action
+    const actions = [KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN, KEY_Z];
+    const randomIndex = Math.floor(Math.random() * actions.length);
+    gameState.lastActionTaken = actions[randomIndex];
+  }
+  
+  // Every 5 actions, try to place a block
+  if (gameState.framesSinceLastAction % 5 === 0) {
+    const { grid, availableBlocks, selectedBlockIndex, currentBlock } = gameState;
+    if (canPlaceBlock(grid, availableBlocks[selectedBlockIndex], currentBlock.x, currentBlock.y)) {
+      return KEY_SPACE;
+    }
+  }
+  
+  return gameState.lastActionTaken;
+}
+
+// Test to demonstrate winning the game
+function getTestWinAction(gameState) {
+  // Only take actions during PLAYING phase
+  if (gameState.gamePhase !== "PLAYING") return null;
+  
+  // Track position to detect if we're stuck
+  gameState.actionHistory.push({
+    x: gameState.currentBlock.x,
+    y: gameState.currentBlock.y,
+    blockIndex: gameState.selectedBlockIndex
+  });
+  
+  // If we're stuck, cycle through blocks or take a random movement
+  if (isStuck(gameState.actionHistory, gameState.currentBlock)) {
+    const randomAction = Math.floor(Math.random() * 5);
+    switch (randomAction) {
+      case 0: return KEY_LEFT;
+      case 1: return KEY_RIGHT;
+      case 2: return KEY_UP;
+      case 3: return KEY_DOWN;
+      case 4: return KEY_Z;
+    }
+  }
+  
+  const { grid, availableBlocks, selectedBlockIndex, currentBlock } = gameState;
+  
+  // Try to find the best block to use
+  let bestBlockIndex = selectedBlockIndex;
+  let bestScore = -1;
+  
+  for (let i = 0; i < availableBlocks.length; i++) {
+    const block = availableBlocks[i];
+    
+    // Calculate how many cells this block would fill
+    let cellCount = 0;
+    for (let row = 0; row < block.shape.length; row++) {
+      for (let col = 0; col < block.shape[row].length; col++) {
+        if (block.shape[row][col] === 1) {
+          cellCount++;
+        }
+      }
+    }
+    
+    // Prefer blocks with more cells
+    if (cellCount > bestScore) {
+      bestScore = cellCount;
+      bestBlockIndex = i;
+    }
+  }
+  
+  // If we're not on the best block, cycle to it
+  if (selectedBlockIndex !== bestBlockIndex) {
+    return KEY_Z;
+  }
+  
+  // Find the best position to place the block
+  let bestX = currentBlock.x;
+  let bestY = currentBlock.y;
+  let bestPositionScore = -1;
+  
+  // Scan the grid for potential placements
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      if (canPlaceBlock(grid, availableBlocks[selectedBlockIndex], x, y)) {
+        // Calculate how many adjacent filled cells this placement would have
+        let adjacentFilled = 0;
+        const shape = availableBlocks[selectedBlockIndex].shape;
+        
+        for (let row = 0; row < shape.length; row++) {
+          for (let col = 0; col < shape[row].length; col++) {
+            if (shape[row][col] === 1) {
+              // Check adjacent cells (up, down, left, right)
+              const positions = [
+                { dx: -1, dy: 0 },
+                { dx: 1, dy: 0 },
+                { dx: 0, dy: -1 },
+                { dx: 0, dy: 1 }
+              ];
+              
+              for (const pos of positions) {
+                const adjX = x + col + pos.dx;
+                const adjY = y + row + pos.dy;
+                
+                // Check if the adjacent cell is within bounds and filled
+                if (
+                  adjX >= 0 && adjX < GRID_SIZE && 
+                  adjY >= 0 && adjY < GRID_SIZE && 
+                  grid[adjY][adjX] !== 0
+                ) {
+                  adjacentFilled++;
+                }
+              }
+            }
+          }
+        }
+        
+        // Calculate how close this placement would get to completing rows/columns
+        let rowCompletionScore = 0;
+        let colCompletionScore = 0;
+        
+        for (let row = 0; row < shape.length; row++) {
+          for (let col = 0; col < shape[row].length; col++) {
+            if (shape[row][col] === 1) {
+              const gridY = y + row;
+              const gridX = x + col;
+              
+              // Count filled cells in this row and column
+              let rowFilled = 0;
+              let colFilled = 0;
+              
+              for (let i = 0; i < GRID_SIZE; i++) {
+                if (grid[gridY][i] !== 0 || (i >= x && i < x + shape[row].length && shape[row][i - x] === 1)) {
+                  rowFilled++;
+                }
+                if (grid[i][gridX] !== 0 || (i >= y && i < y + shape.length && shape[i - y][col] === 1)) {
+                  colFilled++;
+                }
+              }
+              
+              rowCompletionScore += rowFilled;
+              colCompletionScore += colFilled;
+            }
+          }
+        }
+        
+        // Calculate total position score
+        const positionScore = adjacentFilled * 2 + rowCompletionScore + colCompletionScore;
+        
+        if (positionScore > bestPositionScore) {
+          bestPositionScore = positionScore;
+          bestX = x;
+          bestY = y;
+        }
+      }
+    }
+  }
+  
+  // Move towards the best position
+  if (currentBlock.x < bestX) return KEY_RIGHT;
+  if (currentBlock.x > bestX) return KEY_LEFT;
+  if (currentBlock.y < bestY) return KEY_DOWN;
+  if (currentBlock.y > bestY) return KEY_UP;
+  
+  // If we're at the best position, place the block
+  if (currentBlock.x === bestX && currentBlock.y === bestY) {
+    if (canPlaceBlock(grid, availableBlocks[selectedBlockIndex], bestX, bestY)) {
+      return KEY_SPACE;
+    }
+  }
+  
+  // If we can't find a good move, take a random one
+  const actions = [KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN, KEY_Z];
+  return actions[Math.floor(Math.random() * actions.length)];
+}
+
+// Test the line clearing mechanism
+function getTestLineClearingAction(gameState) {
+  // Only take actions during PLAYING phase
+  if (gameState.gamePhase !== "PLAYING") return null;
+  
+  // Track position to detect if we're stuck
+  gameState.actionHistory.push({
+    x: gameState.currentBlock.x,
+    y: gameState.currentBlock.y,
+    blockIndex: gameState.selectedBlockIndex
+  });
+  
+  // If we're stuck, take a random action
+  if (isStuck(gameState.actionHistory, gameState.currentBlock)) {
+    const randomAction = Math.floor(Math.random() * 5);
+    switch (randomAction) {
+      case 0: return KEY_LEFT;
+      case 1: return KEY_RIGHT;
+      case 2: return KEY_UP;
+      case 3: return KEY_DOWN;
+      case 4: return KEY_Z;
+    }
+  }
+  
+  const { grid, availableBlocks, selectedBlockIndex, currentBlock } = gameState;
+  
+  // Analyze the grid to find rows and columns that are almost complete
+  const rowFillCounts = Array(GRID_SIZE).fill(0);
+  const colFillCounts = Array(GRID_SIZE).fill(0);
+  
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      if (grid[y][x] !== 0) {
+        rowFillCounts[y]++;
+        colFillCounts[x]++;
+      }
+    }
+  }
+  
+  // Find best position to place the block to complete lines
+  let bestX = currentBlock.x;
+  let bestY = currentBlock.y;
+  let bestLineScore = -1;
+  
+  // Scan the grid for potential placements
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      if (canPlaceBlock(grid, availableBlocks[selectedBlockIndex], x, y)) {
+        let lineScore = 0;
+        const shape = availableBlocks[selectedBlockIndex].shape;
+        
+        // Calculate how many lines this placement would complete
+        const affectedRows = new Set();
+        const affectedCols = new Set();
+        
+        for (let row = 0; row < shape.length; row++) {
+          for (let col = 0; col < shape[row].length; col++) {
+            if (shape[row][col] === 1) {
+              const gridY = y + row;
+              const gridX = x + col;
+              
+              affectedRows.add(gridY);
+              affectedCols.add(gridX);
+            }
+          }
+        }
+        
+        // Calculate how close to completion each affected row/column would be
+        for (const rowIndex of affectedRows) {
+          const newRowFill = rowFillCounts[rowIndex] + shape[0].filter(cell => cell === 1).length;
+          if (newRowFill === GRID_SIZE) {
+            lineScore += 100; // Heavily prioritize completing a line
+          } else {
+            lineScore += newRowFill; // Otherwise prioritize filling rows that are closer to completion
+          }
+        }
+        
+        for (const colIndex of affectedCols) {
+          const newColFill = colFillCounts[colIndex] + shape.filter(row => row[colIndex - x] === 1).length;
+          if (newColFill === GRID_SIZE) {
+            lineScore += 100; // Heavily prioritize completing a line
+          } else {
+            lineScore += newColFill; // Otherwise prioritize filling columns that are closer to completion
+          }
+        }
+        
+        if (lineScore > bestLineScore) {
+          bestLineScore = lineScore;
+          bestX = x;
+          bestY = y;
+        }
+      }
+    }
+  }
+  
+  // Move towards the best position
+  if (currentBlock.x < bestX) return KEY_RIGHT;
+  if (currentBlock.x > bestX) return KEY_LEFT;
+  if (currentBlock.y < bestY) return KEY_DOWN;
+  if (currentBlock.y > bestY) return KEY_UP;
+  
+  // If we're at the best position, place the block
+  if (currentBlock.x === bestX && currentBlock.y === bestY) {
+    if (canPlaceBlock(grid, availableBlocks[selectedBlockIndex], bestX, bestY)) {
+      return KEY_SPACE;
+    }
+  }
+  
+  // If we can't find a good move, cycle through blocks
+  return KEY_Z;
+}
+
+// Test to fill the grid until game over
+function getTestGameOverAction(gameState) {
+  // Only take actions during PLAYING phase
+  if (gameState.gamePhase !== "PLAYING") return null;
+  
+  // Track position to detect if we're stuck
+  gameState.actionHistory.push({
+    x: gameState.currentBlock.x,
+    y: gameState.currentBlock.y,
+    blockIndex: gameState.selectedBlockIndex
+  });
+  
+  // If we're stuck, take a random action
+  if (isStuck(gameState.actionHistory, gameState.currentBlock)) {
+    const randomAction = Math.floor(Math.random() * 5);
+    switch (randomAction) {
+      case 0: return KEY_LEFT;
+      case 1: return KEY_RIGHT;
+      case 2: return KEY_UP;
+      case 3: return KEY_DOWN;
+      case 4: return KEY_Z;
+    }
+  }
+  
+  const { grid, availableBlocks, selectedBlockIndex, currentBlock } = gameState;
+  
+  // Try to place blocks in a way that makes it difficult to continue playing
+  // (avoiding completing lines and focusing on creating isolated empty cells)
+  let bestX = currentBlock.x;
+  let bestY = currentBlock.y;
+  let bestScore = -1;
+  
+  // Scan the grid for potential placements
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      if (canPlaceBlock(grid, availableBlocks[selectedBlockIndex], x, y)) {
+        let score = 0;
+        const shape = availableBlocks[selectedBlockIndex].shape;
+        
+        // Calculate how many isolated empty cells this placement would create
+        for (let row = 0; row < shape.length; row++) {
+          for (let col = 0; col < shape[row].length; col++) {
+            if (shape[row][col] === 1) {
+              const gridY = y + row;
+              const gridX = x + col;
+              
+              // Check adjacent cells
+              const positions = [
+                { dx: -1, dy: 0 },
+                { dx: 1, dy: 0 },
+                { dx: 0, dy: -1 },
+                { dx: 0, dy: 1 }
+              ];
+              
+              for (const pos of positions) {
+                const adjX = gridX + pos.dx;
+                const adjY = gridY + pos.dy;
+                
+                // Check if the adjacent cell is within bounds and empty
+                if (
+                  adjX >= 0 && adjX < GRID_SIZE && 
+                  adjY >= 0 && adjY < GRID_SIZE && 
+                  grid[adjY][adjX] === 0
+                ) {
+                  // Check if this empty cell would be isolated (surrounded by filled cells on 3 sides)
+                  let surroundedCount = 0;
+                  
+                  for (const innerPos of positions) {
+                    const innerX = adjX + innerPos.dx;
+                    const innerY = adjY + innerPos.dy;
+                    
+                    // Count surrounding filled cells or out-of-bounds (which count as "filled")
+                    if (
+                      innerX < 0 || innerX >= GRID_SIZE || 
+                      innerY < 0 || innerY >= GRID_SIZE || 
+                      grid[innerY][innerX] !== 0 ||
+                      (innerX >= x && innerX < x + shape[0].length && 
+                       innerY >= y && innerY < y + shape.length && 
+                       shape[innerY - y][innerX - x] === 1)
+                    ) {
+                      surroundedCount++;
+                    }
+                  }
+                  
+                  if (surroundedCount >= 3) {
+                    score += 10; // Heavily prioritize creating isolated cells
+                  }
+                }
+              }
+            }
+          }
+        }
+        
+        // Avoid completing lines
+        const affectedRows = new Set();
+        const affectedCols = new Set();
+        
+        for (let row = 0; row < shape.length; row++) {
+          for (let col = 0; col < shape[row].length; col++) {
+            if (shape[row][col] === 1) {
+              affectedRows.add(y + row);
+              affectedCols.add(x + col);
+            }
+          }
+        }
+        
+        // Calculate how close to completion each affected row/column would be
+        for (const rowIndex of affectedRows) {
+          let rowFilled = 0;
+          for (let i = 0; i < GRID_SIZE; i++) {
+            if (grid[rowIndex][i] !== 0 || (i >= x && i < x + shape[0].length && shape[rowIndex - y][i - x] === 1)) {
+              rowFilled++;
+            }
+          }
+          
+          // Penalize placements that would complete or nearly complete a row
+          if (rowFilled >= GRID_SIZE - 1) {
+            score -= 50;
+          }
+        }
+        
+        for (const colIndex of affectedCols) {
+          let colFilled = 0;
+          for (let i = 0; i < GRID_SIZE; i++) {
+            if (grid[i][colIndex] !== 0 || (i >= y && i < y + shape.length && shape[i - y][colIndex - x] === 1)) {
+              colFilled++;
+            }
+          }
+          
+          // Penalize placements that would complete or nearly complete a column
+          if (colFilled >= GRID_SIZE - 1) {
+            score -= 50;
+          }
+        }
+        
+        if (score > bestScore) {
+          bestScore = score;
+          bestX = x;
+          bestY = y;
+        }
+      }
+    }
+  }
+  
+  // Move towards the best position
+  if (currentBlock.x < bestX) return KEY_RIGHT;
+  if (currentBlock.x > bestX) return KEY_LEFT;
+  if (currentBlock.y < bestY) return KEY_DOWN;
+  if (currentBlock.y > bestY) return KEY_UP;
+  
+  // If we're at the best position, place the block
+  if (currentBlock.x === bestX && currentBlock.y === bestY) {
+    if (canPlaceBlock(grid, availableBlocks[selectedBlockIndex], bestX, bestY)) {
+      return KEY_SPACE;
+    }
+  }
+  
+  // If we can't find a good move, cycle through blocks
+  return KEY_Z;
+}
+
+// Test block selection mechanism
+function getTestBlockSelectionAction(gameState) {
+  // Only take actions during PLAYING phase
+  if (gameState.gamePhase !== "PLAYING") return null;
+  
+  // Track position to detect if we're stuck
+  gameState.actionHistory.push({
+    x: gameState.currentBlock.x,
+    y: gameState.currentBlock.y,
+    blockIndex: gameState.selectedBlockIndex
+  });
+  
+  // If we're stuck, take a random action
+  if (isStuck(gameState.actionHistory, gameState.currentBlock)) {
+    const randomAction = Math.floor(Math.random() * 5);
+    switch (randomAction) {
+      case 0: return KEY_LEFT;
+      case 1: return KEY_RIGHT;
+      case 2: return KEY_UP;
+      case 3: return KEY_DOWN;
+      case 4: return KEY_Z;
+    }
+  }
+  
+  const { grid, availableBlocks, selectedBlockIndex, currentBlock } = gameState;
+  
+  // Cycle through blocks frequently to test the selection mechanism
+  gameState.framesSinceLastAction++;
+  
+  // Every 10 frames, cycle to the next block
+  if (gameState.framesSinceLastAction % 10 === 0) {
+    return KEY_Z;
+  }
+  
+  // Every 30 frames, try to place the current block
+  if (gameState.framesSinceLastAction % 30 === 0) {
+    // Move to a random position
+    const randomDir = Math.floor(Math.random() * 4);
+    switch (randomDir) {
+      case 0: return KEY_LEFT;
+      case 1: return KEY_RIGHT;
+      case 2: return KEY_UP;
+      case 3: return KEY_DOWN;
+    }
+  }
+  
+  // Every 50 frames, try to place the block
+  if (gameState.framesSinceLastAction % 50 === 0) {
+    if (canPlaceBlock(grid, availableBlocks[selectedBlockIndex], currentBlock.x, currentBlock.y)) {
+      return KEY_SPACE;
+    }
+  }
+  
+  return null;
+}
+
+// Main testing controller function
+export function game_testing_controller(gameState) {
+  switch (gameState.controlMode) {
+    case "TEST_1":
+      return getStickyKeysAction(gameState);
+    case "TEST_2":
+      return getTestWinAction(gameState);
+    case "TEST_3":
+      return getTestLineClearingAction(gameState);
+    case "TEST_4":
+      return getTestGameOverAction(gameState);
+    case "TEST_5":
+      return getTestBlockSelectionAction(gameState);
+    default:
+      return getStickyKeysAction(gameState);
+  }
+}
+
+// Expose the game_testing_controller function globally
+window.game_testing_controller = game_testing_controller;
+export default game_testing_controller;
+</file>
+
+<file name="globals.js">
+// Game constants
+export const INITIAL_GRID_SIZE = 14;
+export let GRID_SIZE = INITIAL_GRID_SIZE;
+export const CELL_SIZE = 25;
+export const GRID_OFFSET_X = 110; // Shifted to center the grid
+export const GRID_OFFSET_Y = 50;
+export const BLOCK_PREVIEW_X = 50; // Adjusted to shift preview blocks slightly to the right
+export const BLOCK_PREVIEW_Y = 50; // Moved upward
+export const PREVIEW_SIZE = 20;
+export const MIN_SCORE_TO_WIN = 999999; // Effectively disabled in favor of level progression
+
+// Level Configuration
+export const LEVELS = [
+  // Easy Levels
+  { 
+    id: 1, 
+    name: "Easy I", 
+    linesTarget: 2, 
+    maxBlocks: 15, 
+    bgColor: [30, 30, 50] // Dark Blue
+  },
+  { 
+    id: 2, 
+    name: "Easy II", 
+    linesTarget: 4, 
+    maxBlocks: 20, 
+    bgColor: [30, 50, 30] // Dark Green
+  },
+  // Medium Levels
+  { 
+    id: 3, 
+    name: "Medium I", 
+    linesTarget: 6, 
+    maxBlocks: 25, 
+    bgColor: [50, 30, 50] // Dark Purple
+  },
+  { 
+    id: 4, 
+    name: "Medium II", 
+    linesTarget: 8, 
+    maxBlocks: 30, 
+    bgColor: [50, 30, 30] // Dark Red
+  },
+  // Hard Levels
+  { 
+    id: 5, 
+    name: "Hard I", 
+    linesTarget: 10, 
+    maxBlocks: 30, 
+    bgColor: [50, 50, 30] // Dark Yellow/Olive
+  },
+  { 
+    id: 6, 
+    name: "Hard II", 
+    linesTarget: 12, 
+    maxBlocks: 35, 
+    bgColor: [30, 50, 50] // Dark Teal
+  }
+];
+
+// Game state
+export const gameState = {
+  player: {
+    score: 0,
+    highScore: 0,
+    comboCount: 0,
+    lastClearedLines: 0
+  },
+  level: {
+    currentIndex: 0,
+    linesCleared: 0,
+    blocksPlaced: 0
+  },
+  grid: Array(GRID_SIZE).fill().map(() => Array(GRID_SIZE).fill(0)),
+  availableBlocks: [],
+  selectedBlockIndex: 0,
+  currentBlock: {
+    shape: [],
+    x: Math.floor(GRID_SIZE / 2),
+    y: 0
+  },
+  gamePhase: "START", // "START", "PLAYING", "PAUSED", "GAME_OVER_WIN", "GAME_OVER_LOSE"
+  controlMode: "HUMAN", // Only "HUMAN" mode will be used
+  // Visual animations queue
+  animations: [],
+  // Auto-restart logic
+  autoRestartScheduled: false,
+  autoRestartTimeoutId: null
+};
+
+// Block shapes definition
+export const BLOCK_SHAPES = [
+  // Single square
+  [
+    [1]
+  ],
+  // Horizontal line of 2
+  [
+    [1, 1]
+  ],
+  // Vertical line of 2
+  [
+    [1],
+    [1]
+  ],
+  // Horizontal line of 3
+  [
+    [1, 1, 1]
+  ],
+  // Vertical line of 3
+  [
+    [1],
+    [1],
+    [1]
+  ],
+  // L shape
+  [
+    [1, 0],
+    [1, 1]
+  ],
+  // Reversed L shape
+  [
+    [0, 1],
+    [1, 1]
+  ],
+  // T shape
+  [
+    [1, 1, 1],
+    [0, 1, 0]
+  ],
+  // Square (2x2)
+  [
+    [1, 1],
+    [1, 1]
+  ],
+  // Cross shape
+  [
+    [0, 1, 0],
+    [1, 1, 1],
+    [0, 1, 0]
+  ],
+  // Z shape
+  [
+    [1, 1, 0],
+    [0, 1, 1]
+  ],
+  // S shape
+  [
+    [0, 1, 1],
+    [1, 1, 0]
+  ]
+];
+
+// Block colors
+export const BLOCK_COLORS = [
+  [255, 50, 50],    // Red
+  [50, 255, 50],    // Green
+  [50, 50, 255],    // Blue
+  [255, 255, 50],   // Yellow
+  [255, 50, 255],   // Magenta
+  [50, 255, 255],   // Cyan
+  [255, 165, 50],   // Orange
+  [150, 50, 200],   // Purple
+  [255, 150, 180],  // Pink
+  [50, 180, 50],    // Dark Green
+  [50, 80, 200],    // Navy
+  [180, 180, 50]    // Olive
+];
+
+// Function to get game state
+export function getGameState() {
+  return gameState;
+}
+
+// Helper to update grid size dynamically
+export function setGridSize(size) {
+  GRID_SIZE = size;
+}
+
+// Expose the getGameState function globally
+window.getGameState = getGameState;
+</file>
+
+<file name="game.js">
+import { 
+  gameState, GRID_SIZE, BLOCK_SHAPES, BLOCK_COLORS, MIN_SCORE_TO_WIN, LEVELS
+} from './globals.js';
+import { 
+  generateBlocks, canPlaceBlock, placeBlock, checkForCompletedLines, 
+  clearCompletedLines, calculateScore, canPlaceAnyBlock, resetGameState, generateRandomBlock
+} from './utils.js';
+import { 
+  handleKeyPressed, processGameControls, KEY_SPACE
+} from './input.js';
+import { 
+  drawGrid, drawCurrentBlock, drawBlockPreviews, drawGameInfo,
+  drawStartScreen, drawPauseScreen, drawGameOverScreen
+} from './rendering.js';
+// import { game_testing_controller } from './automated_testing_controller.js'; // Removed: Automated testing file
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Initialize variables
+  p.logs = {
+    "game_info": [],
+    "player_info": [],
+    "inputs": []
+  };
+  
+  let lastFallTime = 0;
+  const FALL_INTERVAL = 800; // Time in ms between gravity steps
+  
+  p.setup = function() {
+    p.createCanvas(600, 400);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Initialize game state
+    resetGameState(true);
+    
+    lastFallTime = p.millis();
+    
+    // Log initial game state
+    p.logs.game_info.push({
+      "game_status": gameState.gamePhase,
+      "data": {},
+      "framecount": p.frameCount,
+      "timestamp": Date.now()
+    });
+  };
+  
+  p.draw = function() {
+    p.background(20);
+    
+    // Handle different game phases
+    switch (gameState.gamePhase) {
+      case "START":
+        drawStartScreen(p);
+        break;
+        
+      case "PLAYING":
+        // Gravity Logic
+        if (p.millis() - lastFallTime > FALL_INTERVAL) {
+          const { grid, availableBlocks, selectedBlockIndex, currentBlock } = gameState;
+          const block = availableBlocks[selectedBlockIndex];
+          
+          // Try to move down
+          if (canPlaceBlock(grid, block, currentBlock.x, currentBlock.y + 1)) {
+            currentBlock.y++;
+          } else {
+            // If cannot move down, try to place if valid
+            if (canPlaceBlock(grid, block, currentBlock.x, currentBlock.y)) {
+              handleBlockPlacement();
+            }
+          }
+          lastFallTime = p.millis();
+        }
+
+        // Game rendering
+        drawGrid(p);
+        drawCurrentBlock(p);
+        drawBlockPreviews(p);
+        drawGameInfo(p);
+        break;
+        
+      case "PAUSED":
+        // Still draw the game but with a pause overlay
+        drawGrid(p);
+        drawBlockPreviews(p);
+        drawGameInfo(p);
+        drawPauseScreen(p);
+        break;
+        
+      case "GAME_OVER_WIN":
+      case "GAME_OVER_LOSE":
+        // Draw the game state in the background
+        drawGrid(p);
+        drawBlockPreviews(p);
+        drawGameInfo(p);
+        
+        // Draw game over screen
+        drawGameOverScreen(p);
+
+        // Auto-restart logic
+        if (!gameState.autoRestartScheduled) {
+            gameState.autoRestartScheduled = true;
+            gameState.autoRestartTimeoutId = setTimeout(() => {
+                // Only restart if the game phase is still game over (i.e., not manually restarted)
+                if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+                    gameState.gamePhase = "START";
+                    resetGameState(); // Resets game state and clears auto-restart flags
+                    p.logs.game_info.push({
+                        "game_status": "START", // Log the new phase
+                        "data": { reason: "auto_restart" },
+                        "framecount": p.frameCount,
+                        "timestamp": Date.now()
+                    });
+                }
+                // Ensure the scheduled flag and timeout ID are cleared regardless of whether a restart happened
+                gameState.autoRestartScheduled = false;
+                gameState.autoRestartTimeoutId = null;
+            }, 1000); // 1 second delay
+        }
+        break;
+    }
+  };
+  
+  p.keyPressed = function() {
+    // Handle key press for game control
+    handleKeyPressed(p, p.keyCode);
+    
+    // Process game controls only in HUMAN mode and PLAYING phase
+    if (gameState.gamePhase === "PLAYING") {
+      processGameControls(p, p.keyCode);
+      
+      // Handle block placement (Hard Drop)
+      if (p.keyCode === KEY_SPACE) {
+        const { grid, availableBlocks, selectedBlockIndex, currentBlock } = gameState;
+        const block = availableBlocks[selectedBlockIndex];
+        
+        // Drop to bottom
+        while (canPlaceBlock(grid, block, currentBlock.x, currentBlock.y + 1)) {
+          currentBlock.y++;
+        }
+        
+        // Place if valid
+        if (canPlaceBlock(grid, block, currentBlock.x, currentBlock.y)) {
+          handleBlockPlacement();
+          lastFallTime = p.millis(); // Reset gravity timer
+        }
+      }
+    }
+  };
+  
+  // Handle block placement and game logic
+  function handleBlockPlacement() {
+    const { grid, availableBlocks, selectedBlockIndex, currentBlock } = gameState;
+    const block = availableBlocks[selectedBlockIndex];
+    
+    if (canPlaceBlock(grid, block, currentBlock.x, currentBlock.y)) {
+      // Capture the cells that will be placed (for animation)
+      const placedCells = [];
+      const shape = block.shape;
+      for (let row = 0; row < shape.length; row++) {
+        for (let col = 0; col < shape[row].length; col++) {
+          if (shape[row][col] === 1) {
+            placedCells.push({ x: currentBlock.x + col, y: currentBlock.y + row, colorIndex: block.colorIndex });
+          }
+        }
+      }
+
+      // Place the block on the grid (logical state)
+      placeBlock(grid, block, currentBlock.x, currentBlock.y);
+
+      // Add a short "pop" animation for the placed cells
+      gameState.animations.push({ type: 'place', cells: placedCells, frame: 0, duration: 10 }); 
+      
+      // Increment moves used for this level
+      gameState.level.blocksPlaced++;
+
+      // Check for completed lines
+      const { completedRows, completedCols } = checkForCompletedLines(grid);
+      const totalLinesCleared = completedRows.length + completedCols.length;
+      
+      // Update combo count
+      if (totalLinesCleared > 0) {
+        if (gameState.player.lastClearedLines > 0) {
+          gameState.player.comboCount++;
+        } else {
+          gameState.player.comboCount = 1;
+        }
+        gameState.player.lastClearedLines = totalLinesCleared;
+      } else {
+        gameState.player.comboCount = 0;
+        gameState.player.lastClearedLines = 0;
+      }
+      
+      // Clear completed lines (logical state) and update score
+      if (totalLinesCleared > 0) {
+        // Capture cells that will be cleared for animation before zeroing them
+        const clearedCells = [];
+        for (const row of completedRows) {
+          for (let col = 0; col < grid[row].length; col++) {
+            clearedCells.push({ x: col, y: row, colorIndex: grid[row][col] - 1 });
+          }
+        }
+        for (const col of completedCols) {
+          for (let row = 0; row < grid.length; row++) {
+            clearedCells.push({ x: col, y: row, colorIndex: grid[row][col] - 1 });
+          }
+        }
+
+        clearCompletedLines(grid, completedRows, completedCols);
+        // Add a "clear" animation so cells visually shrink/fade
+        gameState.animations.push({ type: 'clear', cells: clearedCells, frame: 0, duration: 18 });
+
+        const scoreGained = calculateScore(totalLinesCleared, gameState.player.comboCount);
+        gameState.player.score += scoreGained;
+        
+        // Update high score if needed
+        if (gameState.player.score > gameState.player.highScore) {
+          gameState.player.highScore = gameState.player.score;
+        }
+
+        // Update Level Progress
+        gameState.level.linesCleared += totalLinesCleared;
+      }
+      
+      // Replace the used block with a new one
+      availableBlocks[selectedBlockIndex] = generateRandomBlock();
+      
+      // Reset current block position to top
+      currentBlock.x = Math.floor(GRID_SIZE / 2);
+      currentBlock.y = 0;
+      
+      // --- Level Logic Checks ---
+      const currentLevel = LEVELS[gameState.level.currentIndex];
+      
+      // 1. Check for Level Win
+      if (gameState.level.linesCleared >= currentLevel.linesTarget) {
+        // Level Complete!
+        gameState.level.currentIndex++;
+        
+        // Check if all levels completed
+        if (gameState.level.currentIndex >= LEVELS.length) {
+          gameState.gamePhase = "GAME_OVER_WIN";
+          p.logs.game_info.push({
+            "game_status": gameState.gamePhase,
+            "data": { score: gameState.player.score },
+            "framecount": p.frameCount,
+            "timestamp": Date.now()
+          });
+          return;
+        } else {
+          // Move to next level - Reset grid for distinct level feel
+          resetGameState(false); // false = don't reset score/level index, just grid/blocks
+          // Maybe add a small visual indication or pause here, but immediate transition keeps flow
+          return;
+        }
+      }
+      
+      // 2. Check for Level Loss (Out of moves)
+      if (gameState.level.blocksPlaced >= currentLevel.maxBlocks) {
+        gameState.gamePhase = "GAME_OVER_LOSE";
+        p.logs.game_info.push({
+          "game_status": gameState.gamePhase,
+          "data": { score: gameState.player.score, reason: "out_of_moves" },
+          "framecount": p.frameCount,
+          "timestamp": Date.now()
+        });
+        return;
+      }
+
+      // 3. Check for Spawn Collision (New Block Overlaps immediately)
+      // This handles the "placed over the block / over the top line" lose condition
+      if (!canPlaceBlock(grid, availableBlocks[selectedBlockIndex], currentBlock.x, currentBlock.y)) {
+        gameState.gamePhase = "GAME_OVER_LOSE";
+        p.logs.game_info.push({
+          "game_status": gameState.gamePhase,
+          "data": { score: gameState.player.score, reason: "spawn_collision" },
+          "framecount": p.frameCount,
+          "timestamp": Date.now()
+        });
+        return;
+      }
+      
+      // 4. Check for Game Over (Cannot place blocks anywhere)
+      if (!canPlaceAnyBlock()) {
+        gameState.gamePhase = "GAME_OVER_LOSE";
+        p.logs.game_info.push({
+          "game_status": gameState.gamePhase,
+          "data": { score: gameState.player.score, reason: "no_placement" },
+          "framecount": p.frameCount,
+          "timestamp": Date.now()
+        });
+      }
+    }
+  }
+});
+
+// Add setControlMode function
+function setControlMode(mode) {
+  // Only 'HUMAN' mode is supported now
+  if (mode === "HUMAN") {
+    gameState.controlMode = mode;
+    
+    // Update button states: only the 'Human Mode' button exists
+    document.querySelectorAll('.control-button').forEach(btn => btn.classList.remove('active'));
+    const humanModeBtn = document.getElementById('humanModeBtn');
+    if (humanModeBtn) {
+      humanModeBtn.classList.add('active');
+    }
+    
+    // Reset game when switching modes (or re-selecting human mode during gameplay)
+    if (gameState.gamePhase === "PLAYING") {
+      gameState.gamePhase = "START";
+      resetGameState(true);
+    }
+  }
+}
+
+// Expose functions globally
+window.setControlMode = setControlMode;
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    // Ensure levelNum is within bounds (0 to LEVELS.length - 1)
+    if (levelNum >= 1 && levelNum <= LEVELS.length) {
+        state.level.currentIndex = levelNum - 1;
+        // Reset grid for the new level
+        resetGameState(false);
+        state.gamePhase = "PLAYING";
+    }
+  }
+};
+</file>
+
+<file name="rendering.js">
+import { 
+  GRID_SIZE, CELL_SIZE, GRID_OFFSET_X, GRID_OFFSET_Y, 
+  BLOCK_PREVIEW_X, BLOCK_PREVIEW_Y, PREVIEW_SIZE, 
+  BLOCK_COLORS, gameState, LEVELS
+} from './globals.js';
+import { canPlaceBlock, getBlockDimensions } from './utils.js';
+
+/* ------------------------------- Helpers ------------------------------- */
+
+// Always apply colors with explicit RGBA to avoid dimming/alpha surprises.
+function fillColor(p, colorIndex, alpha = 255) {
+  const c = BLOCK_COLORS[colorIndex] || [255, 255, 255];
+  p.fill(c[0], c[1], c[2], alpha);
+}
+
+// Trim empty rows/cols around a 0/1 shape so centering is perfect.
+function trimShape(shape) {
+  const rows = shape.length;
+  const cols = rows ? shape[0].length : 0;
+  if (!rows || !cols) return { shape, top: 0, left: 0, rows, cols };
+
+  let top = 0, bottom = rows - 1, left = 0, right = cols - 1;
+
+  // find top
+  while (top <= bottom && shape[top].every(v => v === 0)) top++;
+  // find bottom
+  while (bottom >= top && shape[bottom].every(v => v === 0)) bottom--;
+  // find left
+  while (left <= right && shape.every(row => row[left] === 0)) left++;
+  // find right
+  while (right >= left && shape.every(row => row[right] === 0)) right--;
+
+  if (top > bottom || left > right) {
+    // all zeros; return as-is
+    return { shape, top: 0, left: 0, rows, cols };
+  }
+
+  const trimmed = [];
+  for (let r = top; r <= bottom; r++) {
+    trimmed.push(shape[r].slice(left, right + 1));
+  }
+  return { shape: trimmed, top, left, rows: trimmed.length, cols: trimmed[0].length };
+}
+
+/* ------------------------------ Grid Drawing ------------------------------ */
+
+export function drawGrid(p) {
+  p.push();
+  
+  // Get current level background color
+  const level = LEVELS[gameState.level.currentIndex] || LEVELS[0];
+  const bgColor = level.bgColor;
+  
+  // Draw grid background container
+  p.stroke(100);
+  p.strokeWeight(1);
+  p.fill(bgColor[0], bgColor[1], bgColor[2]);
+  p.rect(
+    GRID_OFFSET_X - 1,
+    GRID_OFFSET_Y - 1,
+    GRID_SIZE * CELL_SIZE + 2,
+    GRID_SIZE * CELL_SIZE + 2
+  );
+  
+  // Grid cells
+  for (let row = 0; row < GRID_SIZE; row++) {
+    for (let col = 0; col < GRID_SIZE; col++) {
+      const x = GRID_OFFSET_X + col * CELL_SIZE;
+      const y = GRID_OFFSET_Y + row * CELL_SIZE;
+
+      // cell background
+      p.noStroke();
+      if (gameState.grid[row][col] === 0) {
+        // Slightly darker version of level bg for empty cells
+        p.fill(bgColor[0] * 0.7, bgColor[1] * 0.7, bgColor[2] * 0.7);
+      } else {
+        const colorIndex = gameState.grid[row][col] - 1;
+        fillColor(p, colorIndex, 255);
+      }
+      p.rect(x, y, CELL_SIZE, CELL_SIZE);
+
+      // cell border
+      p.stroke(bgColor[0] + 30, bgColor[1] + 30, bgColor[2] + 30);
+      p.strokeWeight(1);
+      p.noFill();
+      p.rect(x, y, CELL_SIZE, CELL_SIZE);
+    }
+  }
+
+  // Animations (drawn over grid)
+  for (let i = gameState.animations.length - 1; i >= 0; i--) {
+    const anim = gameState.animations[i];
+    const t = Math.min(1, anim.frame / Math.max(1, anim.duration));
+
+    for (const cell of anim.cells) {
+      const x = GRID_OFFSET_X + cell.x * CELL_SIZE;
+      const y = GRID_OFFSET_Y + cell.y * CELL_SIZE;
+
+      if (anim.type === 'place') {
+        // refined bounce-in + fade in
+        let scale;
+        const bounciness = 0.2;
+        if (t < 0.5) {
+          scale = p.map(t, 0, 0.5, 0.2, 1.0 + bounciness);
+        } else {
+          scale = p.map(t, 0.5, 1.0, 1.0 + bounciness, 1.0);
+        }
+        scale = p.constrain(scale, 0.2, 1.0 + bounciness);
+
+        const alpha = Math.floor(255 * t);
+
+        p.push();
+        p.translate(x + CELL_SIZE / 2, y + CELL_SIZE / 2);
+        p.scale(scale);
+        p.noStroke();
+        fillColor(p, cell.colorIndex, alpha);
+        p.rect(-CELL_SIZE / 2, -CELL_SIZE / 2, CELL_SIZE, CELL_SIZE);
+        p.pop();
+
+      } else if (anim.type === 'clear') {
+        // shrink + rotate + fade out + slight lift
+        const scale = 1 - t;
+        const alpha = Math.floor(255 * (1 - t));
+        const rotation = t * p.PI / 4;
+
+        p.push();
+        p.translate(x + CELL_SIZE / 2, y + CELL_SIZE / 2 - t * 10);
+        p.rotate(rotation);
+        p.scale(scale);
+        p.noStroke();
+        fillColor(p, cell.colorIndex, alpha);
+        p.rect(-CELL_SIZE / 2, -CELL_SIZE / 2, CELL_SIZE, CELL_SIZE);
+        p.pop();
+      }
+    }
+
+    anim.frame++;
+    if (anim.frame >= anim.duration) {
+      gameState.animations.splice(i, 1);
+    }
+  }
+
+  p.pop();
+}
+
+/* --------------------------- Current Block Drawing -------------------------- */
+
+export function drawCurrentBlock(p) {
+  if (gameState.gamePhase !== "PLAYING") return;
+
+  const { currentBlock, selectedBlockIndex, availableBlocks, grid } = gameState;
+  const block = availableBlocks[selectedBlockIndex];
+  if (!block) return;
+
+  const shape = block.shape;
+  const colorIndex = block.colorIndex;
+
+  p.push();
+  p.noStroke();
+
+  const canPlace = canPlaceBlock(grid, block, currentBlock.x, currentBlock.y);
+
+  for (let row = 0; row < shape.length; row++) {
+    for (let col = 0; col < shape[row].length; col++) {
+      if (shape[row][col] === 1) {
+        const x = GRID_OFFSET_X + (currentBlock.x + col) * CELL_SIZE;
+        const y = GRID_OFFSET_Y + (currentBlock.y + row) * CELL_SIZE;
+
+        if (canPlace) {
+          // Increased opacity to 255 to make it "properly colorful" and not dimmed
+          fillColor(p, colorIndex, 255); 
+          // Add a subtle stroke to distinguish it from placed blocks if needed
+          p.stroke(255, 255, 255, 100);
+          p.strokeWeight(1);
+        } else {
+          p.fill(255, 0, 0, 180);        // red for invalid
+        }
+        p.rect(x, y, CELL_SIZE, CELL_SIZE);
+      }
+    }
+  }
+
+  p.pop();
+}
+
+/* ---------------------------- Block Previews UI ---------------------------- */
+
+export function drawBlockPreviews(p) {
+  if (gameState.gamePhase !== "PLAYING") return;
+
+  // Compute a SAFE anchor so previews never overlap the grid.
+  const SAFE_PREVIEW_X = Math.max(
+    BLOCK_PREVIEW_X,
+    GRID_OFFSET_X + GRID_SIZE * CELL_SIZE + 24 // 24px margin to the right of grid
+  );
+  const SAFE_PREVIEW_Y = BLOCK_PREVIEW_Y;
+
+  // Slightly smaller than grid cells so previews are compact.
+  // Cap so they don't get huge on large CELL_SIZE configs.
+  const PREVIEW_CELL = Math.max(6, Math.min(14, Math.floor(CELL_SIZE * 0.45)));
+
+  // Fixed slot so nothing jumps when shapes change.
+  // 5x5 fits most polyominoes; bump if you have bigger shapes.
+  const SLOT_COLS = 5;
+  const SLOT_ROWS = 5;
+
+  const panelPadding = 8;
+  const slotInnerW = SLOT_COLS * PREVIEW_CELL;
+  const slotInnerH = SLOT_ROWS * PREVIEW_CELL;
+  const slotW = slotInnerW + panelPadding * 2;
+  const slotH = slotInnerH + panelPadding * 2;
+
+  const slotGap = 12; // vertical gap between slots
+
+  p.push();
+  p.textSize(16);
+  p.fill(255);
+  p.textAlign(p.LEFT);
+  p.text("Available Blocks:", SAFE_PREVIEW_X, SAFE_PREVIEW_Y - 20);
+
+  for (let i = 0; i < gameState.availableBlocks.length; i++) {
+    const block = gameState.availableBlocks[i];
+    if (!block) continue;
+
+    // slot origin
+    const x0 = SAFE_PREVIEW_X;
+    const y0 = SAFE_PREVIEW_Y + i * (slotH + slotGap);
+
+    // panel
+    p.noStroke();
+    p.fill(30);
+    p.rect(x0, y0, slotW, slotH, 6);
+
+    // selection highlight (fixed-size frame, no jitter)
+    if (i === gameState.selectedBlockIndex) {
+      p.stroke(255, 255, 0);
+      p.strokeWeight(2);
+      p.noFill();
+      p.rect(x0, y0, slotW, slotH, 6);
+    }
+
+    // tight bounding box for centering
+    const { shape } = block;
+    const trimmed = trimShape(shape);
+    const rows = trimmed.rows;
+    const cols = trimmed.cols;
+
+    // pixel size of block inside this slot
+    const blockW = cols * PREVIEW_CELL;
+    const blockH = rows * PREVIEW_CELL;
+
+    // center within inner slot
+    const innerX = x0 + panelPadding;
+    const innerY = y0 + panelPadding;
+    const offsetX = innerX + (slotInnerW - blockW) / 2;
+    const offsetY = innerY + (slotInnerH - blockH) / 2;
+
+    // draw trimmed shape, fully opaque
+    p.noStroke();
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (trimmed.shape[r][c] === 1) {
+          fillColor(p, block.colorIndex, 255);
+          p.rect(
+            offsetX + c * PREVIEW_CELL,
+            offsetY + r * PREVIEW_CELL,
+            PREVIEW_CELL,
+            PREVIEW_CELL
+          );
+        }
+      }
+    }
+  }
+
+  p.pop();
+}
+
+/* -------------------------- HUD / Other Screens --------------------------- */
+
+export function drawGameInfo(p) {
+  p.push();
+  p.textSize(16);
+  p.fill(255);
+  p.textAlign(p.LEFT);
+
+  // Moved HUD to the left side (was 450)
+  const hudX = 20;
+  let hudY = 30;
+
+  // Level Info
+  const level = LEVELS[gameState.level.currentIndex];
+  if (level) {
+    p.fill(255, 200, 100);
+    p.text(`Level: ${level.name}`, hudX, hudY);
+    hudY += 25;
+    
+    p.fill(255);
+    p.text(`Lines: ${gameState.level.linesCleared} / ${level.linesTarget}`, hudX, hudY);
+    hudY += 25;
+    
+    // Moves left (Blocks remaining to place)
+    const movesLeft = level.maxBlocks - gameState.level.blocksPlaced;
+    // Color warning if low on moves
+    if (movesLeft <= 5) p.fill(255, 100, 100);
+    else p.fill(255);
+    p.text(`Moves Left: ${movesLeft}`, hudX, hudY);
+    hudY += 35; // Gap
+  }
+
+  p.fill(255);
+  p.text(`Score: ${gameState.player.score}`, hudX, hudY);
+  hudY += 25;
+  p.text(`High Score: ${gameState.player.highScore}`, hudX, hudY);
+  hudY += 25;
+
+  if (gameState.player.comboCount > 1) {
+    p.fill(255, 255, 0);
+    p.text(`Combo: x${gameState.player.comboCount}`, hudX, hudY);
+  }
+
+  p.pop();
+}
+
+export function drawStartScreen(p) {
+  p.push();
+  p.background(20); // Keep background
+
+  // Replace title with "press enter to begin"
+  p.textSize(30);
+  p.fill(255, 255, 0);
+  p.textAlign(p.CENTER);
+  p.text("press enter to begin", p.width / 2, p.height / 2 - 50); // Centered, slightly above mid-height
+
+  // Keep controls section, adjust Y positions
+  p.textSize(14);
+  p.fill(255);
+  p.textAlign(p.CENTER);
+  p.text("Controls:", p.width / 2, p.height / 2 + 20);
+  p.text("Arrow Left/Right: Move block", p.width / 2, p.height / 2 + 50);
+  p.text("Z: Cycle through blocks", p.width / 2, p.height / 2 + 70);
+  p.text("Space: Place block", p.width / 2, p.height / 2 + 90);
+  p.text("Esc: Pause game", p.width / 2, p.height / 2 + 110);
+
+  p.pop();
+}
+
+export function drawPauseScreen(p) {
+  p.push();
+  p.textSize(16);
+  p.fill(255, 255, 0);
+  p.textAlign(p.RIGHT);
+  p.text("PAUSED", p.width - 20, 30);
+  p.pop();
+}
+
+export function drawGameOverScreen(p) {
+  p.push();
+  p.fill(0, 0, 0, 200);
+  p.rect(0, 0, p.width, p.height);
+
+  p.textSize(40);
+  p.textAlign(p.CENTER);
+
+  if (gameState.gamePhase === "GAME_OVER_WIN") {
+    p.fill(0, 255, 0);
+    p.text("VICTORY!", p.width / 2, p.height / 2 - 40);
+    p.textSize(20);
+    p.fill(255);
+    p.text("You completed all levels!", p.width / 2, p.height / 2);
+  } else {
+    p.fill(255, 0, 0);
+    p.text("GAME OVER", p.width / 2, p.height / 2 - 40);
+    p.textSize(20);
+    p.fill(255);
+    
+    // Show why they lost
+    const level = LEVELS[gameState.level.currentIndex];
+    if (level && gameState.level.blocksPlaced >= level.maxBlocks) {
+      p.text("Out of moves!", p.width / 2, p.height / 2);
+    } else {
+      p.text("No more moves possible!", p.width / 2, p.height / 2);
+    }
+  }
+
+  p.textSize(20);
+  p.fill(255);
+  p.text(`Final Score: ${gameState.player.score}`, p.width / 2, p.height / 2 + 40);
+
+  p.fill(255);
+  p.text("PRESS R TO RESTART", p.width / 2, p.height / 2 + 80);
+
+  p.pop();
+}
+</file>
+
+<file name="utils.js">
+import { GRID_SIZE, BLOCK_SHAPES, gameState, LEVELS, setGridSize, INITIAL_GRID_SIZE } from './globals.js';
+
+// Generate a random block shape
+export function generateRandomBlock() {
+  const shapeIndex = Math.floor(Math.random() * BLOCK_SHAPES.length);
+  const colorIndex = Math.floor(Math.random() * BLOCK_SHAPES.length); // Using the same length for both arrays
+  
+  return {
+    shape: BLOCK_SHAPES[shapeIndex],
+    colorIndex: colorIndex
+  };
+}
+
+// Generate a set of random blocks
+export function generateBlocks(count) {
+  const blocks = [];
+  for (let i = 0; i < count; i++) {
+    blocks.push(generateRandomBlock());
+  }
+  return blocks;
+}
+
+// Check if a block can be placed at a specific position
+export function canPlaceBlock(grid, block, x, y) {
+  const shape = block.shape;
+  
+  for (let row = 0; row < shape.length; row++) {
+    for (let col = 0; col < shape[row].length; col++) {
+      if (shape[row][col] === 1) {
+        const gridX = x + col;
+        const gridY = y + row;
+        
+        // Check if the position is within the grid
+        if (gridX < 0 || gridX >= GRID_SIZE || gridY < 0 || gridY >= GRID_SIZE) {
+          return false;
+        }
+        
+        // Check if the cell is already occupied
+        if (grid[gridY][gridX] !== 0) {
+          return false;
+        }
+      }
+    }
+  }
+  
+  return true;
+}
+
+// Place a block on the grid
+export function placeBlock(grid, block, x, y) {
+  const shape = block.shape;
+  const colorIndex = block.colorIndex;
+  
+  for (let row = 0; row < shape.length; row++) {
+    for (let col = 0; col < shape[row].length; col++) {
+      if (shape[row][col] === 1) {
+        grid[y + row][x + col] = colorIndex + 1; // +1 so that 0 remains empty
+      }
+    }
+  }
+}
+
+// Check for completed rows and columns
+export function checkForCompletedLines(grid) {
+  const completedRows = [];
+  const completedCols = [];
+  
+  // Check rows
+  for (let row = 0; row < GRID_SIZE; row++) {
+    let isRowComplete = true;
+    for (let col = 0; col < GRID_SIZE; col++) {
+      if (grid[row][col] === 0) {
+        isRowComplete = false;
+        break;
+      }
+    }
+    if (isRowComplete) {
+      completedRows.push(row);
+    }
+  }
+  
+  // Check columns
+  for (let col = 0; col < GRID_SIZE; col++) {
+    let isColComplete = true;
+    for (let row = 0; row < GRID_SIZE; row++) {
+      if (grid[row][col] === 0) {
+        isColComplete = false;
+        break;
+      }
+    }
+    if (isColComplete) {
+      completedCols.push(col);
+    }
+  }
+  
+  return { completedRows, completedCols };
+}
+
+// Clear completed lines and update score
+export function clearCompletedLines(grid, completedRows, completedCols) {
+  // Clear columns first (just zero them out)
+  for (const col of completedCols) {
+    for (let row = 0; row < GRID_SIZE; row++) {
+      grid[row][col] = 0;
+    }
+  }
+  
+  // Clear rows and apply gravity (shift down)
+  if (completedRows.length > 0) {
+    const rowsToClear = new Set(completedRows);
+    let writeRow = GRID_SIZE - 1;
+    
+    // Iterate from bottom to top
+    for (let readRow = GRID_SIZE - 1; readRow >= 0; readRow--) {
+      // If the current row is NOT in the clear list, keep it
+      if (!rowsToClear.has(readRow)) {
+        // If we need to move the row down
+        if (writeRow !== readRow) {
+          for (let col = 0; col < GRID_SIZE; col++) {
+            grid[writeRow][col] = grid[readRow][col];
+          }
+        }
+        writeRow--;
+      }
+      // If it IS in the clear list, we skip it (it effectively gets overwritten or left behind)
+    }
+    
+    // Fill the remaining top rows with zeros
+    while (writeRow >= 0) {
+      for (let col = 0; col < GRID_SIZE; col++) {
+        grid[writeRow][col] = 0;
+      }
+      writeRow--;
+    }
+  }
+  
+  const totalLinesCleared = completedRows.length + completedCols.length;
+  
+  // Shrink the grid if lines were cleared
+  if (totalLinesCleared > 0) {
+    const newSize = Math.max(1, GRID_SIZE - totalLinesCleared);
+    setGridSize(newSize);
+    
+    // Truncate grid rows (height)
+    if (grid.length > newSize) {
+      grid.length = newSize;
+    }
+    
+    // Truncate grid columns (width)
+    for (let i = 0; i < grid.length; i++) {
+      if (grid[i].length > newSize) {
+        grid[i].length = newSize;
+      }
+    }
+  }
+
+  return totalLinesCleared;
+}
+
+// Calculate score based on lines cleared and combo
+export function calculateScore(linesCleared, comboCount) {
+  // Base score per line
+  const baseScore = 10;
+  
+  // Bonus for multiple lines cleared at once
+  let multiplier = 1;
+  if (linesCleared > 1) {
+    multiplier = Math.pow(2, linesCleared - 1);
+  }
+  
+  // Combo bonus
+  let comboBonus = 0;
+  if (comboCount > 1) {
+    comboBonus = comboCount * 5;
+  }
+  
+  return (baseScore * linesCleared * multiplier) + comboBonus;
+}
+
+// Check if any of the available blocks can be placed on the grid
+export function canPlaceAnyBlock() {
+  const { grid, availableBlocks } = gameState;
+  
+  for (const block of availableBlocks) {
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        if (canPlaceBlock(grid, block, x, y)) {
+          return true;
+        }
+      }
+    }
+  }
+  
+  return false;
+}
+
+// Reset the game state for a new game
+export function resetGameState(resetLevel = true) {
+  // Always reset grid size to initial size when resetting the grid
+  setGridSize(INITIAL_GRID_SIZE);
+
+  if (resetLevel) {
+    gameState.player.score = 0;
+    gameState.player.highScore = gameState.player.highScore; // Preserve high score
+    gameState.level.currentIndex = 0;
+  }
+  
+  gameState.player.comboCount = 0;
+  gameState.player.lastClearedLines = 0;
+  
+  // Reset level progress
+  gameState.level.linesCleared = 0;
+  gameState.level.blocksPlaced = 0;
+  
+  gameState.grid = Array(GRID_SIZE).fill().map(() => Array(GRID_SIZE).fill(0));
+  gameState.availableBlocks = generateBlocks(3);
+  gameState.selectedBlockIndex = 0;
+  gameState.currentBlock = {
+    shape: gameState.availableBlocks[0].shape,
+    x: Math.floor(GRID_SIZE / 2),
+    y: 0 // Start from top
+  };
+  gameState.animations = [];
+
+  // Clear any pending auto-restart
+  if (gameState.autoRestartTimeoutId) {
+      clearTimeout(gameState.autoRestartTimeoutId);
+      gameState.autoRestartTimeoutId = null;
+  }
+  gameState.autoRestartScheduled = false;
+}
+
+// Get the dimensions of a block shape
+export function getBlockDimensions(shape) {
+  return {
+    width: shape[0].length,
+    height: shape.length
+  };
+}
+</file>
+
+<file name="input.js">
+import { gameState } from './globals.js';
+import { resetGameState } from './utils.js';
+
+// Key codes
+export const KEY_LEFT = 37;
+export const KEY_UP = 38;
+export const KEY_RIGHT = 39;
+export const KEY_DOWN = 40;
+export const KEY_SPACE = 32;
+export const KEY_SHIFT = 16;
+export const KEY_Z = 90;
+export const KEY_ENTER = 13;
+export const KEY_ESC = 27;
+export const KEY_R = 82;
+
+// Handle key pressed events
+export function handleKeyPressed(p, keyCode) {
+  // Log the key press
+  p.logs.inputs.push({
+    "input_type": "keyPressed",
+    "data": { key: p.key, keyCode: keyCode },
+    "framecount": p.frameCount,
+    "timestamp": Date.now()
+  });
+  
+  // Handle game phase transitions
+  if (gameState.gamePhase === "START" && keyCode === KEY_ENTER) {
+    gameState.gamePhase = "PLAYING";
+    p.logs.game_info.push({
+      "game_status": gameState.gamePhase,
+      "data": {},
+      "framecount": p.frameCount,
+      "timestamp": Date.now()
+    });
+    return;
+  }
+  
+  if ((gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") && keyCode === KEY_R) {
+    // Manual restart: cancel any pending auto-restart
+    if (gameState.autoRestartTimeoutId) {
+        clearTimeout(gameState.autoRestartTimeoutId);
+        gameState.autoRestartTimeoutId = null;
+    }
+    gameState.autoRestartScheduled = false; // Ensure the flag is reset immediately
+
+    gameState.gamePhase = "START";
+    resetGameState(); // This function also handles clearing auto-restart flags
+    p.logs.game_info.push({
+      "game_status": gameState.gamePhase,
+      "data": { reason: "manual_restart" },
+      "framecount": p.frameCount,
+      "timestamp": Date.now()
+    });
+    return;
+  }
+  
+  if (gameState.gamePhase === "PLAYING" && keyCode === KEY_ESC) {
+    gameState.gamePhase = "PAUSED";
+    p.logs.game_info.push({
+      "game_status": gameState.gamePhase,
+      "data": {},
+      "framecount": p.frameCount,
+      "timestamp": Date.now()
+    });
+    return;
+  }
+  
+  if (gameState.gamePhase === "PAUSED" && keyCode === KEY_ESC) {
+    gameState.gamePhase = "PLAYING";
+    p.logs.game_info.push({
+      "game_status": gameState.gamePhase,
+      "data": {},
+      "framecount": p.frameCount,
+      "timestamp": Date.now()
+    });
+    return;
+  }
+}
+
+// Process game controls during gameplay
+export function processGameControls(p, keyCode) {
+  if (gameState.gamePhase !== "PLAYING") return;
+  
+  const currentBlock = gameState.currentBlock;
+  
+  switch (keyCode) {
+    case KEY_LEFT:
+      currentBlock.x = Math.max(0, currentBlock.x - 1);
+      break;
+    case KEY_RIGHT:
+      currentBlock.x = Math.min(
+        gameState.grid[0].length - gameState.availableBlocks[gameState.selectedBlockIndex].shape[0].length, 
+        currentBlock.x + 1
+      );
+      break;
+    // KEY_UP removed as blocks fall automatically
+    case KEY_DOWN:
+      currentBlock.y = Math.min(
+        gameState.grid.length - gameState.availableBlocks[gameState.selectedBlockIndex].shape.length, 
+        currentBlock.y + 1
+      );
+      break;
+    case KEY_Z:
+      // Cycle through available blocks
+      gameState.selectedBlockIndex = (gameState.selectedBlockIndex + 1) % gameState.availableBlocks.length;
+      gameState.currentBlock.shape = gameState.availableBlocks[gameState.selectedBlockIndex].shape;
+      break;
+  }
+  
+  // Log player position
+  p.logs.player_info.push({
+    "screen_x": currentBlock.x,
+    "screen_y": currentBlock.y,
+    "game_x": currentBlock.x,
+    "game_y": currentBlock.y,
+    "framecount": p.frameCount,
+    "timestamp": Date.now()
+  });
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

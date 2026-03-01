@@ -1,0 +1,1459 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you add multiple lives in this game instead of dying in one hit? and can you also level 4 is a bit too hard, can you ease on the difficulty a bit?
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">WENJIA - Dimensional Spirit Rescue</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST_1 (Movement Test)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST_2 (Win Game)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Navigate a mystical cat-like energy creature through dimensional rifts to rescue trapped spirits. Switch between the vibrant Material World and the ethereal Energy World to solve platforming puzzles. Each dimension has unique platforms and hazards - what blocks your path in one world might be your bridge in another. Progress through increasingly challenging levels, but beware: falling into pits or touching enemies means failure. Master the art of dimensional shifting to succeed!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Left/Right: Move horizontally | Space: Jump | Z: Shift between Material World and Energy World | Enter: Start game from start screen | ESC: Pause/Unpause game | R: Restart and return to start screen</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+// automated_testing_controller.js
+import { WORLD_MATERIAL, WORLD_ENERGY } from './globals.js';
+
+let positionHistory = [];
+let stuckCounter = 0;
+let lastShiftFrame = 0;
+
+function getTestWinAction(gameState, p) {
+  if (!gameState.player || !gameState.spirit) {
+    return { left: false, right: false, jump: false, shift: false };
+  }
+
+  const player = gameState.player;
+  const spirit = gameState.spirit;
+  const currentWorld = gameState.currentWorld;
+  
+  // Track position to detect if stuck
+  positionHistory.push({ x: player.x, y: player.y, frame: p.frameCount });
+  if (positionHistory.length > 60) {
+    positionHistory.shift();
+  }
+  
+  // Check if stuck
+  if (positionHistory.length >= 60) {
+    const recent = positionHistory.slice(-60);
+    const xVariance = Math.max(...recent.map(p => p.x)) - Math.min(...recent.map(p => p.x));
+    const yVariance = Math.max(...recent.map(p => p.y)) - Math.min(...recent.map(p => p.y));
+    
+    if (xVariance < 20 && yVariance < 20) {
+      stuckCounter++;
+      if (stuckCounter > 120) {
+        // Try jumping and shifting if stuck
+        stuckCounter = 0;
+        return { left: false, right: false, jump: true, shift: p.frameCount - lastShiftFrame > 20 };
+      }
+    } else {
+      stuckCounter = 0;
+    }
+  }
+
+  const action = { left: false, right: false, jump: false, shift: false };
+  
+  // Calculate direction to spirit
+  const dx = spirit.x - (player.x + player.width / 2);
+  const dy = spirit.y - (player.y + player.height / 2);
+  const distance = Math.sqrt(dx * dx + dy * dy);
+  
+  // Check if there's a platform in current world ahead
+  const playerCenterX = player.x + player.width / 2;
+  const playerBottom = player.y + player.height;
+  
+  let hasPathInCurrentWorld = false;
+  let needsWorldShift = false;
+  
+  // Look for platforms ahead
+  for (const platform of gameState.platforms) {
+    if (platform.world === currentWorld || platform.world === 'BOTH') {
+      const platformCenterX = platform.x + platform.width / 2;
+      const directionToSpirit = dx > 0 ? 1 : -1;
+      const platformInDirection = directionToSpirit > 0 ? 
+        platformCenterX > playerCenterX : 
+        platformCenterX < playerCenterX;
+      
+      if (platformInDirection && Math.abs(platformCenterX - playerCenterX) < 200) {
+        hasPathInCurrentWorld = true;
+        break;
+      }
+    }
+  }
+  
+  // Check for enemies in the path
+  let enemyAhead = false;
+  for (const enemy of gameState.enemies) {
+    if (enemy.world === currentWorld) {
+      const enemyDx = enemy.x - player.x;
+      if (Math.abs(enemyDx) < 100 && Math.abs(enemy.y - player.y) < 50) {
+        if ((dx > 0 && enemyDx > 0) || (dx < 0 && enemyDx < 0)) {
+          enemyAhead = true;
+          needsWorldShift = true;
+          break;
+        }
+      }
+    }
+  }
+  
+  // Check if player is on a platform
+  let onPlatform = false;
+  for (const platform of gameState.platforms) {
+    if (platform.world === currentWorld || platform.world === 'BOTH') {
+      const onHorizontally = player.x + player.width > platform.x && 
+                            player.x < platform.x + platform.width;
+      const onVertically = Math.abs(playerBottom - platform.y) < 5;
+      if (onHorizontally && onVertically) {
+        onPlatform = true;
+        break;
+      }
+    }
+  }
+  
+  // Decision logic
+  
+  // If enemy ahead or no path, try shifting
+  if ((needsWorldShift || !hasPathInCurrentWorld) && 
+      p.frameCount - lastShiftFrame > 30 && onPlatform) {
+    action.shift = true;
+    lastShiftFrame = p.frameCount;
+    return action;
+  }
+  
+  // Move towards spirit
+  if (Math.abs(dx) > 10) {
+    if (dx > 0) {
+      action.right = true;
+    } else {
+      action.left = true;
+    }
+  }
+  
+  // Jump logic
+  if (dy < -20 && player.onGround) {
+    action.jump = true;
+  } else if (!onPlatform && !player.onGround) {
+    // In air, might need to jump when landing
+    action.jump = false;
+  } else if (Math.abs(dx) < 100 && dy < -10 && player.onGround) {
+    action.jump = true;
+  }
+  
+  // Jump over gaps
+  let gapAhead = true;
+  const lookAheadDist = 50;
+  const lookAheadX = player.x + (action.right ? lookAheadDist : action.left ? -lookAheadDist : 0);
+  
+  for (const platform of gameState.platforms) {
+    if (platform.world === currentWorld || platform.world === 'BOTH') {
+      if (lookAheadX >= platform.x && lookAheadX <= platform.x + platform.width) {
+        if (Math.abs(platform.y - playerBottom) < 80) {
+          gapAhead = false;
+          break;
+        }
+      }
+    }
+  }
+  
+  if (gapAhead && (action.left || action.right) && player.onGround) {
+    action.jump = true;
+  }
+  
+  return action;
+}
+
+function getBasicTestAction(gameState, p) {
+  // Basic movement test - move right, jump occasionally, shift worlds
+  const frameNum = p.frameCount;
+  const action = { left: false, right: false, jump: false, shift: false };
+  
+  // Move in patterns
+  if ((frameNum % 200) < 100) {
+    action.right = true;
+  } else {
+    action.left = true;
+  }
+  
+  // Jump every 60 frames
+  if (frameNum % 60 === 0) {
+    action.jump = true;
+  }
+  
+  // Shift worlds every 90 frames
+  if (frameNum % 90 === 0) {
+    action.shift = true;
+  }
+  
+  return action;
+}
+
+export function get_automated_testing_action(gameState) {
+  const p = window.gameInstance;
+  
+  switch (gameState.controlMode) {
+    case "TEST_1":
+      return getBasicTestAction(gameState, p);
+    case "TEST_2":
+      return getTestWinAction(gameState, p);
+    default:
+      return { left: false, right: false, jump: false, shift: false };
+  }
+}
+
+// Expose globally
+if (typeof window !== 'undefined') {
+  window.get_automated_testing_action = get_automated_testing_action;
+}
+
+export default get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+// globals.js
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+
+// Game phases
+export const PHASE_START = "START";
+export const PHASE_PLAYING = "PLAYING";
+export const PHASE_PAUSED = "PAUSED";
+export const PHASE_GAME_OVER_WIN = "GAME_OVER_WIN";
+export const PHASE_GAME_OVER_LOSE = "GAME_OVER_LOSE";
+
+// Control modes
+export const CONTROL_HUMAN = "HUMAN";
+export const CONTROL_TEST_1 = "TEST_1";
+export const CONTROL_TEST_2 = "TEST_2";
+
+// Dimensions
+export const WORLD_MATERIAL = "MATERIAL";
+export const WORLD_ENERGY = "ENERGY";
+
+// Player constants
+export const PLAYER_WIDTH = 24;
+export const PLAYER_HEIGHT = 24;
+export const PLAYER_SPEED = 3;
+export const PLAYER_JUMP_FORCE = 8;
+export const GRAVITY = 0.4;
+export const MAX_FALL_SPEED = 10;
+
+// Level constants
+export const PLATFORM_HEIGHT = 20;
+export const ENEMY_SIZE = 20;
+export const SPIRIT_SIZE = 30;
+
+// Game state
+export const gameState = {
+  player: null,
+  entities: [],
+  platforms: [],
+  enemies: [],
+  spirit: null,
+  score: 0,
+  currentLevel: 0,
+  currentWorld: WORLD_MATERIAL,
+  gamePhase: PHASE_START,
+  controlMode: CONTROL_HUMAN,
+  levelComplete: false,
+  keys: {
+    left: false,
+    right: false,
+    jump: false,
+    shift: false
+  }
+};
+
+// Expose gameState globally
+if (typeof window !== 'undefined') {
+  window.getGameState = () => gameState;
+}
+</file>
+
+<file name="game.js">
+// game.js
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, TARGET_FPS, PHASE_START, PHASE_PLAYING, PHASE_PAUSED, PHASE_GAME_OVER_WIN, PHASE_GAME_OVER_LOSE, CONTROL_HUMAN, WORLD_MATERIAL, WORLD_ENERGY } from './globals.js';
+import { Player } from './player.js';
+import { createLevel, TOTAL_LEVELS } from './levels.js';
+import { renderStartScreen, renderGame, renderGameOver } from './rendering.js';
+import { handleKeyPressed, handleKeyReleased } from './input.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Initialize logs
+  p.logs = {
+    game_info: [],
+    inputs: [],
+    player_info: []
+  };
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(TARGET_FPS);
+    p.randomSeed(42);
+    
+    // Initialize game state
+    gameState.gamePhase = PHASE_START;
+    gameState.controlMode = CONTROL_HUMAN;
+    
+    p.logs.game_info.push({
+      data: { event: "game_initialized", gamePhase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+
+  p.draw = function() {
+    // Single background call to prevent flickering
+    p.background(20, 15, 35);
+    
+    if (gameState.gamePhase === PHASE_START) {
+      renderStartScreen(p);
+    } else if (gameState.gamePhase === PHASE_PLAYING || gameState.gamePhase === PHASE_PAUSED) {
+      // Initialize level if needed
+      if (!gameState.player) {
+        initializeLevel(p);
+      }
+      
+      // Update game (only if not paused)
+      if (gameState.gamePhase === PHASE_PLAYING) {
+        updateGame(p);
+      }
+      
+      // Render game
+      renderGame(p);
+    } else if (gameState.gamePhase === PHASE_GAME_OVER_WIN || gameState.gamePhase === PHASE_GAME_OVER_LOSE) {
+      renderGameOver(p);
+    }
+  };
+
+  p.keyPressed = function() {
+    handleKeyPressed(p, p.key, p.keyCode);
+  };
+
+  p.keyReleased = function() {
+    handleKeyReleased(p, p.key, p.keyCode);
+  };
+
+  function initializeLevel(p) {
+    const levelData = createLevel(gameState.currentLevel);
+    
+    gameState.platforms = levelData.platforms;
+    gameState.enemies = levelData.enemies;
+    gameState.spirit = levelData.spirit;
+    
+    gameState.player = new Player(levelData.playerStart.x, levelData.playerStart.y);
+    gameState.entities = [gameState.player, ...gameState.enemies];
+    if (gameState.spirit) {
+      gameState.entities.push(gameState.spirit);
+    }
+    
+    gameState.levelComplete = false;
+    gameState.currentWorld = WORLD_MATERIAL;
+    
+    // Reset keys
+    gameState.keys = {
+      left: false,
+      right: false,
+      jump: false,
+      shift: false
+    };
+    
+    p.logs.game_info.push({
+      data: { event: "level_initialized", level: gameState.currentLevel },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    
+    logPlayerInfo(p);
+  }
+
+  function updateGame(p) {
+    // Handle automated testing
+    if (gameState.controlMode !== CONTROL_HUMAN && gameState.player) {
+      const action = get_automated_testing_action(gameState);
+      
+      // Apply actions
+      gameState.keys.left = action.left || false;
+      gameState.keys.right = action.right || false;
+      gameState.keys.jump = action.jump || false;
+      
+      // Handle world shift
+      if (action.shift && !gameState.keys.shift) {
+        gameState.currentWorld = gameState.currentWorld === WORLD_MATERIAL ? WORLD_ENERGY : WORLD_MATERIAL;
+        p.logs.game_info.push({
+          data: { action: "worldShift", currentWorld: gameState.currentWorld },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+      gameState.keys.shift = action.shift || false;
+    }
+    
+    // Update player
+    if (gameState.player) {
+      const result = gameState.player.update(p);
+      
+      if (result === 'FALL') {
+        // Player fell - game over
+        gameState.gamePhase = PHASE_GAME_OVER_LOSE;
+        p.logs.game_info.push({
+          data: { event: "game_over", reason: "fell", gamePhase: gameState.gamePhase },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+        return;
+      }
+      
+      // Check enemy collisions
+      for (const enemy of gameState.enemies) {
+        if (enemy.world === gameState.currentWorld) {
+          if (gameState.player.checkEnemyCollision(enemy, p)) {
+            gameState.gamePhase = PHASE_GAME_OVER_LOSE;
+            p.logs.game_info.push({
+              data: { event: "game_over", reason: "enemy_collision", gamePhase: gameState.gamePhase },
+              framecount: p.frameCount,
+              timestamp: Date.now()
+            });
+            return;
+          }
+        }
+      }
+      
+      // Check spirit collision
+      if (gameState.spirit && gameState.player.checkSpiritCollision(gameState.spirit, p)) {
+        gameState.score += 100;
+        gameState.currentLevel++;
+        
+        p.logs.game_info.push({
+          data: { event: "level_complete", level: gameState.currentLevel - 1, score: gameState.score },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+        
+        if (gameState.currentLevel >= TOTAL_LEVELS) {
+          // Game won!
+          gameState.gamePhase = PHASE_GAME_OVER_WIN;
+          p.logs.game_info.push({
+            data: { event: "game_won", gamePhase: gameState.gamePhase, finalScore: gameState.score },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+        } else {
+          // Load next level
+          gameState.player = null;
+        }
+        return;
+      }
+      
+      // Log player info periodically
+      if (p.frameCount % 30 === 0) {
+        logPlayerInfo(p);
+      }
+    }
+    
+    // Update enemies
+    for (const enemy of gameState.enemies) {
+      enemy.update();
+    }
+    
+    // Update spirit
+    if (gameState.spirit) {
+      gameState.spirit.update();
+    }
+  }
+
+  function logPlayerInfo(p) {
+    if (gameState.player) {
+      p.logs.player_info.push({
+        screen_x: gameState.player.x,
+        screen_y: gameState.player.y,
+        game_x: gameState.player.x,
+        game_y: gameState.player.y,
+        framecount: p.frameCount
+      });
+    }
+  }
+});
+
+// Expose globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Control mode switcher
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const modeMap = {
+    'HUMAN': 'humanModeBtn',
+    'TEST_1': 'test_1_ModeBtn',
+    'TEST_2': 'test_2_ModeBtn'
+  };
+  
+  const activeBtn = document.getElementById(modeMap[mode]);
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+  
+  gameInstance.logs.game_info.push({
+    data: { event: "control_mode_changed", controlMode: mode },
+    framecount: gameInstance.frameCount,
+    timestamp: Date.now()
+  });
+};
+</file>
+
+<file name="rendering.js">
+// rendering.js
+import { gameState, PHASE_START, PHASE_PLAYING, PHASE_PAUSED, PHASE_GAME_OVER_WIN, PHASE_GAME_OVER_LOSE, WORLD_MATERIAL, WORLD_ENERGY, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderStartScreen(p) {
+  // Background
+  p.background(20, 15, 35);
+  
+  // Animated background particles
+  for (let i = 0; i < 50; i++) {
+    const x = (i * 137 + p.frameCount * 0.5) % CANVAS_WIDTH;
+    const y = (i * 219 + p.frameCount * 0.3) % CANVAS_HEIGHT;
+    const world = i % 2 === 0 ? WORLD_MATERIAL : WORLD_ENERGY;
+    
+    if (world === WORLD_MATERIAL) {
+      p.fill(100, 80, 60, 100);
+    } else {
+      p.fill(100, 200, 255, 80);
+    }
+    p.noStroke();
+    p.circle(x, y, 4);
+  }
+  
+  // Title
+  p.fill(255, 220, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text("WENJIA", CANVAS_WIDTH / 2, 80);
+  
+  // Subtitle with glow
+  p.fill(180, 220, 255, 200);
+  p.textSize(18);
+  p.text("Dimensional Spirit Rescue", CANVAS_WIDTH / 2, 120);
+  
+  // Instructions
+  p.fill(220, 220, 220);
+  p.textSize(14);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.text("Navigate through parallel dimensions", CANVAS_WIDTH / 2, 170);
+  p.text("to rescue trapped spirits.", CANVAS_WIDTH / 2, 190);
+  
+  // Controls box
+  p.fill(40, 35, 50, 180);
+  p.stroke(100, 200, 255, 150);
+  p.strokeWeight(2);
+  p.rect(150, 220, 300, 120, 8);
+  
+  p.fill(255, 240, 200);
+  p.noStroke();
+  p.textSize(13);
+  p.textAlign(p.LEFT, p.TOP);
+  p.text("← → : Move", 180, 235);
+  p.text("SPACE : Jump", 180, 255);
+  p.text("Z : Shift Dimension", 180, 275);
+  p.text("ESC : Pause", 180, 295);
+  p.text("R : Restart", 180, 315);
+  
+  // Start prompt with pulse
+  const pulse = Math.sin(p.frameCount * 0.1) * 20 + 235;
+  p.fill(pulse, 255, pulse);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(20);
+  p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 370);
+}
+
+export function renderGame(p) {
+  // Draw background based on current world
+  if (gameState.currentWorld === WORLD_MATERIAL) {
+    // Material world - earthy tones
+    p.background(60, 50, 70);
+    
+    // Background elements
+    for (let i = 0; i < 30; i++) {
+      const x = (i * 157) % CANVAS_WIDTH;
+      const y = (i * 193) % CANVAS_HEIGHT;
+      p.fill(80, 70, 90, 80);
+      p.noStroke();
+      p.circle(x, y, 40);
+    }
+  } else {
+    // Energy world - ethereal blues
+    p.background(30, 40, 80);
+    
+    // Background energy waves
+    p.noFill();
+    p.stroke(80, 150, 200, 60);
+    p.strokeWeight(2);
+    for (let i = 0; i < 5; i++) {
+      const offset = p.frameCount * 0.5 + i * 80;
+      p.beginShape();
+      for (let x = 0; x < CANVAS_WIDTH + 20; x += 20) {
+        const y = 200 + Math.sin((x + offset) * 0.02) * 30;
+        p.vertex(x, y);
+      }
+      p.endShape();
+    }
+  }
+  
+  // Render platforms
+  for (const platform of gameState.platforms) {
+    platform.render(p, gameState.currentWorld);
+  }
+  
+  // Render enemies
+  for (const enemy of gameState.enemies) {
+    enemy.render(p, gameState.currentWorld);
+  }
+  
+  // Render spirit
+  if (gameState.spirit) {
+    gameState.spirit.render(p);
+  }
+  
+  // Render player
+  if (gameState.player) {
+    gameState.player.render(p);
+  }
+  
+  // UI
+  renderUI(p);
+  
+  // Pause indicator
+  if (gameState.gamePhase === PHASE_PAUSED) {
+    p.fill(255, 255, 255);
+    p.textSize(16);
+    p.textAlign(p.RIGHT, p.TOP);
+    p.text("PAUSED", CANVAS_WIDTH - 10, 10);
+  }
+}
+
+function renderUI(p) {
+  // Score and level
+  p.fill(255, 255, 255);
+  p.textSize(16);
+  p.textAlign(p.LEFT, p.TOP);
+  p.text(`Level ${gameState.currentLevel + 1}`, 10, 10);
+  p.text(`Score: ${gameState.score}`, 10, 30);
+  
+  // World indicator
+  const worldColor = gameState.currentWorld === WORLD_MATERIAL ? 
+    [255, 180, 100] : [150, 220, 255];
+  p.fill(...worldColor);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.text(`${gameState.currentWorld} WORLD`, CANVAS_WIDTH - 10, 10);
+  
+  // World switch hint
+  p.fill(220, 220, 220, 180);
+  p.textSize(12);
+  p.textAlign(p.CENTER, p.BOTTOM);
+  p.text("Press Z to shift dimension", CANVAS_WIDTH / 2, CANVAS_HEIGHT - 10);
+}
+
+export function renderGameOver(p) {
+  // Semi-transparent overlay
+  p.background(20, 15, 35, 220);
+  
+  const isWin = gameState.gamePhase === PHASE_GAME_OVER_WIN;
+  
+  // Title
+  if (isWin) {
+    p.fill(100, 255, 150);
+    p.textSize(48);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text("VICTORY!", CANVAS_WIDTH / 2, 120);
+    
+    p.fill(200, 255, 200);
+    p.textSize(20);
+    p.text("All Spirits Rescued!", CANVAS_WIDTH / 2, 170);
+  } else {
+    p.fill(255, 100, 100);
+    p.textSize(48);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text("GAME OVER", CANVAS_WIDTH / 2, 120);
+    
+    p.fill(255, 180, 180);
+    p.textSize(18);
+    p.text("Spirit Lost to the Void", CANVAS_WIDTH / 2, 170);
+  }
+  
+  // Score
+  p.fill(255, 240, 200);
+  p.textSize(24);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 230);
+  p.textSize(16);
+  p.text(`Levels Completed: ${gameState.currentLevel}`, CANVAS_WIDTH / 2, 260);
+  
+  // Restart prompt
+  const pulse = Math.sin(p.frameCount * 0.1) * 40 + 215;
+  p.fill(pulse, pulse, 255);
+  p.textSize(20);
+  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, 330);
+}
+</file>
+
+<file name="spirit.js">
+// spirit.js
+import { SPIRIT_SIZE } from './globals.js';
+
+export class Spirit {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.size = SPIRIT_SIZE;
+    this.pulsePhase = 0;
+  }
+
+  update() {
+    this.pulsePhase += 0.05;
+  }
+
+  render(p) {
+    p.push();
+    
+    const pulse = Math.sin(this.pulsePhase) * 5;
+    const currentSize = this.size + pulse;
+    
+    // Outer aura
+    for (let i = 4; i >= 0; i--) {
+      const alpha = 60 - i * 12;
+      p.fill(255, 220, 100, alpha);
+      p.noStroke();
+      p.circle(this.x, this.y, currentSize + i * 8);
+    }
+    
+    // Bright core
+    p.fill(255, 240, 150, 220);
+    p.circle(this.x, this.y, currentSize);
+    
+    // Inner bright spot
+    p.fill(255, 255, 200);
+    p.circle(this.x, this.y, currentSize * 0.5);
+    
+    // Sparkles
+    for (let i = 0; i < 8; i++) {
+      const angle = (i / 8) * Math.PI * 2 + this.pulsePhase * 2;
+      const dist = currentSize / 2 + 10;
+      const sx = this.x + Math.cos(angle) * dist;
+      const sy = this.y + Math.sin(angle) * dist;
+      p.fill(255, 230, 120, 200);
+      p.circle(sx, sy, 3);
+    }
+    
+    p.pop();
+  }
+}
+</file>
+
+<file name="levels.js">
+// levels.js
+import { Platform } from './platform.js';
+import { Enemy } from './enemy.js';
+import { Spirit } from './spirit.js';
+import { WORLD_MATERIAL, WORLD_ENERGY } from './globals.js';
+
+export function createLevel(levelNum) {
+  const platforms = [];
+  const enemies = [];
+  let spirit = null;
+  let playerStart = { x: 50, y: 100 };
+
+  if (levelNum === 0) {
+    // Tutorial level - basic movement and world shift
+    playerStart = { x: 30, y: 300 };
+    
+    // Ground platforms
+    platforms.push(new Platform(0, 350, 200, 50, 'BOTH'));
+    platforms.push(new Platform(250, 350, 200, 50, WORLD_MATERIAL));
+    platforms.push(new Platform(250, 350, 200, 50, WORLD_ENERGY));
+    platforms.push(new Platform(500, 350, 100, 50, 'BOTH'));
+    
+    // First platform jump
+    platforms.push(new Platform(150, 280, 80, 20, 'BOTH'));
+    
+    // Dimension-specific platforms
+    platforms.push(new Platform(280, 220, 100, 20, WORLD_MATERIAL));
+    platforms.push(new Platform(400, 220, 100, 20, WORLD_ENERGY));
+    
+    spirit = new Spirit(550, 320);
+    
+  } else if (levelNum === 1) {
+    // Level 1 - Introducing enemies
+    playerStart = { x: 30, y: 300 };
+    
+    platforms.push(new Platform(0, 350, 150, 50, 'BOTH'));
+    platforms.push(new Platform(200, 350, 150, 50, WORLD_MATERIAL));
+    platforms.push(new Platform(200, 280, 100, 20, WORLD_ENERGY));
+    platforms.push(new Platform(350, 220, 150, 20, WORLD_MATERIAL));
+    platforms.push(new Platform(450, 350, 150, 50, 'BOTH'));
+    
+    enemies.push(new Enemy(220, 330, WORLD_MATERIAL, 80));
+    enemies.push(new Enemy(360, 200, WORLD_MATERIAL, 100));
+    
+    spirit = new Spirit(525, 320);
+    
+  } else if (levelNum === 2) {
+    // Level 2 - Complex dimension puzzle
+    playerStart = { x: 30, y: 320 };
+    
+    platforms.push(new Platform(0, 350, 120, 50, 'BOTH'));
+    platforms.push(new Platform(150, 300, 80, 20, WORLD_MATERIAL));
+    platforms.push(new Platform(150, 250, 80, 20, WORLD_ENERGY));
+    platforms.push(new Platform(260, 200, 100, 20, WORLD_MATERIAL));
+    platforms.push(new Platform(260, 280, 100, 20, WORLD_ENERGY));
+    platforms.push(new Platform(390, 230, 90, 20, WORLD_ENERGY));
+    platforms.push(new Platform(390, 160, 90, 20, WORLD_MATERIAL));
+    platforms.push(new Platform(500, 350, 100, 50, 'BOTH'));
+    
+    enemies.push(new Enemy(160, 280, WORLD_MATERIAL, 50));
+    enemies.push(new Enemy(270, 180, WORLD_MATERIAL, 70));
+    enemies.push(new Enemy(270, 260, WORLD_ENERGY, 70));
+    enemies.push(new Enemy(400, 210, WORLD_ENERGY, 60));
+    
+    spirit = new Spirit(550, 320);
+    
+  } else if (levelNum === 3) {
+    // Level 3 - Vertical challenge
+    playerStart = { x: 30, y: 350 };
+    
+    platforms.push(new Platform(0, 380, 100, 20, 'BOTH'));
+    platforms.push(new Platform(130, 330, 70, 20, WORLD_MATERIAL));
+    platforms.push(new Platform(230, 330, 70, 20, WORLD_ENERGY));
+    platforms.push(new Platform(130, 270, 70, 20, WORLD_ENERGY));
+    platforms.push(new Platform(230, 270, 70, 20, WORLD_MATERIAL));
+    platforms.push(new Platform(130, 210, 70, 20, WORLD_MATERIAL));
+    platforms.push(new Platform(230, 210, 70, 20, WORLD_ENERGY));
+    platforms.push(new Platform(330, 150, 100, 20, 'BOTH'));
+    platforms.push(new Platform(460, 200, 80, 20, WORLD_MATERIAL));
+    platforms.push(new Platform(460, 270, 80, 20, WORLD_ENERGY));
+    platforms.push(new Platform(500, 380, 100, 20, 'BOTH'));
+    
+    enemies.push(new Enemy(140, 310, WORLD_MATERIAL, 40));
+    enemies.push(new Enemy(240, 310, WORLD_ENERGY, 40));
+    enemies.push(new Enemy(140, 250, WORLD_ENERGY, 40));
+    enemies.push(new Enemy(240, 190, WORLD_ENERGY, 40));
+    enemies.push(new Enemy(470, 180, WORLD_MATERIAL, 50));
+    
+    spirit = new Spirit(550, 360);
+    
+  } else if (levelNum === 4) {
+    // Level 4 - Timing challenge
+    playerStart = { x: 30, y: 320 };
+    
+    platforms.push(new Platform(0, 350, 100, 50, 'BOTH'));
+    platforms.push(new Platform(130, 300, 60, 20, WORLD_MATERIAL));
+    platforms.push(new Platform(220, 250, 60, 20, WORLD_ENERGY));
+    platforms.push(new Platform(310, 200, 60, 20, WORLD_MATERIAL));
+    platforms.push(new Platform(400, 250, 60, 20, WORLD_ENERGY));
+    platforms.push(new Platform(490, 300, 110, 50, 'BOTH'));
+    
+    enemies.push(new Enemy(140, 280, WORLD_MATERIAL, 30));
+    enemies.push(new Enemy(230, 230, WORLD_ENERGY, 30));
+    enemies.push(new Enemy(320, 180, WORLD_MATERIAL, 30));
+    enemies.push(new Enemy(410, 230, WORLD_ENERGY, 30));
+    
+    spirit = new Spirit(545, 270);
+    
+  } else {
+    // Victory lap - celebration level
+    playerStart = { x: 280, y: 200 };
+    
+    // Central platform
+    platforms.push(new Platform(250, 250, 100, 20, 'BOTH'));
+    
+    // Decorative platforms around
+    for (let i = 0; i < 8; i++) {
+      const angle = (i / 8) * Math.PI * 2;
+      const dist = 120;
+      const px = 300 + Math.cos(angle) * dist - 40;
+      const py = 270 + Math.sin(angle) * dist - 10;
+      const world = i % 2 === 0 ? WORLD_MATERIAL : WORLD_ENERGY;
+      platforms.push(new Platform(px, py, 80, 20, world));
+    }
+    
+    spirit = new Spirit(300, 220);
+  }
+
+  return { platforms, enemies, spirit, playerStart };
+}
+
+export const TOTAL_LEVELS = 6;
+</file>
+
+<file name="enemy.js">
+// enemy.js
+import { ENEMY_SIZE } from './globals.js';
+
+export class Enemy {
+  constructor(x, y, world, moveRange = 0) {
+    this.x = x;
+    this.y = y;
+    this.size = ENEMY_SIZE;
+    this.world = world;
+    this.startX = x;
+    this.moveRange = moveRange;
+    this.speed = 1;
+    this.direction = 1;
+  }
+
+  update() {
+    if (this.moveRange > 0) {
+      this.x += this.speed * this.direction;
+      
+      if (this.x > this.startX + this.moveRange) {
+        this.x = this.startX + this.moveRange;
+        this.direction = -1;
+      } else if (this.x < this.startX) {
+        this.x = this.startX;
+        this.direction = 1;
+      }
+    }
+  }
+
+  render(p, currentWorld) {
+    if (this.world === currentWorld) {
+      p.push();
+      
+      if (this.world === 'MATERIAL') {
+        // Material world enemy - spiky hazard
+        p.fill(180, 50, 50);
+        p.stroke(120, 30, 30);
+        p.strokeWeight(2);
+        
+        // Body
+        p.circle(this.x + this.size / 2, this.y + this.size / 2, this.size);
+        
+        // Spikes
+        p.noStroke();
+        p.fill(200, 60, 60);
+        const spikeCount = 8;
+        for (let i = 0; i < spikeCount; i++) {
+          const angle = (i / spikeCount) * Math.PI * 2 + p.frameCount * 0.05;
+          const spikeX = this.x + this.size / 2 + Math.cos(angle) * (this.size / 2 + 4);
+          const spikeY = this.y + this.size / 2 + Math.sin(angle) * (this.size / 2 + 4);
+          p.triangle(
+            this.x + this.size / 2 + Math.cos(angle) * (this.size / 2),
+            this.y + this.size / 2 + Math.sin(angle) * (this.size / 2),
+            spikeX, spikeY,
+            this.x + this.size / 2 + Math.cos(angle + 0.3) * (this.size / 2),
+            this.y + this.size / 2 + Math.sin(angle + 0.3) * (this.size / 2)
+          );
+        }
+      } else {
+        // Energy world enemy - electric hazard
+        p.noStroke();
+        
+        // Electric glow
+        for (let i = 3; i >= 0; i--) {
+          const alpha = 60 - i * 12;
+          p.fill(255, 100, 200, alpha);
+          p.circle(this.x + this.size / 2, this.y + this.size / 2, this.size + i * 6);
+        }
+        
+        // Core
+        p.fill(255, 150, 220, 200);
+        p.circle(this.x + this.size / 2, this.y + this.size / 2, this.size);
+        
+        // Lightning bolts
+        p.stroke(255, 200, 240, 180);
+        p.strokeWeight(2);
+        const boltCount = 6;
+        for (let i = 0; i < boltCount; i++) {
+          const angle = (i / boltCount) * Math.PI * 2 + p.frameCount * 0.08;
+          const boltLength = this.size / 2 + 6 + Math.sin(p.frameCount * 0.2 + i) * 3;
+          const x1 = this.x + this.size / 2;
+          const y1 = this.y + this.size / 2;
+          const x2 = x1 + Math.cos(angle) * boltLength;
+          const y2 = y1 + Math.sin(angle) * boltLength;
+          p.line(x1, y1, x2, y2);
+        }
+      }
+      
+      p.pop();
+    }
+  }
+}
+</file>
+
+<file name="player.js">
+// player.js
+import { gameState, PLAYER_WIDTH, PLAYER_HEIGHT, PLAYER_SPEED, PLAYER_JUMP_FORCE, GRAVITY, MAX_FALL_SPEED, CANVAS_HEIGHT } from './globals.js';
+
+export class Player {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.width = PLAYER_WIDTH;
+    this.height = PLAYER_HEIGHT;
+    this.vx = 0;
+    this.vy = 0;
+    this.onGround = false;
+    this.jumpBuffer = 0;
+    this.coyoteTime = 0;
+  }
+
+  update(p) {
+    // Apply gravity
+    this.vy += GRAVITY;
+    if (this.vy > MAX_FALL_SPEED) {
+      this.vy = MAX_FALL_SPEED;
+    }
+
+    // Horizontal movement
+    this.vx = 0;
+    if (gameState.keys.left) {
+      this.vx = -PLAYER_SPEED;
+    }
+    if (gameState.keys.right) {
+      this.vx = PLAYER_SPEED;
+    }
+
+    // Jump buffer and coyote time
+    if (this.jumpBuffer > 0) {
+      this.jumpBuffer--;
+    }
+    if (this.coyoteTime > 0) {
+      this.coyoteTime--;
+    }
+
+    // Jump logic
+    if (gameState.keys.jump && (this.onGround || this.coyoteTime > 0) && this.jumpBuffer === 0) {
+      this.vy = -PLAYER_JUMP_FORCE;
+      this.jumpBuffer = 10;
+      this.coyoteTime = 0;
+      this.onGround = false;
+    }
+
+    // Store previous onGround state
+    const wasOnGround = this.onGround;
+
+    // Apply velocity
+    this.x += this.vx;
+    this.y += this.vy;
+
+    // Check platform collisions
+    this.onGround = false;
+    for (const platform of gameState.platforms) {
+      if (platform.world === gameState.currentWorld || platform.world === 'BOTH') {
+        if (this.checkPlatformCollision(platform, p)) {
+          this.onGround = true;
+        }
+      }
+    }
+
+    // Update coyote time
+    if (wasOnGround && !this.onGround) {
+      this.coyoteTime = 5;
+    }
+
+    // Screen bounds
+    if (this.x < 0) this.x = 0;
+    if (this.x + this.width > 600) this.x = 600 - this.width;
+
+    // Fall detection
+    if (this.y > CANVAS_HEIGHT + 50) {
+      return 'FALL';
+    }
+
+    return null;
+  }
+
+  checkPlatformCollision(platform, p) {
+    const colliding = p.collideRectRect(
+      this.x, this.y, this.width, this.height,
+      platform.x, platform.y, platform.width, platform.height
+    );
+
+    if (colliding) {
+      // Determine collision side
+      const overlapLeft = (this.x + this.width) - platform.x;
+      const overlapRight = (platform.x + platform.width) - this.x;
+      const overlapTop = (this.y + this.height) - platform.y;
+      const overlapBottom = (platform.y + platform.height) - this.y;
+
+      const minOverlap = Math.min(overlapLeft, overlapRight, overlapTop, overlapBottom);
+
+      if (minOverlap === overlapTop && this.vy > 0) {
+        // Landing on top
+        this.y = platform.y - this.height;
+        this.vy = 0;
+        return true;
+      } else if (minOverlap === overlapBottom && this.vy < 0) {
+        // Hitting bottom
+        this.y = platform.y + platform.height;
+        this.vy = 0;
+      } else if (minOverlap === overlapLeft) {
+        // Hitting from left
+        this.x = platform.x - this.width;
+        this.vx = 0;
+      } else if (minOverlap === overlapRight) {
+        // Hitting from right
+        this.x = platform.x + platform.width;
+        this.vx = 0;
+      }
+    }
+
+    return false;
+  }
+
+  checkEnemyCollision(enemy, p) {
+    return p.collideRectRect(
+      this.x, this.y, this.width, this.height,
+      enemy.x, enemy.y, enemy.size, enemy.size
+    );
+  }
+
+  checkSpiritCollision(spirit, p) {
+    return p.collideRectCircle(
+      this.x, this.y, this.width, this.height,
+      spirit.x, spirit.y, spirit.size
+    );
+  }
+
+  render(p) {
+    p.push();
+    
+    // Draw based on current world
+    if (gameState.currentWorld === 'MATERIAL') {
+      // Material world - solid cat shape
+      p.fill(255, 180, 100);
+      p.stroke(200, 140, 60);
+      p.strokeWeight(2);
+      
+      // Body
+      p.rect(this.x + 4, this.y + 8, this.width - 8, this.height - 8, 4);
+      
+      // Head
+      p.circle(this.x + this.width / 2, this.y + 6, 12);
+      
+      // Ears
+      p.triangle(
+        this.x + 6, this.y + 2,
+        this.x + 9, this.y - 2,
+        this.x + 10, this.y + 4
+      );
+      p.triangle(
+        this.x + this.width - 6, this.y + 2,
+        this.x + this.width - 9, this.y - 2,
+        this.x + this.width - 10, this.y + 4
+      );
+      
+      // Eyes
+      p.fill(50);
+      p.noStroke();
+      p.circle(this.x + 9, this.y + 6, 3);
+      p.circle(this.x + 15, this.y + 6, 3);
+      
+      // Tail
+      p.stroke(200, 140, 60);
+      p.strokeWeight(3);
+      p.noFill();
+      const tailX = this.x + this.width - 4;
+      const tailY = this.y + 16;
+      p.bezier(
+        tailX, tailY,
+        tailX + 6, tailY - 8,
+        tailX + 8, tailY - 4,
+        tailX + 10, tailY - 10
+      );
+    } else {
+      // Energy world - ethereal energy creature
+      p.noStroke();
+      
+      // Outer glow
+      for (let i = 4; i > 0; i--) {
+        const alpha = 50 - i * 10;
+        p.fill(100, 200, 255, alpha);
+        const offset = i * 2;
+        p.ellipse(this.x + this.width / 2, this.y + this.height / 2, 
+                  this.width + offset, this.height + offset);
+      }
+      
+      // Core energy body
+      p.fill(150, 220, 255, 200);
+      p.ellipse(this.x + this.width / 2, this.y + this.height / 2, 
+                this.width, this.height);
+      
+      // Bright center
+      p.fill(200, 240, 255, 250);
+      p.ellipse(this.x + this.width / 2, this.y + this.height / 2, 
+                this.width * 0.6, this.height * 0.6);
+      
+      // Energy particles
+      const frameOffset = p.frameCount * 0.1;
+      for (let i = 0; i < 3; i++) {
+        const angle = frameOffset + i * 2.1;
+        const particleX = this.x + this.width / 2 + Math.cos(angle) * 15;
+        const particleY = this.y + this.height / 2 + Math.sin(angle) * 12;
+        p.fill(180, 230, 255, 150);
+        p.circle(particleX, particleY, 4);
+      }
+    }
+    
+    p.pop();
+  }
+}
+</file>
+
+<file name="platform.js">
+// platform.js
+export class Platform {
+  constructor(x, y, width, height, world) {
+    this.x = x;
+    this.y = y;
+    this.width = width;
+    this.height = height;
+    this.world = world; // 'MATERIAL', 'ENERGY', or 'BOTH'
+  }
+
+  render(p, currentWorld) {
+    if (this.world === currentWorld || this.world === 'BOTH') {
+      p.push();
+      
+      if (this.world === 'MATERIAL' || (this.world === 'BOTH' && currentWorld === 'MATERIAL')) {
+        // Material world platforms - solid stone
+        p.fill(100, 80, 60);
+        p.stroke(70, 60, 50);
+        p.strokeWeight(2);
+        p.rect(this.x, this.y, this.width, this.height, 2);
+        
+        // Stone texture
+        p.noStroke();
+        p.fill(120, 100, 80, 100);
+        for (let i = 0; i < this.width; i += 15) {
+          p.rect(this.x + i + 2, this.y + 2, 8, 4);
+        }
+      } else if (this.world === 'ENERGY' || (this.world === 'BOTH' && currentWorld === 'ENERGY')) {
+        // Energy world platforms - glowing ethereal
+        p.noStroke();
+        
+        // Glow effect
+        for (let i = 3; i >= 0; i--) {
+          const alpha = 40 - i * 8;
+          p.fill(100, 200, 255, alpha);
+          p.rect(this.x - i * 2, this.y - i * 2, this.width + i * 4, this.height + i * 4, 4);
+        }
+        
+        // Core platform
+        p.fill(120, 210, 255, 180);
+        p.rect(this.x, this.y, this.width, this.height, 2);
+        
+        // Energy particles
+        const particleCount = Math.floor(this.width / 30);
+        for (let i = 0; i < particleCount; i++) {
+          const px = this.x + (i + 0.5) * (this.width / particleCount);
+          const py = this.y + this.height / 2;
+          const offset = Math.sin(p.frameCount * 0.1 + i) * 3;
+          p.fill(180, 230, 255, 200);
+          p.circle(px, py + offset, 6);
+        }
+      }
+      
+      p.pop();
+    }
+  }
+}
+</file>
+
+<file name="input.js">
+// input.js
+import { gameState, PHASE_START, PHASE_PLAYING, PHASE_PAUSED, PHASE_GAME_OVER_WIN, PHASE_GAME_OVER_LOSE, CONTROL_HUMAN, WORLD_MATERIAL, WORLD_ENERGY } from './globals.js';
+
+export function handleKeyPressed(p, key, keyCode) {
+  // Log input
+  p.logs.inputs.push({
+    input_type: "keyPressed",
+    data: { key, keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+
+  // Phase transitions
+  if (keyCode === 13) { // ENTER
+    if (gameState.gamePhase === PHASE_START) {
+      gameState.gamePhase = PHASE_PLAYING;
+      p.logs.game_info.push({
+        data: { gamePhase: gameState.gamePhase },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+    return;
+  }
+
+  if (keyCode === 27) { // ESC
+    if (gameState.gamePhase === PHASE_PLAYING) {
+      gameState.gamePhase = PHASE_PAUSED;
+      p.logs.game_info.push({
+        data: { gamePhase: gameState.gamePhase },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    } else if (gameState.gamePhase === PHASE_PAUSED) {
+      gameState.gamePhase = PHASE_PLAYING;
+      p.logs.game_info.push({
+        data: { gamePhase: gameState.gamePhase },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+    return;
+  }
+
+  if (keyCode === 82) { // R
+    if (gameState.gamePhase === PHASE_GAME_OVER_WIN || gameState.gamePhase === PHASE_GAME_OVER_LOSE) {
+      resetGame();
+      gameState.gamePhase = PHASE_START;
+      p.logs.game_info.push({
+        data: { gamePhase: gameState.gamePhase, action: "restart" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+    return;
+  }
+
+  // Gameplay controls (only in PLAYING phase and HUMAN mode)
+  if (gameState.gamePhase === PHASE_PLAYING && gameState.controlMode === CONTROL_HUMAN) {
+    if (keyCode === 37) { // LEFT
+      gameState.keys.left = true;
+    } else if (keyCode === 39) { // RIGHT
+      gameState.keys.right = true;
+    } else if (keyCode === 32) { // SPACE
+      gameState.keys.jump = true;
+    } else if (keyCode === 90) { // Z
+      // Toggle world
+      gameState.currentWorld = gameState.currentWorld === WORLD_MATERIAL ? WORLD_ENERGY : WORLD_MATERIAL;
+      p.logs.game_info.push({
+        data: { action: "worldShift", currentWorld: gameState.currentWorld },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+}
+
+export function handleKeyReleased(p, key, keyCode) {
+  // Log input
+  p.logs.inputs.push({
+    input_type: "keyReleased",
+    data: { key, keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+
+  if (gameState.controlMode === CONTROL_HUMAN) {
+    if (keyCode === 37) { // LEFT
+      gameState.keys.left = false;
+    } else if (keyCode === 39) { // RIGHT
+      gameState.keys.right = false;
+    } else if (keyCode === 32) { // SPACE
+      gameState.keys.jump = false;
+    }
+  }
+}
+
+function resetGame() {
+  gameState.player = null;
+  gameState.entities = [];
+  gameState.platforms = [];
+  gameState.enemies = [];
+  gameState.spirit = null;
+  gameState.score = 0;
+  gameState.currentLevel = 0;
+  gameState.currentWorld = WORLD_MATERIAL;
+  gameState.levelComplete = false;
+  gameState.keys = {
+    left: false,
+    right: false,
+    jump: false,
+    shift: false
+  };
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

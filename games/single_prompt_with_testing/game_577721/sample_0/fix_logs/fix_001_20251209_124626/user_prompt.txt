@@ -1,0 +1,1409 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+physics.js:9  GET https://cdn.jsdelivr.net/npm/p5.collide2d@1.0.0/+esm net::ERR_ABORTED 404 (Not Found)
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Mob Commander</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 2px solid #333; box-shadow: 0 0 20px rgba(0,0,0,0.5); width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; font-family: sans-serif; transition: background 0.2s; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #007bff; }
+      h1 { color: #fff; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 2px; }
+      p { color: #aaa; font-family: sans-serif; max-width: 600px; margin: 5px auto; line-height: 1.4; font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle">Mob Commander</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN', this)">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="setMode('TEST_1', this)">TEST (Survival)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="setMode('TEST_2', this)">TEST (Win)</button>
+      </div>
+      <p id="gameDescription">Command your cannon, multiply your mob, and destroy the enemy base!</p>
+      <p id="gameControls">ARROWS: Move | SPACE: Shoot | SHIFT: Rapid Fire | Z: Champion | ESC: Pause</p>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    
+    <script>
+        function setMode(mode, btn) {
+            if(window.setControlMode) {
+                window.setControlMode(mode);
+                document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            }
+        }
+    </script>
+    
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+/**
+ * Automated Testing Controller
+ * Provides input actions for automated test scenarios.
+ */
+
+import { CANVAS_WIDTH } from './globals.js';
+
+/**
+ * Main testing hook
+ */
+export function get_automated_testing_action(gameState) {
+    if (!gameState.player) return null;
+
+    if (gameState.controlMode === 'TEST_1') {
+        return runTest1(gameState);
+    } else if (gameState.controlMode === 'TEST_2') {
+        return runTest2(gameState);
+    }
+    return null;
+}
+
+// TEST 1: Survival / Random
+// Just move back and forth and shoot
+let test1Dir = 1;
+function runTest1(gameState) {
+    const player = gameState.player;
+    
+    // Change direction at edges
+    if (player.x > CANVAS_WIDTH - 50) test1Dir = -1;
+    if (player.x < 50) test1Dir = 1;
+
+    const keys = [32]; // Always hold space
+    
+    if (test1Dir === 1) keys.push(39); // Right
+    else keys.push(37); // Left
+    
+    return { keys };
+}
+
+// TEST 2: Optimization
+// Find best gate and aim for it
+function runTest2(gameState) {
+    const player = gameState.player;
+    const keys = [32]; // Always shoot
+
+    // Find best target
+    let targetX = CANVAS_WIDTH / 2;
+    let maxScore = -1;
+
+    // Evaluate gates
+    gameState.gates.forEach(gate => {
+        // Only care if gate is reachable (above player)
+        if (gate.y < player.y) {
+            let score = 0;
+            if (gate.op === 'MULT') score = gate.value * 10;
+            else score = gate.value;
+            
+            // Prioritize gates lower down (closer)
+            score += gate.y * 0.01;
+
+            if (score > maxScore) {
+                maxScore = score;
+                targetX = gate.x + gate.width/2;
+            }
+        }
+    });
+
+    // If no gates, aim at enemy base or clusters of enemies
+    if (maxScore === -1 && gameState.enemyBase) {
+        targetX = gameState.enemyBase.x;
+    }
+
+    // Move towards target
+    if (Math.abs(player.x - targetX) > 5) {
+        if (player.x < targetX) keys.push(39);
+        else keys.push(37);
+    }
+
+    return { keys };
+}
+
+window.get_automated_testing_action = get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+/**
+ * Global Constants and Game State Configuration
+ * 
+ * This file contains all global configuration constants, color definitions,
+ * and the central gameState object structure.
+ */
+
+// Canvas Dimensions
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Game Settings
+export const TARGET_FPS = 60;
+export const GRAVITY = 0; // Top-down view, no gravity
+export const DRAG = 0.95; // Air resistance
+
+// Entity Settings
+export const MOB_RADIUS = 4;
+export const MOB_SPEED = 3.5;
+export const ENEMY_MOB_SPEED = 2.5;
+export const PLAYER_COOLDOWN = 10; // Frames between shots
+export const CHAMPION_COST = 500;
+export const OVERDRIVE_COST = 1;
+
+// Colors (RGB Arrays)
+export const COLOR_BG = [30, 30, 40];
+export const COLOR_PLAYER = [60, 120, 255]; // Blue
+export const COLOR_ENEMY = [255, 60, 60];   // Red
+export const COLOR_GATE_MULT = [0, 200, 100]; // Green
+export const COLOR_GATE_ADD = [255, 200, 0];  // Yellow
+export const COLOR_TEXT = [255, 255, 255];
+
+// Game State Object
+export const gameState = {
+    // System State
+    gamePhase: "START",     // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN",   // HUMAN, TEST_1, TEST_2
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Entity Collections
+    player: null,           // The Cannon
+    enemyBase: null,        // The Target
+    mobs: [],               // All moving units (friendly and enemy)
+    gates: [],              // Multiplier/Adder gates
+    particles: [],          // Visual effects
+    projectiles: [],        // Special projectiles (if any)
+    floatingTexts: [],      // UI popups (+1, x2)
+    
+    // Game Progress
+    score: 0,
+    energy: 100,            // Resource for special moves
+    maxEnergy: 100,
+    levelDifficulty: 1,
+    waveTimer: 0,
+    
+    // Physics / World
+    shakeTimer: 0,
+    shakeIntensity: 0,
+    
+    // Spatial Partitioning
+    spatialGrid: null       // Initialized in game.js
+};
+
+/**
+ * Expose gameState to the window object for debugging and external access
+ */
+export function getGameState() {
+    return gameState;
+}
+
+// Make globally available as per requirements
+window.getGameState = getGameState;
+
+/**
+ * Reset the game state for a new game
+ */
+export function resetGameState() {
+    gameState.gamePhase = "START";
+    gameState.score = 0;
+    gameState.energy = 100;
+    gameState.levelDifficulty = 1;
+    gameState.waveTimer = 0;
+    gameState.shakeTimer = 0;
+    
+    // Entities are cleared in game.js setup/reset logic
+    gameState.mobs = [];
+    gameState.gates = [];
+    gameState.particles = [];
+    gameState.floatingTexts = [];
+}
+</file>
+
+<file name="game.js">
+/**
+ * Main Game Entry Point
+ * Handles P5 instance setup, game loop, and level management.
+ */
+
+import { 
+    gameState, getGameState, resetGameState,
+    CANVAS_WIDTH, CANVAS_HEIGHT, COLOR_BG
+} from './globals.js';
+import { handleKeyPress, handleKeyRelease, clearInputBuffer } from './input.js';
+import { renderUI, renderStartScreen, renderPausedOverlay, renderGameOver } from './ui.js';
+import { SpatialGrid, updatePhysics } from './physics.js';
+import { Player, EnemyBase, Gate } from './entities.js';
+
+// --- Level Generation Logic ---
+let gateSpawnTimer = 0;
+
+function spawnGameElements(p) {
+    gateSpawnTimer++;
+    
+    // Spawn Gates every ~2 seconds (120 frames)
+    if (gateSpawnTimer > 150) {
+        gateSpawnTimer = 0;
+        
+        // Randomize gate properties
+        const isMult = Math.random() > 0.4; // 60% chance mult
+        const value = isMult ? Math.floor(Math.random() * 3) + 2 : Math.floor(Math.random() * 20) + 10;
+        const width = 80 + Math.random() * 60;
+        const x = Math.random() * (CANVAS_WIDTH - width);
+        const y = 80; // Below base
+        
+        const gate = new Gate(x, y, width, value, isMult ? 'MULT' : 'ADD');
+        gameState.gates.push(gate);
+    }
+}
+
+function updateGame(p) {
+    // Update Player
+    if (gameState.player) gameState.player.update(p);
+    
+    // Update Enemy Base
+    if (gameState.enemyBase) gameState.enemyBase.update(p);
+    
+    // Spawn Level Elements
+    spawnGameElements(p);
+    
+    // Update Physics & Collisions
+    updatePhysics(p);
+    
+    // Update Gates
+    for (let i = gameState.gates.length - 1; i >= 0; i--) {
+        const gate = gameState.gates[i];
+        gate.update(p);
+        if (gate.isDead) gameState.gates.splice(i, 1);
+    }
+
+    // Cleanup Dead Mobs (Optimized in physics loop ideally, but cleanup here to be safe)
+    // We filter once per frame
+    gameState.mobs = gameState.mobs.filter(m => !m.isDead);
+
+    // Update Particles
+    for (let i = gameState.particles.length - 1; i >= 0; i--) {
+        const pt = gameState.particles[i];
+        pt.update();
+        if (pt.isDead()) gameState.particles.splice(i, 1);
+    }
+
+    // Update Floating Texts
+    for (let i = gameState.floatingTexts.length - 1; i >= 0; i--) {
+        const ft = gameState.floatingTexts[i];
+        ft.update();
+        if (ft.isDead()) gameState.floatingTexts.splice(i, 1);
+    }
+
+    // Screen Shake Decay
+    if (gameState.shakeTimer > 0) gameState.shakeTimer--;
+}
+
+function renderGame(p) {
+    // Screen Shake Transform
+    p.push();
+    if (gameState.shakeTimer > 0) {
+        const amt = gameState.shakeIntensity;
+        const dx = p.random(-amt, amt);
+        const dy = p.random(-amt, amt);
+        p.translate(dx, dy);
+    }
+
+    // Draw Entities
+    // 1. Gates (Below mobs)
+    gameState.gates.forEach(g => g.render(p));
+    
+    // 2. Base
+    if (gameState.enemyBase) gameState.enemyBase.render(p);
+    
+    // 3. Mobs
+    gameState.mobs.forEach(m => m.render(p));
+    
+    // 4. Player
+    if (gameState.player) gameState.player.render(p);
+    
+    // 5. Particles
+    gameState.particles.forEach(pt => pt.render(p));
+    gameState.floatingTexts.forEach(ft => ft.render(p));
+
+    p.pop();
+}
+
+/**
+ * Initialize Game Objects
+ */
+function initGame() {
+    resetGameState();
+    gameState.spatialGrid = new SpatialGrid(40); // 40px cells
+    
+    gameState.player = new Player();
+    gameState.enemyBase = new EnemyBase();
+    
+    // Initial gates
+    gameState.gates.push(new Gate(100, 150, 100, 2, 'MULT'));
+    gameState.gates.push(new Gate(400, 200, 100, 10, 'ADD'));
+}
+
+// --- P5 Instance ---
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        // Log Start
+        p.logs.game_info.push({
+            event: 'setup',
+            timestamp: Date.now()
+        });
+        
+        // Initial setup not needed here as Start Phase handles transition to Init
+    };
+
+    p.draw = function() {
+        // Global Time Updates
+        gameState.frameCount = p.frameCount;
+        const now = p.millis();
+        gameState.deltaTime = (now - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = now;
+        
+        // Background
+        p.background(...COLOR_BG);
+
+        // State Machine
+        switch (gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                // Check if we need to auto-start for testing
+                if (gameState.controlMode !== 'HUMAN' && p.frameCount > 10) {
+                     initGame();
+                     gameState.gamePhase = "PLAYING";
+                }
+                break;
+                
+            case "PLAYING":
+                // If just switched to playing and objects not init, init them
+                if (!gameState.player) initGame();
+                
+                updateGame(p);
+                renderGame(p);
+                renderUI(p);
+                
+                // Logging Player Info (Periodic)
+                if (p.frameCount % 60 === 0 && gameState.player) {
+                    p.logs.player_info.push({
+                        frame: p.frameCount,
+                        x: gameState.player.x,
+                        score: gameState.score,
+                        mobs: gameState.mobs.length
+                    });
+                }
+                break;
+                
+            case "PAUSED":
+                renderGame(p);
+                renderPausedOverlay(p);
+                break;
+                
+            case "GAME_OVER_WIN":
+            case "GAME_OVER_LOSE":
+                renderGame(p);
+                renderGameOver(p);
+                break;
+        }
+        
+        clearInputBuffer();
+    };
+
+    p.keyPressed = function() {
+        handleKeyPress(p);
+    };
+
+    p.keyReleased = function() {
+        handleKeyRelease(p);
+    };
+});
+
+// Control Mode Hook
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+    // If setting mode while game running, restart
+    if (gameState.gamePhase !== "START") {
+        gameState.gamePhase = "START";
+        // Reset logs slightly or just mark event
+        gameInstance.logs.game_info.push({ event: 'mode_change', mode: mode });
+    }
+};
+
+window.gameInstance = gameInstance;
+</file>
+
+<file name="ui.js">
+/**
+ * User Interface Rendering
+ * Handles Start, Pause, Game Over screens, and HUD.
+ */
+
+import { CANVAS_WIDTH, CANVAS_HEIGHT, gameState } from './globals.js';
+
+export function renderUI(p) {
+    // Top HUD
+    p.push();
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(16);
+    p.fill(255);
+    p.noStroke();
+    
+    // Score
+    p.text(`Score: ${gameState.score}`, 10, 10);
+    
+    // Energy
+    p.text(`Energy: ${Math.floor(gameState.energy)}%`, 10, 30);
+    
+    // Debug info (optional)
+    if (gameState.controlMode !== 'HUMAN') {
+        p.textAlign(p.RIGHT, p.TOP);
+        p.fill(255, 255, 0);
+        p.text(`MODE: ${gameState.controlMode}`, CANVAS_WIDTH - 10, 10);
+    }
+    
+    p.pop();
+}
+
+export function renderStartScreen(p) {
+    drawOverlay(p, [0, 0, 0, 220]);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(255);
+    
+    p.textSize(40);
+    p.text("MOB COMMANDER", CANVAS_WIDTH/2, CANVAS_HEIGHT/3);
+    
+    p.textSize(18);
+    p.text("Press ENTER to Start", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    
+    p.textSize(14);
+    p.fill(200);
+    p.text("Arrow Keys to Move | Space to Shoot", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+    p.text("Destroy the enemy base before they breach yours!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 70);
+}
+
+export function renderPausedOverlay(p) {
+    drawOverlay(p, [0, 0, 0, 150]);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(255);
+    p.textSize(40);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    p.textSize(16);
+    p.text("Press ESC to Resume", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+}
+
+export function renderGameOver(p) {
+    const isWin = gameState.gamePhase === "GAME_OVER_WIN";
+    const color = isWin ? [0, 100, 0, 200] : [100, 0, 0, 200];
+    
+    drawOverlay(p, color);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(255);
+    p.textSize(48);
+    p.text(isWin ? "VICTORY!" : "DEFEAT", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 20);
+    
+    p.textSize(24);
+    p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+    
+    p.textSize(16);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 80);
+}
+
+function drawOverlay(p, color) {
+    p.push();
+    p.fill(...color);
+    p.noStroke();
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.pop();
+}
+</file>
+
+<file name="entities.js">
+/**
+ * Game Entities
+ * Includes Player (Cannon), Mobs, Gates, and Bases.
+ */
+
+import { 
+    CANVAS_WIDTH, CANVAS_HEIGHT, 
+    COLOR_PLAYER, COLOR_ENEMY, COLOR_GATE_MULT, COLOR_GATE_ADD, 
+    MOB_RADIUS, MOB_SPEED, ENEMY_MOB_SPEED,
+    gameState,
+    PLAYER_COOLDOWN
+} from './globals.js';
+
+import { isKeyDown, KEYS } from './input.js';
+
+// --- Base Entity ---
+class Entity {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.dead = false;
+    }
+    
+    update(p) {}
+    render(p) {}
+    
+    kill() {
+        this.dead = true;
+    }
+    
+    get isDead() {
+        return this.dead;
+    }
+}
+
+// --- Player Cannon ---
+export class Player extends Entity {
+    constructor() {
+        super(CANVAS_WIDTH / 2, CANVAS_HEIGHT - 40);
+        this.width = 40;
+        this.height = 40;
+        this.baseHealth = 100;
+        this.maxBaseHealth = 100;
+        
+        this.cooldownTimer = 0;
+        this.speed = 5;
+    }
+
+    update(p) {
+        // Movement
+        if (isKeyDown(KEYS.LEFT)) {
+            this.x -= this.speed;
+        }
+        if (isKeyDown(KEYS.RIGHT)) {
+            this.x += this.speed;
+        }
+        
+        // Clamp to screen
+        this.x = Math.max(this.width/2, Math.min(CANVAS_WIDTH - this.width/2, this.x));
+
+        // Shooting
+        if (this.cooldownTimer > 0) this.cooldownTimer--;
+        
+        const isRapid = isKeyDown(KEYS.SHIFT) && gameState.energy > 0;
+        const shootRate = isRapid ? 4 : PLAYER_COOLDOWN;
+        
+        if (isKeyDown(KEYS.SPACE)) {
+            if (this.cooldownTimer <= 0) {
+                this.shoot();
+                this.cooldownTimer = shootRate;
+                
+                if (isRapid) gameState.energy = Math.max(0, gameState.energy - 0.5);
+            }
+        }
+        
+        // Energy Regen
+        if (!isRapid && gameState.energy < gameState.maxEnergy) {
+            gameState.energy += 0.1;
+        }
+        
+        // Champion Spawn (Z)
+        if (isKeyDown(KEYS.Z)) {
+             // Logic for champion handled in debounced input or simple cooldown check
+             // For now, let's keep it simple or implement if space permits
+        }
+    }
+
+    shoot() {
+        // Spawn a friendly mob
+        this.spawnMobAt(this.x, this.y - 20);
+    }
+    
+    spawnMobAt(x, y) {
+        const mob = new Mob(x, y, 'FRIENDLY');
+        gameState.mobs.push(mob);
+    }
+
+    takeBaseDamage(amount) {
+        this.baseHealth -= amount;
+        if (this.baseHealth <= 0) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+        }
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        
+        // Base
+        p.fill(50);
+        p.rectMode(p.CENTER);
+        p.rect(0, 20, 60, 20); // Platform
+        
+        // Cannon
+        p.fill(COLOR_PLAYER);
+        p.rect(0, 0, 20, 40);
+        
+        // Detail
+        p.fill(255, 255, 255, 100);
+        p.rect(0, 0, 10, 30);
+        
+        p.pop();
+        
+        // Render Base Health Line
+        const hRatio = this.baseHealth / this.maxBaseHealth;
+        p.noStroke();
+        p.fill(50);
+        p.rect(0, CANVAS_HEIGHT - 10, CANVAS_WIDTH, 10);
+        p.fill(hRatio > 0.3 ? COLOR_PLAYER : [255, 0, 0]);
+        p.rect(0, CANVAS_HEIGHT - 10, CANVAS_WIDTH * hRatio, 10);
+    }
+}
+
+// --- Mob ---
+export class Mob extends Entity {
+    constructor(x, y, team) {
+        super(x, y);
+        this.team = team; // 'FRIENDLY' or 'ENEMY'
+        this.type = 'MOB';
+        this.radius = MOB_RADIUS;
+        
+        // Physics
+        // Slight randomness in velocity to avoid stacking perfectly
+        const spread = (Math.random() - 0.5) * 0.5;
+        
+        if (team === 'FRIENDLY') {
+            this.vy = -MOB_SPEED;
+            this.vx = spread;
+        } else {
+            this.vy = ENEMY_MOB_SPEED;
+            this.vx = spread;
+        }
+    }
+
+    update(p) {
+        // Basic Movement
+        this.x += this.vx;
+        this.y += this.vy;
+        
+        // Wall Bounce
+        if (this.x < this.radius) {
+            this.x = this.radius;
+            this.vx *= -1;
+        } else if (this.x > CANVAS_WIDTH - this.radius) {
+            this.x = CANVAS_WIDTH - this.radius;
+            this.vx *= -1;
+        }
+        
+        // Cull if off screen
+        if (this.y < -50 || this.y > CANVAS_HEIGHT + 50) {
+            this.kill();
+        }
+    }
+
+    render(p) {
+        p.fill(this.team === 'FRIENDLY' ? COLOR_PLAYER : COLOR_ENEMY);
+        p.noStroke();
+        p.circle(this.x, this.y, this.radius * 2);
+    }
+}
+
+// --- Multiplier Gate ---
+export class Gate extends Entity {
+    constructor(x, y, width, value, op) {
+        super(x, y);
+        this.width = width;
+        this.height = 30;
+        this.value = value;
+        this.op = op; // 'MULT' or 'ADD'
+        this.type = 'GATE';
+        this.speed = 0.5; // Scroll speed
+    }
+
+    update(p) {
+        this.y += this.speed;
+        
+        // Remove if passes player
+        if (this.y > CANVAS_HEIGHT - 50) {
+            this.kill();
+        }
+    }
+
+    render(p) {
+        p.push();
+        const color = this.op === 'MULT' ? COLOR_GATE_MULT : COLOR_GATE_ADD;
+        
+        // Glassy look
+        p.fill(color[0], color[1], color[2], 100);
+        p.stroke(color);
+        p.strokeWeight(2);
+        p.rect(this.x, this.y, this.width, this.height);
+        
+        // Text
+        p.fill(255);
+        p.noStroke();
+        p.textAlign(p.CENTER, p.CENTER);
+        p.textSize(16);
+        p.textStyle(p.BOLD);
+        const txt = this.op === 'MULT' ? `x${this.value}` : `+${this.value}`;
+        p.text(txt, this.x + this.width/2, this.y + this.height/2);
+        
+        p.pop();
+    }
+}
+
+// --- Enemy Base ---
+export class EnemyBase extends Entity {
+    constructor() {
+        super(CANVAS_WIDTH / 2, 40);
+        this.width = 120;
+        this.height = 60;
+        this.health = 500;
+        this.maxHealth = 500;
+        this.type = 'ENEMY_BASE';
+        
+        this.spawnTimer = 0;
+        this.spawnRate = 60; // Frames
+    }
+
+    update(p) {
+        // Spawning Logic
+        this.spawnTimer++;
+        
+        // Dynamic difficulty: Spawn faster as health drops
+        const currentRate = Math.max(20, Math.floor(this.spawnRate * (this.health / this.maxHealth)));
+        
+        if (this.spawnTimer >= currentRate) {
+            this.spawnEnemy();
+            this.spawnTimer = 0;
+        }
+    }
+    
+    spawnEnemy() {
+        const x = this.x - this.width/2 + Math.random() * this.width;
+        const y = this.y + this.height/2;
+        const enemy = new Mob(x, y, 'ENEMY');
+        gameState.mobs.push(enemy);
+    }
+
+    takeDamage(amount) {
+        this.health -= amount;
+        if (this.health <= 0) {
+            gameState.gamePhase = "GAME_OVER_WIN";
+        }
+    }
+
+    render(p) {
+        p.push();
+        p.rectMode(p.CENTER);
+        p.translate(this.x, this.y);
+        
+        // Base structure
+        p.fill(COLOR_ENEMY);
+        p.stroke(200, 50, 50);
+        p.strokeWeight(3);
+        p.rect(0, 0, this.width, this.height, 10);
+        
+        // Health Bar (above base)
+        const barW = this.width;
+        const barH = 8;
+        const healthPct = Math.max(0, this.health / this.maxHealth);
+        
+        p.noStroke();
+        p.fill(50);
+        p.rect(0, -this.height/2 - 10, barW, barH);
+        p.fill(0, 255, 0);
+        p.rectMode(p.CORNER);
+        p.rect(-barW/2, -this.height/2 - 14, barW * healthPct, barH);
+        
+        // Label
+        p.fill(255);
+        p.textAlign(p.CENTER);
+        p.textSize(12);
+        p.text(this.health, 0, 5);
+        
+        p.pop();
+    }
+}
+</file>
+
+<file name="physics.js">
+/**
+ * Physics and Collision System
+ * 
+ * Implements a spatial grid for efficient collision detection of many entities
+ * and handles physics interactions between mobs, gates, and bases.
+ */
+
+import { CANVAS_WIDTH, CANVAS_HEIGHT, gameState, MOB_RADIUS } from './globals.js';
+import { collideRectCircle, collideCircleCircle } from 'https://cdn.jsdelivr.net/npm/p5.collide2d@1.0.0/+esm';
+
+/**
+ * Spatial Grid for optimizing collision queries.
+ * Divides the canvas into buckets.
+ */
+export class SpatialGrid {
+    constructor(cellSize) {
+        this.cellSize = cellSize;
+        this.cols = Math.ceil(CANVAS_WIDTH / cellSize);
+        this.rows = Math.ceil(CANVAS_HEIGHT / cellSize);
+        this.buckets = new Map();
+    }
+
+    clear() {
+        this.buckets.clear();
+    }
+
+    /**
+     * Get unique key for a cell coordinate
+     */
+    getKey(c, r) {
+        return `${c},${r}`;
+    }
+
+    /**
+     * Add an entity to the grid buckets it overlaps with
+     */
+    add(entity) {
+        // Determine grid bounds for the entity
+        // We assume entity has x, y and optionally radius or width/height
+        let minX, minY, maxX, maxY;
+
+        if (entity.radius) {
+            minX = entity.x - entity.radius;
+            maxX = entity.x + entity.radius;
+            minY = entity.y - entity.radius;
+            maxY = entity.y + entity.radius;
+        } else if (entity.width && entity.height) {
+            minX = entity.x;
+            maxX = entity.x + entity.width;
+            minY = entity.y;
+            maxY = entity.y + entity.height;
+        } else {
+            // Point fallback
+            minX = maxX = entity.x;
+            minY = maxY = entity.y;
+        }
+
+        const startCol = Math.floor(Math.max(0, minX) / this.cellSize);
+        const endCol = Math.floor(Math.min(CANVAS_WIDTH - 1, maxX) / this.cellSize);
+        const startRow = Math.floor(Math.max(0, minY) / this.cellSize);
+        const endRow = Math.floor(Math.min(CANVAS_HEIGHT - 1, maxY) / this.cellSize);
+
+        for (let c = startCol; c <= endCol; c++) {
+            for (let r = startRow; r <= endRow; r++) {
+                const key = this.getKey(c, r);
+                if (!this.buckets.has(key)) {
+                    this.buckets.set(key, []);
+                }
+                this.buckets.get(key).push(entity);
+            }
+        }
+    }
+
+    /**
+     * Retrieve potential collision candidates for an entity
+     */
+    getCandidates(entity) {
+        const candidates = new Set();
+        
+        let minX, minY, maxX, maxY;
+        if (entity.radius) {
+            minX = entity.x - entity.radius;
+            maxX = entity.x + entity.radius;
+            minY = entity.y - entity.radius;
+            maxY = entity.y + entity.radius;
+        } else {
+            minX = entity.x;
+            maxX = entity.x + entity.width;
+            minY = entity.y;
+            maxY = entity.y + entity.height;
+        }
+
+        const startCol = Math.floor(Math.max(0, minX) / this.cellSize);
+        const endCol = Math.floor(Math.min(CANVAS_WIDTH - 1, maxX) / this.cellSize);
+        const startRow = Math.floor(Math.max(0, minY) / this.cellSize);
+        const endRow = Math.floor(Math.min(CANVAS_HEIGHT - 1, maxY) / this.cellSize);
+
+        for (let c = startCol; c <= endCol; c++) {
+            for (let r = startRow; r <= endRow; r++) {
+                const key = this.getKey(c, r);
+                if (this.buckets.has(key)) {
+                    const bucket = this.buckets.get(key);
+                    for (let i = 0; i < bucket.length; i++) {
+                        if (bucket[i] !== entity) {
+                            candidates.add(bucket[i]);
+                        }
+                    }
+                }
+            }
+        }
+        return Array.from(candidates);
+    }
+}
+
+/**
+ * Main physics update function
+ * Handles movement integration and collision resolution
+ */
+export function updatePhysics(p) {
+    // 1. Clear Grid
+    gameState.spatialGrid.clear();
+
+    // 2. Add interactable entities to grid
+    // Mobs
+    for (const mob of gameState.mobs) {
+        gameState.spatialGrid.add(mob);
+    }
+    // Gates
+    for (const gate of gameState.gates) {
+        gameState.spatialGrid.add(gate);
+    }
+    // Base (Static, but added for collision checks with mobs)
+    if (gameState.enemyBase) {
+        gameState.spatialGrid.add(gameState.enemyBase);
+    }
+    if (gameState.player) {
+        // Player base hitbox
+        const playerBaseHitbox = {
+            x: 0,
+            y: CANVAS_HEIGHT - 50,
+            width: CANVAS_WIDTH,
+            height: 50,
+            type: 'PLAYER_BASE',
+            isStatic: true
+        };
+        gameState.spatialGrid.add(playerBaseHitbox);
+    }
+
+    // 3. Process Mob Interactions
+    // We iterate backwards because mobs might die/duplicate
+    for (let i = gameState.mobs.length - 1; i >= 0; i--) {
+        const mob = gameState.mobs[i];
+        
+        // Move mob
+        mob.update(p);
+
+        // Get candidates
+        const candidates = gameState.spatialGrid.getCandidates(mob);
+
+        for (const other of candidates) {
+            // Mob vs Mob (Opposite teams)
+            if (other.type === 'MOB' && other.team !== mob.team) {
+                if (checkCircleCollision(mob, other)) {
+                    resolveMobCombat(mob, other, p);
+                    // If mob died, stop processing this mob
+                    if (mob.isDead) break;
+                }
+            }
+            
+            // Mob vs Gate (Friendly only)
+            else if (other.type === 'GATE' && mob.team === 'FRIENDLY') {
+                // Rect (Gate) vs Circle (Mob)
+                if (collideRectCircle(other.x, other.y, other.width, other.height, mob.x, mob.y, mob.radius * 2)) {
+                     resolveMobGate(mob, other, p);
+                     if (mob.isDead) break;
+                }
+            }
+
+            // Mob vs Enemy Base (Friendly only)
+            else if (other.type === 'ENEMY_BASE' && mob.team === 'FRIENDLY') {
+                if (collideRectCircle(other.x, other.y, other.width, other.height, mob.x, mob.y, mob.radius * 2)) {
+                    resolveMobBase(mob, other, p);
+                    if (mob.isDead) break;
+                }
+            }
+
+            // Enemy Mob vs Player Base
+            else if (other.type === 'PLAYER_BASE' && mob.team === 'ENEMY') {
+                if (collideRectCircle(other.x, other.y, other.width, other.height, mob.x, mob.y, mob.radius * 2)) {
+                    resolveMobPlayerBase(mob, p);
+                    if (mob.isDead) break;
+                }
+            }
+        }
+    }
+}
+
+// --- Collision Resolution Helpers ---
+
+function checkCircleCollision(c1, c2) {
+    const dx = c1.x - c2.x;
+    const dy = c1.y - c2.y;
+    const rSum = c1.radius + c2.radius;
+    return (dx * dx + dy * dy) <= (rSum * rSum);
+}
+
+function resolveMobCombat(mob1, mob2, p) {
+    // Both mobs destroy each other
+    mob1.kill();
+    mob2.kill();
+    
+    // Effects
+    spawnExplosion(p, (mob1.x + mob2.x)/2, (mob1.y + mob2.y)/2, [200, 200, 200]);
+    
+    // Score
+    gameState.score += 5;
+}
+
+function resolveMobGate(mob, gate, p) {
+    // Only process if mob hasn't already hit this gate (to prevent double triggering)
+    // We can use a cooldown or ID check, but moving the mob past the gate is easier.
+    // Here we will consume the mob and spawn new ones past the gate.
+    
+    mob.kill(); // Remove original
+    
+    // Spawn new mobs based on gate operation
+    let count = 1;
+    if (gate.op === 'MULT') {
+        count = Math.floor(gate.value);
+    } else if (gate.op === 'ADD') {
+        count = 1 + gate.value; // Original + Added
+    }
+
+    // Cap burst spawn to prevent crash
+    count = Math.min(count, 50);
+
+    for (let i = 0; i < count; i++) {
+        // Spawn slightly ahead and spread out
+        const offsetX = (Math.random() - 0.5) * 20;
+        const offsetY = (Math.random() - 0.5) * 20 - 15; // Move up
+        
+        // Import Mob dynamically or pass constructor?
+        // To avoid circular dependency, we use the spawn helper attached to gameState or passed in.
+        // For this design, we'll assume a global spawner or factory pattern.
+        // We will call the method on the gate itself or player to spawn.
+        
+        // Solution: Create plain object data for game loop to process spawning?
+        // Better: `gameState.player.spawnMob(...)`
+        if (gameState.player) {
+            gameState.player.spawnMobAt(mob.x + offsetX, mob.y + offsetY - 10);
+        }
+    }
+    
+    // Visual pop
+    spawnText(p, mob.x, mob.y, gate.op === 'MULT' ? `x${gate.value}` : `+${gate.value}`);
+}
+
+function resolveMobBase(mob, base, p) {
+    mob.kill();
+    base.takeDamage(1);
+    spawnExplosion(p, mob.x, mob.y, [255, 100, 100]);
+    gameState.score += 10;
+    
+    // Shake screen
+    gameState.shakeTimer = 5;
+    gameState.shakeIntensity = 2;
+}
+
+function resolveMobPlayerBase(mob, p) {
+    mob.kill();
+    // Player base damage logic
+    if (gameState.player) {
+        gameState.player.takeBaseDamage(1);
+    }
+    spawnExplosion(p, mob.x, mob.y, [255, 50, 50]);
+    
+    gameState.shakeTimer = 10;
+    gameState.shakeIntensity = 5;
+}
+
+// --- Effects Helpers ---
+// (Ideally imported from particles.js, but to avoid circular deps, we can attach to gameState or pass functions)
+// For simplicity, we assume we can create particles here if we import the class, or use a simplified data struct.
+
+import { Particle, FloatingText } from './particles.js';
+
+function spawnExplosion(p, x, y, color) {
+    for (let i = 0; i < 5; i++) {
+        gameState.particles.push(new Particle(x, y, color));
+    }
+}
+
+function spawnText(p, x, y, text) {
+    gameState.floatingTexts.push(new FloatingText(x, y, text));
+}
+</file>
+
+<file name="particles.js">
+/**
+ * Particle and Visual Effects System
+ */
+
+import { CANVAS_HEIGHT } from './globals.js';
+
+export class Particle {
+    constructor(x, y, color) {
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        
+        // Random velocity
+        const angle = Math.random() * Math.PI * 2;
+        const speed = Math.random() * 2 + 1;
+        this.vx = Math.cos(angle) * speed;
+        this.vy = Math.sin(angle) * speed;
+        
+        this.life = 1.0; // 1.0 to 0.0
+        this.decay = 0.05;
+        this.size = Math.random() * 3 + 2;
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life -= this.decay;
+        this.size *= 0.95;
+    }
+
+    render(p) {
+        p.noStroke();
+        // Add alpha to color
+        p.fill(this.color[0], this.color[1], this.color[2], this.life * 255);
+        p.circle(this.x, this.y, this.size);
+    }
+
+    isDead() {
+        return this.life <= 0;
+    }
+}
+
+export class FloatingText {
+    constructor(x, y, text) {
+        this.x = x;
+        this.y = y;
+        this.text = text;
+        this.vy = -1; // Float up
+        this.life = 40; // Frames
+        this.maxLife = 40;
+    }
+
+    update() {
+        this.y += this.vy;
+        this.life--;
+    }
+
+    render(p) {
+        const alpha = (this.life / this.maxLife) * 255;
+        p.push();
+        p.fill(255, 255, 255, alpha);
+        p.stroke(0, 0, 0, alpha);
+        p.strokeWeight(2);
+        p.textSize(16);
+        p.textStyle(p.BOLD);
+        p.text(this.text, this.x, this.y);
+        p.pop();
+    }
+
+    isDead() {
+        return this.life <= 0;
+    }
+}
+</file>
+
+<file name="input.js">
+/**
+ * Input Handling System
+ * 
+ * Manages keyboard inputs, tracks key states, and maps inputs to game actions.
+ * Supports both human input and automated testing controller injection.
+ */
+
+import { gameState } from './globals.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+// Key State Tracker
+const keys = {};
+const keyPressedOnce = {};
+
+// Key Constants
+export const KEYS = {
+    LEFT: 37,
+    UP: 38,
+    RIGHT: 39,
+    DOWN: 40,
+    SPACE: 32,
+    SHIFT: 16,
+    Z: 90,
+    ENTER: 13,
+    ESC: 27,
+    R: 82
+};
+
+/**
+ * Register a key press event
+ * @param {object} p - p5 instance
+ */
+export function handleKeyPress(p) {
+    keys[p.keyCode] = true;
+    keyPressedOnce[p.keyCode] = true;
+    
+    // Log input for debugging/replay
+    if (p.logs && p.logs.inputs) {
+        p.logs.inputs.push({
+            type: 'press',
+            key: p.key,
+            keyCode: p.keyCode,
+            frame: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+
+    // Global Phase Control
+    handlePhaseControl(p);
+}
+
+/**
+ * Register a key release event
+ * @param {object} p - p5 instance
+ */
+export function handleKeyRelease(p) {
+    keys[p.keyCode] = false;
+    
+    if (p.logs && p.logs.inputs) {
+        p.logs.inputs.push({
+            type: 'release',
+            key: p.key,
+            keyCode: p.keyCode,
+            frame: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+
+/**
+ * Check if a specific key is currently held down
+ * @param {number} keyCode 
+ * @returns {boolean}
+ */
+export function isKeyDown(keyCode) {
+    // If in automated testing mode, override input
+    if (gameState.controlMode !== 'HUMAN') {
+        const action = get_automated_testing_action(gameState);
+        if (action && action.keys) {
+            return action.keys.includes(keyCode);
+        }
+    }
+    return keys[keyCode] === true;
+}
+
+/**
+ * Check if a key was pressed exactly on this frame (buffered)
+ * @param {number} keyCode 
+ * @returns {boolean}
+ */
+export function wasKeyPressed(keyCode) {
+    if (gameState.controlMode !== 'HUMAN') {
+         const action = get_automated_testing_action(gameState);
+        if (action && action.press === keyCode) {
+            return true;
+        }
+    }
+    
+    const wasPressed = keyPressedOnce[keyCode] === true;
+    // We do not clear here, we clear at end of frame
+    return wasPressed;
+}
+
+/**
+ * Clear the "pressed once" buffer at the end of the game loop
+ */
+export function clearInputBuffer() {
+    for (const key in keyPressedOnce) {
+        keyPressedOnce[key] = false;
+    }
+}
+
+/**
+ * Handle state transitions based on input (Start, Pause, Restart)
+ * @param {object} p - p5 instance
+ */
+function handlePhaseControl(p) {
+    const code = p.keyCode;
+
+    // START -> PLAYING
+    if (gameState.gamePhase === "START" && code === KEYS.ENTER) {
+        gameState.gamePhase = "PLAYING";
+        logPhaseChange(p, "PLAYING");
+    }
+
+    // PLAYING <-> PAUSED
+    else if (code === KEYS.ESC) {
+        if (gameState.gamePhase === "PLAYING") {
+            gameState.gamePhase = "PAUSED";
+            logPhaseChange(p, "PAUSED");
+        } else if (gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = "PLAYING";
+            logPhaseChange(p, "PLAYING");
+        }
+    }
+
+    // GAME_OVER -> START
+    else if ((gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") && code === KEYS.R) {
+        // Full reset is handled in game.js by checking this transition
+        gameState.gamePhase = "START"; 
+        logPhaseChange(p, "START");
+    }
+}
+
+function logPhaseChange(p, newPhase) {
+    if (p.logs && p.logs.game_info) {
+        p.logs.game_info.push({
+            event: 'phase_change',
+            newPhase: newPhase,
+            frame: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

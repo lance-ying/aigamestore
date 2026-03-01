@@ -1,0 +1,226 @@
+<analysis>
+- Issue identified: The `input.update()` method is called at the beginning of the `gameLoop`, before the game logic `update()`. This causes `prevKeys` to be updated to match the current `keys` before the game logic checks for input changes. As a result, `justPressed` (which checks `key && !prevKey`) always returns false because `prevKey` is already equal to `key`.
+- Files affected: `game.js` (logic order), `index.html` (CSS styling).
+- Changes needed: 
+  1. In `game.js`, move `input.update()` to the end of the `gameLoop` function so that input transitions are correctly detected during the frame's update step.
+  2. In `index.html`, modify the CSS for `html` and `body` to use Flexbox and 100% width/height to center the game container on the screen.
+</analysis>
+
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>WebFishing Sim</title>
+    <style>
+      html, body { 
+          margin: 0; 
+          padding: 0; 
+          width: 100%;
+          height: 100%;
+          overflow: hidden; 
+          background: #222; 
+          display: flex;
+          justify-content: center;
+          align-items: center;
+      }
+      #game-container {
+          width: 600px; 
+          height: 400px; 
+          position: relative;
+          overflow: hidden;
+          box-shadow: 0 0 20px rgba(0,0,0,0.5);
+      }
+      canvas { 
+          display: block;
+      }
+      /* UI Overlay handled by canvas inside container */
+    </style>
+  </head>
+  <body>
+    <div id="game-container"></div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/seedrandom@3.0.5/seedrandom.min.js"></script>
+    <script type="module" src="game.js"></script>
+    
+    <!-- Testing Control Hook -->
+    <script>
+        // Default
+        window.gameState = { controlMode: "HUMAN" };
+    </script>
+  </body>
+</html>
+</code>
+
+<code filename="game.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, logGameInfo } from './globals.js';
+import { input } from './input.js';
+import { ui } from './ui.js';
+import { cameraSystem } from './camera.js';
+import { world } from './world.js';
+import { Player, NPC } from './entities.js';
+
+// Setup
+function init() {
+    // 1. Scene
+    gameState.scene = new THREE.Scene();
+    gameState.scene.background = new THREE.Color(0x87CEEB);
+    gameState.scene.fog = new THREE.Fog(0x87CEEB, 20, 100);
+
+    // 2. Camera
+    cameraSystem.setup();
+
+    // 3. Renderer
+    gameState.renderer = new THREE.WebGLRenderer({ antialias: true });
+    gameState.renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+    gameState.renderer.shadowMap.enabled = true;
+    
+    // Setup Container
+    const container = document.getElementById('game-container') || document.body;
+    gameState.gameContainer = container;
+    container.appendChild(gameState.renderer.domElement);
+    
+    // UI Init
+    ui.init();
+
+    // 4. Lighting
+    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+    gameState.scene.add(ambient);
+    
+    const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+    sun.position.set(50, 100, 50);
+    sun.castShadow = true;
+    sun.shadow.camera.left = -50;
+    sun.shadow.camera.right = 50;
+    sun.shadow.camera.top = 50;
+    sun.shadow.camera.bottom = -50;
+    gameState.scene.add(sun);
+
+    // 5. World
+    world.init();
+
+    // 6. Entities
+    gameState.player = new Player(0, 5, 5); // Start mid-air to test physics
+    gameState.entities.push(gameState.player);
+    
+    // Add NPCs
+    gameState.npcs.push(new NPC(5, 5, 0xff0000));
+    gameState.npcs.push(new NPC(-5, 5, 0x0000ff));
+    gameState.npcs.forEach(n => gameState.entities.push(n));
+    
+    // Start Log
+    logGameInfo({ event: "INIT", message: "Game Initialized" });
+    
+    // Start Loop
+    lastTime = performance.now();
+    requestAnimationFrame(gameLoop);
+}
+
+let lastTime = 0;
+
+function gameLoop(currentTime) {
+    requestAnimationFrame(gameLoop);
+    
+    const dt = (currentTime - lastTime) / 1000;
+    lastTime = currentTime;
+    
+    // Cap delta time
+    gameState.deltaTime = Math.min(dt, 0.1);
+    gameState.frameCount++;
+    
+    update(gameState.deltaTime);
+    render();
+    
+    // Update input state after logic to correctly detect justPressed events
+    input.update();
+}
+
+function update(dt) {
+    // Global Phase Control
+    if (input.justPressed('ENTER') && gameState.gamePhase === "START") {
+        gameState.gamePhase = "PLAYING";
+        logGameInfo({ event: "PHASE_CHANGE", to: "PLAYING" });
+    }
+    
+    if (input.justPressed('ESC')) {
+        if (gameState.gamePhase === "PLAYING") gameState.gamePhase = "PAUSED";
+        else if (gameState.gamePhase === "PAUSED") gameState.gamePhase = "PLAYING";
+    }
+    
+    if (input.justPressed('RESTART') && gameState.gamePhase.startsWith("GAME_OVER")) {
+        resetGame();
+    }
+    
+    if (gameState.gamePhase !== "PLAYING") return;
+    
+    // Update Entities
+    gameState.entities.forEach(e => {
+        if (e.update) e.update(dt);
+    });
+    
+    // Update Camera
+    cameraSystem.update();
+    
+    // Test Automation Hooks
+    handleAutomatedTests();
+}
+
+function render() {
+    if (gameState.renderer && gameState.scene && gameState.camera) {
+        gameState.renderer.render(gameState.scene, gameState.camera);
+    }
+    ui.render();
+}
+
+function resetGame() {
+    // Simple reload for now, or reset variables
+    gameState.gamePhase = "START";
+    gameState.inventory = [];
+    gameState.money = 0;
+    gameState.score = 0;
+    gameState.player.mesh.position.set(0, 5, 5);
+    gameState.player.physics.velocity.set(0, 0, 0);
+    gameState.fishingSystem.state = 'IDLE';
+    gameState.fishingSystem.cleanupBobber();
+    logGameInfo({ event: "RESET" });
+}
+
+// Automated Testing Logic
+function handleAutomatedTests() {
+    const mode = window.gameState?.controlMode; // Access via window to be safe if injected
+    
+    if (mode === "TEST_1") {
+        // Move Forward Test
+        if (gameState.frameCount < 100) {
+            input.keys['UP'] = true;
+        } else {
+            input.keys['UP'] = false;
+        }
+    }
+    
+    if (mode === "TEST_2") {
+        // Win Game Test (Catch many fish)
+        if (gameState.frameCount % 10 === 0 && gameState.inventory.length < 10) {
+            gameState.inventory.push({name: "Cheat Fish", value: 100});
+        }
+        if (gameState.inventory.length >= 10 && gameState.gamePhase === "PLAYING") {
+             gameState.gamePhase = "GAME_OVER_WIN";
+        }
+    }
+}
+
+// Expose setControlMode
+window.setControlMode = (mode) => {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+    // Reset if switching to tests
+    if (mode.startsWith("TEST")) {
+        gameState.gamePhase = "PLAYING"; // Force start
+        if(gameState.player) gameState.player.mesh.position.set(0,5,5);
+    }
+};
+
+// Start
+init();
+</code>

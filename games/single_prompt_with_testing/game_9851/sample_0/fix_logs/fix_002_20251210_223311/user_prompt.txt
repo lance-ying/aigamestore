@@ -1,0 +1,1829 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+
+entities.js:8 Uncaught SyntaxError: The requested module './particles.js' does not provide an export named 'ParticleSystem' (at entities.js:8:10)
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Castle Hammerwatch Lite</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; transition: background 0.2s; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #d4af37; color: #000; font-weight: bold; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: 'Segoe UI', Arial, sans-serif; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 2px;">Castle Hammerwatch Lite</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="updateMode('HUMAN', this)">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="updateMode('TEST_1', this)">TEST 1 (Survival)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="updateMode('TEST_2', this)">TEST 2 (Win)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto 10px auto; line-height: 1.4; font-size: 14px;">
+        Hack and slash your way through the castle dungeon! Defeat enemies, collect gold, and find the exit.
+      </p>
+      <p id="gameControls" style="color: #888; font-family: monospace; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4; font-size: 12px;">
+        ARROWS: Move | Z: Attack | SHIFT: Dash | SPACE: Interact
+      </p>
+    </div>
+    
+    <!-- Dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.7.0/lib/p5.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    
+    <!-- Game Module -->
+    <script type="module" src="game.js"></script>
+    
+    <script>
+      function updateMode(mode, btn) {
+        window.setControlMode(mode);
+        // UI Update
+        document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        // Reset focus to canvas so keys work immediately
+        document.querySelector('body').focus();
+      }
+    </script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+/**
+ * Automated testing logic for "Castle Hammerwatch Lite".
+ * Simulates user input based on test scenarios.
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { dist } from './utils.js';
+
+// Key Codes
+const KEY_LEFT = 37;
+const KEY_UP = 38;
+const KEY_RIGHT = 39;
+const KEY_DOWN = 40;
+const KEY_Z = 90;    // Attack
+const KEY_SHIFT = 16; // Dash
+const KEY_SPACE = 32; // Interact
+const KEY_ENTER = 13;
+
+let lastActionFrame = 0;
+let currentDirection = null;
+let modeState = {
+    target: null,
+    stuckTimer: 0,
+    lastPos: {x:0, y:0}
+};
+
+export function get_automated_testing_action(currentState) {
+    if (currentState.gamePhase === "START" || currentState.gamePhase === "GAME_OVER_LOSE" || currentState.gamePhase === "GAME_OVER_WIN") {
+        // Press Enter to start/restart
+        return { keyCode: KEY_ENTER, type: 'press' };
+    }
+
+    if (currentState.gamePhase !== "PLAYING") return null;
+
+    switch (currentState.controlMode) {
+        case "TEST_1": // Random Wandering / Survival
+            return test1_survival(currentState);
+        case "TEST_2": // Aggressive / Objective
+            return test2_objective(currentState);
+        default:
+            return null;
+    }
+}
+
+function test1_survival(state) {
+    // Change direction every 30-60 frames
+    if (!currentDirection || state.frameCount - lastActionFrame > 45) {
+        const dirs = [KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN];
+        currentDirection = dirs[Math.floor(Math.random() * dirs.length)];
+        lastActionFrame = state.frameCount;
+        
+        // Occasionally stop
+        if (Math.random() < 0.2) currentDirection = null;
+    }
+
+    if (currentDirection) {
+        return { keyCode: currentDirection, type: 'hold' };
+    }
+    return null;
+}
+
+function test2_objective(state) {
+    const player = state.player;
+    if (!player) return null;
+
+    // 1. Attack nearby enemies
+    let nearestEnemy = null;
+    let minDist = 9999;
+    
+    state.enemies.forEach(e => {
+        const d = dist(player.x, player.y, e.x, e.y);
+        if (d < minDist) {
+            minDist = d;
+            nearestEnemy = e;
+        }
+    });
+
+    if (nearestEnemy && minDist < 150) {
+        // Move towards enemy
+        if (minDist < 40) {
+            // Attack range
+            return { keyCode: KEY_Z, type: 'press' };
+        } else {
+            // Chase
+            return getMoveKey(player, nearestEnemy);
+        }
+    }
+
+    // 2. Collect Keys/Pickups
+    if (state.pickups.length > 0) {
+        const target = state.pickups[0]; // Just target first one
+        return getMoveKey(player, target);
+    }
+    
+    // 3. Find Exit/Door
+    // Simplified: Just move right and down generally
+    if (Math.random() < 0.5) return { keyCode: KEY_RIGHT, type: 'hold' };
+    return { keyCode: KEY_DOWN, type: 'hold' };
+}
+
+function getMoveKey(player, target) {
+    const dx = target.x - player.x;
+    const dy = target.y - player.y;
+    
+    if (Math.abs(dx) > Math.abs(dy)) {
+        return dx > 0 ? { keyCode: KEY_RIGHT, type: 'hold' } : { keyCode: KEY_LEFT, type: 'hold' };
+    } else {
+        return dy > 0 ? { keyCode: KEY_DOWN, type: 'hold' } : { keyCode: KEY_UP, type: 'hold' };
+    }
+}
+
+// Expose globally
+window.get_automated_testing_action = get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+/**
+ * Global constants and state management for Castle Hammerwatch Lite.
+ * Handles the central gameState object and configuration.
+ */
+
+// Canvas Dimensions
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Game Configuration
+export const TILE_SIZE = 40;
+export const GRAVITY = 0; // Top-down game, no gravity
+export const FRICTION = 0.85;
+export const MAX_SPEED = 4;
+export const DASH_SPEED = 10;
+export const DASH_COOLDOWN = 60; // Frames
+export const ATTACK_COOLDOWN = 25; // Frames
+export const ATTACK_DURATION = 10; // Frames
+
+// Colors
+export const COLORS = {
+    BACKGROUND: '#1a1a24',
+    WALL: '#363645',
+    FLOOR: '#232330',
+    FLOOR_CHECKER: '#282838',
+    UI_BG: 'rgba(0, 0, 0, 0.7)',
+    TEXT: '#ffffff',
+    ACCENT: '#d4af37', // Gold
+    HEALTH_BAR_BG: '#4a0d0d',
+    HEALTH_BAR_FG: '#e02828',
+    STAMINA_BAR_BG: '#0d284a',
+    STAMINA_BAR_FG: '#2888e0'
+};
+
+/**
+ * The central game state object.
+ * Accessible globally via window.getGameState()
+ */
+export const gameState = {
+    // Phase Management
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2
+    
+    // Time & Performance
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Core Entities
+    player: null,
+    entities: [],     // All dynamic entities (enemies, projectiles, etc.)
+    world: [],        // Static tile map
+    particles: [],    // Visual effects
+    textPopups: [],   // Floating damage numbers, etc.
+    
+    // Specific Lists for optimized access
+    enemies: [],
+    projectiles: [],
+    pickups: [],      // Gold, Potions
+    interactables: [], // Chests, Doors
+    
+    // World State
+    camera: {
+        x: 0,
+        y: 0
+    },
+    mapWidth: 0,
+    mapHeight: 0,
+    
+    // Player Progress (Session)
+    score: 0,
+    keys: 0,
+    floor: 1,
+    
+    // Input State
+    keysPressed: {},
+    mouseX: 0,
+    mouseY: 0
+};
+
+/**
+ * Returns the global game state.
+ * Exposed to window for debugging and automated testing.
+ */
+export function getGameState() {
+    return gameState;
+}
+
+// Expose globally
+window.getGameState = getGameState;
+
+/**
+ * Resets the game state for a new session.
+ */
+export function resetGameState() {
+    gameState.gamePhase = "START";
+    gameState.frameCount = 0;
+    gameState.entities = [];
+    gameState.enemies = [];
+    gameState.projectiles = [];
+    gameState.particles = [];
+    gameState.pickups = [];
+    gameState.interactables = [];
+    gameState.textPopups = [];
+    gameState.score = 0;
+    gameState.keys = 0;
+    gameState.floor = 1;
+    gameState.camera.x = 0;
+    gameState.camera.y = 0;
+}
+</file>
+
+<file name="game.js">
+/**
+ * Main Game Loop and p5 instance setup.
+ * Integrates all modules and handles the high-level game flow.
+ */
+
+import { gameState, resetGameState, getGameState, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './globals.js';
+import { Player } from './entities.js';
+import { initWorld, renderWorld } from './world.js';
+import { renderUI, renderStartScreen, renderGameOver, renderPauseScreen } from './ui.js';
+import { updateParticles } from './particles.js';
+import { screenShake, isOnScreen } from './utils.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    // Initialize Logs
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        resetGameState();
+        
+        // Initial log
+        p.logs.game_info.push({
+            data: { gamePhase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    };
+
+    p.draw = function() {
+        // Time management
+        const currentTime = p.millis();
+        gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = currentTime;
+        gameState.frameCount = p.frameCount;
+
+        // Input Handling for Automated Testing
+        if (gameState.controlMode !== "HUMAN") {
+            const action = get_automated_testing_action(gameState);
+            if (action) {
+                if (action.type === 'press') {
+                    p.keyCode = action.keyCode;
+                    p.keyPressed();
+                    // Reset key immediately to simulate press
+                    setTimeout(() => p.keyReleased(), 50); 
+                } else {
+                    // Simulate holding key by manually setting p5 keyIsDown state?
+                    // p5 doesn't easily allow mocking keyIsDown.
+                    // Instead, we inject into a custom input handler in Player class.
+                    // For this architecture, we will simulate by setting a flag in gameState if needed
+                    // Or simply modify the p.keyIsDown wrapper if we wrote one.
+                    // For simplicity, we'll assume the entity handles movement via direct state check
+                    // OR we trigger the logic directly here for test mode:
+                    handleTestInput(p, action.keyCode);
+                }
+            }
+        }
+
+        // Render Background (Clear Screen)
+        p.background(COLORS.BACKGROUND);
+
+        switch (gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                break;
+            case "PLAYING":
+                updateGame(p);
+                renderGame(p);
+                renderUI(p);
+                break;
+            case "PAUSED":
+                renderGame(p); // Draw game behind overlay
+                renderPauseScreen(p);
+                break;
+            case "GAME_OVER_WIN":
+                renderGame(p);
+                renderGameOver(p, true);
+                break;
+            case "GAME_OVER_LOSE":
+                renderGame(p);
+                renderGameOver(p, false);
+                break;
+        }
+    };
+
+    function updateGame(p) {
+        // Camera Follow
+        if (gameState.player) {
+            const targetX = gameState.player.x - CANVAS_WIDTH / 2;
+            const targetY = gameState.player.y - CANVAS_HEIGHT / 2;
+            
+            // Smooth lerp
+            gameState.camera.x += (targetX - gameState.camera.x) * 0.1;
+            gameState.camera.y += (targetY - gameState.camera.y) * 0.1;
+            
+            // Bounds check (World size vs Canvas size)
+            // Assuming world is large enough
+            gameState.camera.x = Math.max(0, Math.min(gameState.camera.x, gameState.mapWidth * 40 - CANVAS_WIDTH));
+            gameState.camera.y = Math.max(0, Math.min(gameState.camera.y, gameState.mapHeight * 40 - CANVAS_HEIGHT));
+        }
+
+        // Screen Shake update
+        screenShake.update();
+
+        // Update Entities
+        gameState.entities.forEach(e => e.update(p));
+        gameState.interactables.forEach(i => i.update(p));
+        gameState.pickups.forEach(pick => pick.update(p));
+        gameState.projectiles.forEach(proj => proj.update(p));
+        
+        // Update Particles
+        updateParticles(p);
+
+        // Cleanup
+        gameState.entities = gameState.entities.filter(e => !e.markedForDeletion);
+        gameState.enemies = gameState.enemies.filter(e => !e.markedForDeletion);
+        gameState.projectiles = gameState.projectiles.filter(p => !p.markedForDeletion);
+        gameState.pickups = gameState.pickups.filter(p => !p.markedForDeletion);
+
+        // Log Player Info
+        if (gameState.player && p.frameCount % 60 === 0) {
+            p.logs.player_info.push({
+                screen_x: gameState.player.x,
+                screen_y: gameState.player.y,
+                game_x: gameState.player.x,
+                game_y: gameState.player.y,
+                framecount: p.frameCount,
+                timestamp: Date.now()
+            });
+        }
+    }
+
+    function renderGame(p) {
+        p.push();
+        
+        // Apply Camera Transformation
+        const shake = screenShake.getOffset(p);
+        p.translate(-gameState.camera.x + shake.x, -gameState.camera.y + shake.y);
+
+        // Render World
+        renderWorld(p);
+
+        // Render Interactables (Bottom layer)
+        gameState.interactables.forEach(i => {
+            if (isOnScreen(i)) i.render(p);
+        });
+        
+        // Render Pickups
+        gameState.pickups.forEach(pick => {
+             if (isOnScreen(pick)) pick.render(p);
+        });
+
+        // Render Entities
+        // Sort by Y for simple depth sorting
+        const renderList = [...gameState.entities, ...gameState.projectiles];
+        renderList.sort((a, b) => (a.y + a.height) - (b.y + b.height));
+        
+        renderList.forEach(e => {
+            if (isOnScreen(e)) e.render(p);
+        });
+
+        p.pop();
+    }
+
+    // Input Handlers
+    p.keyPressed = function() {
+        // Global Keys
+        if (p.keyCode === 27) { // ESC
+            if (gameState.gamePhase === "PLAYING") gameState.gamePhase = "PAUSED";
+            else if (gameState.gamePhase === "PAUSED") gameState.gamePhase = "PLAYING";
+        }
+        
+        if (p.keyCode === 13) { // ENTER
+            if (gameState.gamePhase === "START") {
+                initWorld(p);
+                gameState.gamePhase = "PLAYING";
+                p.logs.game_info.push({ data: { gamePhase: "PLAYING" }, framecount: p.frameCount, timestamp: Date.now() });
+            }
+        }
+        
+        if (p.keyCode === 82) { // R
+            if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE" || gameState.gamePhase === "PAUSED") {
+                resetGameState();
+                // initWorld(p); // Don't init immediately, go to start
+                gameState.gamePhase = "START";
+            }
+        }
+        
+        p.logs.inputs.push({
+            input_type: 'keyPressed',
+            data: { key: p.key, keyCode: p.keyCode },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    };
+    
+    // Monkey patch keyIsDown for Test Mode
+    const originalKeyIsDown = p.keyIsDown;
+    let testKeysDown = {};
+    
+    p.keyIsDown = function(code) {
+        if (gameState.controlMode !== "HUMAN") {
+            return !!testKeysDown[code];
+        }
+        return originalKeyIsDown.call(p, code);
+    };
+    
+    function handleTestInput(p, keyCode) {
+        testKeysDown = {}; // Reset previous frame's synthetic input
+        testKeysDown[keyCode] = true;
+    }
+
+    p.keyReleased = function() {
+        p.logs.inputs.push({
+            input_type: 'keyReleased',
+            data: { key: p.key, keyCode: p.keyCode },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    };
+});
+
+window.gameInstance = gameInstance;
+
+// Control Mode Switcher
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+};
+</file>
+
+<file name="ui.js">
+/**
+ * User Interface rendering and HUD.
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './globals.js';
+
+export function renderUI(p) {
+    p.push();
+    
+    // HUD Bar Background
+    p.fill(COLORS.UI_BG);
+    p.noStroke();
+    p.rect(0, 0, CANVAS_WIDTH, 50);
+    p.stroke(255, 255, 255, 50);
+    p.line(0, 50, CANVAS_WIDTH, 50);
+
+    if (gameState.player) {
+        // Health Bar
+        const hpX = 20;
+        const hpY = 15;
+        const hpW = 150;
+        const hpH = 12;
+        
+        p.fill(COLORS.HEALTH_BAR_BG);
+        p.noStroke();
+        p.rect(hpX, hpY, hpW, hpH);
+        
+        const hpRatio = Math.max(0, gameState.player.health / gameState.player.maxHealth);
+        p.fill(COLORS.HEALTH_BAR_FG);
+        p.rect(hpX, hpY, hpW * hpRatio, hpH);
+        
+        p.stroke(0);
+        p.noFill();
+        p.rect(hpX, hpY, hpW, hpH);
+        
+        p.noStroke();
+        p.fill(255);
+        p.textSize(10);
+        p.textAlign(p.LEFT, p.BOTTOM);
+        p.text("HEALTH", hpX, hpY - 2);
+
+        // Stamina Bar
+        const stX = 20;
+        const stY = 32;
+        
+        p.fill(COLORS.STAMINA_BAR_BG);
+        p.rect(stX, stY, hpW, 6);
+        
+        const stRatio = Math.max(0, gameState.player.stamina / gameState.player.maxStamina);
+        p.fill(COLORS.STAMINA_BAR_FG);
+        p.rect(stX, stY, hpW * stRatio, 6);
+    }
+
+    // Stats
+    p.fill(COLORS.ACCENT);
+    p.textSize(16);
+    p.textAlign(p.RIGHT, p.CENTER);
+    p.text(`SCORE: ${gameState.score}`, CANVAS_WIDTH - 20, 25);
+    
+    p.fill(200);
+    p.textSize(14);
+    p.text(`KEYS: ${gameState.keys}`, CANVAS_WIDTH - 150, 25);
+
+    p.pop();
+}
+
+export function renderStartScreen(p) {
+    p.background(COLORS.BACKGROUND);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(COLORS.ACCENT);
+    p.textSize(40);
+    p.text("CASTLE HAMMERWATCH", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 60);
+    p.textSize(24);
+    p.text("LITE EDITION", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 20);
+    
+    p.fill(255);
+    p.textSize(16);
+    p.text("PRESS ENTER TO START", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+    
+    p.fill(150);
+    p.textSize(12);
+    p.text("ARROWS to Move | Z to Attack | SHIFT to Dash | SPACE to Interact", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 80);
+}
+
+export function renderGameOver(p, win) {
+    p.background(0, 0, 0, 200); // Overlay
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    if (win) {
+        p.fill(COLORS.ACCENT);
+        p.textSize(48);
+        p.text("VICTORY!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+        p.textSize(20);
+        p.text("You escaped the castle!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 10);
+    } else {
+        p.fill(COLORS.HEALTH_BAR_FG);
+        p.textSize(48);
+        p.text("YOU DIED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+    }
+    
+    p.fill(255);
+    p.textSize(24);
+    p.text(`FINAL SCORE: ${gameState.score}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60);
+    
+    p.textSize(16);
+    p.fill(150);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 100);
+}
+
+export function renderPauseScreen(p) {
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(32);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+}
+</file>
+
+<file name="world.js">
+/**
+ * World generation and map management.
+ */
+
+import { gameState, TILE_SIZE, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Player, Enemy, Interactable, Pickup } from './entities.js';
+
+// 0: Floor, 1: Wall, S: Start, E: Exit, K: Key Chest/Item, C: Chest, D: Door, 
+// X: Skeleton, B: Bat, M: Mage
+const LEVEL_MAP = [
+    "11111111111111111111",
+    "1S0000100000001000C1",
+    "1000001000X000100001",
+    "10011110000000D00001",
+    "1001K000001111111111",
+    "100100X0001000000001",
+    "10011111111000M00001",
+    "1000000000D000000001",
+    "11111000001111100001",
+    "1C00000B001000000001",
+    "1000000000100B000001",
+    "1111111D111000000001",
+    "1000000000000M000E01",
+    "100X0000001000000001",
+    "11111111111111111111"
+];
+
+class Tile {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.type = type; // 'FLOOR', 'WALL'
+        this.solid = (type === 'WALL');
+    }
+
+    render(p) {
+        if (this.type === 'WALL') {
+            // Draw wall with depth effect
+            p.fill('#4a4a5a');
+            p.rect(this.x, this.y, TILE_SIZE, TILE_SIZE);
+            p.fill('#2a2a3a'); // Top shadow
+            p.rect(this.x, this.y + TILE_SIZE - 5, TILE_SIZE, 5);
+        } else {
+            // Draw floor
+            if ((this.x / TILE_SIZE + this.y / TILE_SIZE) % 2 === 0) {
+                p.fill('#232330');
+            } else {
+                p.fill('#262635');
+            }
+            p.rect(this.x, this.y, TILE_SIZE, TILE_SIZE);
+            
+            // Random cracks/details
+            // Optimized: Don't draw complex details per tile every frame in JS without caching
+            // Just simple color variation is fine
+        }
+    }
+}
+
+export function initWorld(p) {
+    gameState.world = [];
+    gameState.entities = [];
+    gameState.enemies = [];
+    gameState.interactables = [];
+    gameState.pickups = [];
+    
+    gameState.mapHeight = LEVEL_MAP.length;
+    gameState.mapWidth = LEVEL_MAP[0].length;
+    
+    for (let r = 0; r < gameState.mapHeight; r++) {
+        const row = [];
+        const mapRow = LEVEL_MAP[r];
+        
+        for (let c = 0; c < gameState.mapWidth; c++) {
+            const char = mapRow[c];
+            const x = c * TILE_SIZE;
+            const y = r * TILE_SIZE;
+            
+            // Default tile
+            let type = 'FLOOR';
+            if (char === '1') type = 'WALL';
+            
+            row.push(new Tile(x, y, type));
+            
+            // Entities
+            if (char === 'S') {
+                gameState.player = new Player(x + 10, y + 10);
+            } else if (char === 'X') {
+                new Enemy(x + 10, y + 10, 'SKELETON');
+            } else if (char === 'B') {
+                new Enemy(x + 10, y + 10, 'BAT');
+            } else if (char === 'M') {
+                new Enemy(x + 10, y + 10, 'MAGE');
+            } else if (char === 'C') {
+                gameState.interactables.push(new Interactable(x, y, 'CHEST'));
+            } else if (char === 'D') {
+                gameState.interactables.push(new Interactable(x, y, 'DOOR'));
+            } else if (char === 'E') {
+                gameState.interactables.push(new Interactable(x, y, 'EXIT'));
+            } else if (char === 'K') {
+                gameState.pickups.push(new Pickup(x + 12, y + 12, 'KEY'));
+            }
+        }
+        gameState.world.push(row);
+    }
+    
+    // Add player to entities list
+    if (gameState.player) {
+        gameState.entities.push(gameState.player);
+    }
+    
+    // Add enemies to entities
+    gameState.enemies.forEach(e => gameState.entities.push(e));
+}
+
+export function renderWorld(p) {
+    // Only render visible tiles
+    const startCol = Math.floor(gameState.camera.x / TILE_SIZE);
+    const endCol = startCol + (CANVAS_WIDTH / TILE_SIZE) + 1;
+    const startRow = Math.floor(gameState.camera.y / TILE_SIZE);
+    const endRow = startRow + (CANVAS_HEIGHT / TILE_SIZE) + 1;
+
+    for (let r = startRow; r <= endRow; r++) {
+        for (let c = startCol; c <= endCol; c++) {
+            if (r >= 0 && r < gameState.mapHeight && c >= 0 && c < gameState.mapWidth) {
+                gameState.world[r][c].render(p);
+            }
+        }
+    }
+}
+</file>
+
+<file name="entities.js">
+/**
+ * Game entities including Player, Enemy, and Interactables.
+ */
+
+import { gameState, TILE_SIZE, FRICTION, CANVAS_WIDTH, CANVAS_HEIGHT, DASH_SPEED, DASH_COOLDOWN, ATTACK_COOLDOWN, ATTACK_DURATION, COLORS } from './globals.js';
+import { handleWorldCollision, checkEntityHit, dist, checkRectOverlap } from './physics.js';
+import { screenShake } from './utils.js';
+import { ParticleSystem, createBloodEffect, createDustEffect, createSparkle } from './particles.js';
+
+class Entity {
+    constructor(x, y, width, height) {
+        this.x = x;
+        this.y = y;
+        this.width = width;
+        this.height = height;
+        this.vx = 0;
+        this.vy = 0;
+        this.markedForDeletion = false;
+        this.color = [255, 255, 255];
+    }
+
+    update(p) {
+        // Basic physics update
+        this.vx *= FRICTION;
+        this.vy *= FRICTION;
+    }
+
+    render(p) {
+        p.fill(this.color);
+        p.rect(this.x, this.y, this.width, this.height);
+    }
+    
+    getCenter() {
+        return {
+            x: this.x + this.width / 2,
+            y: this.y + this.height / 2
+        };
+    }
+}
+
+export class Player extends Entity {
+    constructor(x, y) {
+        super(x, y, 20, 20);
+        this.speed = 3;
+        this.health = 100;
+        this.maxHealth = 100;
+        this.stamina = 100;
+        this.maxStamina = 100;
+        
+        // State
+        this.facing = 1; // 1 Right, -1 Left, 2 Down, -2 Up (Simplified: Angle)
+        this.facingAngle = 0;
+        this.isAttacking = false;
+        this.attackTimer = 0;
+        this.isDashing = false;
+        this.dashTimer = 0;
+        
+        // I-Frames
+        this.invincible = false;
+        this.invincibleTimer = 0;
+        
+        // Visuals
+        this.animTimer = 0;
+    }
+
+    update(p) {
+        // Input Handling
+        if (gameState.gamePhase === "PLAYING" && !this.isDashing) {
+            this.handleInput(p);
+        }
+
+        // Dashing Logic
+        if (this.isDashing) {
+            this.dashTimer--;
+            if (this.dashTimer <= 0) {
+                this.isDashing = false;
+                this.dashTimer = DASH_COOLDOWN;
+            } else if (this.dashTimer > DASH_COOLDOWN - 10) {
+                 // Active Dash phase (first 10 frames)
+                 createDustEffect(this.x + this.width/2, this.y + this.height, this.color);
+            } else {
+                // Cooldown phase
+                this.vx *= 0.5;
+                this.vy *= 0.5;
+            }
+        } else {
+            // Stamina regen
+            if (this.dashTimer > 0) this.dashTimer--;
+            this.stamina = Math.min(this.maxStamina, this.stamina + 0.5);
+        }
+
+        // Attacking Logic
+        if (this.isAttacking) {
+            this.attackTimer--;
+            if (this.attackTimer <= 0) {
+                this.isAttacking = false;
+            }
+            
+            // Perform attack check once during the swing
+            if (this.attackTimer === ATTACK_DURATION - 5) {
+                this.checkAttackHit(p);
+            }
+        }
+
+        // Physics
+        handleWorldCollision(this);
+
+        // Invincibility
+        if (this.invincible) {
+            this.invincibleTimer--;
+            if (this.invincibleTimer <= 0) {
+                this.invincible = false;
+            }
+        }
+        
+        // Death check
+        if (this.health <= 0) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+            createBloodEffect(this.x, this.y, 20);
+        }
+
+        this.animTimer += 0.1;
+    }
+
+    handleInput(p) {
+        let dx = 0;
+        let dy = 0;
+        const keyLeft = 37;
+        const keyRight = 39;
+        const keyUp = 38;
+        const keyDown = 40;
+        const keyShift = 16;
+        const keyZ = 90;
+
+        if (p.keyIsDown(keyLeft)) dx -= 1;
+        if (p.keyIsDown(keyRight)) dx += 1;
+        if (p.keyIsDown(keyUp)) dy -= 1;
+        if (p.keyIsDown(keyDown)) dy += 1;
+
+        // Normalize diagonal movement
+        if (dx !== 0 || dy !== 0) {
+            const length = Math.sqrt(dx*dx + dy*dy);
+            dx /= length;
+            dy /= length;
+            
+            this.vx += dx * 0.5;
+            this.vy += dy * 0.5;
+            
+            // Limit speed
+            const currentSpeed = Math.sqrt(this.vx*this.vx + this.vy*this.vy);
+            if (currentSpeed > this.speed) {
+                this.vx = (this.vx / currentSpeed) * this.speed;
+                this.vy = (this.vy / currentSpeed) * this.speed;
+            }
+            
+            this.facingAngle = Math.atan2(dy, dx);
+            if (p.frameCount % 10 === 0) createDustEffect(this.x + 10, this.y + 20, [200, 200, 200]);
+        }
+
+        // Dash
+        if (p.keyIsDown(keyShift) && this.dashTimer === 0 && this.stamina > 20) {
+            this.startDash(dx, dy);
+        }
+        
+        // Attack
+        if (p.keyIsDown(keyZ) && !this.isAttacking) {
+            this.startAttack();
+        }
+    }
+
+    startDash(dx, dy) {
+        if (dx === 0 && dy === 0) return; // Can't dash in place
+        
+        this.isDashing = true;
+        this.dashTimer = DASH_COOLDOWN; // Set full duration + cooldown
+        this.stamina -= 25;
+        this.vx = dx * DASH_SPEED;
+        this.vy = dy * DASH_SPEED;
+        
+        screenShake.add(0.2);
+    }
+
+    startAttack() {
+        this.isAttacking = true;
+        this.attackTimer = ATTACK_DURATION;
+        screenShake.add(0.1);
+    }
+
+    checkAttackHit(p) {
+        // Create a hitbox in front of player
+        const reach = 30;
+        const hitX = (this.x + 10) + Math.cos(this.facingAngle) * reach;
+        const hitY = (this.y + 10) + Math.sin(this.facingAngle) * reach;
+        const hitRadius = 25;
+
+        // Check enemies
+        gameState.enemies.forEach(enemy => {
+            if (checkEntityHit(enemy, hitX, hitY, hitRadius)) {
+                enemy.takeDamage(25, this.facingAngle);
+                createBloodEffect(enemy.x + enemy.width/2, enemy.y + enemy.height/2);
+                screenShake.add(0.2);
+            }
+        });
+        
+        // Check breakables (in interactables)
+        gameState.interactables.forEach(obj => {
+             if (obj.breakable && checkEntityHit(obj, hitX, hitY, hitRadius)) {
+                 obj.break(p);
+             }
+        });
+    }
+
+    takeDamage(amount) {
+        if (this.invincible || this.isDashing) return;
+        
+        this.health -= amount;
+        this.invincible = true;
+        this.invincibleTimer = 60; // 1 second
+        screenShake.add(0.5);
+        createBloodEffect(this.x + 10, this.y + 10, 10, [255, 0, 0]);
+        
+        // Log player info
+        if (gameState.frameCount % 60 === 0) { // Throttle logs
+             // Handled in main loop usually, but specific event logging is good
+        }
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x + 10, this.y + 10);
+        
+        // Shadow
+        p.noStroke();
+        p.fill(0, 0, 0, 100);
+        p.ellipse(0, 8, 16, 6);
+
+        // Flash white if invincible
+        if (this.invincible && Math.floor(gameState.frameCount / 4) % 2 === 0) {
+            p.fill(255);
+        } else {
+            p.fill(COLORS.ACCENT);
+        }
+        
+        // Bobbing animation
+        const bob = this.vx !== 0 || this.vy !== 0 ? Math.sin(this.animTimer) * 2 : 0;
+        
+        // Body (Armor)
+        p.rectMode(p.CENTER);
+        p.rect(0, 0 + bob, 14, 18, 2);
+        
+        // Helmet
+        p.fill(200);
+        p.rect(0, -8 + bob, 16, 14, 4);
+        
+        // Eyes (Visor)
+        p.fill(0);
+        p.rect(0, -8 + bob, 10, 3);
+        
+        // Sword Swing Animation
+        if (this.isAttacking) {
+            const swingProgress = 1 - (this.attackTimer / ATTACK_DURATION);
+            const startAngle = this.facingAngle - p.PI / 3;
+            const endAngle = this.facingAngle + p.PI / 3;
+            const currentAngle = p.lerp(startAngle, endAngle, swingProgress);
+            
+            p.push();
+            p.rotate(currentAngle);
+            p.translate(15, 0);
+            
+            // Sword Blade
+            p.fill(220);
+            p.rect(0, 0, 25, 4);
+            // Hilt
+            p.fill(139, 69, 19);
+            p.rect(-2, 0, 6, 8);
+            
+            // Swoosh effect
+            p.noFill();
+            p.stroke(255, 255, 255, 200 * (1-swingProgress));
+            p.strokeWeight(2);
+            p.arc(-15, 0, 50, 50, -p.PI/4, p.PI/4);
+            
+            p.pop();
+        }
+
+        p.pop();
+        
+        // Debug Hitbox
+        // if (this.isAttacking) {
+        //     p.noFill();
+        //     p.stroke(255, 0, 0);
+        //     const reach = 30;
+        //     const hitX = (this.x + 10) + Math.cos(this.facingAngle) * reach;
+        //     const hitY = (this.y + 10) + Math.sin(this.facingAngle) * reach;
+        //     p.circle(hitX, hitY, 50);
+        // }
+    }
+}
+
+export class Enemy extends Entity {
+    constructor(x, y, type) {
+        super(x, y, 20, 20);
+        this.type = type; // 'SKELETON', 'BAT', 'MAGE'
+        this.health = 50;
+        this.state = 'IDLE'; // IDLE, CHASE, ATTACK
+        this.detectionRange = 200;
+        this.attackRange = 30;
+        this.knockback = {x: 0, y: 0};
+        
+        // Type specific stats
+        if (type === 'BAT') {
+            this.speed = 2.5;
+            this.health = 30;
+            this.color = [100, 80, 200];
+            this.flying = true;
+        } else if (type === 'MAGE') {
+            this.speed = 1.0;
+            this.health = 40;
+            this.attackRange = 150;
+            this.color = [180, 30, 30];
+            this.cooldown = 0;
+        } else { // SKELETON
+            this.speed = 1.5;
+            this.health = 60;
+            this.color = [200, 200, 200];
+        }
+        
+        this.animOffset = Math.random() * 100;
+    }
+
+    update(p) {
+        if (!gameState.player) return;
+
+        // Apply knockback friction
+        this.x += this.knockback.x;
+        this.y += this.knockback.y;
+        this.knockback.x *= 0.8;
+        this.knockback.y *= 0.8;
+        
+        // Behavior
+        const d = dist(this.x, this.y, gameState.player.x, gameState.player.y);
+        
+        if (d < this.detectionRange) {
+            this.state = 'CHASE';
+        } else {
+            this.state = 'IDLE';
+        }
+
+        if (this.state === 'CHASE') {
+            // Move towards player
+            if (d > this.attackRange) {
+                const angle = Math.atan2(gameState.player.y - this.y, gameState.player.x - this.x);
+                this.vx += Math.cos(angle) * 0.2;
+                this.vy += Math.sin(angle) * 0.2;
+                
+                // Cap speed
+                const speed = Math.sqrt(this.vx*this.vx + this.vy*this.vy);
+                if (speed > this.speed) {
+                    this.vx = (this.vx / speed) * this.speed;
+                    this.vy = (this.vy / speed) * this.speed;
+                }
+            } else {
+                // Attack logic
+                this.performAttack(p);
+            }
+        }
+        
+        super.update(p);
+        
+        // Physics collision
+        if (!this.flying) {
+            handleWorldCollision(this);
+        }
+        
+        // Resolve overlapping with other enemies (simple separation)
+        gameState.enemies.forEach(other => {
+            if (other !== this) {
+                const distOther = dist(this.x, this.y, other.x, other.y);
+                if (distOther < this.width) {
+                    const angle = Math.atan2(this.y - other.y, this.x - other.x);
+                    this.x += Math.cos(angle) * 1;
+                    this.y += Math.sin(angle) * 1;
+                }
+            }
+        });
+    }
+
+    performAttack(p) {
+        if (this.type === 'MAGE') {
+            if (this.cooldown <= 0) {
+                // Shoot projectile
+                const angle = Math.atan2(gameState.player.y - this.y, gameState.player.x - this.x);
+                gameState.projectiles.push(new Projectile(this.x + 10, this.y + 10, angle, false));
+                this.cooldown = 120; // 2 seconds
+            } else {
+                this.cooldown--;
+            }
+        } else {
+            // Melee
+            if (checkRectOverlap(this.x, this.y, this.width, this.height, gameState.player.x, gameState.player.y, gameState.player.width, gameState.player.height)) {
+                gameState.player.takeDamage(10);
+                // Knockback player slightly
+                const angle = Math.atan2(gameState.player.y - this.y, gameState.player.x - this.x);
+                gameState.player.vx += Math.cos(angle) * 10;
+                gameState.player.vy += Math.sin(angle) * 10;
+            }
+        }
+    }
+
+    takeDamage(amount, angleFromAttacker) {
+        this.health -= amount;
+        this.knockback.x = Math.cos(angleFromAttacker) * 8;
+        this.knockback.y = Math.sin(angleFromAttacker) * 8;
+        
+        // Flash red
+        // Handled in render logic via visual effect usually, simple here
+        
+        if (this.health <= 0) {
+            this.die(p);
+        }
+    }
+
+    die(p) {
+        this.markedForDeletion = true;
+        gameState.score += (this.type === 'MAGE' ? 50 : 20);
+        createBloodEffect(this.x + 10, this.y + 10, 15);
+        
+        // Chance to drop item
+        if (Math.random() < 0.3) {
+            gameState.pickups.push(new Pickup(this.x, this.y, Math.random() < 0.5 ? 'GOLD' : 'POTION'));
+        }
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x + 10, this.y + 10);
+        
+        // Bobbing
+        const bob = Math.sin((gameState.frameCount + this.animOffset) * 0.1) * 3;
+        
+        // Shadow
+        p.fill(0, 0, 0, 100);
+        p.noStroke();
+        p.ellipse(0, 10, 14, 6);
+        
+        if (this.type === 'BAT') {
+            p.fill(this.color);
+            p.translate(0, bob - 5); // Fly higher
+            p.beginShape();
+            p.vertex(0, 0);
+            p.vertex(-10, -10);
+            p.vertex(-5, 5);
+            p.vertex(0, 0);
+            p.vertex(5, 5);
+            p.vertex(10, -10);
+            p.endShape(p.CLOSE);
+        } else if (this.type === 'SKELETON') {
+            p.fill(220);
+            p.translate(0, bob * 0.2);
+            p.rectMode(p.CENTER);
+            p.rect(0, 0, 14, 16);
+            p.fill(0);
+            p.rect(-3, -4, 3, 3);
+            p.rect(3, -4, 3, 3);
+        } else if (this.type === 'MAGE') {
+            p.fill(this.color);
+            p.translate(0, bob * 0.5);
+            p.triangle(0, -10, -8, 10, 8, 10);
+            p.fill(255, 200, 0); // Hat brim
+            p.rectMode(p.CENTER);
+            p.rect(0, -5, 18, 2);
+        }
+        
+        p.pop();
+    }
+}
+
+export class Projectile extends Entity {
+    constructor(x, y, angle, isPlayerOwned) {
+        super(x, y, 8, 8);
+        this.speed = 6;
+        this.vx = Math.cos(angle) * this.speed;
+        this.vy = Math.sin(angle) * this.speed;
+        this.isPlayerOwned = isPlayerOwned;
+        this.life = 100;
+    }
+
+    update(p) {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life--;
+        
+        if (this.life <= 0) this.markedForDeletion = true;
+        
+        // Wall collision
+        const c = Math.floor((this.x + 4) / TILE_SIZE);
+        const r = Math.floor((this.y + 4) / TILE_SIZE);
+        const tile = gameState.world[r] && gameState.world[r][c];
+        if (tile && tile.solid) {
+            this.markedForDeletion = true;
+            createSparkle(this.x, this.y);
+            return;
+        }
+
+        // Entity collision
+        if (this.isPlayerOwned) {
+            // Player shooting logic (if implemented)
+        } else {
+            // Enemy shooting player
+            if (checkRectOverlap(this.x, this.y, this.width, this.height, gameState.player.x, gameState.player.y, gameState.player.width, gameState.player.height)) {
+                gameState.player.takeDamage(15);
+                this.markedForDeletion = true;
+            }
+        }
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x + 4, this.y + 4);
+        p.rotate(Math.atan2(this.vy, this.vx));
+        p.fill(this.isPlayerOwned ? [0, 255, 255] : [255, 100, 0]);
+        p.noStroke();
+        p.ellipse(0, 0, 10, 6);
+        p.pop();
+    }
+}
+
+export class Pickup extends Entity {
+    constructor(x, y, type) {
+        super(x, y, 16, 16);
+        this.type = type; // 'GOLD', 'POTION', 'KEY'
+        this.bobOffset = Math.random() * 100;
+    }
+
+    update(p) {
+        // Magnetic effect if player is close
+        if (dist(this.x, this.y, gameState.player.x, gameState.player.y) < 60) {
+            this.x += (gameState.player.x - this.x) * 0.05;
+            this.y += (gameState.player.y - this.y) * 0.05;
+        }
+
+        if (checkRectOverlap(this.x, this.y, this.width, this.height, gameState.player.x, gameState.player.y, gameState.player.width, gameState.player.height)) {
+            this.collect();
+        }
+    }
+
+    collect() {
+        this.markedForDeletion = true;
+        createSparkle(this.x + 8, this.y + 8);
+        
+        if (this.type === 'GOLD') {
+            gameState.score += 10;
+        } else if (this.type === 'POTION') {
+            gameState.player.health = Math.min(gameState.player.maxHealth, gameState.player.health + 25);
+        } else if (this.type === 'KEY') {
+            gameState.keys++;
+            gameState.score += 100;
+        }
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x + 8, this.y + 8 + Math.sin((gameState.frameCount + this.bobOffset) * 0.1) * 3);
+        
+        if (this.type === 'GOLD') {
+            p.fill(255, 215, 0);
+            p.circle(0, 0, 10);
+            p.fill(255, 255, 0);
+            p.circle(-2, -2, 3);
+        } else if (this.type === 'POTION') {
+            p.fill(255, 0, 0);
+            p.rectMode(p.CENTER);
+            p.rect(0, 2, 8, 10, 2);
+            p.fill(200);
+            p.rect(0, -4, 4, 3);
+        } else if (this.type === 'KEY') {
+            p.fill(192, 192, 192);
+            p.rotate(p.PI / 4);
+            p.rectMode(p.CENTER);
+            p.rect(0, 0, 4, 12);
+            p.circle(0, -6, 8);
+        }
+        
+        p.pop();
+    }
+}
+
+export class Interactable extends Entity {
+    constructor(x, y, type) {
+        super(x, y, TILE_SIZE, TILE_SIZE);
+        this.type = type; // 'CHEST', 'DOOR', 'EXIT'
+        this.opened = false;
+        this.locked = (type === 'DOOR');
+    }
+
+    update(p) {
+        if (this.opened) return;
+
+        // Check interaction
+        const d = dist(this.x + this.width/2, this.y + this.height/2, gameState.player.x + 10, gameState.player.y + 10);
+        if (d < 40 && p.keyIsDown(32)) { // SPACE
+            this.interact();
+        }
+        
+        // Auto interact with exit
+        if (this.type === 'EXIT' && d < 20) {
+            gameState.gamePhase = "GAME_OVER_WIN";
+        }
+    }
+
+    interact() {
+        if (this.opened) return;
+        
+        if (this.type === 'DOOR') {
+            if (gameState.keys > 0) {
+                gameState.keys--;
+                this.opened = true;
+                this.width = 0; // Remove collision
+                this.height = 0;
+                createSparkle(this.x + TILE_SIZE/2, this.y + TILE_SIZE/2);
+            }
+        } else if (this.type === 'CHEST') {
+            this.opened = true;
+            createSparkle(this.x + TILE_SIZE/2, this.y + TILE_SIZE/2);
+            gameState.score += 500;
+            // Spawn loot
+            for(let i=0; i<5; i++) {
+                const loot = new Pickup(this.x + TILE_SIZE/2, this.y + TILE_SIZE/2, 'GOLD');
+                loot.vx = Math.random() * 4 - 2;
+                loot.vy = Math.random() * 4 - 2;
+                gameState.pickups.push(loot);
+            }
+        }
+    }
+
+    render(p) {
+        if (this.opened && this.type !== 'EXIT') {
+            // Render opened state
+            p.fill(100);
+            p.rect(this.x, this.y, this.width || TILE_SIZE, this.height || TILE_SIZE);
+            return;
+        }
+
+        if (this.type === 'DOOR') {
+            p.fill(139, 69, 19);
+            p.rect(this.x, this.y, TILE_SIZE, TILE_SIZE);
+            p.fill(0);
+            p.rect(this.x + 5, this.y + 5, TILE_SIZE - 10, TILE_SIZE - 10);
+            // Lock
+            p.fill(255, 215, 0);
+            p.circle(this.x + TILE_SIZE/2, this.y + TILE_SIZE/2, 8);
+        } else if (this.type === 'CHEST') {
+            p.fill(160, 82, 45);
+            p.rect(this.x + 5, this.y + 10, TILE_SIZE - 10, TILE_SIZE - 20);
+            p.fill(255, 215, 0);
+            p.rect(this.x + TILE_SIZE/2 - 2, this.y + 10, 4, 10);
+        } else if (this.type === 'EXIT') {
+            p.fill(0);
+            p.rect(this.x, this.y, TILE_SIZE, TILE_SIZE);
+            // Stairs pattern
+            p.stroke(50);
+            for(let i=0; i<4; i++) {
+                p.line(this.x, this.y + i*10, this.x + TILE_SIZE, this.y + i*10);
+            }
+            p.noStroke();
+        }
+    }
+}
+</file>
+
+<file name="utils.js">
+/**
+ * Utility functions for math, randomization, and geometry.
+ */
+
+import { CANVAS_WIDTH, CANVAS_HEIGHT, TILE_SIZE, gameState } from './globals.js';
+
+/**
+ * Calculates distance between two points.
+ */
+export function dist(x1, y1, x2, y2) {
+    return Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
+}
+
+/**
+ * Linearly interpolates between two values.
+ */
+export function lerp(start, end, amt) {
+    return (1 - amt) * start + amt * end;
+}
+
+/**
+ * Constrains a value between min and max.
+ */
+export function constrain(n, low, high) {
+    return Math.max(Math.min(n, high), low);
+}
+
+/**
+ * Checks if a point is within a rectangle.
+ */
+export function pointInRect(px, py, rx, ry, rw, rh) {
+    return px >= rx && px <= rx + rw && py >= ry && py <= ry + rh;
+}
+
+/**
+ * Checks if a rectangular entity is on screen.
+ * Used for culling rendering.
+ */
+export function isOnScreen(entity, margin = 100) {
+    const screenX = entity.x - gameState.camera.x;
+    const screenY = entity.y - gameState.camera.y;
+    
+    return (
+        screenX + entity.width + margin > 0 &&
+        screenX - margin < CANVAS_WIDTH &&
+        screenY + entity.height + margin > 0 &&
+        screenY - margin < CANVAS_HEIGHT
+    );
+}
+
+/**
+ * Generates a random integer between min and max (inclusive).
+ * Note: Should use p5's random in the main loop for seed consistency, 
+ * but this is a helper for non-p5 contexts if needed.
+ */
+export function randomInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+/**
+ * Screen shake effect helper.
+ * Adds offset to camera based on trauma.
+ */
+export class ScreenShake {
+    constructor() {
+        this.trauma = 0;
+        this.decay = 0.9;
+        this.maxOffset = 20;
+    }
+
+    add(amount) {
+        this.trauma = Math.min(this.trauma + amount, 1.0);
+    }
+
+    update() {
+        if (this.trauma > 0) {
+            this.trauma *= this.decay;
+            if (this.trauma < 0.01) this.trauma = 0;
+        }
+    }
+
+    getOffset(p) {
+        if (this.trauma <= 0) return { x: 0, y: 0 };
+        
+        const shake = this.trauma * this.trauma;
+        const offsetX = this.maxOffset * shake * (p.random() * 2 - 1);
+        const offsetY = this.maxOffset * shake * (p.random() * 2 - 1);
+        
+        return { x: offsetX, y: offsetY };
+    }
+}
+
+export const screenShake = new ScreenShake();
+</file>
+
+<file name="physics.js">
+/**
+ * Physics engine handling collision detection and spatial queries.
+ * Wraps p5.collide2d for convenience and specific game logic.
+ */
+
+import { gameState, TILE_SIZE } from './globals.js';
+
+/**
+ * Checks collision between a dynamic entity and the static world tiles.
+ * Resolves collision by modifying entity position.
+ * @param {Entity} entity 
+ */
+export function handleWorldCollision(entity) {
+    // Calculate tile range to check based on entity bounding box
+    // Adding a buffer to check surrounding tiles
+    const startCol = Math.floor((entity.x - entity.width) / TILE_SIZE);
+    const endCol = Math.floor((entity.x + entity.width * 2) / TILE_SIZE);
+    const startRow = Math.floor((entity.y - entity.height) / TILE_SIZE);
+    const endRow = Math.floor((entity.y + entity.height * 2) / TILE_SIZE);
+
+    // X Axis Collision
+    let nextX = entity.x + entity.vx;
+    let nextY = entity.y; // Keep Y constant to test X movement
+
+    for (let c = startCol; c <= endCol; c++) {
+        for (let r = startRow; r <= endRow; r++) {
+            const tile = getTileAt(c, r);
+            if (tile && tile.solid) {
+                // Check if moving to nextX would collide
+                if (checkRectOverlap(
+                    nextX, entity.y, entity.width, entity.height,
+                    c * TILE_SIZE, r * TILE_SIZE, TILE_SIZE, TILE_SIZE
+                )) {
+                    // Collision detected on X
+                    if (entity.vx > 0) { // Moving Right
+                        entity.x = c * TILE_SIZE - entity.width - 0.1;
+                    } else if (entity.vx < 0) { // Moving Left
+                        entity.x = (c + 1) * TILE_SIZE + 0.1;
+                    }
+                    entity.vx = 0;
+                    nextX = entity.x; // Update nextX for subsequent checks if needed
+                }
+            }
+        }
+    }
+
+    // Apply X position
+    entity.x += entity.vx;
+
+    // Y Axis Collision
+    nextX = entity.x; // Use resolved X
+    nextY = entity.y + entity.vy;
+
+    for (let c = startCol; c <= endCol; c++) {
+        for (let r = startRow; r <= endRow; r++) {
+            const tile = getTileAt(c, r);
+            if (tile && tile.solid) {
+                if (checkRectOverlap(
+                    entity.x, nextY, entity.width, entity.height,
+                    c * TILE_SIZE, r * TILE_SIZE, TILE_SIZE, TILE_SIZE
+                )) {
+                    // Collision detected on Y
+                    if (entity.vy > 0) { // Moving Down
+                        entity.y = r * TILE_SIZE - entity.height - 0.1;
+                    } else if (entity.vy < 0) { // Moving Up
+                        entity.y = (r + 1) * TILE_SIZE + 0.1;
+                    }
+                    entity.vy = 0;
+                }
+            }
+        }
+    }
+    
+    // Apply Y position
+    entity.y += entity.vy;
+}
+
+/**
+ * Checks overlap between two AABBs (Axis Aligned Bounding Boxes).
+ */
+export function checkRectOverlap(x1, y1, w1, h1, x2, y2, w2, h2) {
+    return (
+        x1 < x2 + w2 &&
+        x1 + w1 > x2 &&
+        y1 < y2 + h2 &&
+        y1 + h1 > y2
+    );
+}
+
+/**
+ * Retrieves tile data from the global map.
+ */
+export function getTileAt(col, row) {
+    if (row >= 0 && row < gameState.mapHeight && col >= 0 && col < gameState.mapWidth) {
+        return gameState.world[row][col];
+    }
+    return null; // Out of bounds
+}
+
+/**
+ * Checks collision between an entity (AABB) and a circle (Projectile/Attack).
+ */
+export function checkEntityHit(entity, circleX, circleY, radius) {
+    return collideRectCircle(
+        entity.x, entity.y, entity.width, entity.height,
+        circleX, circleY, radius * 2
+    );
+}
+
+/**
+ * Internal implementation of collideRectCircle to avoid external dependency issues.
+ * Based on p5.collide2d logic.
+ */
+function collideRectCircle(rx, ry, rw, rh, cx, cy, diameter) {
+    let testX = cx;
+    let testY = cy;
+
+    // which edge is closest?
+    if (cx < rx)         testX = rx;      // left edge
+    else if (cx > rx + rw) testX = rx + rw;   // right edge
+
+    if (cy < ry)         testY = ry;      // top edge
+    else if (cy > ry + rh) testY = ry + rh;   // bottom edge
+
+    // get distance from closest edges
+    const distX = cx - testX;
+    const distY = cy - testY;
+    const distance = Math.sqrt((distX * distX) + (distY * distY));
+
+    return distance <= diameter / 2;
+}
+
+/**
+ * Simple raycast to check line of sight between two entities.
+ * Checks against walls.
+ */
+export function hasLineOfSight(entity1, entity2) {
+    // Sample points along the line
+    const steps = 10;
+    const dx = entity2.x - entity1.x;
+    const dy = entity2.y - entity1.y;
+    
+    for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const cx = entity1.x + dx * t + entity1.width/2;
+        const cy = entity1.y + dy * t + entity1.height/2;
+        
+        const col = Math.floor(cx / TILE_SIZE);
+        const row = Math.floor(cy / TILE_SIZE);
+        
+        const tile = getTileAt(col, row);
+        if (tile && tile.solid) {
+            return false;
+        }
+    }
+    return true;
+}
+</file>
+
+<file name="particles.js">
+/**
+ * Particle system for visual effects.
+ */
+
+import { gameState } from './globals.js';
+
+class Particle {
+    constructor(x, y, vx, vy, color, life, size) {
+        this.x = x;
+        this.y = y;
+        this.vx = vx;
+        this.vy = vy;
+        this.color = color;
+        this.life = life;
+        this.maxLife = life;
+        this.size = size;
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life--;
+        this.vy += 0.05; // Light gravity
+    }
+
+    render(p) {
+        const alpha = (this.life / this.maxLife) * 255;
+        p.noStroke();
+        p.fill(this.color[0], this.color[1], this.color[2], alpha);
+        p.circle(this.x, this.y, this.size);
+    }
+}
+
+export function updateParticles(p) {
+    for (let i = gameState.particles.length - 1; i >= 0; i--) {
+        const part = gameState.particles[i];
+        part.update();
+        if (part.life <= 0) {
+            gameState.particles.splice(i, 1);
+        } else {
+            part.render(p);
+        }
+    }
+}
+
+export function createBloodEffect(x, y, amount = 10, color = [180, 0, 0]) {
+    for (let i = 0; i < amount; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = Math.random() * 3;
+        gameState.particles.push(new Particle(
+            x, y,
+            Math.cos(angle) * speed,
+            Math.sin(angle) * speed,
+            color,
+            randomInt(10, 30),
+            randomInt(2, 5)
+        ));
+    }
+}
+
+export function createDustEffect(x, y, color = [200, 200, 200]) {
+    gameState.particles.push(new Particle(
+        x, y,
+        (Math.random() - 0.5) * 1,
+        (Math.random() - 0.5) * 1,
+        color,
+        randomInt(10, 20),
+        randomInt(3, 6)
+    ));
+}
+
+export function createSparkle(x, y) {
+    for (let i = 0; i < 5; i++) {
+        gameState.particles.push(new Particle(
+            x, y,
+            (Math.random() - 0.5) * 2,
+            (Math.random() - 0.5) * 2,
+            [255, 255, 0],
+            20,
+            2
+        ));
+    }
+}
+
+function randomInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

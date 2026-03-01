@@ -1,0 +1,1269 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+I think its because my pc is a macbook pro so the refreshrate of my machine is messing with the refreshrate of the game, and the jumping mechanic of the game is not floaty enough, can you fix all of this
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Crumble Chaos</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      #game-container {
+        width: 600px;
+        height: 400px;
+        position: relative;
+        overflow: hidden;
+        border: 2px solid #333;
+        box-shadow: 0 0 20px rgba(0,0,0,0.5);
+      }
+      canvas { display: block; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; font-family: sans-serif; transition: background 0.2s; }
+      .control-button:hover { background: #555; }
+      .control-button:active { background: #007bff; }
+      h1 { color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }
+      p { color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 10px auto; line-height: 1.4; font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle">Crumble Chaos</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST: Movement</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST: Jump</button>
+        <button id="test_3_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_3')">TEST: Crumble</button>
+        <button id="test_5_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_5')">TEST: Death</button>
+      </div>
+      <p>Control a blue slime ball through a crumbling world. Platforms fall when you touch them!</p>
+      <p>ARROWS/WASD: Move | SPACE: Jump | Z/SHIFT: Grapple Hook</p>
+    </div>
+    
+    <div id="game-container"></div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/seedrandom/3.0.5/seedrandom.min.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// Global Game Configuration
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const FOV = 60;
+export const ASPECT_RATIO = CANVAS_WIDTH / CANVAS_HEIGHT;
+export const NEAR_PLANE = 0.1;
+export const FAR_PLANE = 1000;
+
+// Physics Constants
+export const GRAVITY = new THREE.Vector3(0, -0.015, 0); // Tuned for floaty feel (was -0.025)
+export const TERMINAL_VELOCITY = -1.0;
+export const AIR_RESISTANCE = 0.99;
+export const GROUND_FRICTION = 0.92;
+export const BOUNCE_RESTITUTION = 0.4;
+export const PLAYER_RADIUS = 0.5;
+export const PLAYER_MASS = 1.0;
+export const GRAPPLE_RANGE = 15.0;
+export const GRAPPLE_STRENGTH = 0.04;
+
+// Game State Management
+export const gameState = {
+    // Phase control
+    gamePhase: "START", // "START", "PLAYING", "PAUSED", "GAME_OVER_WIN", "GAME_OVER_LOSE"
+    controlMode: "HUMAN", // "HUMAN" or "TEST_X"
+    
+    // Core Three.js components
+    scene: null,
+    camera: null,
+    renderer: null,
+    gameContainer: null,
+    
+    // Lighting
+    lights: [],
+    ambientLight: null,
+    directionalLight: null,
+    
+    // Entities and Physics
+    player: null,
+    entities: [],      // All dynamic objects
+    platforms: [],     // Static/Crumbling platforms
+    grapplePoints: [], // Points to swing from
+    particles: [],     // Visual effects
+    collisionPairs: [],
+    
+    // Camera Logic
+    cameraTarget: null,
+    cameraOffset: new THREE.Vector3(0, 4, 8),
+    currentCameraPosition: new THREE.Vector3(0, 5, 10),
+    cameraShake: 0,
+    
+    // Game Progression
+    score: 0,
+    levelLength: 200, // Z distance to finish
+    frameCount: 0,
+    deltaTime: 0,
+    lastFrameTime: 0,
+    
+    // Debug/Logging
+    logs: {
+        game_info: [],
+        player_info: [],
+        inputs: []
+    }
+};
+
+// Global accessor as required
+window.getGameState = () => gameState;
+
+// Initialization helper for logs
+export function initLogs() {
+    gameState.logs = {
+        game_info: [],
+        player_info: [],
+        inputs: []
+    };
+    window.logs = gameState.logs; // Expose globally as required
+}
+</file>
+
+<file name="game.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, initLogs, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { updatePhysics } from './physics.js';
+import { Player } from './entities.js';
+import { setupCamera, updateCamera } from './camera.js';
+import { generateLevel } from './level_gen.js';
+import { setupUI, renderUI } from './ui.js';
+
+// Input State
+const keys = {
+    ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false,
+    w: false, s: false, a: false, d: false,
+    " ": false, z: false, Shift: false
+};
+
+function initGame() {
+    // 1. Setup Container
+    const container = document.getElementById('game-container') || document.body;
+    gameState.gameContainer = container;
+
+    // 2. Setup Three.js
+    gameState.scene = new THREE.Scene();
+    gameState.scene.background = new THREE.Color(0x87CEEB); // Sky Blue
+    gameState.scene.fog = new THREE.Fog(0x87CEEB, 20, 100);
+
+    gameState.renderer = new THREE.WebGLRenderer({ antialias: true });
+    gameState.renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+    gameState.renderer.shadowMap.enabled = true;
+    container.appendChild(gameState.renderer.domElement);
+
+    setupCamera();
+    setupLighting();
+    setupUI();
+    initLogs();
+
+    // 3. Initialize Random
+    // Using hardcoded seed for reproducibility as requested
+    Math.seedrandom('42');
+
+    // 4. Initial Game State
+    gameState.gamePhase = "START";
+    gameState.gameInstance = { reset: resetGame }; // Expose instance
+    window.gameInstance = gameState.gameInstance;
+
+    // Start Loop
+    requestAnimationFrame(gameLoop);
+}
+
+function setupLighting() {
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    gameState.scene.add(ambientLight);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(50, 100, 50);
+    dirLight.castShadow = true;
+    dirLight.shadow.camera.left = -50;
+    dirLight.shadow.camera.right = 50;
+    dirLight.shadow.camera.top = 50;
+    dirLight.shadow.camera.bottom = -50;
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
+    gameState.scene.add(dirLight);
+}
+
+function startGame() {
+    resetGame();
+    gameState.gamePhase = "PLAYING";
+}
+
+function resetGame() {
+    // Clear entities
+    gameState.entities.forEach(e => {
+        if (e.mesh) gameState.scene.remove(e.mesh);
+    });
+    gameState.entities = [];
+    
+    // Clear platforms and points
+    gameState.platforms.forEach(p => gameState.scene.remove(p.mesh));
+    gameState.grapplePoints.forEach(p => gameState.scene.remove(p.mesh));
+    gameState.platforms = [];
+    gameState.grapplePoints = [];
+
+    // Generate Level
+    generateLevel();
+
+    // Create Player
+    gameState.player = new Player(0, 3, 0);
+    
+    gameState.frameCount = 0;
+}
+
+// Input Handling
+window.addEventListener('keydown', (e) => {
+    // Map keys
+    if (keys.hasOwnProperty(e.key) || keys.hasOwnProperty(e.code)) {
+        keys[e.key] = true;
+    }
+    
+    // Log input
+    gameState.logs.inputs.push({
+        type: 'keydown',
+        key: e.key,
+        frame: gameState.frameCount,
+        time: Date.now()
+    });
+
+    // Phase transitions
+    if (gameState.gamePhase === "START" && e.code === "Enter") {
+        startGame();
+    } else if (gameState.gamePhase === "PLAYING" && e.code === "Escape") {
+        gameState.gamePhase = "PAUSED";
+    } else if (gameState.gamePhase === "PAUSED" && e.code === "Escape") {
+        gameState.gamePhase = "PLAYING";
+    } else if ((gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") && (e.key === "r" || e.key === "R")) {
+        gameState.gamePhase = "START"; // Go back to start screen
+        resetGame(); // Reset positions but wait for Enter to play
+    }
+    
+    // Mechanics triggers (Jump/Grapple)
+    if (gameState.gamePhase === "PLAYING" && gameState.player) {
+        if (e.key === " " && !e.repeat) {
+            gameState.player.jump();
+        }
+        if ((e.key === "z" || e.key === "Z" || e.key === "Shift") && !e.repeat) {
+            gameState.player.startGrapple();
+        }
+    }
+});
+
+window.addEventListener('keyup', (e) => {
+    if (keys.hasOwnProperty(e.key) || keys.hasOwnProperty(e.code)) {
+        keys[e.key] = false;
+    }
+    
+    if (gameState.gamePhase === "PLAYING" && gameState.player) {
+        if (e.key === "z" || e.key === "Z" || e.key === "Shift") {
+            gameState.player.stopGrapple();
+        }
+    }
+});
+
+function handlePlayerInput() {
+    const p = gameState.player;
+    if (!p) return;
+
+    // Movement forces
+    const moveForce = 0.02;
+    const forward = new THREE.Vector3(0, 0, -1);
+    const right = new THREE.Vector3(1, 0, 0);
+
+    // Apply force relative to camera/world
+    if (keys["ArrowUp"] || keys["w"] || keys["W"]) {
+        p.velocity.add(forward.clone().multiplyScalar(moveForce));
+    }
+    if (keys["ArrowDown"] || keys["s"] || keys["S"]) {
+        p.velocity.add(forward.clone().multiplyScalar(-moveForce));
+    }
+    if (keys["ArrowLeft"] || keys["a"] || keys["A"]) {
+        p.velocity.add(right.clone().multiplyScalar(-moveForce));
+    }
+    if (keys["ArrowRight"] || keys["d"] || keys["D"]) {
+        p.velocity.add(right.clone().multiplyScalar(moveForce));
+    }
+    
+    // Apply swing force if grappling
+    if (p.isGrappling) {
+        if (keys["ArrowUp"] || keys["w"]) p.velocity.add(forward.clone().multiplyScalar(moveForce * 1.5));
+    }
+}
+
+// Automated Testing Logic
+function runTests() {
+    if (!gameState.player && gameState.gamePhase === "PLAYING") return;
+    const p = gameState.player;
+
+    switch (gameState.controlMode) {
+        case "TEST_1": // Rolling test
+            if (gameState.frameCount < 10) startGame();
+            if (gameState.frameCount >= 10 && gameState.frameCount < 70) {
+                p.velocity.add(new THREE.Vector3(0, 0, -0.05)); // Simulate holding W
+            }
+            if (gameState.frameCount === 70) {
+                console.log("TEST_1 Z pos:", p.position.z);
+            }
+            break;
+        case "TEST_2": // Jump test
+            if (gameState.frameCount < 10) startGame();
+            if (gameState.frameCount === 20) p.jump();
+            break;
+        case "TEST_3": // Crumble Test
+            if (gameState.frameCount < 10) {
+                startGame();
+                // Move platform under player to be CRUMBLE type
+                const plat = gameState.platforms.find(pl => pl.position.z === 0); // Start plat
+                if (plat) plat.type = 'CRUMBLE';
+            }
+            break;
+        case "TEST_5": // Death
+            if (gameState.frameCount === 10) startGame();
+            if (gameState.frameCount === 20) p.position.y = -60;
+            break;
+        case "TEST_6": // Win
+            if (gameState.frameCount === 10) startGame();
+            if (gameState.frameCount === 20) p.position.z = -gameState.levelLength - 10;
+            break;
+    }
+}
+
+let lastTime = 0;
+function gameLoop(currentTime) {
+    const deltaTime = Math.min((currentTime - lastTime) / 1000, 0.1); // Cap dt
+    lastTime = currentTime;
+    
+    gameState.deltaTime = deltaTime;
+    gameState.frameCount++;
+
+    if (gameState.gamePhase === "PLAYING") {
+        // Run logic
+        if (gameState.controlMode === "HUMAN") {
+            handlePlayerInput();
+        } else {
+            runTests();
+        }
+
+        // Sub-step physics for stability
+        const steps = 4;
+        const dt = deltaTime / steps;
+        for(let i=0; i<steps; i++) {
+            updatePhysics(dt);
+        }
+        
+        // Update entities visuals/logic
+        gameState.entities.forEach(e => e.update(deltaTime));
+        gameState.grapplePoints.forEach(p => p.update(deltaTime));
+        
+        updateCamera();
+        
+        // Log Player Info
+        if (gameState.player) {
+            gameState.logs.player_info.push({
+                x: gameState.player.position.x,
+                y: gameState.player.position.y,
+                z: gameState.player.position.z,
+                vx: gameState.player.velocity.x,
+                vy: gameState.player.velocity.y,
+                vz: gameState.player.velocity.z,
+                state: gameState.player.onGround ? 'ground' : 'air',
+                frame: gameState.frameCount
+            });
+        }
+    }
+    
+    // Log Game Info
+    gameState.logs.game_info.push({
+        phase: gameState.gamePhase,
+        frame: gameState.frameCount,
+        fps: 1/deltaTime
+    });
+
+    gameState.renderer.render(gameState.scene, gameState.camera);
+    renderUI();
+    
+    requestAnimationFrame(gameLoop);
+}
+
+// Global functions for test buttons
+window.setControlMode = (mode) => {
+    gameState.controlMode = mode;
+    console.log("Control Mode Set:", mode);
+    // Reset to ensure clean test state
+    gameState.gamePhase = "START";
+    resetGame();
+};
+
+// Start
+initGame();
+</file>
+
+<file name="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+let uiContext = null;
+
+export function setupUI() {
+    const uiCanvas = document.createElement('canvas');
+    uiCanvas.width = CANVAS_WIDTH;
+    uiCanvas.height = CANVAS_HEIGHT;
+    uiCanvas.style.position = 'absolute';
+    uiCanvas.style.top = '0';
+    uiCanvas.style.left = '0';
+    uiCanvas.style.pointerEvents = 'none';
+    uiCanvas.style.zIndex = '100';
+    
+    if (gameState.gameContainer) {
+        gameState.gameContainer.appendChild(uiCanvas);
+    } else {
+        document.body.appendChild(uiCanvas); // Fallback
+    }
+    
+    uiContext = uiCanvas.getContext('2d');
+}
+
+export function renderUI() {
+    if (!uiContext) return;
+    
+    // Clear
+    uiContext.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    // Common HUD
+    if (gameState.gamePhase === "PLAYING") {
+        renderHUD();
+    }
+    
+    // Screens
+    if (gameState.gamePhase === "START") {
+        renderStartScreen();
+    } else if (gameState.gamePhase === "PAUSED") {
+        renderPauseScreen();
+    } else if (gameState.gamePhase === "GAME_OVER_WIN") {
+        renderWinScreen();
+    } else if (gameState.gamePhase === "GAME_OVER_LOSE") {
+        renderLoseScreen();
+    }
+}
+
+function renderHUD() {
+    uiContext.fillStyle = 'white';
+    uiContext.font = 'bold 16px Arial';
+    uiContext.textAlign = 'left';
+    uiContext.fillText(`Distance: ${Math.abs(Math.round(gameState.player?.position.z || 0))}m`, 20, 30);
+    
+    // Grapple Indicator
+    if (gameState.player && gameState.player.isGrappling) {
+        uiContext.fillStyle = '#ff00ff';
+        uiContext.fillText("HOOKED!", 20, 55);
+    }
+    
+    // Controls Hint
+    uiContext.fillStyle = 'rgba(255, 255, 255, 0.5)';
+    uiContext.font = '12px Arial';
+    uiContext.fillText("WASD: Move | SPACE: Jump | Z: Grapple", 20, CANVAS_HEIGHT - 20);
+}
+
+function renderOverlay(color) {
+    uiContext.fillStyle = color;
+    uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+}
+
+function renderStartScreen() {
+    renderOverlay('rgba(0, 0, 0, 0.7)');
+    
+    uiContext.fillStyle = '#0088ff';
+    uiContext.font = 'bold 48px Arial';
+    uiContext.textAlign = 'center';
+    uiContext.fillText('CRUMBLE CHAOS', CANVAS_WIDTH/2, 150);
+    
+    uiContext.fillStyle = 'white';
+    uiContext.font = '20px Arial';
+    uiContext.fillText('Roll, Jump, and Swing to Survive!', CANVAS_WIDTH/2, 200);
+    
+    uiContext.font = 'bold 24px Arial';
+    uiContext.fillStyle = '#ffff00';
+    uiContext.fillText('PRESS ENTER TO START', CANVAS_WIDTH/2, 300);
+}
+
+function renderPauseScreen() {
+    renderOverlay('rgba(0, 0, 0, 0.5)');
+    
+    uiContext.fillStyle = 'white';
+    uiContext.font = 'bold 40px Arial';
+    uiContext.textAlign = 'center';
+    uiContext.fillText('PAUSED', CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    uiContext.font = '20px Arial';
+    uiContext.fillText('Press ESC to Resume', CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+}
+
+function renderWinScreen() {
+    renderOverlay('rgba(0, 50, 0, 0.8)');
+    
+    uiContext.fillStyle = '#00ff00';
+    uiContext.font = 'bold 48px Arial';
+    uiContext.textAlign = 'center';
+    uiContext.fillText('LEVEL CLEARED!', CANVAS_WIDTH/2, 150);
+    
+    uiContext.fillStyle = 'white';
+    uiContext.font = '20px Arial';
+    uiContext.fillText('You survived the crumbling chaos.', CANVAS_WIDTH/2, 200);
+    
+    uiContext.font = 'bold 24px Arial';
+    uiContext.fillText('PRESS R TO PLAY AGAIN', CANVAS_WIDTH/2, 300);
+}
+
+function renderLoseScreen() {
+    renderOverlay('rgba(50, 0, 0, 0.8)');
+    
+    uiContext.fillStyle = '#ff0000';
+    uiContext.font = 'bold 48px Arial';
+    uiContext.textAlign = 'center';
+    uiContext.fillText('CRUMBLED!', CANVAS_WIDTH/2, 150);
+    
+    uiContext.fillStyle = 'white';
+    uiContext.font = '20px Arial';
+    uiContext.fillText('The void claimed you.', CANVAS_WIDTH/2, 200);
+    
+    uiContext.font = 'bold 24px Arial';
+    uiContext.fillText('PRESS R TO RESTART', CANVAS_WIDTH/2, 300);
+}
+</file>
+
+<file name="entities.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, PLAYER_RADIUS, GRAVITY } from './globals.js';
+import { randomColorVariant } from './utils.js';
+import { applyGrapplePhysics } from './physics.js';
+
+/**
+ * Base Entity Class
+ */
+class Entity {
+    constructor(x, y, z) {
+        this.position = new THREE.Vector3(x, y, z);
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        this.mesh = null;
+        this.isStatic = false;
+        this.gravityScale = 1.0;
+        
+        // Add to global lists
+        gameState.entities.push(this);
+    }
+    
+    update(deltaTime) {
+        // Base update - overridden by children
+    }
+}
+
+/**
+ * Player Class - The Blue Slime Ball
+ */
+export class Player extends Entity {
+    constructor(x, y, z) {
+        super(x, y, z);
+        this.radius = PLAYER_RADIUS;
+        this.isPlayer = true;
+        this.onGround = false;
+        this.health = 100;
+        
+        // Grapple State
+        this.grappleTarget = null;
+        this.isGrappling = false;
+        this.grappleLine = null; // Visual line
+        
+        // Create Mesh
+        // Slime/Ball appearance
+        const geometry = new THREE.SphereGeometry(this.radius, 32, 32);
+        const material = new THREE.MeshStandardMaterial({ 
+            color: 0x0088ff, 
+            roughness: 0.2,
+            metalness: 0.5,
+            emissive: 0x001133
+        });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.castShadow = true;
+        this.mesh.receiveShadow = true;
+        this.mesh.position.copy(this.position);
+        
+        gameState.scene.add(this.mesh);
+        
+        // Create Grapple Visual
+        const lineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+        const lineMat = new THREE.LineBasicMaterial({ color: 0xff00ff, linewidth: 2 });
+        this.grappleLine = new THREE.Line(lineGeo, lineMat);
+        this.grappleLine.visible = false;
+        this.grappleLine.frustumCulled = false; // Always render if visible
+        gameState.scene.add(this.grappleLine);
+    }
+    
+    update(deltaTime) {
+        // Squash and Stretch effect based on velocity
+        const speed = this.velocity.length();
+        if (speed > 0.1) {
+            // Stretch in direction of movement
+            // Made more "squishy" by increasing multiplier and max stretch
+            const stretch = Math.min(1.0 + speed * 1.0, 1.6);
+            const squash = 1.0 / Math.sqrt(stretch);
+            
+            // Reset scale then apply
+            // Using non-uniform scale (squash, squash, stretch) creates a wobbly effect when rolling
+            this.mesh.scale.set(squash, squash, stretch);
+            
+        } else {
+            this.mesh.scale.lerp(new THREE.Vector3(1, 1, 1), 0.1);
+        }
+
+        // Handle Grapple Physics
+        if (this.isGrappling && this.grappleTarget) {
+            applyGrapplePhysics(this, this.grappleTarget, deltaTime);
+            
+            // Update visual line
+            const positions = this.grappleLine.geometry.attributes.position.array;
+            positions[0] = this.position.x;
+            positions[1] = this.position.y;
+            positions[2] = this.position.z;
+            positions[3] = this.grappleTarget.position.x;
+            positions[4] = this.grappleTarget.position.y;
+            positions[5] = this.grappleTarget.position.z;
+            this.grappleLine.geometry.attributes.position.needsUpdate = true;
+            this.grappleLine.visible = true;
+        } else {
+            this.grappleLine.visible = false;
+        }
+
+        // Death Check
+        if (this.position.y < -30) {
+            this.die();
+        }
+        
+        // Win Check (End of level ~ Z = -200)
+        if (this.position.z < -gameState.levelLength) {
+             gameState.gamePhase = "GAME_OVER_WIN";
+        }
+    }
+    
+    startGrapple() {
+        // Find nearest grapple point in front of player
+        let closestDist = 25.0; // Max range
+        let bestPoint = null;
+        
+        // Filter points roughly in front of camera/player
+        // (Simplified to distance for this implementation)
+        gameState.grapplePoints.forEach(pt => {
+            const dist = this.position.distanceTo(pt.position);
+            if (dist < closestDist && pt.position.y > this.position.y) {
+                closestDist = dist;
+                bestPoint = pt;
+            }
+        });
+        
+        if (bestPoint) {
+            this.isGrappling = true;
+            this.grappleTarget = bestPoint;
+            // Initial pull
+            const dir = new THREE.Vector3().subVectors(bestPoint.position, this.position).normalize();
+            this.velocity.add(dir.multiplyScalar(0.2));
+        }
+    }
+    
+    stopGrapple() {
+        this.isGrappling = false;
+        this.grappleTarget = null;
+    }
+    
+    jump() {
+        if (this.onGround) {
+            this.velocity.y = 0.8; // Increased jump impulse (was 0.6)
+            this.onGround = false;
+            
+            // Create particle effect at feet
+            createExplosion(this.position.clone().sub(new THREE.Vector3(0, 0.5, 0)), 5, 0xaaaaaa);
+        }
+    }
+    
+    die() {
+        gameState.gamePhase = "GAME_OVER_LOSE";
+        this.velocity.set(0, 0, 0);
+    }
+}
+
+/**
+ * Platform - Can be static or crumbling
+ */
+export class Platform extends Entity {
+    constructor(x, y, z, width, depth, type = 'NORMAL') {
+        super(x, y, z);
+        this.width = width;
+        this.height = 1; // Standard thickness
+        this.depth = depth;
+        this.halfSize = new THREE.Vector3(width/2, 0.5, depth/2);
+        this.isStatic = true; // Starts static
+        this.type = type; // 'NORMAL', 'CRUMBLE', 'FALLING'
+        
+        // Crumble Logic
+        this.crumbleTimer = 0;
+        this.crumbleDuration = 0.8; // Time before falling
+        this.isShaking = false;
+        this.initialPos = this.position.clone();
+        
+        // Mesh
+        const geometry = new THREE.BoxGeometry(width, 1, depth);
+        let color = type === 'CRUMBLE' ? 0xffaa00 : 0x44cc44;
+        if (type === 'START') color = 0x888888;
+        if (type === 'FINISH') color = 0xff0000;
+        
+        const material = new THREE.MeshStandardMaterial({ 
+            color: color,
+            roughness: 0.8
+        });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.copy(this.position);
+        this.mesh.receiveShadow = true;
+        this.mesh.castShadow = true;
+        
+        gameState.scene.add(this.mesh);
+        gameState.platforms.push(this);
+    }
+    
+    triggerCrumble() {
+        if (this.type === 'CRUMBLE' && !this.isShaking && this.isStatic) {
+            this.isShaking = true;
+            // Flash color
+            this.mesh.material.emissive.setHex(0x550000);
+        }
+    }
+    
+    update(deltaTime) {
+        if (this.isShaking) {
+            this.crumbleTimer += deltaTime;
+            
+            // Shake effect
+            const shakeAmount = 0.1 * (this.crumbleTimer / this.crumbleDuration);
+            this.mesh.position.set(
+                this.initialPos.x + (Math.random() - 0.5) * shakeAmount,
+                this.initialPos.y + (Math.random() - 0.5) * shakeAmount,
+                this.initialPos.z + (Math.random() - 0.5) * shakeAmount
+            );
+            
+            // Start falling
+            if (this.crumbleTimer >= this.crumbleDuration) {
+                this.isShaking = false;
+                this.isStatic = false; // Enables physics gravity
+                this.type = 'FALLING';
+                this.mesh.material.color.setHex(0x555555); // Turn grey
+                this.mesh.material.emissive.setHex(0x000000);
+                
+                // Add initial angular velocity for chaotic fall
+                this.velocity.x = (Math.random() - 0.5) * 0.1;
+                this.velocity.z = (Math.random() - 0.5) * 0.1;
+                
+                // Spawn particles
+                createExplosion(this.position, 8, 0xffaa00);
+            }
+        }
+        
+        // Update physics if falling
+        if (!this.isStatic) {
+            // Handled by global physics loop for position/velocity
+            // We just rotate slightly for effect
+            this.mesh.rotation.x += deltaTime * 0.5;
+            this.mesh.rotation.z += deltaTime * 0.3;
+        }
+    }
+}
+
+/**
+ * Grapple Point - Static floating orb
+ */
+export class GrapplePoint extends Entity {
+    constructor(x, y, z) {
+        super(x, y, z);
+        this.isStatic = true;
+        
+        const geometry = new THREE.IcosahedronGeometry(0.5);
+        const material = new THREE.MeshStandardMaterial({ 
+            color: 0xff00ff,
+            emissive: 0xff00ff,
+            emissiveIntensity: 0.5
+        });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.copy(this.position);
+        
+        gameState.scene.add(this.mesh);
+        gameState.grapplePoints.push(this);
+        
+        // Animation offset
+        this.timeOffset = Math.random() * 100;
+    }
+    
+    update(deltaTime) {
+        // Floating animation
+        this.mesh.position.y = this.position.y + Math.sin(gameState.frameCount * 0.05 + this.timeOffset) * 0.2;
+        this.mesh.rotation.y += 0.02;
+        this.mesh.rotation.z += 0.01;
+    }
+}
+
+/**
+ * Particle System Helper
+ */
+export class Particle extends Entity {
+    constructor(pos, color) {
+        super(pos.x, pos.y, pos.z);
+        this.lifetime = 1.0;
+        this.age = 0;
+        
+        const geometry = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+        const material = new THREE.MeshBasicMaterial({ color: color });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.copy(this.position);
+        
+        // Random velocity
+        this.velocity.set(
+            (Math.random() - 0.5) * 0.3,
+            (Math.random() - 0.5) * 0.3 + 0.2,
+            (Math.random() - 0.5) * 0.3
+        );
+        
+        gameState.scene.add(this.mesh);
+        gameState.entities.push(this);
+    }
+    
+    update(deltaTime) {
+        this.age += deltaTime;
+        if (this.age > this.lifetime) {
+            // Destroy
+            gameState.scene.remove(this.mesh);
+            const idx = gameState.entities.indexOf(this);
+            if (idx > -1) gameState.entities.splice(idx, 1);
+            return;
+        }
+        
+        // Shrink
+        const scale = 1 - (this.age / this.lifetime);
+        this.mesh.scale.set(scale, scale, scale);
+    }
+}
+
+export function createExplosion(pos, count, color) {
+    for (let i = 0; i < count; i++) {
+        new Particle(pos, color);
+    }
+}
+</file>
+
+<file name="utils.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+
+/**
+ * Math helper to clamp values
+ */
+export function clamp(value, min, max) {
+    return Math.min(Math.max(value, min), max);
+}
+
+/**
+ * Linear interpolation
+ */
+export function lerp(start, end, t) {
+    return start * (1 - t) + end * t;
+}
+
+/**
+ * Check collision between a sphere (player) and an Axis-Aligned Bounding Box (AABB)
+ * @param {THREE.Vector3} spherePos 
+ * @param {number} radius 
+ * @param {Object} box - {min: Vector3, max: Vector3}
+ * @returns {boolean}
+ */
+export function sphereAABBIntersection(spherePos, radius, box) {
+    // Find the point on the AABB closest to the sphere center
+    const x = Math.max(box.min.x, Math.min(spherePos.x, box.max.x));
+    const y = Math.max(box.min.y, Math.min(spherePos.y, box.max.y));
+    const z = Math.max(box.min.z, Math.min(spherePos.z, box.max.z));
+
+    // Distance between sphere center and closest point
+    const distanceSq = 
+        (x - spherePos.x) * (x - spherePos.x) +
+        (y - spherePos.y) * (y - spherePos.y) +
+        (z - spherePos.z) * (z - spherePos.z);
+
+    return distanceSq < (radius * radius);
+}
+
+/**
+ * Get collision normal and penetration depth for response
+ */
+export function getSphereAABBCollisionInfo(spherePos, radius, box) {
+    const closestPoint = new THREE.Vector3(
+        Math.max(box.min.x, Math.min(spherePos.x, box.max.x)),
+        Math.max(box.min.y, Math.min(spherePos.y, box.max.y)),
+        Math.max(box.min.z, Math.min(spherePos.z, box.max.z))
+    );
+
+    const difference = new THREE.Vector3().subVectors(spherePos, closestPoint);
+    const distance = difference.length();
+    
+    // If center is inside box (distance is 0), push up by default
+    if (distance === 0) {
+        return {
+            normal: new THREE.Vector3(0, 1, 0),
+            depth: radius // Push out by radius
+        };
+    }
+
+    return {
+        normal: difference.normalize(),
+        depth: radius - distance
+    };
+}
+
+/**
+ * Generate a random color variant
+ */
+export function randomColorVariant(baseColorHex, variation = 0.1) {
+    const color = new THREE.Color(baseColorHex);
+    const offset = (Math.random() - 0.5) * variation;
+    color.offsetHSL(0, 0, offset);
+    return color;
+}
+
+/**
+ * Smooth step function
+ */
+export function smoothStep(edge0, edge1, x) {
+    const t = clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+</file>
+
+<file name="camera.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+import { lerp } from './utils.js';
+
+export function setupCamera() {
+    gameState.camera = new THREE.PerspectiveCamera(60, 600/400, 0.1, 1000);
+    gameState.camera.position.set(0, 5, 10);
+    gameState.camera.lookAt(0, 0, 0);
+}
+
+export function updateCamera() {
+    const player = gameState.player;
+    if (!player) return;
+    
+    // Target position behind player
+    // We add velocity to the offset to look ahead/behind based on movement
+    const velocityLag = player.velocity.clone().multiplyScalar(-5);
+    velocityLag.y = 0; // Don't lag vertically too much
+    
+    const desiredPosition = player.position.clone()
+        .add(gameState.cameraOffset)
+        .add(velocityLag);
+        
+    // Clamp Y to not go below ground too much
+    desiredPosition.y = Math.max(desiredPosition.y, player.position.y + 2);
+    
+    // Smooth lerp
+    gameState.camera.position.lerp(desiredPosition, 0.1);
+    
+    // Look at player
+    // Add slight offset to look ahead of player
+    const lookTarget = player.position.clone().add(player.velocity.clone().multiplyScalar(10));
+    const currentLook = new THREE.Vector3();
+    gameState.camera.getWorldDirection(currentLook);
+    
+    // Approximate lookAt smoothing
+    const tempCam = gameState.camera.clone();
+    tempCam.lookAt(player.position);
+    gameState.camera.quaternion.slerp(tempCam.quaternion, 0.1);
+}
+</file>
+
+<file name="physics.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, GRAVITY, GROUND_FRICTION, AIR_RESISTANCE, BOUNCE_RESTITUTION } from './globals.js';
+import { sphereAABBIntersection, getSphereAABBCollisionInfo } from './utils.js';
+
+/**
+ * Main physics update loop
+ * Handles integration of forces, velocities, and collision resolution
+ */
+export function updatePhysics(deltaTime) {
+    // 1. Apply Gravity and External Forces to all dynamic entities
+    gameState.entities.forEach(entity => {
+        if (!entity.isStatic) {
+            // Apply gravity
+            entity.velocity.add(GRAVITY.clone().multiplyScalar(entity.gravityScale || 1.0));
+            
+            // Apply air resistance
+            entity.velocity.multiplyScalar(AIR_RESISTANCE);
+            
+            // Integrate position
+            entity.position.add(entity.velocity.clone().multiplyScalar(deltaTime * 60)); // Normalize to 60fps scale
+            
+            // Update mesh position
+            if (entity.mesh) {
+                entity.mesh.position.copy(entity.position);
+                
+                // Rotate mesh based on movement (rolling effect) if it's the player
+                if (entity.isPlayer && entity.onGround) {
+                    const moveDir = entity.velocity.clone().normalize();
+                    const axis = new THREE.Vector3(moveDir.z, 0, -moveDir.x).normalize();
+                    const speed = entity.velocity.length();
+                    entity.mesh.rotateOnWorldAxis(axis, speed * 0.2);
+                }
+            }
+        }
+    });
+
+    // 2. Resolve Collisions
+    handleCollisions();
+    
+    // 3. Crumble Logic
+    updatePlatforms(deltaTime);
+}
+
+/**
+ * Handle collisions between dynamic entities and static/dynamic platforms
+ */
+export function handleCollisions() {
+    const player = gameState.player;
+    if (!player) return;
+
+    player.onGround = false;
+    let groundContactNormal = new THREE.Vector3();
+
+    // Check collision with all platforms
+    // We iterate backwards in case we remove platforms (though we mark them instead)
+    for (let i = 0; i < gameState.platforms.length; i++) {
+        const platform = gameState.platforms[i];
+        
+        // Skip if platform is too far away (Optimization)
+        if (platform.position.distanceToSquared(player.position) > 1000) continue;
+
+        // Get platform bounding box (in world space)
+        const box = {
+            min: new THREE.Vector3().copy(platform.position).sub(platform.halfSize),
+            max: new THREE.Vector3().copy(platform.position).add(platform.halfSize)
+        };
+
+        if (sphereAABBIntersection(player.position, player.radius, box)) {
+            const collision = getSphereAABBCollisionInfo(player.position, player.radius, box);
+            
+            // Resolve penetration
+            const pushVec = collision.normal.clone().multiplyScalar(collision.depth);
+            player.position.add(pushVec);
+            player.mesh.position.copy(player.position);
+            
+            // Update Velocity (Bounce/Slide)
+            const velocityDotNormal = player.velocity.dot(collision.normal);
+            
+            // Only bounce if moving towards the surface
+            if (velocityDotNormal < 0) {
+                // Remove velocity component along normal
+                const bounce = collision.normal.clone().multiplyScalar(velocityDotNormal * -(1 + BOUNCE_RESTITUTION));
+                
+                // Less bounce for small velocities (prevent jitter)
+                if (Math.abs(velocityDotNormal) < 0.1) {
+                    bounce.multiplyScalar(0.0); // Stop bouncing
+                    
+                    // Friction application when sliding/rolling
+                    const frictionVector = player.velocity.clone().sub(
+                        collision.normal.clone().multiplyScalar(velocityDotNormal)
+                    );
+                    frictionVector.multiplyScalar(1 - GROUND_FRICTION);
+                    player.velocity.sub(frictionVector);
+                }
+                
+                player.velocity.add(bounce);
+            }
+
+            // Check if grounded (normal is roughly up)
+            if (collision.normal.y > 0.5) {
+                player.onGround = true;
+                groundContactNormal = collision.normal;
+                
+                // Interact with platform (Crumble trigger)
+                platform.triggerCrumble();
+            }
+        }
+    }
+}
+
+/**
+ * Update platform logic (crumbling, falling)
+ */
+function updatePlatforms(deltaTime) {
+    for (let i = gameState.platforms.length - 1; i >= 0; i--) {
+        const platform = gameState.platforms[i];
+        platform.update(deltaTime);
+        
+        // Remove platforms that have fallen into the void
+        if (platform.position.y < -100) {
+            gameState.scene.remove(platform.mesh);
+            gameState.platforms.splice(i, 1);
+        }
+    }
+}
+
+/**
+ * Apply grapple force to player
+ */
+export function applyGrapplePhysics(player, point, deltaTime) {
+    const ropeVector = new THREE.Vector3().subVectors(point.position, player.position);
+    const distance = ropeVector.length();
+    const direction = ropeVector.normalize();
+    
+    // Spring/Elastic force
+    // Pull player towards point
+    const force = direction.multiplyScalar(0.015); 
+    player.velocity.add(force);
+    
+    // Swing mechanics:
+    // If distance > desired length, cancel out velocity away from pivot
+    // This acts like a strict rope constraint
+    const velocityAlongRope = player.velocity.dot(direction);
+    
+    // Damping (air friction on rope)
+    player.velocity.multiplyScalar(0.99);
+
+    // Add tangential boost if input is pressed (swinging)
+    // handled in input/player logic, but here we enforce the constraint
+}
+</file>
+
+<file name="level_gen.js">
+import { Platform, GrapplePoint } from './entities.js';
+import { gameState } from './globals.js';
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+/**
+ * Procedurally generate the level
+ */
+export function generateLevel() {
+    // Clear existing
+    gameState.platforms = [];
+    gameState.grapplePoints = [];
+    
+    let zCursor = 0;
+    
+    // 1. Start Area (Safe)
+    new Platform(0, 0, 0, 10, 10, 'START');
+    zCursor = -10;
+    
+    // 2. Progression
+    // Generate segments until we reach level length
+    while (zCursor > -gameState.levelLength) {
+        const segmentType = Math.floor(Math.random() * 4); // 0: Jumps, 1: Crumble Path, 2: Grapple Gap, 3: Mixed
+        
+        switch (segmentType) {
+            case 0: // Basic Jumps
+                for (let i = 0; i < 3; i++) {
+                    // Reduced gap from (6+rnd*4) to (4+rnd*3)
+                    zCursor -= 4 + Math.random() * 3;
+                    const xOff = (Math.random() - 0.5) * 10;
+                    new Platform(xOff, Math.random() * 2, zCursor, 5, 5, 'NORMAL');
+                }
+                break;
+                
+            case 1: // Crumble Path (Dense but dangerous)
+                zCursor -= 2;
+                for (let i = 0; i < 5; i++) {
+                    // Reduced gap from 5 to 3.5
+                    zCursor -= 3.5;
+                    const xOff = (Math.random() - 0.5) * 5;
+                    new Platform(xOff, 0, zCursor, 4, 4, 'CRUMBLE');
+                }
+                break;
+                
+            case 2: // Grapple Gap
+                zCursor -= 5;
+                // Add a launch platform
+                new Platform(0, 1, zCursor, 4, 4, 'NORMAL');
+                
+                // Add gap with grapple points
+                // Reduced gap size from 25 to 18
+                const gapSize = 18;
+                const pointHeight = 8 + Math.random() * 4;
+                
+                new GrapplePoint(0, pointHeight, zCursor - gapSize/2);
+                if (Math.random() > 0.5) {
+                    new GrapplePoint((Math.random()-0.5)*10, pointHeight + 2, zCursor - gapSize * 0.75);
+                }
+                
+                zCursor -= gapSize;
+                // Landing platform
+                new Platform(0, -2, zCursor, 6, 6, 'NORMAL');
+                break;
+                
+            case 3: // Thin Crumble Bridge
+                zCursor -= 2;
+                for (let i = 0; i < 8; i++) {
+                    // Reduced gap from 3.5 to 2.8
+                    zCursor -= 2.8;
+                    // Winding path
+                    const xOff = Math.sin(i * 0.5) * 5;
+                    new Platform(xOff, Math.cos(i * 0.5) * 2, zCursor, 2.5, 3, 'CRUMBLE');
+                }
+                break;
+        }
+    }
+    
+    // 3. Finish Line
+    zCursor -= 10;
+    new Platform(0, -5, zCursor, 20, 20, 'FINISH');
+    
+    // Add visual finish gate
+    const gateGeo = new THREE.TorusGeometry(5, 0.5, 16, 32);
+    const gateMat = new THREE.MeshStandardMaterial({ color: 0xffff00, emissive: 0xffaa00 });
+    const gate = new THREE.Mesh(gateGeo, gateMat);
+    gate.position.set(0, 0, zCursor);
+    gameState.scene.add(gate);
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

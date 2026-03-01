@@ -1,0 +1,768 @@
+<analysis>
+- Issue identified: 
+    1. Fishing rod visibility: The player lacks a visible fishing rod mesh, and when casting, only a bobber appears with no connecting line, making it look like the "rod flies away".
+    2. Reeling mechanics: The bar movement in the minigame is too sluggish (acceleration/gravity too low).
+    3. Missing Score UI: The score is tracked in state but not displayed on the HUD.
+- Files affected: `entities.js`, `fishing.js`, `ui.js`
+- Changes needed:
+    1. `entities.js`: Add a visual Rod mesh to the Player model and a helper method `getRodTipWorldPosition`.
+    2. `fishing.js`: 
+        - Create and update a `THREE.Line` connecting the rod tip to the bobber during fishing.
+        - Increase acceleration and gravity constants in `updateReelingGame` to make controls snappier.
+    3. `ui.js`: Add a Score display to the HUD in `renderHUD`.
+</analysis>
+
+<code filename="entities.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, COLORS } from './globals.js';
+import { PhysicsBody, getTerrainHeight, getWaterLevel } from './physics.js';
+import { input } from './input.js';
+import { FishingSystem } from './fishing.js';
+
+export class Player {
+    constructor(x, y, z) {
+        // Simple Body
+        const group = new THREE.Group();
+        
+        // Torso
+        const torsoGeo = new THREE.BoxGeometry(0.8, 1.0, 0.5);
+        const torsoMat = new THREE.MeshLambertMaterial({ color: COLORS.PLAYER });
+        const torso = new THREE.Mesh(torsoGeo, torsoMat);
+        torso.position.y = 0.5;
+        torso.castShadow = true;
+        group.add(torso);
+        
+        // Head
+        const headGeo = new THREE.BoxGeometry(0.6, 0.6, 0.6);
+        const headMat = new THREE.MeshLambertMaterial({ color: 0xFFCCAA });
+        const head = new THREE.Mesh(headGeo, headMat);
+        head.position.y = 1.3;
+        group.add(head);
+        
+        // Hat (Cone)
+        const hatGeo = new THREE.ConeGeometry(0.5, 0.6, 16);
+        const hatMat = new THREE.MeshLambertMaterial({ color: 0x333333 });
+        const hat = new THREE.Mesh(hatGeo, hatMat);
+        hat.position.y = 1.7;
+        group.add(hat);
+        
+        // Fishing Rod (Visual)
+        const rodGeo = new THREE.CylinderGeometry(0.02, 0.04, 2.5);
+        const rodMat = new THREE.MeshLambertMaterial({ color: 0x8B4513 });
+        const rod = new THREE.Mesh(rodGeo, rodMat);
+        rod.position.set(0.5, 1.2, 0.5); // Hold in "hand"
+        rod.rotation.x = Math.PI / 3; // Angle forward
+        rod.rotation.z = -Math.PI / 8; // Angle slightly out
+        rod.castShadow = true;
+        group.add(rod);
+        this.rodMesh = rod;
+
+        // Rod Tip Helper (for line attachment)
+        const tipGeo = new THREE.BoxGeometry(0.01, 0.01, 0.01);
+        const tip = new THREE.Mesh(tipGeo, new THREE.MeshBasicMaterial({ visible: false }));
+        tip.position.set(0, 1.25, 0); // Top of rod
+        rod.add(tip);
+        this.rodTip = tip;
+        
+        group.position.set(x, y, z);
+        gameState.scene.add(group);
+        
+        this.mesh = group;
+        this.physics = new PhysicsBody(group, { mass: 1.0, drag: 0.2, radius: 0.5 });
+        
+        this.moveSpeed = 0.2;
+        this.rotSpeed = 0.1;
+        this.jumpForce = 0.4;
+        
+        // Systems
+        this.fishing = new FishingSystem(this);
+        gameState.fishingSystem = this.fishing;
+        
+        // Animation
+        this.bobTime = 0;
+    }
+    
+    getRodTipWorldPosition() {
+        const pos = new THREE.Vector3();
+        if (this.rodTip) {
+            this.rodTip.getWorldPosition(pos);
+        } else {
+            this.mesh.getWorldPosition(pos);
+            pos.y += 2;
+        }
+        return pos;
+    }
+    
+    update(deltaTime) {
+        // Fishing Update
+        this.fishing.update(deltaTime);
+        
+        // Movement blocked while fishing (except idle)
+        if (this.fishing.isActive && this.fishing.state !== 'IDLE') {
+            this.physics.velocity.x = 0;
+            this.physics.velocity.z = 0;
+            this.physics.update(deltaTime);
+            return; // No movement control
+        }
+        
+        // Input Movement
+        const moveDir = new THREE.Vector3(0, 0, 0);
+        let moved = false;
+        
+        // Relative to camera/view
+        const camForward = new THREE.Vector3(0, 0, -1).applyQuaternion(gameState.camera.quaternion);
+        camForward.y = 0;
+        camForward.normalize();
+        const camRight = new THREE.Vector3(1, 0, 0).applyQuaternion(gameState.camera.quaternion);
+        camRight.y = 0;
+        camRight.normalize();
+        
+        if (input.isDown('UP')) {
+            moveDir.add(camForward);
+            moved = true;
+        }
+        if (input.isDown('DOWN')) {
+            moveDir.add(camForward.clone().negate());
+            moved = true;
+        }
+        if (input.isDown('LEFT')) {
+            moveDir.add(camRight.clone().negate());
+            moved = true;
+        }
+        if (input.isDown('RIGHT')) {
+            moveDir.add(camRight);
+            moved = true;
+        }
+        
+        if (moved) {
+            moveDir.normalize();
+            
+            // Sprint
+            const speed = input.isDown('SPRINT') ? this.moveSpeed * 1.8 : this.moveSpeed;
+            
+            // Apply acceleration
+            this.physics.applyForce(moveDir.multiplyScalar(speed * 10 * deltaTime));
+            
+            // Rotate to face movement
+            const angle = Math.atan2(moveDir.x, moveDir.z);
+            const targetQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), angle);
+            this.mesh.quaternion.slerp(targetQuat, 0.2);
+            
+            // Bobbing animation
+            this.bobTime += deltaTime * 10;
+            this.mesh.children[0].position.y = 0.5 + Math.sin(this.bobTime) * 0.05;
+        } else {
+            // Idle anim
+            this.mesh.children[0].position.y = 0.5;
+        }
+        
+        // Jump
+        if (input.justPressed('JUMP') && this.physics.onGround) {
+            this.physics.velocity.y = this.jumpForce;
+            this.physics.onGround = false;
+        }
+        
+        // Fishing Trigger
+        if (input.justPressed('ACTION') && this.fishing.state === 'IDLE' && this.physics.onGround) {
+            // Check if facing water
+            // Simple check: Is water level nearby?
+            const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(this.mesh.quaternion);
+            const checkPos = this.mesh.position.clone().add(fwd.multiplyScalar(2));
+            const wL = getWaterLevel(checkPos.x, checkPos.z);
+            const tH = getTerrainHeight(checkPos.x, checkPos.z);
+            
+            if (tH < wL) {
+                this.fishing.startCasting();
+            } else {
+                // Feedback?
+                gameState.chatLog.push({sender: "You", message: "Can't fish here (too far from water).", color: '#ccc'});
+            }
+        }
+        
+        // Update Physics
+        this.physics.update(deltaTime);
+        
+        // Bounds check (respawn if fell off world)
+        if (this.mesh.position.y < -10) {
+            this.mesh.position.set(0, 5, 0);
+            this.physics.velocity.set(0,0,0);
+        }
+    }
+}
+
+export class NPC {
+    constructor(x, z, color) {
+        this.group = new THREE.Group();
+        
+        const mat = new THREE.MeshLambertMaterial({ color: color });
+        const body = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.0, 0.5), mat);
+        body.position.y = 0.5;
+        this.group.add(body);
+        
+        const head = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 0.6), new THREE.MeshLambertMaterial({color: 0xFFCCAA}));
+        head.position.y = 1.3;
+        this.group.add(head);
+        
+        this.group.position.set(x, getTerrainHeight(x, z), z);
+        gameState.scene.add(this.group);
+        
+        this.physics = new PhysicsBody(this.group, { mass: 1.0 });
+        this.timer = 0;
+        this.action = 'IDLE'; // IDLE, WALK
+        this.targetPos = new THREE.Vector3();
+        
+        this.chatLines = [
+            "Nice weather!", "Caught anything?", "I love this island.",
+            "My rod is broken...", "Have you seen the Glitch Fish?",
+            "WebFishing is fun!", "Zzz...", "Anyone want to trade?"
+        ];
+        this.chatTimer = Math.random() * 20;
+    }
+    
+    update(deltaTime) {
+        this.timer -= deltaTime;
+        
+        // AI Logic
+        if (this.timer <= 0) {
+            if (Math.random() > 0.5) {
+                this.action = 'WALK';
+                this.timer = 2 + Math.random() * 3;
+                // Random wander target
+                const angle = Math.random() * Math.PI * 2;
+                this.targetPos.set(
+                    this.group.position.x + Math.cos(angle) * 5,
+                    0,
+                    this.group.position.z + Math.sin(angle) * 5
+                );
+            } else {
+                this.action = 'IDLE';
+                this.timer = 2 + Math.random() * 3;
+            }
+        }
+        
+        if (this.action === 'WALK') {
+            const dir = new THREE.Vector3().subVectors(this.targetPos, this.group.position);
+            dir.y = 0;
+            if (dir.length() > 0.5) {
+                dir.normalize();
+                this.physics.applyForce(dir.multiplyScalar(0.5 * deltaTime));
+                
+                const angle = Math.atan2(dir.x, dir.z);
+                this.group.quaternion.slerp(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), angle), 0.1);
+            } else {
+                this.action = 'IDLE';
+            }
+        }
+        
+        // Chat Logic
+        this.chatTimer -= deltaTime;
+        if (this.chatTimer <= 0) {
+            this.chatTimer = 15 + Math.random() * 20;
+            const msg = this.chatLines[Math.floor(Math.random() * this.chatLines.length)];
+            gameState.chatLog.push({
+                sender: "Friend",
+                message: msg,
+                color: '#aaaaff'
+            });
+        }
+        
+        this.physics.update(deltaTime);
+    }
+}
+</code>
+
+<code filename="fishing.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, FISH_TYPES, logGameInfo } from './globals.js';
+import { input } from './input.js';
+
+export class FishingSystem {
+    constructor(player) {
+        this.player = player;
+        this.state = 'IDLE'; // IDLE, CASTING, WAITING, BITING, HOOKED, REELING, CAUGHT_ANIM
+        this.castPower = 0;
+        this.bobber = null;
+        this.line = null;
+        
+        // Mini-game vars
+        this.biteTimer = 0;
+        this.hookTimer = 0;
+        this.targetPos = 0.5; // 0 to 1
+        this.playerBarPos = 0.5; // 0 to 1
+        this.progress = 0.3; // 0 to 1, start partial
+        this.targetVelocity = 0.01;
+        this.barVelocity = 0;
+        this.currentFish = null;
+        
+        this.animTimer = 0;
+        this.lastCaughtFish = null;
+    }
+    
+    get isActive() {
+        return this.state !== 'IDLE';
+    }
+    
+    update(deltaTime) {
+        // Update Fishing Line Visual
+        if (this.line && this.bobber && this.player) {
+            const positions = this.line.geometry.attributes.position.array;
+            
+            const start = this.player.getRodTipWorldPosition();
+            const end = this.bobber.mesh.position;
+            
+            positions[0] = start.x;
+            positions[1] = start.y;
+            positions[2] = start.z;
+            positions[3] = end.x;
+            positions[4] = end.y;
+            positions[5] = end.z;
+            
+            this.line.geometry.attributes.position.needsUpdate = true;
+        }
+
+        switch(this.state) {
+            case 'IDLE':
+                // Handled by input outside
+                break;
+                
+            case 'CASTING':
+                // Charge up power
+                if (input.isDown('ACTION')) {
+                    this.castPower += deltaTime * 1.5; // fill in ~0.6s
+                    if (this.castPower > 1) this.castPower = 1;
+                } else {
+                    // Released
+                    this.performCast();
+                }
+                break;
+                
+            case 'WAITING':
+                // Bobber physics update happens in main entity loop, 
+                // but we check time here.
+                this.biteTimer -= deltaTime;
+                if (this.biteTimer <= 0) {
+                    this.state = 'BITING';
+                    this.hookTimer = 1.0; // 1 second to react
+                    // SFX or Visual Shake could trigger here
+                    if(this.bobber) this.bobber.dip();
+                }
+                // Cancel if player moves too much? Nah, allow it for now.
+                break;
+                
+            case 'BITING':
+                this.hookTimer -= deltaTime;
+                if (input.justPressed('ACTION')) {
+                    this.startReeling();
+                } else if (this.hookTimer <= 0) {
+                    this.failFishing("Too slow!");
+                }
+                break;
+                
+            case 'REELING':
+                this.updateReelingGame(deltaTime);
+                break;
+                
+            case 'CAUGHT_ANIM':
+                this.animTimer -= deltaTime;
+                if (this.animTimer <= 0) {
+                    this.state = 'IDLE';
+                    this.cleanupBobber();
+                }
+                break;
+        }
+    }
+    
+    startCasting() {
+        if (!this.player) return;
+        this.state = 'CASTING';
+        this.castPower = 0;
+    }
+    
+    performCast() {
+        this.state = 'WAITING';
+        this.biteTimer = 2.0 + Math.random() * 3.0; // 2-5s wait
+        
+        // Spawn Bobber
+        const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(this.player.mesh.quaternion);
+        const startPos = this.player.getRodTipWorldPosition();
+        
+        // Calculate velocity based on power
+        const velocity = forward.multiplyScalar(5 + this.castPower * 10);
+        velocity.y = 5 + this.castPower * 5; // Arc
+        
+        this.bobber = new Bobber(startPos, velocity);
+        gameState.entities.push(this.bobber);
+        gameState.scene.add(this.bobber.mesh);
+        
+        // Create Line
+        const lineGeo = new THREE.BufferGeometry();
+        const vertices = new Float32Array(6); // 2 points * 3 coords
+        lineGeo.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+        const lineMat = new THREE.LineBasicMaterial({ color: 0xFFFFFF, linewidth: 2 });
+        this.line = new THREE.Line(lineGeo, lineMat);
+        gameState.scene.add(this.line);
+        
+        // Select potential fish
+        this.currentFish = this.selectRandomFish();
+    }
+    
+    selectRandomFish() {
+        // Weighted random
+        const roll = Math.random() * 10;
+        const fish = FISH_TYPES[Math.floor(Math.random() * FISH_TYPES.length)];
+        // Simple selection for now
+        return fish;
+    }
+    
+    startReeling() {
+        this.state = 'REELING';
+        this.progress = 0.3;
+        this.playerBarPos = 0.5;
+        this.targetPos = 0.5;
+        // Difficulty scaling
+        this.targetVelocity = 0.005 * (this.currentFish ? this.currentFish.difficulty : 1);
+    }
+    
+    updateReelingGame(deltaTime) {
+        // Player Input - Significantly increased force for snappier control
+        const force = 8.0; 
+        
+        if (input.isDown('ACTION')) {
+            this.barVelocity += deltaTime * force;
+        } else {
+            this.barVelocity -= deltaTime * force;
+        }
+        
+        // Physics for bar
+        this.barVelocity *= 0.9; // damping
+        this.playerBarPos += this.barVelocity * deltaTime;
+        
+        // Clamp
+        if (this.playerBarPos < 0) { this.playerBarPos = 0; this.barVelocity = 0; }
+        if (this.playerBarPos > 1) { this.playerBarPos = 1; this.barVelocity = 0; }
+        
+        // Target Movement (Fish AI)
+        // Moves sinusoidally plus noise
+        const time = Date.now() / 1000;
+        const difficulty = this.currentFish.difficulty;
+        
+        // Erratic movement
+        if (Math.random() < 0.05 * difficulty) {
+            this.targetVelocity = (Math.random() - 0.5) * 2.0 * difficulty;
+        }
+        
+        this.targetPos += this.targetVelocity * deltaTime;
+        
+        // Keep target in bounds but bounce
+        if (this.targetPos < 0) { this.targetPos = 0; this.targetVelocity *= -1; }
+        if (this.targetPos > 1) { this.targetPos = 1; this.targetVelocity *= -1; }
+        
+        // Check Overlap (Hit testing)
+        // Assume bar size 0.1, target size 0.2 (normalized)
+        const barSize = 0.1; // The small player blip
+        const targetSize = 0.2; // The green zone
+        
+        // We want player bar (point) inside target zone
+        const dist = Math.abs(this.playerBarPos - this.targetPos);
+        const inZone = dist < (targetSize / 2);
+        
+        if (inZone) {
+            this.progress += deltaTime * 0.3; // Fill bar
+        } else {
+            this.progress -= deltaTime * 0.2; // Drain bar
+        }
+        
+        // Win/Loss
+        if (this.progress >= 1.0) {
+            this.successCatch();
+        } else if (this.progress <= 0) {
+            this.failFishing("Fish got away...");
+        }
+    }
+    
+    successCatch() {
+        this.state = 'CAUGHT_ANIM';
+        this.animTimer = 2.0;
+        this.lastCaughtFish = this.currentFish;
+        
+        gameState.inventory.push(this.currentFish);
+        gameState.money += this.currentFish.value;
+        gameState.score += this.currentFish.value;
+        
+        gameState.chatLog.push({
+            sender: "System",
+            message: `You caught a ${this.currentFish.name}!`,
+            color: '#FFFF00'
+        });
+        
+        // Check win
+        if (gameState.inventory.length >= gameState.goalFishCount) {
+            setTimeout(() => {
+                gameState.gamePhase = "GAME_OVER_WIN";
+            }, 2000);
+        }
+    }
+    
+    failFishing(reason) {
+        this.state = 'IDLE';
+        this.cleanupBobber();
+        gameState.chatLog.push({
+            sender: "System",
+            message: reason,
+            color: '#FF9999'
+        });
+    }
+    
+    cleanupBobber() {
+        if (this.bobber) {
+            gameState.scene.remove(this.bobber.mesh);
+            gameState.entities = gameState.entities.filter(e => e !== this.bobber);
+            this.bobber = null;
+        }
+        if (this.line) {
+            gameState.scene.remove(this.line);
+            this.line = null;
+        }
+    }
+}
+
+// Bobber Entity
+import { PhysicsBody } from './physics.js';
+
+class Bobber extends PhysicsBody {
+    constructor(position, velocity) {
+        const geometry = new THREE.SphereGeometry(0.2, 8, 8);
+        const material = new THREE.MeshLambertMaterial({ color: 0xFF0000 });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.copy(position);
+        
+        super(mesh, { mass: 0.1, drag: 0.01, radius: 0.2 });
+        this.velocity.copy(velocity);
+        
+        this.startY = position.y;
+    }
+    
+    dip() {
+        // Visual splash effect
+        this.velocity.y = -2.0;
+        // Could spawn particle
+    }
+}
+</code>
+
+<code filename="ui.js">
+import { gameState, COLORS, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+class UIManager {
+    constructor() {
+        this.canvas = document.createElement('canvas');
+        this.canvas.width = CANVAS_WIDTH;
+        this.canvas.height = CANVAS_HEIGHT;
+        this.canvas.style.position = 'absolute';
+        this.canvas.style.top = '0';
+        this.canvas.style.left = '0';
+        this.canvas.style.pointerEvents = 'none'; // Click through
+        this.ctx = this.canvas.getContext('2d');
+    }
+
+    init() {
+        if (gameState.gameContainer) {
+            gameState.gameContainer.appendChild(this.canvas);
+        }
+    }
+
+    render() {
+        this.ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+        if (gameState.gamePhase === "START") {
+            this.renderStartScreen();
+        } else if (gameState.gamePhase === "PLAYING") {
+            this.renderHUD();
+            this.renderFishingUI();
+        } else if (gameState.gamePhase === "PAUSED") {
+            this.renderPaused();
+        } else if (gameState.gamePhase.startsWith("GAME_OVER")) {
+            this.renderGameOver();
+        }
+    }
+
+    renderStartScreen() {
+        this.ctx.fillStyle = 'rgba(0,0,0,0.8)';
+        this.ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        
+        this.ctx.fillStyle = 'white';
+        this.ctx.font = 'bold 30px monospace';
+        this.ctx.textAlign = 'center';
+        this.ctx.fillText("WEBFISHING SIM", CANVAS_WIDTH/2, 100);
+        
+        this.ctx.font = '16px monospace';
+        this.ctx.fillText("Relax, Chat, Fish.", CANVAS_WIDTH/2, 140);
+        
+        this.ctx.fillStyle = '#AAAAAA';
+        this.ctx.font = '14px monospace';
+        this.ctx.fillText("Arrows/WASD to Move | Z to Fish | SPACE to Jump", CANVAS_WIDTH/2, 250);
+        
+        this.ctx.fillStyle = COLORS.GRASS;
+        this.ctx.font = 'bold 20px monospace';
+        this.ctx.fillText("PRESS ENTER TO START", CANVAS_WIDTH/2, 300);
+    }
+
+    renderHUD() {
+        // Top Left: Money & Journal
+        this.ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        this.ctx.roundRect ? this.ctx.roundRect(10, 10, 150, 80, 5) : this.ctx.fillRect(10, 10, 150, 80);
+        this.ctx.fill();
+        
+        this.ctx.fillStyle = 'gold';
+        this.ctx.font = '16px monospace';
+        this.ctx.textAlign = 'left';
+        this.ctx.fillText(`$ ${gameState.money}`, 20, 35);
+        
+        this.ctx.fillStyle = 'white';
+        this.ctx.fillText(`Fish: ${gameState.inventory.length}/${gameState.goalFishCount}`, 20, 55);
+        
+        this.ctx.fillStyle = 'lightgreen';
+        this.ctx.fillText(`Score: ${gameState.score}`, 20, 75);
+
+        // Bottom Left: Chat Log
+        this.renderChat();
+    }
+
+    renderChat() {
+        const x = 10;
+        const y = CANVAS_HEIGHT - 120;
+        const w = 250;
+        const h = 110;
+        
+        this.ctx.fillStyle = 'rgba(0,0,0,0.3)';
+        this.ctx.fillRect(x, y, w, h);
+        
+        this.ctx.font = '12px monospace';
+        this.ctx.textAlign = 'left';
+        
+        // Show last 5 messages
+        const messages = gameState.chatLog.slice(-5);
+        messages.forEach((msg, index) => {
+            this.ctx.fillStyle = msg.color || 'white';
+            this.ctx.fillText(`${msg.sender}: ${msg.message}`, x + 5, y + 20 + (index * 18));
+        });
+    }
+
+    renderFishingUI() {
+        if (!gameState.fishingSystem || !gameState.fishingSystem.isActive) return;
+
+        const fs = gameState.fishingSystem;
+        const cx = CANVAS_WIDTH / 2;
+        const cy = CANVAS_HEIGHT / 2;
+
+        // Visual for Casting Power
+        if (fs.state === 'CASTING') {
+            this.ctx.fillStyle = 'white';
+            this.ctx.font = '16px monospace';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText("HOLD Z TO CHARGE", cx, cy - 50);
+            
+            // Power Bar
+            this.ctx.fillStyle = 'black';
+            this.ctx.fillRect(cx - 50, cy - 30, 100, 10);
+            this.ctx.fillStyle = 'lime';
+            this.ctx.fillRect(cx - 50, cy - 30, 100 * fs.castPower, 10);
+        }
+
+        // Waiting
+        if (fs.state === 'WAITING') {
+             this.ctx.fillStyle = 'white';
+             this.ctx.font = 'italic 14px monospace';
+             this.ctx.textAlign = 'center';
+             this.ctx.fillText("Waiting for bite...", cx, cy - 50);
+        }
+
+        // Biting Alert
+        if (fs.state === 'BITING') {
+            this.ctx.fillStyle = 'red';
+            this.ctx.font = 'bold 32px monospace';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText("!!!", cx, cy - 80);
+            this.ctx.font = '16px monospace';
+            this.ctx.fillText("PRESS Z!", cx, cy - 50);
+        }
+
+        // Reeling Mini-game
+        if (fs.state === 'REELING') {
+            // Draw background bar (vertical)
+            const bh = 150;
+            const bw = 20;
+            const bx = cx + 60;
+            const by = cy - bh/2;
+            
+            this.ctx.fillStyle = 'rgba(0,0,0,0.8)';
+            this.ctx.fillRect(bx, by, bw, bh);
+            
+            // Target Zone (The fish's comfort zone) - Moves
+            const th = 40;
+            const ty = by + bh - (fs.targetPos * (bh - th)) - th;
+            this.ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+            this.ctx.fillRect(bx, ty, bw, th);
+            
+            // Player Bar (Controlled by Z)
+            const ph = 10;
+            const py = by + bh - (fs.playerBarPos * (bh - ph)) - ph;
+            this.ctx.fillStyle = 'white';
+            this.ctx.fillRect(bx - 2, py, bw + 4, ph);
+            
+            // Progress Bar (Horizontal)
+            this.ctx.fillStyle = 'black';
+            this.ctx.fillRect(cx - 50, cy + 60, 100, 10);
+            this.ctx.fillStyle = 'orange';
+            this.ctx.fillRect(cx - 50, cy + 60, 100 * fs.progress, 10);
+            
+            this.ctx.fillStyle = 'white';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText("KEEP THE BAR ON THE GREEN!", cx, cy + 80);
+        }
+        
+        // Caught Message
+        if (fs.state === 'CAUGHT_ANIM') {
+            this.ctx.fillStyle = 'yellow';
+            this.ctx.font = 'bold 24px monospace';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText(`CAUGHT ${fs.lastCaughtFish.name.toUpperCase()}!`, cx, cy - 50);
+            this.ctx.font = '16px monospace';
+            this.ctx.fillText(`+ $${fs.lastCaughtFish.value}`, cx, cy - 30);
+        }
+    }
+    
+    renderPaused() {
+        this.ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        this.ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        this.ctx.fillStyle = 'white';
+        this.ctx.font = 'bold 30px monospace';
+        this.ctx.textAlign = 'center';
+        this.ctx.fillText("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    }
+    
+    renderGameOver() {
+        this.ctx.fillStyle = 'rgba(0,0,0,0.9)';
+        this.ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        
+        const isWin = gameState.gamePhase === "GAME_OVER_WIN";
+        
+        this.ctx.fillStyle = isWin ? 'lime' : 'red';
+        this.ctx.font = 'bold 36px monospace';
+        this.ctx.textAlign = 'center';
+        this.ctx.fillText(isWin ? "JOURNAL COMPLETE!" : "GAME OVER", CANVAS_WIDTH/2, 150);
+        
+        this.ctx.fillStyle = 'white';
+        this.ctx.font = '20px monospace';
+        this.ctx.fillText(`Total Money Earned: $${gameState.money}`, CANVAS_WIDTH/2, 200);
+        this.ctx.fillText(`Fish Caught: ${gameState.inventory.length}`, CANVAS_WIDTH/2, 230);
+        this.ctx.fillText(`Final Score: ${gameState.score}`, CANVAS_WIDTH/2, 260);
+        
+        this.ctx.fillStyle = '#AAAAAA';
+        this.ctx.font = '16px monospace';
+        this.ctx.fillText("Press R to Play Again", CANVAS_WIDTH/2, 320);
+    }
+}
+
+export const ui = new UIManager();
+</code>

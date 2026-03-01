@@ -1,0 +1,1839 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you get rid of the level selector, and when I press spacebar to jump to the other side, can I move across the octagon instead? 
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">OCTAGON RUSH</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic Movement)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win Strategy)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Navigate through 9 challenging levels across an octagonal tunnel. Each level increases in difficulty with faster speeds and more obstacles. Easy, medium, and hard levels await - each with unique colored obstacles. Survive 20 seconds per level to advance!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;"><strong>Controls:</strong> Left Arrow: Move to left lane | Right Arrow: Move to right lane | Space: Flip to opposite lane | Enter: Start game / Continue | Esc: Pause/unpause | R: Restart | 1-9: Select level</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+// automated_testing_controller.js - Automated testing
+
+import { NUM_SEGMENTS } from './globals.js';
+
+// Helper function to find the safest segment
+function findSafestSegment(gameState) {
+  const segmentDanger = new Array(NUM_SEGMENTS).fill(0);
+  
+  // Analyze upcoming obstacles
+  for (const obstacle of gameState.obstacles) {
+    if (obstacle.z > -50 && obstacle.z < 200) {
+      const dangerWeight = 1 / (obstacle.z + 1);
+      segmentDanger[obstacle.segment] += dangerWeight * 10;
+    }
+  }
+  
+  // Find segment with minimum danger
+  let minDanger = Infinity;
+  let safestSegment = gameState.playerSegment;
+  
+  for (let i = 0; i < NUM_SEGMENTS; i++) {
+    if (segmentDanger[i] < minDanger) {
+      minDanger = segmentDanger[i];
+      safestSegment = i;
+    }
+  }
+  
+  return safestSegment;
+}
+
+// Calculate rotation needed to reach target segment
+function getRotationToSegment(currentSegment, targetSegment) {
+  let diff = targetSegment - currentSegment;
+  
+  // Choose shortest rotation direction
+  if (diff > NUM_SEGMENTS / 2) {
+    diff -= NUM_SEGMENTS;
+  } else if (diff < -NUM_SEGMENTS / 2) {
+    diff += NUM_SEGMENTS;
+  }
+  
+  return diff;
+}
+
+// TEST_1: Basic random movement testing
+function getRandomAction(gameState) {
+  const rand = Math.random();
+  
+  if (rand < 0.3) {
+    return { left: true };
+  } else if (rand < 0.6) {
+    return { right: true };
+  } else if (rand < 0.7) {
+    return { flip: true };
+  }
+  
+  return {};
+}
+
+// TEST_2: Win strategy - survive 60 seconds
+function getWinAction(gameState) {
+  const action = {};
+  
+  // Don't take action during flip animation
+  if (gameState.isFlipping) {
+    return action;
+  }
+  
+  const safestSegment = findSafestSegment(gameState);
+  const rotationNeeded = getRotationToSegment(gameState.playerSegment, safestSegment);
+  
+  // Calculate effective player segment considering tunnel rotation
+  const SEGMENT_ANGLE = (Math.PI * 2) / NUM_SEGMENTS;
+  const effectiveSegment = Math.round((-gameState.tunnelRotation / SEGMENT_ANGLE)) % NUM_SEGMENTS;
+  const normalizedSegment = effectiveSegment < 0 ? effectiveSegment + NUM_SEGMENTS : effectiveSegment;
+  const actualPlayerSegment = (gameState.playerSegment + normalizedSegment) % NUM_SEGMENTS;
+  
+  // Check for immediate danger
+  let immediateDanger = false;
+  let dangerSegment = -1;
+  
+  for (const obstacle of gameState.obstacles) {
+    if (obstacle.z > 0 && obstacle.z < 80) {
+      if (obstacle.segment === actualPlayerSegment) {
+        immediateDanger = true;
+        dangerSegment = obstacle.segment;
+        break;
+      }
+    }
+  }
+  
+  // If immediate danger, use flip if it helps, otherwise rotate
+  if (immediateDanger) {
+    const oppositeSegment = (actualPlayerSegment + NUM_SEGMENTS / 2) % NUM_SEGMENTS;
+    
+    // Check if opposite segment is safer
+    let oppositeSafe = true;
+    for (const obstacle of gameState.obstacles) {
+      if (obstacle.z > 0 && obstacle.z < 80 && obstacle.segment === oppositeSegment) {
+        oppositeSafe = false;
+        break;
+      }
+    }
+    
+    if (oppositeSafe) {
+      action.flip = true;
+      return action;
+    }
+  }
+  
+  // Rotate toward safest segment
+  if (Math.abs(rotationNeeded) > 0.5) {
+    if (rotationNeeded > 0) {
+      action.right = true;
+    } else {
+      action.left = true;
+    }
+  }
+  
+  return action;
+}
+
+export function get_automated_testing_action(gameState) {
+  switch (gameState.controlMode) {
+    case "TEST_1":
+      return getRandomAction(gameState);
+    case "TEST_2":
+      return getWinAction(gameState);
+    default:
+      return getRandomAction(gameState);
+  }
+}
+
+// Expose globally
+if (typeof window !== 'undefined') {
+  window.get_automated_testing_action = get_automated_testing_action;
+}
+
+export default get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+// globals.js - Global constants and game state
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+
+// Game phases
+export const PHASE_START = "START";
+export const PHASE_LEVEL_SELECT = "LEVEL_SELECT";
+export const PHASE_PLAYING = "PLAYING";
+export const PHASE_PAUSED = "PAUSED";
+export const PHASE_LEVEL_COMPLETE = "LEVEL_COMPLETE";
+export const PHASE_GAME_OVER_WIN = "GAME_OVER_WIN";
+export const PHASE_GAME_OVER_LOSE = "GAME_OVER_LOSE";
+
+// Tunnel configuration
+export const NUM_SEGMENTS = 8; // Octagonal tunnel
+export const TUNNEL_RADIUS = 150;
+export const SEGMENT_ANGLE = (Math.PI * 2) / NUM_SEGMENTS;
+
+// Player configuration
+export const PLAYER_SIZE = 20;
+export const MAX_LIVES = 3;
+
+// Obstacle configuration
+export const OBSTACLE_WIDTH = 30;
+export const OBSTACLE_HEIGHT = 15;
+
+// Level timing
+export const LEVEL_DURATION = 20; // seconds per level
+
+// Movement
+export const LANE_SWITCH_COOLDOWN = 0.15; // seconds between lane switches
+
+// Level configuration
+export const LEVELS = [
+  // Easy levels (1-3)
+  {
+    number: 1,
+    difficulty: "EASY",
+    name: "Green Valley",
+    initialSpeed: 2,
+    maxSpeed: 4,
+    speedIncreaseRate: 0.03,
+    obstacleColor: [100, 255, 100],
+    minObstaclesPerWave: 1,
+    maxObstaclesPerWave: 2,
+    minSpacing: 100,
+    maxSpacing: 200
+  },
+  {
+    number: 2,
+    difficulty: "EASY",
+    name: "Cyan Stream",
+    initialSpeed: 2.5,
+    maxSpeed: 5,
+    speedIncreaseRate: 0.04,
+    obstacleColor: [100, 255, 255],
+    minObstaclesPerWave: 1,
+    maxObstaclesPerWave: 3,
+    minSpacing: 90,
+    maxSpacing: 180
+  },
+  {
+    number: 3,
+    difficulty: "EASY",
+    name: "Blue Horizon",
+    initialSpeed: 3,
+    maxSpeed: 6,
+    speedIncreaseRate: 0.05,
+    obstacleColor: [100, 150, 255],
+    minObstaclesPerWave: 2,
+    maxObstaclesPerWave: 3,
+    minSpacing: 80,
+    maxSpacing: 170
+  },
+  // Medium levels (4-6)
+  {
+    number: 4,
+    difficulty: "MEDIUM",
+    name: "Golden Rush",
+    initialSpeed: 4,
+    maxSpeed: 7,
+    speedIncreaseRate: 0.06,
+    obstacleColor: [255, 255, 100],
+    minObstaclesPerWave: 2,
+    maxObstaclesPerWave: 4,
+    minSpacing: 70,
+    maxSpacing: 150
+  },
+  {
+    number: 5,
+    difficulty: "MEDIUM",
+    name: "Orange Blaze",
+    initialSpeed: 5,
+    maxSpeed: 8,
+    speedIncreaseRate: 0.07,
+    obstacleColor: [255, 180, 100],
+    minObstaclesPerWave: 2,
+    maxObstaclesPerWave: 4,
+    minSpacing: 65,
+    maxSpacing: 140
+  },
+  {
+    number: 6,
+    difficulty: "MEDIUM",
+    name: "Pink Storm",
+    initialSpeed: 6,
+    maxSpeed: 9,
+    speedIncreaseRate: 0.08,
+    obstacleColor: [255, 100, 200],
+    minObstaclesPerWave: 3,
+    maxObstaclesPerWave: 5,
+    minSpacing: 60,
+    maxSpacing: 130
+  },
+  // Hard levels (7-9)
+  {
+    number: 7,
+    difficulty: "HARD",
+    name: "Red Inferno",
+    initialSpeed: 7,
+    maxSpeed: 10,
+    speedIncreaseRate: 0.09,
+    obstacleColor: [255, 100, 100],
+    minObstaclesPerWave: 3,
+    maxObstaclesPerWave: 5,
+    minSpacing: 55,
+    maxSpacing: 120
+  },
+  {
+    number: 8,
+    difficulty: "HARD",
+    name: "Purple Chaos",
+    initialSpeed: 8,
+    maxSpeed: 11,
+    speedIncreaseRate: 0.10,
+    obstacleColor: [200, 100, 255],
+    minObstaclesPerWave: 3,
+    maxObstaclesPerWave: 6,
+    minSpacing: 50,
+    maxSpacing: 110
+  },
+  {
+    number: 9,
+    difficulty: "HARD",
+    name: "White Thunder",
+    initialSpeed: 9,
+    maxSpeed: 12,
+    speedIncreaseRate: 0.11,
+    obstacleColor: [255, 255, 255],
+    minObstaclesPerWave: 4,
+    maxObstaclesPerWave: 6,
+    minSpacing: 45,
+    maxSpacing: 100
+  }
+];
+
+// Game state object
+export const gameState = {
+  player: null,
+  entities: [],
+  obstacles: [],
+  particles: [],
+  score: 0,
+  lives: MAX_LIVES,
+  gamePhase: PHASE_START,
+  controlMode: "HUMAN",
+  currentLevel: 1,
+  levelConfig: LEVELS[0],
+  tunnelRotation: 0,
+  playerSegment: 0,
+  scrollOffset: 0,
+  speed: 2,
+  gameTime: 0,
+  lastObstacleZ: 0,
+  isFlipping: false,
+  flipProgress: 0,
+  flipStartSegment: 0,
+  flipTargetSegment: 0,
+  isMovingLane: false,
+  laneMoveProgress: 0,
+  laneMoveStartSegment: 0,
+  laneMoveTargetSegment: 0,
+  nextObstacleId: 0,
+  laneSwitchCooldown: 0,
+  screenShake: 0,
+  hitFlashAlpha: 0,
+  invulnerableTime: 0
+};
+
+// Function to expose game state
+export function getGameState() {
+  return gameState;
+}
+
+// Attach to window
+if (typeof window !== 'undefined') {
+  window.getGameState = getGameState;
+}
+</file>
+
+<file name="game.js">
+// game.js - Main game file
+
+import { 
+  gameState, 
+  CANVAS_WIDTH, 
+  CANVAS_HEIGHT, 
+  TARGET_FPS,
+  PHASE_PLAYING
+} from './globals.js';
+import { handleKeyPressed, handleKeyReleased, processGameplayInputs } from './input_handler.js';
+import { updateGame } from './game_logic.js';
+import { render } from './renderer.js';
+import { getGameState } from './globals.js';
+
+const p5 = window.p5;
+
+let lastFrameTime = 0;
+
+let gameInstance = new p5(p => {
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(TARGET_FPS);
+    p.randomSeed(42);
+    
+    // Initialize logs
+    p.logs = {
+      "game_info": [],
+      "inputs": [],
+      "player_info": []
+    };
+    
+    // Log initial game state
+    p.logs.game_info.push({
+      data: { phase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    
+    lastFrameTime = Date.now();
+  };
+  
+  p.draw = function() {
+    // Calculate delta time
+    const currentTime = Date.now();
+    const deltaTime = Math.min((currentTime - lastFrameTime) / 1000, 0.1);
+    lastFrameTime = currentTime;
+    
+    // Process inputs
+    processGameplayInputs(p);
+    
+    // Update game logic
+    if (gameState.gamePhase === PHASE_PLAYING) {
+      updateGame(p, deltaTime);
+    }
+    
+    // Render
+    render(p);
+  };
+  
+  p.keyPressed = function() {
+    handleKeyPressed(p);
+  };
+  
+  p.keyReleased = function() {
+    handleKeyReleased(p);
+  };
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const activeBtnId = mode === 'HUMAN' ? 'humanModeBtn' : 
+                      mode === 'TEST_1' ? 'test_1_ModeBtn' :
+                      mode === 'TEST_2' ? 'test_2_ModeBtn' : 'humanModeBtn';
+  
+  const activeBtn = document.getElementById(activeBtnId);
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+};
+</file>
+
+<file name="renderer.js">
+// renderer.js - Rendering functions
+
+import { 
+  gameState, 
+  CANVAS_WIDTH, 
+  CANVAS_HEIGHT,
+  PHASE_START,
+  PHASE_LEVEL_SELECT,
+  PHASE_PLAYING,
+  PHASE_PAUSED,
+  PHASE_LEVEL_COMPLETE,
+  PHASE_GAME_OVER_WIN,
+  PHASE_GAME_OVER_LOSE,
+  LEVEL_DURATION,
+  NUM_SEGMENTS,
+  TUNNEL_RADIUS,
+  MAX_LIVES,
+  LEVELS
+} from './globals.js';
+import { Tunnel } from './tunnel.js';
+
+const tunnel = new Tunnel();
+
+export function render(p) {
+  p.background(10, 5, 20);
+  
+  p.translate(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  
+  // Apply screen shake only during playing phase
+  if (gameState.screenShake > 0 && gameState.gamePhase === PHASE_PLAYING) {
+    const shakeAmount = gameState.screenShake * 10;
+    p.translate(
+      (Math.random() - 0.5) * shakeAmount,
+      (Math.random() - 0.5) * shakeAmount
+    );
+  }
+  
+  if (gameState.gamePhase === PHASE_START) {
+    renderStartScreen(p);
+  } else if (gameState.gamePhase === PHASE_LEVEL_SELECT) {
+    renderLevelSelect(p);
+  } else if (gameState.gamePhase === PHASE_PLAYING) {
+    renderGame(p);
+    renderUI(p);
+    renderParticles(p);
+    renderHitFlash(p);
+  } else if (gameState.gamePhase === PHASE_PAUSED) {
+    renderGame(p);
+    renderUI(p);
+    renderParticles(p);
+    renderPauseOverlay(p);
+  } else if (gameState.gamePhase === PHASE_LEVEL_COMPLETE) {
+    renderGame(p);
+    renderParticles(p);
+    renderLevelCompleteScreen(p);
+  } else if (gameState.gamePhase === PHASE_GAME_OVER_WIN || 
+             gameState.gamePhase === PHASE_GAME_OVER_LOSE) {
+    renderGame(p);
+    renderParticles(p);
+    renderGameOverScreen(p);
+  }
+}
+
+function renderStartScreen(p) {
+  p.push();
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  // Title
+  p.fill(100, 200, 255);
+  p.noStroke();
+  p.textSize(48);
+  p.text('OCTAGON RUSH', 0, -120);
+  
+  // Subtitle with glow
+  p.fill(150, 220, 255, 200);
+  p.textSize(16);
+  p.text('9 LEVELS OF TUNNEL MAYHEM', 0, -80);
+  
+  // Description
+  p.fill(200);
+  p.textSize(14);
+  p.textAlign(p.CENTER, p.TOP);
+  const desc = 'Navigate through octagonal tunnels with increasing difficulty.\nSurvive 20 seconds per level. Beat all 9 levels to win!';
+  p.text(desc, 0, -40);
+  
+  // Instructions
+  p.textAlign(p.LEFT, p.TOP);
+  p.fill(180);
+  p.textSize(13);
+  p.text('CONTROLS:', -200, 20);
+  p.fill(200);
+  p.textSize(12);
+  p.text('← → : Move between lanes', -200, 40);
+  p.text('SPACE : Flip 180°', -200, 60);
+  p.text('ESC : Pause', -200, 80);
+  p.text('R : Restart', -200, 100);
+  
+  // Start prompt with pulsing effect
+  const pulse = Math.sin(p.frameCount * 0.1) * 0.3 + 0.7;
+  p.fill(255, 255, 100, pulse * 255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(18);
+  p.text('PRESS ENTER TO CONTINUE', 0, 140);
+  
+  p.pop();
+}
+
+function renderLevelSelect(p) {
+  p.push();
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  // Title
+  p.fill(100, 200, 255);
+  p.noStroke();
+  p.textSize(36);
+  p.text('SELECT LEVEL', 0, -150);
+  
+  // Level grid
+  const startY = -80;
+  const rowHeight = 60;
+  
+  for (let i = 0; i < 3; i++) {
+    const y = startY + i * rowHeight;
+    let difficultyLabel = '';
+    let difficultyColor = [255, 255, 255];
+    
+    if (i === 0) {
+      difficultyLabel = 'EASY';
+      difficultyColor = [100, 255, 100];
+    } else if (i === 1) {
+      difficultyLabel = 'MEDIUM';
+      difficultyColor = [255, 200, 100];
+    } else {
+      difficultyLabel = 'HARD';
+      difficultyColor = [255, 100, 100];
+    }
+    
+    // Difficulty label
+    p.fill(difficultyColor[0], difficultyColor[1], difficultyColor[2]);
+    p.textSize(14);
+    p.textAlign(p.LEFT, p.CENTER);
+    p.text(difficultyLabel, -250, y);
+    
+    // Level buttons
+    p.textAlign(p.CENTER, p.CENTER);
+    for (let j = 0; j < 3; j++) {
+      const levelNum = i * 3 + j + 1;
+      const x = -80 + j * 80;
+      
+      // Button background
+      if (gameState.currentLevel === levelNum) {
+        p.fill(100, 150, 255, 150);
+      } else {
+        p.fill(50, 50, 80, 150);
+      }
+      p.stroke(difficultyColor[0], difficultyColor[1], difficultyColor[2]);
+      p.strokeWeight(2);
+      p.rect(x - 25, y - 18, 50, 36, 5);
+      
+      // Level number
+      p.fill(255);
+      p.noStroke();
+      p.textSize(20);
+      p.text(levelNum, x, y);
+    }
+  }
+  
+  // Instructions
+  p.textAlign(p.CENTER, p.CENTER);
+  p.fill(200);
+  p.textSize(14);
+  p.text('Press 1-9 to select a level', 0, 90);
+  
+  // Start prompt
+  const pulse = Math.sin(p.frameCount * 0.1) * 0.3 + 0.7;
+  p.fill(255, 255, 100, pulse * 255);
+  p.textSize(16);
+  p.text('PRESS ENTER TO START', 0, 130);
+  
+  p.pop();
+}
+
+function renderGame(p) {
+  const tunnelRotation = 0;
+  
+  // Render tunnel
+  tunnel.render(p, tunnelRotation, gameState.scrollOffset);
+  tunnel.renderDepthLines(p, tunnelRotation, gameState.scrollOffset);
+  
+  // Render obstacles
+  for (const obstacle of gameState.obstacles) {
+    obstacle.render(p, tunnelRotation, gameState.scrollOffset);
+  }
+  
+  // Render player with invulnerability flash
+  if (gameState.player) {
+    const shouldRender = gameState.invulnerableTime <= 0 || 
+                        Math.floor(p.frameCount / 5) % 2 === 0;
+    
+    if (shouldRender) {
+      if (gameState.isFlipping) {
+        const t = gameState.flipProgress;
+        const smoothT = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        
+        const startAngle = (gameState.flipStartSegment * Math.PI * 2) / NUM_SEGMENTS;
+        const targetAngle = (gameState.flipTargetSegment * Math.PI * 2) / NUM_SEGMENTS;
+        
+        let angleDiff = targetAngle - startAngle;
+        if (Math.abs(angleDiff) > Math.PI) {
+          angleDiff = angleDiff > 0 ? angleDiff - Math.PI * 2 : angleDiff + Math.PI * 2;
+        }
+        
+        const currentAngle = startAngle + angleDiff * smoothT;
+        renderPlayerAtAngle(p, currentAngle, tunnelRotation);
+      } 
+      else if (gameState.isMovingLane) {
+        const t = gameState.laneMoveProgress;
+        const smoothT = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        
+        const startAngle = (gameState.laneMoveStartSegment * Math.PI * 2) / NUM_SEGMENTS;
+        const targetAngle = (gameState.laneMoveTargetSegment * Math.PI * 2) / NUM_SEGMENTS;
+        
+        let angleDiff = targetAngle - startAngle;
+        if (Math.abs(angleDiff) > Math.PI) {
+          angleDiff = angleDiff > 0 ? angleDiff - Math.PI * 2 : angleDiff + Math.PI * 2;
+        }
+        
+        const currentAngle = startAngle + angleDiff * smoothT;
+        renderPlayerAtAngle(p, currentAngle, tunnelRotation);
+      }
+      else {
+        gameState.player.render(p, tunnelRotation);
+      }
+    }
+  }
+}
+
+function renderPlayerAtAngle(p, playerAngle, tunnelRotation) {
+  const PLAYER_SIZE = 20;
+  
+  const visualAngle = playerAngle;
+  
+  const x = TUNNEL_RADIUS * Math.cos(visualAngle);
+  const y = TUNNEL_RADIUS * Math.sin(visualAngle);
+  
+  p.push();
+  p.translate(x, y);
+  
+  p.fill(100, 200, 255);
+  p.stroke(255);
+  p.strokeWeight(2);
+  
+  const displayAngle = visualAngle - Math.PI / 2;
+  p.rotate(displayAngle);
+  
+  p.beginShape();
+  p.vertex(0, -PLAYER_SIZE / 2);
+  p.vertex(-PLAYER_SIZE / 3, PLAYER_SIZE / 2);
+  p.vertex(PLAYER_SIZE / 3, PLAYER_SIZE / 2);
+  p.endShape(p.CLOSE);
+  
+  p.noFill();
+  p.stroke(100, 200, 255, 100);
+  p.strokeWeight(4);
+  p.circle(0, 0, PLAYER_SIZE * 1.5);
+  
+  p.pop();
+}
+
+function renderParticles(p) {
+  for (const particle of gameState.particles) {
+    particle.render(p);
+  }
+}
+
+function renderHitFlash(p) {
+  if (gameState.hitFlashAlpha > 0) {
+    p.push();
+    p.noStroke();
+    p.fill(255, 50, 50, gameState.hitFlashAlpha);
+    p.rect(-CANVAS_WIDTH / 2, -CANVAS_HEIGHT / 2, CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.pop();
+  }
+}
+
+function renderUI(p) {
+  p.push();
+  p.textAlign(p.LEFT, p.TOP);
+  
+  // Level info
+  const config = gameState.levelConfig;
+  p.fill(config.obstacleColor[0], config.obstacleColor[1], config.obstacleColor[2]);
+  p.noStroke();
+  p.textSize(14);
+  p.text(`LEVEL ${gameState.currentLevel} - ${config.name}`, -CANVAS_WIDTH / 2 + 10, -CANVAS_HEIGHT / 2 + 10);
+  
+  // Difficulty badge
+  p.fill(200);
+  p.textSize(11);
+  p.text(`[${config.difficulty}]`, -CANVAS_WIDTH / 2 + 10, -CANVAS_HEIGHT / 2 + 28);
+  
+  // Score
+  p.fill(255);
+  p.textSize(14);
+  p.text(`SCORE: ${gameState.score}`, -CANVAS_WIDTH / 2 + 10, -CANVAS_HEIGHT / 2 + 50);
+  
+  // Time remaining
+  const timeLeft = Math.max(0, LEVEL_DURATION - gameState.gameTime);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.text(`TIME: ${timeLeft.toFixed(1)}s`, CANVAS_WIDTH / 2 - 10, -CANVAS_HEIGHT / 2 + 10);
+  
+  // Hearts (lives)
+  renderHearts(p);
+  
+  // Speed indicator
+  p.textAlign(p.RIGHT, p.TOP);
+  p.fill(200);
+  p.textSize(12);
+  p.text(`SPEED: ${gameState.speed.toFixed(1)}`, CANVAS_WIDTH / 2 - 10, -CANVAS_HEIGHT / 2 + 30);
+  
+  p.pop();
+}
+
+function renderHearts(p) {
+  p.push();
+  p.translate(0, -CANVAS_HEIGHT / 2 + 35);
+  
+  const heartSize = 20;
+  const spacing = 30;
+  const startX = -(MAX_LIVES * spacing) / 2 + spacing / 2;
+  
+  for (let i = 0; i < MAX_LIVES; i++) {
+    const x = startX + i * spacing;
+    const isFilled = i < gameState.lives;
+    
+    p.push();
+    p.translate(x, 0);
+    
+    if (isFilled) {
+      p.fill(255, 100, 100);
+      p.stroke(255, 150, 150);
+    } else {
+      p.noFill();
+      p.stroke(100, 50, 50);
+    }
+    p.strokeWeight(2);
+    
+    // Draw heart
+    p.beginShape();
+    p.vertex(0, heartSize * 0.3);
+    p.bezierVertex(-heartSize * 0.5, -heartSize * 0.3, -heartSize * 0.5, heartSize * 0.3, 0, heartSize * 0.6);
+    p.bezierVertex(heartSize * 0.5, heartSize * 0.3, heartSize * 0.5, -heartSize * 0.3, 0, heartSize * 0.3);
+    p.endShape(p.CLOSE);
+    
+    p.pop();
+  }
+  
+  p.pop();
+}
+
+function renderPauseOverlay(p) {
+  p.push();
+  p.textAlign(p.RIGHT, p.TOP);
+  p.fill(255, 255, 100);
+  p.noStroke();
+  p.textSize(14);
+  p.text('PAUSED', CANVAS_WIDTH / 2 - 10, -CANVAS_HEIGHT / 2 + 50);
+  p.pop();
+}
+
+function renderLevelCompleteScreen(p) {
+  p.push();
+  
+  // Semi-transparent overlay
+  p.fill(0, 0, 0, 180);
+  p.noStroke();
+  p.rect(-CANVAS_WIDTH / 2, -CANVAS_HEIGHT / 2, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  // Level complete message
+  const config = gameState.levelConfig;
+  p.fill(config.obstacleColor[0], config.obstacleColor[1], config.obstacleColor[2]);
+  p.textSize(42);
+  p.text('LEVEL COMPLETE!', 0, -80);
+  
+  p.fill(200, 255, 200);
+  p.textSize(18);
+  p.text(`${config.name} cleared!`, 0, -35);
+  
+  // Score
+  p.fill(255, 255, 150);
+  p.textSize(20);
+  p.text(`SCORE: ${gameState.score}`, 0, 10);
+  
+  // Next level info
+  if (gameState.currentLevel < 9) {
+    const nextConfig = LEVELS[gameState.currentLevel];
+    p.fill(nextConfig.obstacleColor[0], nextConfig.obstacleColor[1], nextConfig.obstacleColor[2]);
+    p.textSize(16);
+    p.text(`Next: Level ${gameState.currentLevel + 1} - ${nextConfig.name}`, 0, 50);
+  }
+  
+  // Continue prompt
+  const pulse = Math.sin(p.frameCount * 0.1) * 0.3 + 0.7;
+  p.fill(255, 255, 100, pulse * 255);
+  p.textSize(18);
+  p.text('PRESS ENTER TO CONTINUE', 0, 100);
+  
+  p.pop();
+}
+
+function renderGameOverScreen(p) {
+  p.push();
+  
+  // Semi-transparent overlay
+  p.fill(0, 0, 0, 180);
+  p.noStroke();
+  p.rect(-CANVAS_WIDTH / 2, -CANVAS_HEIGHT / 2, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  // Result message
+  if (gameState.gamePhase === PHASE_GAME_OVER_WIN) {
+    p.fill(100, 255, 100);
+    p.textSize(48);
+    p.text('VICTORY!', 0, -80);
+    
+    p.fill(200, 255, 200);
+    p.textSize(20);
+    p.text('You completed all 9 levels!', 0, -30);
+  } else {
+    p.fill(255, 100, 100);
+    p.textSize(48);
+    p.text('GAME OVER', 0, -80);
+    
+    p.fill(255, 200, 200);
+    p.textSize(20);
+    p.text('You crashed!', 0, -30);
+  }
+  
+  // Final score
+  p.fill(255, 255, 150);
+  p.textSize(24);
+  p.text(`FINAL SCORE: ${gameState.score}`, 0, 20);
+  
+  // Level reached
+  p.fill(200);
+  p.textSize(16);
+  p.text(`Level ${gameState.currentLevel} reached`, 0, 50);
+  
+  // Restart prompt
+  const pulse = Math.sin(p.frameCount * 0.1) * 0.3 + 0.7;
+  p.fill(255, 255, 100, pulse * 255);
+  p.textSize(18);
+  p.text('PRESS R TO RESTART', 0, 100);
+  
+  p.pop();
+}
+</file>
+
+<file name="tunnel.js">
+// tunnel.js - Tunnel rendering and management
+
+import { TUNNEL_RADIUS, NUM_SEGMENTS, SEGMENT_ANGLE, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export class Tunnel {
+  constructor() {
+    this.radius = TUNNEL_RADIUS;
+    this.numSegments = NUM_SEGMENTS;
+  }
+
+  render(p, tunnelRotation, scrollOffset) {
+    p.push();
+    
+    // Draw tunnel segments
+    for (let i = 0; i < this.numSegments; i++) {
+      const angle1 = (i * SEGMENT_ANGLE) + tunnelRotation;
+      const angle2 = ((i + 1) * SEGMENT_ANGLE) + tunnelRotation;
+      
+      // Alternate colors for segments
+      const isEven = i % 2 === 0;
+      
+      // Draw near edge
+      p.stroke(isEven ? 80 : 60);
+      p.strokeWeight(3);
+      p.fill(isEven ? 40 : 30);
+      
+      // Draw segment as trapezoid for perspective
+      const x1 = this.radius * Math.cos(angle1);
+      const y1 = this.radius * Math.sin(angle1);
+      const x2 = this.radius * Math.cos(angle2);
+      const y2 = this.radius * Math.sin(angle2);
+      
+      // Far points (smaller for perspective)
+      const farScale = 0.3;
+      const x3 = this.radius * farScale * Math.cos(angle2);
+      const y3 = this.radius * farScale * Math.sin(angle2);
+      const x4 = this.radius * farScale * Math.cos(angle1);
+      const y4 = this.radius * farScale * Math.sin(angle1);
+      
+      p.beginShape();
+      p.vertex(x1, y1);
+      p.vertex(x2, y2);
+      p.vertex(x3, y3);
+      p.vertex(x4, y4);
+      p.endShape(p.CLOSE);
+      
+      // Draw grid lines for depth effect
+      p.stroke(isEven ? 100 : 80);
+      p.strokeWeight(1);
+      for (let d = 0; d < 1; d += 0.2) {
+        const scale = 1 - d * 0.7;
+        const xa = this.radius * scale * Math.cos(angle1);
+        const ya = this.radius * scale * Math.sin(angle1);
+        const xb = this.radius * scale * Math.cos(angle2);
+        const yb = this.radius * scale * Math.sin(angle2);
+        p.line(xa, ya, xb, yb);
+      }
+    }
+    
+    // Draw center circle for visual reference
+    p.fill(20);
+    p.stroke(100);
+    p.strokeWeight(2);
+    p.circle(0, 0, 30);
+    
+    p.pop();
+  }
+
+  renderDepthLines(p, tunnelRotation, scrollOffset) {
+    // Draw animated depth lines for motion effect
+    p.push();
+    p.stroke(70);
+    p.strokeWeight(2);
+    
+    for (let i = 0; i < this.numSegments; i++) {
+      const angle = (i * SEGMENT_ANGLE) + tunnelRotation;
+      
+      // Animated lines moving toward player
+      for (let j = 0; j < 5; j++) {
+        const offset = (scrollOffset * 2 + j * 100) % 400;
+        const scale = 1 - (offset / 400) * 0.7;
+        const x = this.radius * scale * Math.cos(angle);
+        const y = this.radius * scale * Math.sin(angle);
+        
+        const nextAngle = ((i + 1) * SEGMENT_ANGLE) + tunnelRotation;
+        const x2 = this.radius * scale * Math.cos(nextAngle);
+        const y2 = this.radius * scale * Math.sin(nextAngle);
+        
+        p.line(x, y, x2, y2);
+      }
+    }
+    
+    p.pop();
+  }
+}
+</file>
+
+<file name="game_manager.js">
+// game_manager.js - Game state management
+
+import { 
+  gameState, 
+  PHASE_START,
+  PHASE_LEVEL_SELECT,
+  PHASE_PLAYING, 
+  PHASE_PAUSED,
+  NUM_SEGMENTS,
+  MAX_LIVES,
+  LEVELS
+} from './globals.js';
+import { Player } from './player.js';
+import { resetKeys } from './input_handler.js';
+
+export function showLevelSelect(p) {
+  gameState.gamePhase = PHASE_LEVEL_SELECT;
+  resetKeys();
+  
+  if (p) {
+    p.logs.game_info.push({
+      data: { phase: PHASE_LEVEL_SELECT },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+
+export function startGame(p, levelNumber = null) {
+  // If levelNumber provided, use it; otherwise use currentLevel
+  if (levelNumber !== null) {
+    gameState.currentLevel = levelNumber;
+  }
+  
+  gameState.levelConfig = LEVELS[gameState.currentLevel - 1];
+  gameState.gamePhase = PHASE_PLAYING;
+  gameState.score = 0;
+  gameState.lives = MAX_LIVES;
+  gameState.tunnelRotation = 0;
+  gameState.playerSegment = 2;
+  gameState.scrollOffset = 0;
+  gameState.speed = gameState.levelConfig.initialSpeed;
+  gameState.gameTime = 0;
+  gameState.obstacles = [];
+  gameState.entities = [];
+  gameState.particles = [];
+  gameState.isFlipping = false;
+  gameState.flipProgress = 0;
+  gameState.isMovingLane = false;
+  gameState.laneMoveProgress = 0;
+  gameState.nextObstacleId = 0;
+  gameState.lastObstacleZ = 0;
+  gameState.laneSwitchCooldown = 0;
+  gameState.screenShake = 0;
+  gameState.hitFlashAlpha = 0;
+  gameState.invulnerableTime = 0;
+  
+  // Create player at bottom segment
+  gameState.player = new Player(2);
+  gameState.entities.push(gameState.player);
+  
+  resetKeys();
+  
+  p.logs.game_info.push({
+    data: { phase: PHASE_PLAYING, level: gameState.currentLevel },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function resetGame(p) {
+  gameState.gamePhase = PHASE_START;
+  gameState.obstacles = [];
+  gameState.entities = [];
+  gameState.particles = [];
+  gameState.player = null;
+  gameState.lives = MAX_LIVES;
+  gameState.currentLevel = 1;
+  gameState.screenShake = 0;
+  gameState.hitFlashAlpha = 0;
+  gameState.invulnerableTime = 0;
+  resetKeys();
+  
+  p.logs.game_info.push({
+    data: { phase: PHASE_START },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function pauseGame(p) {
+  gameState.gamePhase = PHASE_PAUSED;
+  p.logs.game_info.push({
+    data: { phase: PHASE_PAUSED },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function unpauseGame(p) {
+  gameState.gamePhase = PHASE_PLAYING;
+  p.logs.game_info.push({
+    data: { phase: PHASE_PLAYING },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+</file>
+
+<file name="input_handler.js">
+// input_handler.js - Input handling
+
+import { 
+  gameState, 
+  PHASE_START,
+  PHASE_LEVEL_SELECT,
+  PHASE_PLAYING, 
+  PHASE_PAUSED,
+  PHASE_LEVEL_COMPLETE,
+  PHASE_GAME_OVER_WIN,
+  PHASE_GAME_OVER_LOSE,
+  LEVELS
+} from './globals.js';
+import { rotateLeft, rotateRight, flip } from './game_logic.js';
+import { startGame, resetGame, pauseGame, unpauseGame, showLevelSelect } from './game_manager.js';
+
+let keysPressed = new Set();
+let keyProcessed = {};
+
+export function handleKeyPressed(p) {
+  const key = p.key;
+  const keyCode = p.keyCode;
+  
+  // Log input
+  p.logs.inputs.push({
+    input_type: 'keyPressed',
+    data: { key, keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  
+  // ENTER - Start game or continue
+  if (keyCode === 13) {
+    if (gameState.gamePhase === PHASE_START) {
+      showLevelSelect(p);
+    } else if (gameState.gamePhase === PHASE_LEVEL_SELECT) {
+      startGame(p);
+    } else if (gameState.gamePhase === PHASE_LEVEL_COMPLETE) {
+      // Advance to next level
+      gameState.currentLevel++;
+      startGame(p);
+    }
+    return;
+  }
+  
+  // ESC - Pause/Unpause
+  if (keyCode === 27) {
+    if (gameState.gamePhase === PHASE_PLAYING) {
+      pauseGame(p);
+    } else if (gameState.gamePhase === PHASE_PAUSED) {
+      unpauseGame(p);
+    }
+    return;
+  }
+  
+  // R - Restart
+  if (keyCode === 82) {
+    if (gameState.gamePhase === PHASE_GAME_OVER_WIN || 
+        gameState.gamePhase === PHASE_GAME_OVER_LOSE ||
+        gameState.gamePhase === PHASE_PAUSED) {
+      resetGame(p);
+    }
+    return;
+  }
+  
+  // Number keys 1-9 for level selection
+  if (gameState.gamePhase === PHASE_LEVEL_SELECT) {
+    if (keyCode >= 49 && keyCode <= 57) { // Keys 1-9
+      const levelNum = keyCode - 48;
+      gameState.currentLevel = levelNum;
+      startGame(p);
+      return;
+    }
+  }
+  
+  // Track keys for gameplay - mark as not yet processed
+  if (!keysPressed.has(keyCode)) {
+    keysPressed.add(keyCode);
+    keyProcessed[keyCode] = false;
+  }
+}
+
+export function handleKeyReleased(p) {
+  const keyCode = p.keyCode;
+  keysPressed.delete(keyCode);
+  delete keyProcessed[keyCode];
+}
+
+export function processGameplayInputs(p) {
+  if (gameState.gamePhase !== PHASE_PLAYING) return;
+  
+  if (gameState.controlMode === 'HUMAN') {
+    // Left arrow - move left (discrete)
+    if (keysPressed.has(37) && !keyProcessed[37]) {
+      rotateLeft();
+      keyProcessed[37] = true;
+    }
+    
+    // Right arrow - move right (discrete)
+    if (keysPressed.has(39) && !keyProcessed[39]) {
+      rotateRight();
+      keyProcessed[39] = true;
+    }
+    
+    // Space - flip
+    if (keysPressed.has(32) && !keyProcessed[32]) {
+      flip();
+      keyProcessed[32] = true;
+    }
+  } else {
+    // Automated testing mode
+    if (typeof window.get_automated_testing_action === 'function') {
+      const action = window.get_automated_testing_action(gameState);
+      if (action) {
+        if (action.left) rotateLeft();
+        if (action.right) rotateRight();
+        if (action.flip) flip();
+      }
+    }
+  }
+}
+
+export function resetKeys() {
+  keysPressed.clear();
+  keyProcessed = {};
+}
+</file>
+
+<file name="player.js">
+// player.js - Player entity
+
+import { PLAYER_SIZE, TUNNEL_RADIUS, NUM_SEGMENTS, gameState } from './globals.js';
+
+export class Player {
+  constructor(segment) {
+    this.segment = segment; // Initial segment - kept for reference but not used for rendering
+    this.size = PLAYER_SIZE;
+    this.radius = TUNNEL_RADIUS;
+  }
+
+  // Get position in screen space - player is at their segment position
+  getScreenPosition(tunnelRotation, p) {
+    // Calculate angle for the player's segment
+    // Use gameState.playerSegment which is updated by game logic
+    // Segment 0 is at right (0), segment 2 is at bottom (PI/2), etc.
+    const angle = (gameState.playerSegment * Math.PI * 2) / NUM_SEGMENTS;
+    
+    const x = TUNNEL_RADIUS * Math.cos(angle);
+    const y = TUNNEL_RADIUS * Math.sin(angle);
+    
+    return { x, y };
+  }
+
+  render(p, tunnelRotation) {
+    const pos = this.getScreenPosition(tunnelRotation, p);
+    
+    p.push();
+    p.translate(pos.x, pos.y);
+    
+    // Draw player as a small ship
+    p.fill(100, 200, 255);
+    p.stroke(255);
+    p.strokeWeight(2);
+    
+    // Calculate angle pointing toward center
+    // Triangle tip points at rotation angle - PI/2, so to point toward center (at angle + PI),
+    // we need: rotation - PI/2 = angle + PI, so rotation = angle + 3*PI/2 = angle - PI/2
+    const angleToCenter = (gameState.playerSegment * Math.PI * 2) / NUM_SEGMENTS - Math.PI / 2;
+    p.rotate(angleToCenter);
+    
+    p.beginShape();
+    p.vertex(0, -this.size / 2);
+    p.vertex(-this.size / 3, this.size / 2);
+    p.vertex(this.size / 3, this.size / 2);
+    p.endShape(p.CLOSE);
+    
+    // Add glow effect
+    p.noFill();
+    p.stroke(100, 200, 255, 100);
+    p.strokeWeight(4);
+    p.circle(0, 0, this.size * 1.5);
+    
+    p.pop();
+  }
+}
+</file>
+
+<file name="obstacle.js">
+// obstacle.js - Obstacle entity
+
+import { TUNNEL_RADIUS, NUM_SEGMENTS, SEGMENT_ANGLE, OBSTACLE_WIDTH, OBSTACLE_HEIGHT } from './globals.js';
+
+export class Obstacle {
+  constructor(segment, z, id, color = [255, 100, 50]) {
+    this.segment = segment; // Which segment it's on (0-7)
+    this.z = z; // Distance along tunnel
+    this.width = OBSTACLE_WIDTH;
+    this.height = OBSTACLE_HEIGHT;
+    this.id = id;
+    this.type = 'bump'; // speed bump type
+    this.color = color; // Obstacle color based on level
+  }
+
+  update(speed) {
+    this.z -= speed;
+  }
+
+  // Check if obstacle is behind the player (passed)
+  isPassed() {
+    return this.z < -50;
+  }
+
+  // Check if obstacle is too far ahead to render
+  isTooFar() {
+    return this.z > 600;
+  }
+
+  // Get screen position for rendering
+  getScreenPosition(tunnelRotation, scrollOffset) {
+    const angle = (this.segment * Math.PI * 2) / NUM_SEGMENTS + tunnelRotation;
+    
+    // Calculate perspective scale based on z depth
+    const perspectiveScale = 400 / (400 + this.z);
+    const radius = TUNNEL_RADIUS * perspectiveScale;
+    
+    const x = radius * Math.cos(angle);
+    const y = radius * Math.sin(angle);
+    
+    return { x, y, scale: perspectiveScale };
+  }
+
+  render(p, tunnelRotation, scrollOffset) {
+    if (this.z < -50 || this.z > 600) return;
+    
+    const pos = this.getScreenPosition(tunnelRotation, scrollOffset);
+    
+    p.push();
+    p.translate(pos.x, pos.y);
+    
+    // Rotate to align with tunnel segment
+    const angle = (this.segment * Math.PI * 2) / NUM_SEGMENTS + tunnelRotation + Math.PI / 2;
+    p.rotate(angle);
+    
+    // Scale based on depth
+    p.scale(pos.scale);
+    
+    // Draw speed bump with level-specific color
+    p.fill(this.color[0], this.color[1], this.color[2]);
+    const darkerColor = [
+      Math.max(0, this.color[0] - 50),
+      Math.max(0, this.color[1] - 50),
+      Math.max(0, this.color[2] - 50)
+    ];
+    p.stroke(darkerColor[0], darkerColor[1], darkerColor[2]);
+    p.strokeWeight(2);
+    p.rect(-this.width / 2, -this.height / 2, this.width, this.height, 3);
+    
+    // Add stripes with complementary color
+    const stripeColor = [
+      Math.min(255, this.color[0] + 100),
+      Math.min(255, this.color[1] + 100),
+      Math.min(255, this.color[2] + 100)
+    ];
+    p.stroke(stripeColor[0], stripeColor[1], stripeColor[2]);
+    p.strokeWeight(1);
+    for (let i = -1; i <= 1; i++) {
+      p.line(i * 8, -this.height / 2, i * 8, this.height / 2);
+    }
+    
+    p.pop();
+  }
+
+  // Check collision with player
+  checkCollision(playerSegment, playerZ, tunnelRotation) {
+    // Player is at z=0 effectively
+    const zDiff = Math.abs(this.z);
+    if (zDiff > 30) return false;
+    
+    // Calculate the angular positions
+    const playerAngle = (playerSegment * Math.PI * 2) / NUM_SEGMENTS;
+    const obstacleAngle = (this.segment * Math.PI * 2) / NUM_SEGMENTS + tunnelRotation;
+    
+    // Calculate angular difference
+    let angleDiff = playerAngle - obstacleAngle;
+    
+    // Normalize angle difference to [-PI, PI]
+    while (angleDiff > Math.PI) {
+      angleDiff -= Math.PI * 2;
+    }
+    while (angleDiff < -Math.PI) {
+      angleDiff += Math.PI * 2;
+    }
+    
+    // Get absolute angular difference
+    const absAngleDiff = Math.abs(angleDiff);
+    
+    // Collision threshold
+    const collisionThreshold = (Math.PI * 2) / NUM_SEGMENTS * 0.4;
+    
+    return absAngleDiff < collisionThreshold;
+  }
+}
+</file>
+
+<file name="game_logic.js">
+// game_logic.js - Core game logic
+
+import { 
+  gameState, 
+  PHASE_PLAYING,
+  PHASE_LEVEL_COMPLETE,
+  PHASE_GAME_OVER_WIN, 
+  PHASE_GAME_OVER_LOSE,
+  NUM_SEGMENTS,
+  LEVEL_DURATION,
+  LANE_SWITCH_COOLDOWN,
+  TUNNEL_RADIUS,
+  LEVELS
+} from './globals.js';
+import { Obstacle } from './obstacle.js';
+import { createParticleBurst, createTrailParticles } from './particle.js';
+
+export function updateGame(p, deltaTime) {
+  if (gameState.gamePhase !== PHASE_PLAYING) return;
+  
+  // Update game time
+  gameState.gameTime += deltaTime;
+  
+  // Update lane switch cooldown
+  if (gameState.laneSwitchCooldown > 0) {
+    gameState.laneSwitchCooldown -= deltaTime;
+  }
+  
+  // Update invulnerability
+  if (gameState.invulnerableTime > 0) {
+    gameState.invulnerableTime -= deltaTime;
+  }
+  
+  // Update screen shake
+  if (gameState.screenShake > 0) {
+    gameState.screenShake -= deltaTime * 5;
+    if (gameState.screenShake < 0) gameState.screenShake = 0;
+  }
+  
+  // Update hit flash
+  if (gameState.hitFlashAlpha > 0) {
+    gameState.hitFlashAlpha -= deltaTime * 400;
+    if (gameState.hitFlashAlpha < 0) gameState.hitFlashAlpha = 0;
+  }
+  
+  // Update particles
+  for (let i = gameState.particles.length - 1; i >= 0; i--) {
+    gameState.particles[i].update(deltaTime);
+    if (gameState.particles[i].isDead()) {
+      gameState.particles.splice(i, 1);
+    }
+  }
+  
+  // Check level completion
+  if (gameState.gameTime >= LEVEL_DURATION) {
+    // Level complete!
+    if (gameState.currentLevel >= 9) {
+      // All levels complete - WIN!
+      gameState.gamePhase = PHASE_GAME_OVER_WIN;
+      gameState.screenShake = 0;
+      p.logs.game_info.push({
+        data: { phase: PHASE_GAME_OVER_WIN, score: gameState.score },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    } else {
+      // Move to next level
+      gameState.gamePhase = PHASE_LEVEL_COMPLETE;
+      gameState.screenShake = 0;
+      p.logs.game_info.push({
+        data: { phase: PHASE_LEVEL_COMPLETE, level: gameState.currentLevel },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+    return;
+  }
+  
+  // Update speed based on time and level config
+  const config = gameState.levelConfig;
+  gameState.speed = Math.min(
+    gameState.speed + (config.speedIncreaseRate * deltaTime),
+    config.maxSpeed
+  );
+  
+  // Update scroll offset
+  gameState.scrollOffset += gameState.speed;
+  
+  // Handle flip animation
+  if (gameState.isFlipping) {
+    gameState.flipProgress += 0.15;
+    if (gameState.flipProgress >= 1) {
+      gameState.isFlipping = false;
+      gameState.flipProgress = 0;
+      gameState.playerSegment = gameState.flipTargetSegment;
+    }
+  }
+  
+  // Handle lane movement animation
+  if (gameState.isMovingLane) {
+    gameState.laneMoveProgress += 0.25;
+    if (gameState.laneMoveProgress >= 1) {
+      gameState.isMovingLane = false;
+      gameState.laneMoveProgress = 0;
+      gameState.playerSegment = gameState.laneMoveTargetSegment;
+    }
+  }
+  
+  // Use current player segment for collision detection
+  const currentPlayerSegment = gameState.isFlipping 
+    ? gameState.flipStartSegment
+    : gameState.isMovingLane
+    ? gameState.laneMoveStartSegment
+    : gameState.playerSegment;
+  
+  // Update obstacles
+  for (let i = gameState.obstacles.length - 1; i >= 0; i--) {
+    const obstacle = gameState.obstacles[i];
+    obstacle.update(gameState.speed);
+    
+    // Check collision - only if not invulnerable
+    if (gameState.invulnerableTime <= 0 && obstacle.checkCollision(currentPlayerSegment, 0, 0)) {
+      // Hit obstacle - lose a life
+      gameState.lives--;
+      gameState.invulnerableTime = 1.0;
+      gameState.screenShake = 1.0;
+      gameState.hitFlashAlpha = 200;
+      
+      // Create hit particle effect
+      const angle = (currentPlayerSegment * Math.PI * 2) / NUM_SEGMENTS;
+      const hitX = TUNNEL_RADIUS * Math.cos(angle);
+      const hitY = TUNNEL_RADIUS * Math.sin(angle);
+      const hitParticles = createParticleBurst(hitX, hitY, [255, 100, 100], 25);
+      gameState.particles.push(...hitParticles);
+      
+      // Check if game over
+      if (gameState.lives <= 0) {
+        gameState.gamePhase = PHASE_GAME_OVER_LOSE;
+        gameState.screenShake = 0;
+        p.logs.game_info.push({
+          data: { phase: PHASE_GAME_OVER_LOSE, score: gameState.score, reason: 'collision' },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+        return;
+      }
+      
+      // Remove the obstacle that was hit
+      gameState.obstacles.splice(i, 1);
+      continue;
+    }
+    
+    // Remove passed obstacles and add score
+    if (obstacle.isPassed() && !obstacle.scored) {
+      obstacle.scored = true;
+      gameState.score += 10;
+    }
+    
+    // Remove obstacles that are too far behind
+    if (obstacle.z < -100) {
+      gameState.obstacles.splice(i, 1);
+    }
+  }
+  
+  // Spawn new obstacles
+  spawnObstacles(p);
+  
+  // Log player info periodically
+  if (p.frameCount % 10 === 0) {
+    const playerPos = gameState.player.getScreenPosition(0, p);
+    p.logs.player_info.push({
+      screen_x: playerPos.x,
+      screen_y: playerPos.y,
+      game_x: currentPlayerSegment,
+      game_y: gameState.scrollOffset,
+      framecount: p.frameCount
+    });
+  }
+}
+
+function spawnObstacles(p) {
+  // Check if we need to spawn new obstacles
+  const lastObstacle = gameState.obstacles[gameState.obstacles.length - 1];
+  const spawnThreshold = lastObstacle ? lastObstacle.z : 0;
+  
+  if (spawnThreshold < 500) {
+    const config = gameState.levelConfig;
+    
+    // Determine spacing based on level config
+    const spacing = config.minSpacing + (config.maxSpacing - config.minSpacing) * (1 - gameState.speed / config.maxSpeed);
+    const newZ = spawnThreshold + spacing + p.random(20, 50);
+    
+    // Choose number of obstacles based on level config
+    const numObstacles = Math.floor(p.random(config.minObstaclesPerWave, config.maxObstaclesPerWave + 1));
+    const availableSegments = [];
+    for (let i = 0; i < NUM_SEGMENTS; i++) {
+      availableSegments.push(i);
+    }
+    
+    // Shuffle and pick segments
+    for (let i = 0; i < numObstacles; i++) {
+      if (availableSegments.length === 0) break;
+      const idx = Math.floor(p.random(availableSegments.length));
+      const segment = availableSegments.splice(idx, 1)[0];
+      
+      const obstacle = new Obstacle(segment, newZ, gameState.nextObstacleId++, config.obstacleColor);
+      gameState.obstacles.push(obstacle);
+      gameState.entities.push(obstacle);
+    }
+  }
+}
+
+export function rotateLeft() {
+  // Move left (counter-clockwise) - increment segment number
+  if (gameState.laneSwitchCooldown <= 0 && !gameState.isFlipping && !gameState.isMovingLane) {
+    gameState.isMovingLane = true;
+    gameState.laneMoveProgress = 0;
+    gameState.laneMoveStartSegment = gameState.playerSegment;
+    gameState.laneMoveTargetSegment = (gameState.playerSegment + 1) % NUM_SEGMENTS;
+    gameState.laneSwitchCooldown = LANE_SWITCH_COOLDOWN;
+    
+    // Create particle trail effect
+    const angle = (gameState.laneMoveTargetSegment * Math.PI * 2) / NUM_SEGMENTS;
+    const x = TUNNEL_RADIUS * Math.cos(angle);
+    const y = TUNNEL_RADIUS * Math.sin(angle);
+    const trailParticles = createTrailParticles(x, y, [100, 200, 255], 10);
+    gameState.particles.push(...trailParticles);
+  }
+}
+
+export function rotateRight() {
+  // Move right (clockwise) - decrement segment number
+  if (gameState.laneSwitchCooldown <= 0 && !gameState.isFlipping && !gameState.isMovingLane) {
+    gameState.isMovingLane = true;
+    gameState.laneMoveProgress = 0;
+    gameState.laneMoveStartSegment = gameState.playerSegment;
+    gameState.laneMoveTargetSegment = (gameState.playerSegment - 1 + NUM_SEGMENTS) % NUM_SEGMENTS;
+    gameState.laneSwitchCooldown = LANE_SWITCH_COOLDOWN;
+    
+    // Create particle trail effect
+    const angle = (gameState.laneMoveTargetSegment * Math.PI * 2) / NUM_SEGMENTS;
+    const x = TUNNEL_RADIUS * Math.cos(angle);
+    const y = TUNNEL_RADIUS * Math.sin(angle);
+    const trailParticles = createTrailParticles(x, y, [100, 200, 255], 10);
+    gameState.particles.push(...trailParticles);
+  }
+}
+
+export function flip() {
+  if (gameState.isFlipping || gameState.isMovingLane || gameState.laneSwitchCooldown > 0) return;
+  
+  gameState.isFlipping = true;
+  gameState.flipProgress = 0;
+  gameState.flipStartSegment = gameState.playerSegment;
+  gameState.flipTargetSegment = (gameState.playerSegment + NUM_SEGMENTS / 2) % NUM_SEGMENTS;
+  gameState.laneSwitchCooldown = LANE_SWITCH_COOLDOWN * 2;
+  
+  // Create particle burst at start position
+  const startAngle = (gameState.flipStartSegment * Math.PI * 2) / NUM_SEGMENTS;
+  const x = TUNNEL_RADIUS * Math.cos(startAngle);
+  const y = TUNNEL_RADIUS * Math.sin(startAngle);
+  const flipParticles = createParticleBurst(x, y, [255, 200, 100], 20);
+  gameState.particles.push(...flipParticles);
+}
+</file>
+
+<file name="particle.js">
+// particle.js - Particle system for visual effects
+
+export class Particle {
+  constructor(x, y, vx, vy, color, size, lifetime) {
+    this.x = x;
+    this.y = y;
+    this.vx = vx;
+    this.vy = vy;
+    this.color = color;
+    this.size = size;
+    this.lifetime = lifetime;
+    this.maxLifetime = lifetime;
+    this.alpha = 255;
+  }
+
+  update(deltaTime) {
+    this.x += this.vx * deltaTime * 60;
+    this.y += this.vy * deltaTime * 60;
+    this.lifetime -= deltaTime;
+    this.alpha = 255 * (this.lifetime / this.maxLifetime);
+    
+    // Apply gravity
+    this.vy += 0.3 * deltaTime * 60;
+    
+    // Friction
+    this.vx *= 0.98;
+    this.vy *= 0.98;
+  }
+
+  isDead() {
+    return this.lifetime <= 0;
+  }
+
+  render(p) {
+    p.push();
+    p.noStroke();
+    p.fill(this.color[0], this.color[1], this.color[2], this.alpha);
+    p.circle(this.x, this.y, this.size);
+    p.pop();
+  }
+}
+
+// Create a burst of particles at a position
+export function createParticleBurst(x, y, color, count = 15) {
+  const particles = [];
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 3 + 2;
+    const vx = Math.cos(angle) * speed;
+    const vy = Math.sin(angle) * speed;
+    const size = Math.random() * 4 + 2;
+    const lifetime = Math.random() * 0.5 + 0.5;
+    
+    particles.push(new Particle(x, y, vx, vy, color, size, lifetime));
+  }
+  return particles;
+}
+
+// Create trail particles for lane switching
+export function createTrailParticles(x, y, color, count = 8) {
+  const particles = [];
+  for (let i = 0; i < count; i++) {
+    const vx = (Math.random() - 0.5) * 2;
+    const vy = (Math.random() - 0.5) * 2;
+    const size = Math.random() * 3 + 2;
+    const lifetime = Math.random() * 0.3 + 0.3;
+    
+    particles.push(new Particle(x, y, vx, vy, color, size, lifetime));
+  }
+  return particles;
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

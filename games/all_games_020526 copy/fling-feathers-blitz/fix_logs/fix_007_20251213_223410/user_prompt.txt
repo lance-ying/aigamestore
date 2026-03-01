@@ -1,0 +1,2117 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+the auto restart should not put me back to the enter start screen, can you fix that
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <!-- Removed h1#gameTitle and p#gameDescription as per feedback -->
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic Launch)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win Mode)</button>
+      </div>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">
+        <strong>ENTER:</strong> Start the game from the start screen<br>
+        <strong>SPACE:</strong> Launch the bird (aiming starts automatically)<br>
+        <strong>Arrow Keys (UP/DOWN/LEFT/RIGHT):</strong> Adjust slingshot aim while aiming<br>
+        <strong>Z:</strong> Activate the current bird's special ability while in flight<br>
+        <strong>ESC:</strong> Pause or unpause the game<br>
+        <strong>R:</strong> Restart and return to the start screen
+      </p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+// Global game state object
+export const gameState = {
+  player: null, // Not used in this game (birds are projectiles)
+  entities: [], // All game entities (birds, pigs, structures)
+  score: 0,
+  highScore: 0,
+  currentLevel: 1,
+  gamePhase: "START", // "START", "PLAYING", "PAUSED", "GAME_OVER_WIN", "GAME_OVER_LOSE", "LEVEL_COMPLETE"
+  controlMode: "HUMAN", // "HUMAN", "TEST_1", "TEST_2"
+  birdsRemaining: [],
+  pigsRemaining: 0,
+  activeBirds: [],
+  slingshotPullPos: null,
+  isAiming: false,
+  structureBodies: [],
+  particleEffects: [],
+  levelScore: 0,
+  totalLevels: 9,
+  matterEngine: null,
+  matterWorld: null,
+  groundBody: null,
+  keysPressed: {}, // Track which keys are currently held down
+  autoRestartScheduled: false, // NEW: Flag to prevent multiple auto-restart timers
+  autoRestartTimeoutId: null // NEW: Stores the ID of the setTimeout for auto-restart
+};
+
+// Canvas dimensions
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Game constants
+export const GROUND_Y = 350;
+export const SLINGSHOT_X = 80;
+export const SLINGSHOT_Y = 320;
+export const MAX_PULL_DISTANCE = 60;
+export const LAUNCH_POWER_MULTIPLIER = 0.15;
+
+// Physics constants
+export const GRAVITY = 0.4;
+export const BIRD_AIR_FRICTION = 0.01;
+
+// Collision thresholds
+export const PIG_DEFEAT_THRESHOLD = 3;
+export const WOOD_DESTROY_THRESHOLD = 5;
+export const STONE_DESTROY_THRESHOLD = 5; // Reduced from 10 to 5
+
+// Scoring
+export const SCORE_SMALL_PIG = 100;
+export const SCORE_LARGE_PIG = 250;
+export const SCORE_WOOD_BLOCK = 10;
+export const SCORE_STONE_BLOCK = 20;
+export const SCORE_UNUSED_BIRD = 500;
+
+// Bird types
+export const BIRD_TYPES = {
+  RED: 'RED',
+  BLUE: 'BLUE',
+  YELLOW: 'YELLOW',
+  BLACK: 'BLACK',
+  GREEN: 'GREEN',
+  WHITE: 'WHITE'
+};
+// Expose gameState to window for debugging and recording scripts
+if (typeof window !== 'undefined') {
+  window.getGameState = () => gameState;
+}
+</file>
+
+<file name="game.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, GROUND_Y, SCORE_UNUSED_BIRD } from './globals.js';
+import { initPhysicsEngine, updatePhysics, clearPhysicsWorld } from './physics.js';
+import { Bird, Pig, StructureBlock } from './entities.js';
+import { createLevel } from './levels.js';
+import { handleKeyPressed, handleKeyReleased, updateAiming, updateTestingControls } from './input.js';
+import { renderGame } from './renderer.js';
+
+// Centralized game control functions, exported for use by input.js and internal calls
+function startGame(p) {
+  clearPhysicsWorld();
+  
+  const levelData = createLevel(1);
+  
+  gameState.gamePhase = "PLAYING";
+  gameState.currentLevel = 1;
+  gameState.score = 0;
+  gameState.levelScore = 0;
+  gameState.birdsRemaining = [...levelData.birds];
+  gameState.entities = [...levelData.pigs, ...levelData.structures];
+  gameState.pigsRemaining = levelData.pigs.length;
+  gameState.activeBirds = [];
+  gameState.particleEffects = [];
+  gameState.keysPressed = {};
+  
+  // Auto-start aiming when level begins
+  if (gameState.birdsRemaining.length > 0) {
+    gameState.isAiming = true;
+    gameState.slingshotPullPos = { x: 0, y: 0 };
+  } else {
+    gameState.isAiming = false;
+  }
+  
+  // Load high score
+  const savedHighScore = localStorage.getItem('flingFeathersHighScore');
+  if (savedHighScore) {
+    gameState.highScore = parseInt(savedHighScore);
+  }
+
+  p.logs.game_info.push({
+    data: { phase: "PLAYING", level: 1 },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function loadNextLevel(p) {
+  clearPhysicsWorld();
+  
+  gameState.currentLevel++;
+  const levelData = createLevel(gameState.currentLevel);
+  
+  if (!levelData) {
+    gameState.gamePhase = "GAME_OVER_WIN";
+    updateHighScore();
+    p.logs.game_info.push({
+      data: { phase: "GAME_OVER_WIN", score: gameState.score },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    return;
+  }
+  
+  gameState.gamePhase = "PLAYING";
+  gameState.levelScore = 0;
+  gameState.birdsRemaining = [...levelData.birds];
+  gameState.entities = [...levelData.pigs, ...levelData.structures];
+  gameState.pigsRemaining = levelData.pigs.length;
+  gameState.activeBirds = [];
+  gameState.particleEffects = [];
+  gameState.keysPressed = {};
+  
+  // Auto-start aiming when level begins
+  if (gameState.birdsRemaining.length > 0) {
+    gameState.isAiming = true;
+    gameState.slingshotPullPos = { x: 0, y: 0 };
+  } else {
+    gameState.isAiming = false;
+  }
+  
+  p.logs.game_info.push({
+    data: { phase: "PLAYING", level: gameState.currentLevel },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function updateHighScore() {
+  if (gameState.score > gameState.highScore) {
+    gameState.highScore = gameState.score;
+    localStorage.setItem('flingFeathersHighScore', gameState.highScore.toString());
+  }
+}
+
+function restartGame(p) {
+  // NEW: Cancel any pending auto-restart
+  if (gameState.autoRestartTimeoutId) {
+    clearTimeout(gameState.autoRestartTimeoutId);
+    gameState.autoRestartTimeoutId = null;
+  }
+  gameState.autoRestartScheduled = false; // NEW: Reset flag
+
+  clearPhysicsWorld();
+  
+  gameState.gamePhase = "START";
+  gameState.entities = [];
+  gameState.activeBirds = [];
+  gameState.birdsRemaining = [];
+  gameState.isAiming = false;
+  gameState.particleEffects = [];
+  gameState.keysPressed = {};
+  
+  p.logs.game_info.push({
+    data: { phase: "START" },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+// Export these centralized functions so input.js can use them
+export { startGame, loadNextLevel, restartGame, updateHighScore };
+
+let gameInstance; // Declare gameInstance outside to be accessible
+window.onload = function() {
+  const p5 = window.p5;
+  if (!p5) {
+    console.error("p5.js is not loaded. Cannot initialize game.");
+    return;
+  }
+
+  gameInstance = new p5(p => {
+    p.setup = function() {
+      p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+      p.frameRate(60);
+      p.randomSeed(42);
+      
+      // Initialize Matter.js physics
+      initPhysicsEngine();
+      
+      // Initialize logs
+      p.logs = {
+        game_info: [],
+        inputs: [],
+        player_info: []
+      };
+      
+      // Log initial state
+      p.logs.game_info.push({
+        data: { phase: "START" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    };
+
+    p.draw = function() {
+      // Clear background once
+      p.background(135, 206, 235);
+      
+      // Update game logic
+      if (gameState.gamePhase === "PLAYING") {
+        updateAiming(p);
+        updateTestingControls(p);
+        updatePhysics();
+        updateGameState(p);
+        checkWinLoseConditions(p);
+      }
+      
+      // Render
+      renderGame(p);
+
+      // NEW: Clear auto-restart timer if game phase changes away from GAME_OVER
+      // This handles cases like manual restart (R key) taking precedence.
+      if (gameState.gamePhase !== "GAME_OVER_WIN" && gameState.gamePhase !== "GAME_OVER_LOSE") {
+          if (gameState.autoRestartTimeoutId) {
+              clearTimeout(gameState.autoRestartTimeoutId);
+              gameState.autoRestartTimeoutId = null;
+              gameState.autoRestartScheduled = false;
+          }
+      }
+    };
+
+    p.keyPressed = function() {
+      // Pass the p5 instance and the centralized game control functions to the input handler
+      handleKeyPressed(p, p.key, p.keyCode, startGame, loadNextLevel, restartGame);
+    };
+
+    p.keyReleased = function() {
+      handleKeyReleased(p, p.key, p.keyCode);
+    };
+
+    function updateGameState(p) {
+      // Update trails for birds
+      gameState.activeBirds.forEach(bird => {
+        if (bird.active) {
+          bird.updateTrail();
+        }
+      });
+      
+      // Remove inactive birds from active list
+      const World = window.Matter.World;
+      gameState.activeBirds = gameState.activeBirds.filter(bird => {
+        if (!bird.active) {
+          // Ensure body is removed from world when bird becomes inactive
+          if (bird.body && gameState.matterWorld) {
+            World.remove(gameState.matterWorld, bird.body);
+            bird.body = null; // Clear reference to prevent stale body issues
+          }
+          return false;
+        }
+        
+        // Remove birds that are too slow (settled anywhere)
+        const speed = Math.sqrt(
+          bird.body.velocity.x * bird.body.velocity.x +
+          bird.body.velocity.y * bird.body.velocity.y
+        );
+        if (speed < 1) {
+          bird.active = false;
+          // Ensure body is removed from world
+          if (bird.body && gameState.matterWorld) {
+            World.remove(gameState.matterWorld, bird.body);
+            bird.body = null; // Clear reference to prevent stale body issues
+          }
+          return false;
+        }
+        
+        return true;
+      });
+      
+      // Auto-start aiming for next bird if no active birds and birds remaining
+      if (gameState.activeBirds.length === 0 && gameState.birdsRemaining.length > 0 && !gameState.isAiming) {
+        gameState.isAiming = true;
+        gameState.slingshotPullPos = { x: 0, y: 0 };
+      }
+      
+      // Remove inactive entities and ensure their bodies are removed from world
+      gameState.entities = gameState.entities.filter(entity => {
+        if (!entity.active) {
+          // Ensure body is removed from world when entity becomes inactive
+          if (entity.body && gameState.matterWorld) {
+            World.remove(gameState.matterWorld, entity.body);
+            entity.body = null; // Clear reference to prevent stale body issues
+          }
+          return false;
+        }
+        return true;
+      });
+      
+      // Update pig count
+      gameState.pigsRemaining = gameState.entities.filter(e => e.type === 'pig' && e.active).length;
+    }
+
+    function checkWinLoseConditions(p) {
+      // Check win condition
+      if (gameState.pigsRemaining === 0) {
+        // Add bonus for unused birds
+        const bonusScore = gameState.birdsRemaining.length * SCORE_UNUSED_BIRD;
+        gameState.score += bonusScore;
+        gameState.levelScore += bonusScore;
+        
+        if (gameState.currentLevel >= gameState.totalLevels) {
+          // Game complete
+          gameState.gamePhase = "GAME_OVER_WIN";
+          updateHighScore();
+          p.logs.game_info.push({
+            data: { phase: "GAME_OVER_WIN", score: gameState.score },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+          // NEW: Add auto-restart logic for GAME_OVER_WIN
+          if (!gameState.autoRestartScheduled) {
+              gameState.autoRestartScheduled = true;
+              gameState.autoRestartTimeoutId = setTimeout(() => {
+                  // Only restart if still in GAME_OVER_WIN (manual restart could have happened)
+                  if (gameState.gamePhase === "GAME_OVER_WIN") {
+                      restartGame(p);
+                  }
+                  gameState.autoRestartScheduled = false;
+                  gameState.autoRestartTimeoutId = null;
+              }, 1000); // 1 second delay
+          }
+        } else {
+          // Level complete
+          gameState.gamePhase = "LEVEL_COMPLETE";
+          p.logs.game_info.push({
+            data: { phase: "LEVEL_COMPLETE", level: gameState.currentLevel, score: gameState.levelScore },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+          
+          // Auto-advance after delay
+          setTimeout(() => {
+            if (gameState.gamePhase === "LEVEL_COMPLETE") {
+              loadNextLevel(p); // Use the centralized loadNextLevel
+            }
+          }, 3000);
+        }
+      }
+      
+      // Check lose condition
+      if (gameState.birdsRemaining.length === 0 && gameState.activeBirds.length === 0 && gameState.pigsRemaining > 0) {
+        gameState.gamePhase = "GAME_OVER_LOSE";
+        updateHighScore();
+        p.logs.game_info.push({
+          data: { phase: "GAME_OVER_LOSE", score: gameState.score },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+        // NEW: Add auto-restart logic for GAME_OVER_LOSE
+        if (!gameState.autoRestartScheduled) {
+            gameState.autoRestartScheduled = true;
+            gameState.autoRestartTimeoutId = setTimeout(() => {
+                // Only restart if still in GAME_OVER_LOSE (manual restart could have happened)
+                if (gameState.gamePhase === "GAME_OVER_LOSE") {
+                    restartGame(p);
+                }
+                gameState.autoRestartScheduled = false;
+                gameState.autoRestartTimeoutId = null;
+            }, 1000); // 1 second delay
+        }
+      }
+    }
+
+    // Expose game instance and state globally
+    window.gameInstance = gameInstance;
+    // Expose level loading for dev mode
+    window.loadLevel = function(levelNum) {
+      const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+      if (state) {
+        state.currentLevel = levelNum;
+        // Use the centralized loadNextLevel
+        loadNextLevel(p);
+      }
+    };
+    window.getGameState = function() {
+      return gameState;
+    };
+
+    // Control mode switching
+    window.setControlMode = function(mode) {
+      gameState.controlMode = mode;
+      
+      // Update button states
+      document.querySelectorAll('.control-button').forEach(btn => {
+        btn.classList.remove('active');
+      });
+      
+      const buttonMap = {
+        'HUMAN': 'humanModeBtn',
+        'TEST_1': 'test_1_ModeBtn',
+        'TEST_2': 'test_2_ModeBtn'
+      };
+      
+      const activeBtn = document.getElementById(buttonMap[mode]);
+      if (activeBtn) {
+        activeBtn.classList.add('active');
+      }
+    };
+  });
+};
+
+export { gameInstance };
+</file>
+
+<file name="renderer.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, GROUND_Y, SLINGSHOT_X, SLINGSHOT_Y, BIRD_TYPES, LAUNCH_POWER_MULTIPLIER, GRAVITY, BIRD_AIR_FRICTION, MAX_PULL_DISTANCE } from './globals.js';
+
+export function renderGame(p) {
+  // Background
+  renderBackground(p);
+
+  if (gameState.gamePhase === "START") {
+    renderStartScreen(p);
+  } else if (gameState.gamePhase === "PLAYING" || gameState.gamePhase === "PAUSED") {
+    renderGameplay(p);
+    if (gameState.gamePhase === "PAUSED") {
+      renderPauseOverlay(p);
+    }
+  } else if (gameState.gamePhase === "LEVEL_COMPLETE") {
+    renderGameplay(p);
+    renderLevelCompleteScreen(p);
+  } else if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+    renderGameplay(p);
+    renderGameOverScreen(p);
+  }
+}
+
+function renderBackground(p) {
+  // Sky gradient
+  for (let y = 0; y < GROUND_Y; y++) {
+    const inter = y / GROUND_Y;
+    const c = p.lerpColor(p.color(135, 206, 235), p.color(100, 150, 200), inter);
+    p.stroke(c);
+    p.line(0, y, CANVAS_WIDTH, y);
+  }
+  
+  // Ground
+  p.fill(100, 200, 100);
+  p.noStroke();
+  p.rect(0, GROUND_Y, CANVAS_WIDTH, CANVAS_HEIGHT - GROUND_Y);
+}
+
+function renderStartScreen(p) {
+  p.fill(0, 0, 0, 180);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.fill(100, 255, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(24); // Slightly smaller font for the new title
+  p.text("press enter to begin", CANVAS_WIDTH / 2, 60); // Replaced and moved to top
+  
+  // Adjusted Y positions for controls and bird abilities
+  p.textSize(16);
+  p.fill(255, 255, 150);
+  p.text("CONTROLS:", CANVAS_WIDTH / 2, 120); // Moved up
+  p.fill(255);
+  p.textSize(12);
+  p.text("ARROW KEYS: Hold to adjust slingshot aim", CANVAS_WIDTH / 2, 140); // Moved up
+  p.text("SPACE: Launch the bird", CANVAS_WIDTH / 2, 160); // Moved up
+  p.text("Z: Activate bird's special ability", CANVAS_WIDTH / 2, 180); // Moved up
+  p.text("ESC: Pause    R: Restart", CANVAS_WIDTH / 2, 200); // Moved up
+  
+  p.textSize(14);
+  p.fill(255, 200, 100);
+  p.text("BIRD ABILITIES:", CANVAS_WIDTH / 2, 225); // Moved up
+  p.fill(255);
+  p.textSize(10);
+  p.text("Red: Basic • Blue: Split x3 • Yellow: Speed boost", CANVAS_WIDTH / 2, 245); // Moved up
+  p.text("Black: Heavy • Green: Explosion • White: Egg bomb", CANVAS_WIDTH / 2, 260); // Moved up
+  
+  if (gameState.highScore > 0) {
+    p.fill(255, 215, 0);
+    p.textSize(14);
+    p.text(`HIGH SCORE: ${gameState.highScore}`, CANVAS_WIDTH / 2, 360); // Kept at original Y
+  }
+  
+  // Removed "PRESS ENTER TO START" as it was replaced by the new title message
+}
+
+function renderGameplay(p) {
+  // Slingshot
+  renderSlingshot(p);
+  
+  // Entities
+  gameState.entities.forEach(entity => {
+    if (entity.type === 'bird') {
+      renderBird(p, entity);
+    } else if (entity.type === 'pig') {
+      renderPig(p, entity);
+    } else if (entity.type === 'block') {
+      renderStructureBlock(p, entity);
+    } else if (entity.type === 'egg') {
+      renderEgg(p, entity);
+    }
+  });
+  
+  // Particle effects
+  renderParticles(p);
+  
+  // UI
+  renderUI(p);
+  
+  // Trajectory preview when aiming
+  if (gameState.isAiming) {
+    renderTrajectoryPreview(p);
+    renderAimingInfo(p);
+  }
+}
+
+function renderSlingshot(p) {
+  const baseX = SLINGSHOT_X;
+  const baseY = SLINGSHOT_Y;
+  
+  // Base
+  p.fill(80, 50, 30);
+  p.noStroke();
+  p.rect(baseX - 8, baseY, 16, 30);
+  
+  // Rubber bands
+  if (gameState.isAiming) {
+    const pullX = baseX + gameState.slingshotPullPos.x;
+    const pullY = baseY + gameState.slingshotPullPos.y;
+    
+    p.stroke(60, 40, 20);
+    p.strokeWeight(3);
+    p.line(baseX - 6, baseY, pullX, pullY);
+    p.line(baseX + 6, baseY, pullX, pullY);
+    
+    // Bird at pull position
+    const birdType = gameState.birdsRemaining[0];
+    drawBirdIcon(p, pullX, pullY, birdType, 20);
+  } else if (gameState.birdsRemaining.length > 0 && gameState.activeBirds.length === 0) {
+    // Bird ready at slingshot
+    const birdType = gameState.birdsRemaining[0];
+    drawBirdIcon(p, baseX, baseY, birdType, 20);
+  }
+}
+
+function renderBird(p, bird) {
+  if (!bird.active || !bird.body) return;
+  
+  drawBirdIcon(p, bird.body.position.x, bird.body.position.y, bird.birdType, bird.size);
+  
+  // Trail for yellow bird during boost
+  if (bird.birdType === BIRD_TYPES.YELLOW && bird.abilityUsed) {
+    p.stroke(255, 255, 0, 100);
+    p.strokeWeight(bird.size * 0.5);
+    for (let i = 0; i < bird.trail.length - 1; i++) {
+      const alpha = (i / bird.trail.length) * 100;
+      p.stroke(255, 255, 0, alpha);
+      p.line(bird.trail[i].x, bird.trail[i].y, bird.trail[i + 1].x, bird.trail[i + 1].y);
+    }
+  }
+}
+
+function drawBirdIcon(p, x, y, birdType, size) {
+  p.noStroke();
+  
+  if (birdType === BIRD_TYPES.RED) {
+    p.fill(220, 20, 20);
+  } else if (birdType === BIRD_TYPES.BLUE) {
+    p.fill(20, 100, 220);
+  } else if (birdType === BIRD_TYPES.YELLOW) {
+    p.fill(255, 220, 0);
+  } else if (birdType === BIRD_TYPES.BLACK) {
+    p.fill(30, 30, 30);
+  } else if (birdType === BIRD_TYPES.GREEN) {
+    p.fill(50, 220, 50);
+  } else if (birdType === BIRD_TYPES.WHITE) {
+    p.fill(255, 255, 255);
+  }
+  
+  p.ellipse(x, y, size, size);
+  
+  // Eyes
+  p.fill(0);
+  p.ellipse(x + size * 0.15, y - size * 0.1, size * 0.2, size * 0.2);
+  p.ellipse(x - size * 0.15, y - size * 0.1, size * 0.2, size * 0.2);
+  
+  // White part of eyes for white bird visibility
+  if (birdType === BIRD_TYPES.WHITE) {
+    p.fill(255);
+    p.ellipse(x + size * 0.15, y - size * 0.1, size * 0.15, size * 0.15);
+    p.ellipse(x - size * 0.15, y - size * 0.1, size * 0.15, size * 0.15);
+    p.fill(0);
+    p.ellipse(x + size * 0.15, y - size * 0.1, size * 0.08, size * 0.08);
+    p.ellipse(x - size * 0.15, y - size * 0.1, size * 0.08, size * 0.08);
+  }
+  
+  // Eyebrows for angry look
+  p.stroke(0);
+  p.strokeWeight(1.5);
+  p.line(x - size * 0.25, y - size * 0.25, x - size * 0.1, y - size * 0.15);
+  p.line(x + size * 0.25, y - size * 0.25, x + size * 0.1, y - size * 0.15);
+}
+
+function renderEgg(p, egg) {
+  if (!egg.active || !egg.body) return;
+  
+  p.noStroke();
+  p.fill(255, 255, 220);
+  p.ellipse(egg.body.position.x, egg.body.position.y, egg.size, egg.size * 1.2);
+  
+  // Spots
+  p.fill(220, 200, 150);
+  p.ellipse(egg.body.position.x - 3, egg.body.position.y - 2, 4, 4);
+  p.ellipse(egg.body.position.x + 2, egg.body.position.y + 3, 3, 3);
+}
+
+function renderPig(p, pig) {
+  if (!pig.active || !pig.body) return;
+  
+  // Body
+  p.fill(100, 200, 100);
+  p.noStroke();
+  p.ellipse(pig.body.position.x, pig.body.position.y, pig.size, pig.size);
+  
+  // Eyes
+  p.fill(255);
+  const eyeOffset = pig.size * 0.2;
+  p.ellipse(pig.body.position.x - eyeOffset, pig.body.position.y - eyeOffset * 0.5, pig.size * 0.25, pig.size * 0.25);
+  p.ellipse(pig.body.position.x + eyeOffset, pig.body.position.y - eyeOffset * 0.5, pig.size * 0.25, pig.size * 0.25);
+  
+  p.fill(0);
+  p.ellipse(pig.body.position.x - eyeOffset, pig.body.position.y - eyeOffset * 0.5, pig.size * 0.15, pig.size * 0.15);
+  p.ellipse(pig.body.position.x + eyeOffset, pig.body.position.y - eyeOffset * 0.5, pig.size * 0.15, pig.size * 0.15);
+  
+  // Snout
+  p.fill(80, 160, 80);
+  p.ellipse(pig.body.position.x, pig.body.position.y + eyeOffset, pig.size * 0.4, pig.size * 0.3);
+  p.fill(60, 140, 60);
+  p.ellipse(pig.body.position.x - pig.size * 0.1, pig.body.position.y + eyeOffset, pig.size * 0.1, pig.size * 0.1);
+  p.ellipse(pig.body.position.x + pig.size * 0.1, pig.body.position.y + eyeOffset, pig.size * 0.1, pig.size * 0.1);
+  
+  // Health bar
+  renderPigHealthBar(p, pig);
+}
+
+function renderPigHealthBar(p, pig) {
+  const barWidth = pig.size * 1.2;
+  const barHeight = 4;
+  const barX = pig.body.position.x - barWidth / 2;
+  const barY = pig.body.position.y - pig.size / 2 - 8;
+  
+  const maxHealth = pig.isLarge ? 2 : 1;
+  const healthPercent = pig.health / maxHealth;
+  
+  // Background (red)
+  p.fill(200, 50, 50);
+  p.noStroke();
+  p.rect(barX, barY, barWidth, barHeight);
+  
+  // Health (green)
+  p.fill(50, 200, 50);
+  p.rect(barX, barY, barWidth * healthPercent, barHeight);
+  
+  // Border
+  p.noFill();
+  p.stroke(0);
+  p.strokeWeight(1);
+  p.rect(barX, barY, barWidth, barHeight);
+}
+
+function renderStructureBlock(p, block) {
+  if (!block.active || !block.body) return;
+  
+  p.push();
+  p.translate(block.body.position.x, block.body.position.y);
+  p.rotate(block.body.angle);
+  
+  if (block.material === 'WOOD') {
+    p.fill(139, 90, 43);
+    p.stroke(100, 60, 30);
+  } else if (block.material === 'STONE') {
+    p.fill(120, 120, 120);
+    p.stroke(80, 80, 80);
+  }
+  
+  p.strokeWeight(2);
+  p.rectMode(p.CENTER);
+  p.rect(0, 0, block.width, block.height);
+  
+  // Texture lines
+  p.stroke(block.material === 'WOOD' ? 100 : 90, block.material === 'WOOD' ? 60 : 90, block.material === 'WOOD' ? 30 : 90, 100);
+  p.strokeWeight(1);
+  if (block.material === 'WOOD') {
+    for (let i = -block.width / 2; i < block.width / 2; i += 5) {
+      p.line(i, -block.height / 2, i, block.height / 2);
+    }
+  }
+  
+  p.pop();
+  
+  // Health bar (if damaged)
+  if (block.health < block.maxHealth) {
+    renderBlockHealthBar(p, block);
+  }
+}
+
+function renderBlockHealthBar(p, block) {
+  const barWidth = Math.max(block.width, 30);
+  const barHeight = 3;
+  const barX = block.body.position.x - barWidth / 2;
+  const barY = block.body.position.y - Math.max(block.height, block.width) / 2 - 6;
+  
+  const healthPercent = block.health / block.maxHealth;
+  
+  // Background (red)
+  p.fill(200, 50, 50);
+  p.noStroke();
+  p.rect(barX, barY, barWidth, barHeight);
+  
+  // Health (yellow/orange for blocks)
+  p.fill(255, 180, 0);
+  p.rect(barX, barY, barWidth * healthPercent, barHeight);
+  
+  // Border
+  p.noFill();
+  p.stroke(0);
+  p.strokeWeight(1);
+  p.rect(barX, barY, barWidth, barHeight);
+}
+
+function renderParticles(p) {
+  p.noStroke();
+  gameState.particleEffects.forEach(particle => {
+    const alpha = (particle.life / particle.maxLife) * 200;
+    p.fill(...particle.color, alpha);
+    p.ellipse(particle.x, particle.y, particle.size, particle.size);
+  });
+}
+
+function renderUI(p) {
+  p.fill(255);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(16);
+  p.text(`LEVEL: ${gameState.currentLevel}`, 10, 10);
+  p.text(`SCORE: ${gameState.score}`, 10, 30);
+  
+  // Birds remaining
+  p.textSize(14);
+  p.text(`BIRDS: ${gameState.birdsRemaining.length}`, 10, 55);
+  
+  // Bird icons
+  let iconX = 80;
+  for (let i = 0; i < Math.min(3, gameState.birdsRemaining.length); i++) {
+    drawBirdIcon(p, iconX, 62, gameState.birdsRemaining[i], 12);
+    iconX += 18;
+  }
+  if (gameState.birdsRemaining.length > 3) {
+    p.fill(255);
+    p.textSize(12);
+    p.text(`+${gameState.birdsRemaining.length - 3}`, iconX, 57);
+  }
+  
+  // Pigs remaining
+  p.fill(255);
+  p.textSize(14);
+  p.text(`PIGS: ${gameState.pigsRemaining}`, 10, 80);
+}
+
+function renderAimingInfo(p) {
+  if (!gameState.slingshotPullPos) return;
+  
+  const pullX = gameState.slingshotPullPos.x;
+  const pullY = gameState.slingshotPullPos.y;
+  
+  // Calculate launch velocity (opposite direction of pull)
+  const vx = -pullX * LAUNCH_POWER_MULTIPLIER;
+  const vy = -pullY * LAUNCH_POWER_MULTIPLIER;
+  
+  // Calculate angle in degrees (0 degrees = right, 90 degrees = up)
+  const angleRad = Math.atan2(-vy, vx); // negative vy because y-axis is inverted in screen coords
+  let angleDeg = angleRad * (180 / Math.PI);
+  // Normalize to 0-360 range
+  if (angleDeg < 0) angleDeg += 360;
+  
+  // Calculate power as percentage of max pull distance
+  const pullDistance = Math.sqrt(pullX * pullX + pullY * pullY);
+  const powerPercent = Math.round((pullDistance / MAX_PULL_DISTANCE) * 100);
+  
+  // Display info in top-right corner to avoid obstructing trajectory
+  const boxWidth = 110;
+  const boxHeight = 40;
+  const displayX = CANVAS_WIDTH - boxWidth - 10;
+  const displayY = 10;
+  
+  // Background box
+  p.fill(0, 0, 0, 180);
+  p.noStroke();
+  p.rect(displayX, displayY, boxWidth, boxHeight, 5);
+  
+  // Text
+  p.fill(255, 255, 100);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(12);
+  p.text(`Angle: ${Math.round(angleDeg)}°`, displayX + 5, displayY + 5);
+  p.text(`Power: ${powerPercent}%`, displayX + 5, displayY + 23);
+}
+
+function renderTrajectoryPreview(p) {
+  if (!gameState.slingshotPullPos) return;
+  
+  const Matter = window.Matter;
+  if (!Matter) return; // Matter.js not loaded yet
+  
+  const Engine = Matter.Engine;
+  const World = Matter.World;
+  const Bodies = Matter.Bodies;
+  const Body = Matter.Body;
+  
+  const startX = SLINGSHOT_X;
+  const startY = SLINGSHOT_Y;
+  
+  // Initial velocity using the same multiplier as actual launch
+  const vx = -gameState.slingshotPullPos.x * LAUNCH_POWER_MULTIPLIER;
+  const vy = -gameState.slingshotPullPos.y * LAUNCH_POWER_MULTIPLIER;
+  
+  // Create a temporary Matter.js engine for trajectory simulation
+  const tempEngine = Engine.create({
+    gravity: { x: 0, y: GRAVITY }
+  });
+  
+  // Create a temporary bird body (small circle, same properties as actual bird)
+  const tempBird = Bodies.circle(startX, startY, 10, {
+    frictionAir: BIRD_AIR_FRICTION,
+    density: 0.001
+  });
+  
+  // Set initial velocity
+  Body.setVelocity(tempBird, { x: vx, y: vy });
+  
+  // Create temporary ground
+  const tempGround = Bodies.rectangle(CANVAS_WIDTH / 2, GROUND_Y + 25, CANVAS_WIDTH, 50, {
+    isStatic: true
+  });
+  
+  // Add to temporary world
+  World.add(tempEngine.world, [tempBird, tempGround]);
+  
+  // Simulate trajectory by running physics updates
+  const trajectoryPoints = [];
+  const dotSpacing = 4;
+  
+  // Show only 1/2 of full trajectory (40 frames instead of 80)
+  for (let frame = 0; frame < 40; frame++) {
+    // Update physics (60fps = 1000/60 ms per frame)
+    Engine.update(tempEngine, 1000 / 60);
+    
+    // Record position at intervals
+    if (frame % dotSpacing === 0) {
+      trajectoryPoints.push({
+        x: tempBird.position.x,
+        y: tempBird.position.y
+      });
+    }
+    
+    // Stop if bird hits ground or goes off screen
+    if (tempBird.position.y > GROUND_Y || 
+        tempBird.position.x < 0 || 
+        tempBird.position.x > CANVAS_WIDTH || 
+        tempBird.position.y < 0) {
+      break;
+    }
+  }
+  
+  // Clean up temporary engine
+  World.clear(tempEngine.world, false);
+  Engine.clear(tempEngine);
+  
+  // Draw trajectory points
+  p.noStroke();
+  p.fill(255, 255, 255, 180);
+  
+  trajectoryPoints.forEach(point => {
+    p.ellipse(point.x, point.y, 4, 4);
+  });
+}
+
+function renderPauseOverlay(p) {
+  p.fill(0, 0, 0, 100);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.fill(255);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(18);
+  p.text("PAUSED", CANVAS_WIDTH - 10, 10);
+}
+
+function renderLevelCompleteScreen(p) {
+  p.fill(0, 0, 0, 200);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.fill(100, 255, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(40);
+  p.text(`LEVEL ${gameState.currentLevel} COMPLETE!`, CANVAS_WIDTH / 2, 120);
+  
+  p.fill(255);
+  p.textSize(20);
+  p.text(`Level Score: ${gameState.levelScore}`, CANVAS_WIDTH / 2, 180);
+  p.text(`Total Score: ${gameState.score}`, CANVAS_WIDTH / 2, 210);
+  
+  if (gameState.currentLevel < gameState.totalLevels) {
+    p.fill(255, 255, 100);
+    p.textSize(18);
+    p.text("PRESS ENTER FOR NEXT LEVEL", CANVAS_WIDTH / 2, 280);
+  } else {
+    p.fill(255, 215, 0);
+    p.textSize(32);
+    p.text("YOU WIN!", CANVAS_WIDTH / 2, 260);
+    p.fill(255, 255, 100);
+    p.textSize(18);
+    p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, 310);
+  }
+}
+
+function renderGameOverScreen(p) {
+  p.fill(0, 0, 0, 200);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  if (gameState.gamePhase === "GAME_OVER_WIN") {
+    p.fill(100, 255, 100);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(48);
+    p.text("YOU WIN!", CANVAS_WIDTH / 2, 120);
+  } else {
+    p.fill(255, 100, 100);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(48);
+    p.text("GAME OVER", CANVAS_WIDTH / 2, 120);
+  }
+  
+  p.fill(255);
+  p.textSize(20);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 180);
+  p.text(`High Score: ${gameState.highScore}`, CANVAS_WIDTH / 2, 210);
+  
+  p.fill(255, 255, 100);
+  p.textSize(18);
+  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, 280);
+}
+</file>
+
+<file name="entities.js">
+import { gameState, BIRD_TYPES, SCORE_SMALL_PIG, SCORE_LARGE_PIG, SCORE_WOOD_BLOCK, SCORE_STONE_BLOCK, BIRD_AIR_FRICTION } from './globals.js';
+import { createParticleEffect } from './physics.js';
+
+const Matter = window.Matter;
+const Bodies = Matter.Bodies;
+const Body = Matter.Body;
+const World = Matter.World;
+
+export class Bird {
+  constructor(x, y, birdType) {
+    this.type = 'bird';
+    this.birdType = birdType;
+    
+    // Different properties for different bird types
+    let radius = 10;
+    let density = 0.004;
+    
+    if (birdType === BIRD_TYPES.BLACK) {
+      radius = 12;
+      density = 0.008; // Heavy bird
+    } else if (birdType === BIRD_TYPES.WHITE) {
+      radius = 11;
+      density = 0.005;
+    }
+    
+    this.body = Bodies.circle(x, y, radius, {
+      density: density,
+      restitution: 0.4,
+      friction: 0.3,
+      frictionAir: BIRD_AIR_FRICTION
+    });
+    this.active = true;
+    this.abilityUsed = false;
+    this.trail = [];
+    this.maxTrailLength = 15;
+    this.size = birdType === BIRD_TYPES.BLACK ? 24 : 20;
+    
+    World.add(gameState.matterWorld, this.body);
+  }
+
+  updateTrail() {
+    this.trail.push({ x: this.body.position.x, y: this.body.position.y });
+    if (this.trail.length > this.maxTrailLength) {
+      this.trail.shift();
+    }
+  }
+
+  useAbility(gameState, p) {
+    if (this.abilityUsed) return null;
+    this.abilityUsed = true;
+
+    if (this.birdType === BIRD_TYPES.BLUE) {
+      // Split into three birds
+      const miniBirds = [];
+      for (let i = -1; i <= 1; i++) {
+        const miniBird = new Bird(this.body.position.x, this.body.position.y, BIRD_TYPES.BLUE);
+        miniBird.size = 12;
+        
+        // Recreate body with smaller size
+        World.remove(gameState.matterWorld, miniBird.body);
+        miniBird.body = Bodies.circle(this.body.position.x, this.body.position.y, 6, {
+          density: 0.003,
+          restitution: 0.4,
+          friction: 0.3,
+          frictionAir: BIRD_AIR_FRICTION
+        });
+        World.add(gameState.matterWorld, miniBird.body);
+        
+        Body.setVelocity(miniBird.body, {
+          x: this.body.velocity.x + i * 2,
+          y: this.body.velocity.y - 2 + i * 0.5
+        });
+        miniBird.abilityUsed = true; // Mini birds can't split again
+        miniBirds.push(miniBird);
+      }
+      this.active = false;
+      if (this.body && gameState.matterWorld) {
+        World.remove(gameState.matterWorld, this.body);
+        this.body = null;
+      }
+      return miniBirds;
+    } else if (this.birdType === BIRD_TYPES.YELLOW) {
+      // Speed boost
+      const speed = Math.sqrt(
+        this.body.velocity.x * this.body.velocity.x +
+        this.body.velocity.y * this.body.velocity.y
+      );
+      if (speed > 0) {
+        const multiplier = 2.5;
+        Body.setVelocity(this.body, {
+          x: this.body.velocity.x * multiplier,
+          y: this.body.velocity.y * multiplier
+        });
+      }
+    } else if (this.birdType === BIRD_TYPES.GREEN) {
+      // Explosion effect - damage nearby entities
+      const explosionRadius = 80;
+      const explosionForce = 15;
+      const pos = this.body.position;
+      
+      // Create explosion particles
+      const particles = createParticleEffect(pos.x, pos.y, [50, 255, 50], 20);
+      gameState.particleEffects.push(...particles);
+      
+      // Damage nearby entities
+      gameState.entities.forEach(entity => {
+        if (!entity.active || !entity.body || entity === this) return;
+        
+        const dx = entity.body.position.x - pos.x;
+        const dy = entity.body.position.y - pos.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        if (distance < explosionRadius) {
+          // Apply damage
+          if (entity.type === 'pig') {
+            entity.takeDamage(2);
+          } else if (entity.type === 'block') {
+            entity.takeDamage(1);
+          }
+          
+          // Apply force
+          const force = explosionForce / (distance + 1);
+          const angle = Math.atan2(dy, dx);
+          Body.applyForce(entity.body, entity.body.position, {
+            x: Math.cos(angle) * force * 0.01,
+            y: Math.sin(angle) * force * 0.01
+          });
+        }
+      });
+      
+      this.active = false;
+      if (this.body && gameState.matterWorld) {
+        World.remove(gameState.matterWorld, this.body);
+        this.body = null;
+      }
+    } else if (this.birdType === BIRD_TYPES.WHITE) {
+      // Drop egg bomb
+      const egg = new EggBomb(this.body.position.x, this.body.position.y + 5);
+      Body.setVelocity(egg.body, {
+        x: this.body.velocity.x * 0.3,
+        y: 8 // Drop downward
+      });
+      gameState.entities.push(egg);
+      
+      // White bird bounces upward after dropping egg
+      Body.setVelocity(this.body, {
+        x: this.body.velocity.x,
+        y: this.body.velocity.y - 5
+      });
+    }
+    
+    return null;
+  }
+}
+
+export class EggBomb {
+  constructor(x, y) {
+    this.type = 'egg';
+    this.body = Bodies.circle(x, y, 8, {
+      density: 0.006,
+      restitution: 0.2,
+      friction: 0.3,
+      frictionAir: BIRD_AIR_FRICTION
+    });
+    this.active = true;
+    this.size = 16;
+    this.hasExploded = false;
+    
+    World.add(gameState.matterWorld, this.body);
+  }
+  
+  explode() {
+    if (this.hasExploded) return;
+    this.hasExploded = true;
+    
+    const explosionRadius = 60;
+    const explosionForce = 12;
+    const pos = this.body.position;
+    
+    // Create explosion particles
+    const particles = createParticleEffect(pos.x, pos.y, [255, 255, 200], 15);
+    gameState.particleEffects.push(...particles);
+    
+    // Damage nearby entities
+    gameState.entities.forEach(entity => {
+      if (!entity.active || !entity.body || entity === this) return;
+      
+      const dx = entity.body.position.x - pos.x;
+      const dy = entity.body.position.y - pos.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      if (distance < explosionRadius) {
+        // Apply damage
+        if (entity.type === 'pig') {
+          entity.takeDamage(2);
+        } else if (entity.type === 'block') {
+          entity.takeDamage(1);
+        }
+        
+        // Apply force
+        const force = explosionForce / (distance + 1);
+        const angle = Math.atan2(dy, dx);
+        Body.applyForce(entity.body, entity.body.position, {
+          x: Math.cos(angle) * force * 0.01,
+          y: Math.sin(angle) * force * 0.01
+        });
+      }
+    });
+    
+    this.active = false;
+    if (this.body && gameState.matterWorld) {
+      World.remove(gameState.matterWorld, this.body);
+      this.body = null;
+    }
+  }
+}
+
+export class Pig {
+  constructor(x, y, isLarge = false) {
+    this.type = 'pig';
+    const size = isLarge ? 15 : 10;
+    this.body = Bodies.circle(x, y, size, {
+      density: 0.003,
+      restitution: 0.3,
+      friction: 0.5,
+      frictionAir: 0.01
+    });
+    this.isLarge = isLarge;
+    this.health = isLarge ? 2 : 1;
+    this.size = isLarge ? 30 : 20;
+    this.active = true;
+    
+    World.add(gameState.matterWorld, this.body);
+  }
+
+  takeDamage(amount) {
+    this.health -= amount;
+    if (this.health <= 0) {
+      this.active = false;
+      if (this.body && gameState.matterWorld) {
+        const pos = { x: this.body.position.x, y: this.body.position.y };
+        World.remove(gameState.matterWorld, this.body);
+        this.body = null;
+        
+        // Add score
+        const points = this.isLarge ? SCORE_LARGE_PIG : SCORE_SMALL_PIG;
+        gameState.score += points;
+        gameState.levelScore += points;
+        gameState.pigsRemaining--;
+        
+        // Particle effect
+        const particles = createParticleEffect(pos.x, pos.y, [100, 200, 100], 10);
+        gameState.particleEffects.push(...particles);
+      }
+      
+      return true;
+    }
+    return false;
+  }
+}
+
+export class StructureBlock {
+  constructor(x, y, width, height, material) {
+    this.type = 'block';
+    this.material = material; // 'WOOD' or 'STONE'
+    this.width = width;
+    this.height = height;
+    
+    if (material === 'WOOD') {
+      this.body = Bodies.rectangle(x, y, width, height, {
+        density: 0.0015,
+        restitution: 0.2,
+        friction: 0.8,
+        frictionAir: 0.01
+      });
+      this.durability = 5;
+      this.health = 1;
+      this.maxHealth = 1;
+    } else if (material === 'STONE') {
+      this.body = Bodies.rectangle(x, y, width, height, {
+        density: 0.003,
+        restitution: 0.15,
+        friction: 0.9,
+        frictionAir: 0.01
+      });
+      this.durability = 5; // Reduced from 10 to 5
+      this.health = 1; // Reduced from 2 to 1
+      this.maxHealth = 1;
+    }
+    
+    this.active = true;
+    World.add(gameState.matterWorld, this.body);
+  }
+
+  takeDamage(amount) {
+    this.health -= amount;
+    if (this.health <= 0) {
+      this.active = false;
+      if (this.body && gameState.matterWorld) {
+        const pos = { x: this.body.position.x, y: this.body.position.y };
+        const color = this.material === 'WOOD' ? [139, 90, 43] : [120, 120, 120];
+        World.remove(gameState.matterWorld, this.body);
+        this.body = null;
+        
+        // Add score
+        const points = this.material === 'WOOD' ? SCORE_WOOD_BLOCK : SCORE_STONE_BLOCK;
+        gameState.score += points;
+        gameState.levelScore += points;
+        
+        // Particle effect
+        const particles = createParticleEffect(pos.x, pos.y, color, 6);
+        gameState.particleEffects.push(...particles);
+      }
+      
+      return true;
+    }
+    return false;
+  }
+}
+</file>
+
+<file name="levels.js">
+import { Pig, StructureBlock } from './entities.js';
+import { BIRD_TYPES } from './globals.js';
+
+export function getLevelData(levelNumber) {
+  const levels = {
+    // EASY LEVELS (1-3) - Now with 8-10 birds
+    1: {
+      birds: [
+        BIRD_TYPES.RED, BIRD_TYPES.RED, BIRD_TYPES.BLUE, 
+        BIRD_TYPES.RED, BIRD_TYPES.YELLOW, BIRD_TYPES.RED,
+        BIRD_TYPES.BLUE, BIRD_TYPES.GREEN
+      ],
+      pigs: [
+        { x: 350, y: 300, large: false },
+        { x: 380, y: 300, large: false }
+      ],
+      structures: [
+        // Simple ground platform
+        { x: 365, y: 330, w: 50, h: 10, mat: 'WOOD' },
+        { x: 340, y: 320, w: 10, h: 20, mat: 'WOOD' },
+        { x: 390, y: 320, w: 10, h: 20, mat: 'WOOD' },
+        { x: 365, y: 305, w: 60, h: 10, mat: 'WOOD' }
+      ]
+    },
+    2: {
+      birds: [
+        BIRD_TYPES.RED, BIRD_TYPES.BLUE, BIRD_TYPES.RED,
+        BIRD_TYPES.YELLOW, BIRD_TYPES.RED, BIRD_TYPES.BLUE,
+        BIRD_TYPES.BLACK, BIRD_TYPES.RED, BIRD_TYPES.YELLOW
+      ],
+      pigs: [
+        { x: 380, y: 300, large: false },
+        { x: 420, y: 300, large: false },
+        { x: 400, y: 270, large: false }
+      ],
+      structures: [
+        // Simple tower
+        { x: 370, y: 335, w: 15, h: 30, mat: 'WOOD' },
+        { x: 400, y: 335, w: 15, h: 30, mat: 'WOOD' },
+        { x: 430, y: 335, w: 15, h: 30, mat: 'WOOD' },
+        // Platform 1
+        { x: 400, y: 310, w: 70, h: 10, mat: 'WOOD' },
+        // Walls
+        { x: 380, y: 290, w: 15, h: 30, mat: 'WOOD' },
+        { x: 420, y: 290, w: 15, h: 30, mat: 'WOOD' },
+        // Top
+        { x: 400, y: 270, w: 50, h: 10, mat: 'WOOD' }
+      ]
+    },
+    3: {
+      birds: [
+        BIRD_TYPES.RED, BIRD_TYPES.YELLOW, BIRD_TYPES.BLUE,
+        BIRD_TYPES.RED, BIRD_TYPES.WHITE, BIRD_TYPES.BLUE,
+        BIRD_TYPES.YELLOW, BIRD_TYPES.RED, BIRD_TYPES.RED,
+        BIRD_TYPES.GREEN
+      ],
+      pigs: [
+        { x: 360, y: 310, large: false },
+        { x: 400, y: 310, large: false },
+        { x: 380, y: 280, large: false }
+      ],
+      structures: [
+        // Base
+        { x: 360, y: 335, w: 15, h: 30, mat: 'WOOD' },
+        { x: 380, y: 335, w: 15, h: 30, mat: 'WOOD' },
+        { x: 400, y: 335, w: 15, h: 30, mat: 'WOOD' },
+        { x: 420, y: 335, w: 15, h: 30, mat: 'WOOD' },
+        // Floor 1
+        { x: 390, y: 315, w: 70, h: 8, mat: 'WOOD' },
+        { x: 370, y: 295, w: 12, h: 30, mat: 'WOOD' },
+        { x: 410, y: 295, w: 12, h: 30, mat: 'WOOD' },
+        // Floor 2
+        { x: 390, y: 275, w: 50, h: 8, mat: 'WOOD' }
+      ]
+    },
+    
+    // MEDIUM LEVELS (4-6) - Now with 12-15 birds
+    4: {
+      birds: [
+        BIRD_TYPES.RED, BIRD_TYPES.BLUE, BIRD_TYPES.YELLOW, BIRD_TYPES.RED,
+        BIRD_TYPES.BLUE, BIRD_TYPES.BLACK, BIRD_TYPES.YELLOW, BIRD_TYPES.RED,
+        BIRD_TYPES.BLUE, BIRD_TYPES.GREEN, BIRD_TYPES.RED, BIRD_TYPES.YELLOW
+      ],
+      pigs: [
+        { x: 380, y: 300, large: false },
+        { x: 420, y: 300, large: false },
+        { x: 400, y: 270, large: true }
+      ],
+      structures: [
+        // Base with mixed materials
+        { x: 370, y: 335, w: 15, h: 30, mat: 'STONE' },
+        { x: 400, y: 335, w: 15, h: 30, mat: 'WOOD' },
+        { x: 430, y: 335, w: 15, h: 30, mat: 'STONE' },
+        // Platform 1
+        { x: 400, y: 310, w: 70, h: 10, mat: 'WOOD' },
+        // Walls
+        { x: 375, y: 290, w: 15, h: 30, mat: 'WOOD' },
+        { x: 425, y: 290, w: 15, h: 30, mat: 'WOOD' },
+        // Top
+        { x: 400, y: 270, w: 60, h: 10, mat: 'STONE' }
+      ]
+    },
+    5: {
+      birds: [
+        BIRD_TYPES.YELLOW, BIRD_TYPES.BLUE, BIRD_TYPES.RED, BIRD_TYPES.BLUE,
+        BIRD_TYPES.RED, BIRD_TYPES.YELLOW, BIRD_TYPES.WHITE, BIRD_TYPES.BLUE,
+        BIRD_TYPES.RED, BIRD_TYPES.YELLOW, BIRD_TYPES.RED, BIRD_TYPES.BLUE,
+        BIRD_TYPES.BLACK
+      ],
+      pigs: [
+        { x: 350, y: 310, large: false },
+        { x: 400, y: 290, large: false },
+        { x: 450, y: 310, large: false },
+        { x: 400, y: 260, large: true }
+      ],
+      structures: [
+        // Left tower
+        { x: 340, y: 335, w: 15, h: 30, mat: 'WOOD' },
+        { x: 360, y: 335, w: 15, h: 30, mat: 'STONE' },
+        { x: 350, y: 310, w: 30, h: 10, mat: 'WOOD' },
+        // Right tower
+        { x: 440, y: 335, w: 15, h: 30, mat: 'STONE' },
+        { x: 460, y: 335, w: 15, h: 30, mat: 'WOOD' },
+        { x: 450, y: 310, w: 30, h: 10, mat: 'WOOD' },
+        // Center bridge
+        { x: 400, y: 295, w: 120, h: 8, mat: 'WOOD' },
+        { x: 385, y: 275, w: 15, h: 30, mat: 'STONE' },
+        { x: 415, y: 275, w: 15, h: 30, mat: 'STONE' },
+        { x: 400, y: 255, w: 50, h: 10, mat: 'WOOD' }
+      ]
+    },
+    6: {
+      birds: [
+        BIRD_TYPES.RED, BIRD_TYPES.YELLOW, BIRD_TYPES.BLUE, BIRD_TYPES.YELLOW, BIRD_TYPES.RED,
+        BIRD_TYPES.BLUE, BIRD_TYPES.RED, BIRD_TYPES.YELLOW, BIRD_TYPES.GREEN, BIRD_TYPES.BLUE,
+        BIRD_TYPES.BLACK, BIRD_TYPES.YELLOW, BIRD_TYPES.RED, BIRD_TYPES.WHITE, BIRD_TYPES.RED
+      ],
+      pigs: [
+        { x: 370, y: 310, large: false },
+        { x: 430, y: 310, large: false },
+        { x: 400, y: 280, large: true },
+        { x: 380, y: 250, large: false },
+        { x: 420, y: 250, large: false }
+      ],
+      structures: [
+        // Base
+        { x: 360, y: 335, w: 15, h: 30, mat: 'STONE' },
+        { x: 385, y: 335, w: 15, h: 30, mat: 'WOOD' },
+        { x: 415, y: 335, w: 15, h: 30, mat: 'WOOD' },
+        { x: 440, y: 335, w: 15, h: 30, mat: 'STONE' },
+        // Floor 1
+        { x: 400, y: 315, w: 90, h: 8, mat: 'WOOD' },
+        { x: 365, y: 295, w: 15, h: 30, mat: 'STONE' },
+        { x: 400, y: 295, w: 15, h: 30, mat: 'WOOD' },
+        { x: 435, y: 295, w: 15, h: 30, mat: 'STONE' },
+        // Floor 2
+        { x: 400, y: 275, w: 80, h: 8, mat: 'STONE' },
+        { x: 375, y: 260, w: 15, h: 20, mat: 'WOOD' },
+        { x: 405, y: 260, w: 15, h: 20, mat: 'WOOD' },
+        { x: 425, y: 260, w: 15, h: 20, mat: 'WOOD' },
+        // Floor 3
+        { x: 400, y: 245, w: 60, h: 8, mat: 'WOOD' }
+      ]
+    },
+    
+    // HARD LEVELS (7-9) - Now with 15-20 birds
+    7: {
+      birds: [
+        BIRD_TYPES.YELLOW, BIRD_TYPES.BLUE, BIRD_TYPES.RED, BIRD_TYPES.YELLOW, BIRD_TYPES.BLUE,
+        BIRD_TYPES.RED, BIRD_TYPES.YELLOW, BIRD_TYPES.BLACK, BIRD_TYPES.BLUE, BIRD_TYPES.RED,
+        BIRD_TYPES.YELLOW, BIRD_TYPES.GREEN, BIRD_TYPES.BLUE, BIRD_TYPES.RED, BIRD_TYPES.WHITE
+      ],
+      pigs: [
+        { x: 380, y: 300, large: false },
+        { x: 440, y: 300, large: false },
+        { x: 410, y: 270, large: true },
+        { x: 410, y: 240, large: true }
+      ],
+      structures: [
+        // Base fortress
+        { x: 365, y: 330, w: 20, h: 40, mat: 'STONE' },
+        { x: 395, y: 330, w: 20, h: 40, mat: 'STONE' },
+        { x: 425, y: 330, w: 20, h: 40, mat: 'STONE' },
+        { x: 455, y: 330, w: 20, h: 40, mat: 'STONE' },
+        // Floor 1
+        { x: 410, y: 305, w: 100, h: 10, mat: 'STONE' },
+        { x: 380, y: 285, w: 15, h: 30, mat: 'WOOD' },
+        { x: 440, y: 285, w: 15, h: 30, mat: 'WOOD' },
+        // Floor 2
+        { x: 410, y: 265, w: 80, h: 10, mat: 'WOOD' },
+        { x: 390, y: 250, w: 15, h: 20, mat: 'STONE' },
+        { x: 430, y: 250, w: 15, h: 20, mat: 'STONE' },
+        // Roof
+        { x: 410, y: 235, w: 70, h: 10, mat: 'STONE' }
+      ]
+    },
+    8: {
+      birds: [
+        BIRD_TYPES.RED, BIRD_TYPES.YELLOW, BIRD_TYPES.BLUE, BIRD_TYPES.BLUE, BIRD_TYPES.YELLOW, BIRD_TYPES.RED,
+        BIRD_TYPES.BLUE, BIRD_TYPES.BLACK, BIRD_TYPES.YELLOW, BIRD_TYPES.RED, BIRD_TYPES.BLUE, BIRD_TYPES.YELLOW,
+        BIRD_TYPES.RED, BIRD_TYPES.GREEN, BIRD_TYPES.RED, BIRD_TYPES.YELLOW, BIRD_TYPES.WHITE, BIRD_TYPES.BLUE
+      ],
+      pigs: [
+        { x: 320, y: 310, large: false },
+        { x: 350, y: 280, large: false },
+        { x: 450, y: 310, large: false },
+        { x: 480, y: 280, large: true },
+        { x: 400, y: 230, large: true }
+      ],
+      structures: [
+        // Left tower
+        { x: 320, y: 330, w: 15, h: 40, mat: 'WOOD' },
+        { x: 345, y: 330, w: 15, h: 40, mat: 'STONE' },
+        { x: 332, y: 300, w: 40, h: 10, mat: 'WOOD' },
+        { x: 332, y: 280, w: 15, h: 30, mat: 'STONE' },
+        // Right tower
+        { x: 455, y: 330, w: 15, h: 40, mat: 'STONE' },
+        { x: 480, y: 330, w: 15, h: 40, mat: 'STONE' },
+        { x: 467, y: 300, w: 40, h: 10, mat: 'STONE' },
+        { x: 467, y: 280, w: 15, h: 30, mat: 'STONE' },
+        // Middle bridge
+        { x: 400, y: 270, w: 80, h: 10, mat: 'STONE' },
+        { x: 385, y: 250, w: 15, h: 30, mat: 'STONE' },
+        { x: 415, y: 250, w: 15, h: 30, mat: 'STONE' },
+        { x: 400, y: 230, w: 50, h: 10, mat: 'STONE' }
+      ]
+    },
+    9: {
+      birds: [
+        BIRD_TYPES.YELLOW, BIRD_TYPES.BLUE, BIRD_TYPES.YELLOW, BIRD_TYPES.RED, BIRD_TYPES.RED, BIRD_TYPES.BLUE, BIRD_TYPES.YELLOW,
+        BIRD_TYPES.RED, BIRD_TYPES.BLACK, BIRD_TYPES.YELLOW, BIRD_TYPES.RED, BIRD_TYPES.BLUE, BIRD_TYPES.GREEN, BIRD_TYPES.YELLOW,
+        BIRD_TYPES.BLUE, BIRD_TYPES.RED, BIRD_TYPES.YELLOW, BIRD_TYPES.WHITE, BIRD_TYPES.BLUE, BIRD_TYPES.BLACK
+      ],
+      pigs: [
+        { x: 360, y: 320, large: false },
+        { x: 390, y: 320, large: false },
+        { x: 420, y: 320, large: false },
+        { x: 450, y: 320, large: false },
+        { x: 380, y: 280, large: true },
+        { x: 430, y: 280, large: true },
+        { x: 405, y: 240, large: true },
+        { x: 405, y: 200, large: true }
+      ],
+      structures: [
+        // Massive base
+        { x: 350, y: 335, w: 20, h: 30, mat: 'STONE' },
+        { x: 380, y: 335, w: 20, h: 30, mat: 'STONE' },
+        { x: 410, y: 335, w: 20, h: 30, mat: 'STONE' },
+        { x: 440, y: 335, w: 20, h: 30, mat: 'STONE' },
+        { x: 470, y: 335, w: 20, h: 30, mat: 'STONE' },
+        // Level 1
+        { x: 405, y: 312, w: 130, h: 8, mat: 'STONE' },
+        { x: 365, y: 295, w: 15, h: 25, mat: 'WOOD' },
+        { x: 395, y: 295, w: 15, h: 25, mat: 'STONE' },
+        { x: 425, y: 295, w: 15, h: 25, mat: 'STONE' },
+        { x: 455, y: 295, w: 15, h: 25, mat: 'WOOD' },
+        // Level 2
+        { x: 405, y: 275, w: 110, h: 8, mat: 'STONE' },
+        { x: 375, y: 260, w: 15, h: 20, mat: 'STONE' },
+        { x: 405, y: 260, w: 15, h: 20, mat: 'STONE' },
+        { x: 435, y: 260, w: 15, h: 20, mat: 'STONE' },
+        // Level 3
+        { x: 405, y: 245, w: 90, h: 8, mat: 'STONE' },
+        { x: 385, y: 230, w: 15, h: 20, mat: 'STONE' },
+        { x: 425, y: 230, w: 15, h: 20, mat: 'STONE' },
+        // Level 4
+        { x: 405, y: 215, w: 70, h: 8, mat: 'STONE' },
+        { x: 390, y: 200, w: 12, h: 20, mat: 'STONE' },
+        { x: 420, y: 200, w: 12, h: 20, mat: 'STONE' },
+        // Top
+        { x: 405, y: 185, w: 50, h: 8, mat: 'STONE' }
+      ]
+    }
+  };
+
+  return levels[levelNumber];
+}
+
+export function createLevel(levelNumber) {
+  const levelData = getLevelData(levelNumber);
+  if (!levelData) return null;
+
+  const pigs = levelData.pigs.map(p => new Pig(p.x, p.y, p.large));
+  const structures = levelData.structures.map(s => 
+    new StructureBlock(s.x, s.y, s.w, s.h, s.mat)
+  );
+
+  return {
+    birds: [...levelData.birds],
+    pigs: pigs,
+    structures: structures
+  };
+}
+</file>
+
+<file name="physics.js">
+import { gameState, GROUND_Y, CANVAS_WIDTH, CANVAS_HEIGHT, GRAVITY } from './globals.js';
+
+const Matter = window.Matter;
+const Engine = Matter.Engine;
+const World = Matter.World;
+const Bodies = Matter.Bodies;
+const Body = Matter.Body;
+const Events = Matter.Events;
+
+// Initialize Matter.js physics engine
+export function initPhysicsEngine() {
+  gameState.matterEngine = Engine.create({
+    gravity: { x: 0, y: GRAVITY }
+  });
+  
+  gameState.matterWorld = gameState.matterEngine.world;
+  
+  createGround();
+  
+  // Setup collision detection
+  Events.on(gameState.matterEngine, 'collisionStart', handleCollisionStart);
+}
+
+// Create ground body
+function createGround() {
+  gameState.groundBody = Bodies.rectangle(CANVAS_WIDTH / 2, GROUND_Y + 25, CANVAS_WIDTH, 50, {
+    isStatic: true,
+    friction: 0.8,
+    restitution: 0.2
+  });
+  World.add(gameState.matterWorld, gameState.groundBody);
+}
+
+// Update physics
+export function updatePhysics() {
+  if (!gameState.matterEngine) return;
+  
+  Engine.update(gameState.matterEngine, 1000 / 60);
+  
+  // Clean up bodies that fell off screen
+  gameState.entities.forEach(entity => {
+    if (entity.body && entity.body.position.y > CANVAS_HEIGHT + 100) {
+      entity.active = false;
+      if (entity.body && gameState.matterWorld) {
+        World.remove(gameState.matterWorld, entity.body);
+        entity.body = null;
+      }
+    }
+  });
+  
+  // Check egg collisions and trigger explosions
+  gameState.entities.forEach(entity => {
+    if (entity.type === 'egg' && entity.active && !entity.hasExploded) {
+      // Check if egg is moving very slowly or hit something
+      const speed = Math.sqrt(
+        entity.body.velocity.x * entity.body.velocity.x +
+        entity.body.velocity.y * entity.body.velocity.y
+      );
+      if (speed < 1 || entity.body.position.y > GROUND_Y - 10) {
+        entity.explode();
+      }
+    }
+  });
+  
+  // Update particle effects
+  gameState.particleEffects = gameState.particleEffects.filter(particle => {
+    particle.x += particle.vx;
+    particle.y += particle.vy;
+    particle.vy += 0.2; // Gravity
+    particle.life--;
+    return particle.life > 0;
+  });
+}
+
+// Collision handling
+function handleCollisionStart(event) {
+  const pairs = event.pairs;
+  
+  pairs.forEach(pair => {
+    const bodyA = pair.bodyA;
+    const bodyB = pair.bodyB;
+    
+    // Find entities for these bodies
+    const entityA = gameState.entities.find(e => e.body === bodyA);
+    const entityB = gameState.entities.find(e => e.body === bodyB);
+    
+    // Check for egg hitting anything - trigger explosion
+    if (entityA && entityA.type === 'egg' && !entityA.hasExploded) {
+      entityA.explode();
+    }
+    if (entityB && entityB.type === 'egg' && !entityB.hasExploded) {
+      entityB.explode();
+    }
+    
+    // Check for pig hitting ground with high velocity
+    if (bodyA === gameState.groundBody && entityB && entityB.type === 'pig') {
+      handleGroundImpact(entityB, bodyB);
+    } else if (bodyB === gameState.groundBody && entityA && entityA.type === 'pig') {
+      handleGroundImpact(entityA, bodyA);
+    }
+    
+    if (!entityA || !entityB) return;
+    
+    // Calculate impact force
+    const speed = Math.sqrt(
+      Math.pow(bodyA.velocity.x - bodyB.velocity.x, 2) +
+      Math.pow(bodyA.velocity.y - bodyB.velocity.y, 2)
+    );
+    
+    const mass = Math.min(bodyA.mass, bodyB.mass);
+    const force = speed * mass;
+    
+    if (force > 1.5) {
+      handleCollisionDamage(entityA, entityB, force);
+    }
+  });
+}
+
+function handleGroundImpact(pig, pigBody) {
+  // Calculate impact velocity (only vertical component matters for ground)
+  const impactSpeed = Math.abs(pigBody.velocity.y);
+  
+  // If pig is falling fast, take damage
+  if (impactSpeed > 1.5) {
+    const damage = Math.ceil(impactSpeed / 1.5);
+    pig.takeDamage(damage);
+  }
+}
+
+function handleCollisionDamage(e1, e2, force) {
+  const isBird1 = e1.type === 'bird';
+  const isBird2 = e2.type === 'bird';
+  const isPig1 = e1.type === 'pig';
+  const isPig2 = e2.type === 'pig';
+  const isBlock1 = e1.type === 'block';
+  const isBlock2 = e2.type === 'block';
+  
+  // Bird hitting pig
+  if (isBird1 && isPig2 && force > 1.5) {
+    const damage = Math.max(1, Math.floor(force / 2));
+    e2.takeDamage(damage);
+  } else if (isBird2 && isPig1 && force > 1.5) {
+    const damage = Math.max(1, Math.floor(force / 2));
+    e1.takeDamage(damage);
+  }
+  
+  // Bird or block hitting block
+  if ((isBird1 || isBlock1) && isBlock2 && force > e2.durability) {
+    e2.takeDamage(1);
+  }
+  if ((isBird2 || isBlock2) && isBlock1 && force > e1.durability) {
+    e1.takeDamage(1);
+  }
+  
+  // Block landing on pig - INSTANT KILL if falling from above
+  if (isBlock1 && isPig2) {
+    const isAbove = e1.body.position.y < e2.body.position.y;
+    const isFalling = e1.body.velocity.y > 0.5;
+    if (isAbove && isFalling) {
+      e2.takeDamage(100);
+    } else if (force > 2.5) {
+      const damage = Math.max(1, Math.ceil(force / 3));
+      e2.takeDamage(damage);
+    }
+  } else if (isBlock2 && isPig1) {
+    const isAbove = e2.body.position.y < e1.body.position.y;
+    const isFalling = e2.body.velocity.y > 0.5;
+    if (isAbove && isFalling) {
+      e1.takeDamage(100);
+    } else if (force > 2.5) {
+      const damage = Math.max(1, Math.ceil(force / 3));
+      e1.takeDamage(damage);
+    }
+  }
+  
+  // Pig landing on pig - INSTANT KILL the one below
+  if (isPig1 && isPig2) {
+    const pig1Above = e1.body.position.y < e2.body.position.y;
+    const pig2Above = e2.body.position.y < e1.body.position.y;
+    const pig1Falling = e1.body.velocity.y > 0.5;
+    const pig2Falling = e2.body.velocity.y > 0.5;
+    
+    if (pig1Above && pig1Falling) {
+      e2.takeDamage(100);
+    }
+    if (pig2Above && pig2Falling) {
+      e1.takeDamage(100);
+    }
+    
+    if (force > 2 && (pig1Falling || pig2Falling) && !pig1Above && !pig2Above) {
+      const damage = Math.max(1, Math.floor(force / 3));
+      if (pig1Falling) e1.takeDamage(damage);
+      if (pig2Falling) e2.takeDamage(damage);
+    }
+  }
+}
+
+// Create particle effect
+export function createParticleEffect(x, y, color, count = 8) {
+  const particles = [];
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.PI * 2 * i) / count;
+    const speed = 2 + Math.random() * 3;
+    particles.push({
+      x: x,
+      y: y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 30,
+      maxLife: 30,
+      color: color,
+      size: 3 + Math.random() * 3
+    });
+  }
+  return particles;
+}
+
+// Clear all bodies from world
+export function clearPhysicsWorld() {
+  if (!gameState.matterWorld) return;
+  
+  // Remove all entities
+  gameState.entities.forEach(entity => {
+    if (entity.body) {
+      World.remove(gameState.matterWorld, entity.body);
+    }
+  });
+  
+  // Remove ground if it exists
+  if (gameState.groundBody) {
+    World.remove(gameState.matterWorld, gameState.groundBody);
+    gameState.groundBody = null;
+  }
+  
+  // Recreate ground
+  createGround();
+}
+</file>
+
+<file name="input.js">
+import { gameState, SLINGSHOT_X, SLINGSHOT_Y, MAX_PULL_DISTANCE, LAUNCH_POWER_MULTIPLIER } from './globals.js';
+import { Bird } from './entities.js';
+import { createLevel } from './levels.js';
+import { clearPhysicsWorld } from './physics.js';
+// NEW: Import centralized game control functions from game.js
+import { startGame, loadNextLevel, restartGame } from './game.js';
+
+const Matter = window.Matter;
+const Body = Matter.Body;
+
+// NEW: handleKeyPressed now accepts callbacks for game control functions
+export function handleKeyPressed(p, key, keyCode, startGameCallback, loadNextLevelCallback, restartGameCallback) {
+  // Track key state for continuous controls
+  gameState.keysPressed[keyCode] = true;
+
+  // Log input
+  p.logs.inputs.push({
+    input_type: 'keyPressed',
+    data: { key, keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+
+  // ENTER - Start game or advance level
+  if (keyCode === 13) {
+    if (gameState.gamePhase === "START") {
+      startGameCallback(p); // Use the provided callback
+    } else if (gameState.gamePhase === "LEVEL_COMPLETE") {
+      loadNextLevelCallback(p); // Use the provided callback
+    }
+  }
+
+  // ESC - Pause/Unpause
+  if (keyCode === 27) {
+    if (gameState.gamePhase === "PLAYING") {
+      gameState.gamePhase = "PAUSED";
+      p.logs.game_info.push({
+        data: { phase: "PAUSED" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    } else if (gameState.gamePhase === "PAUSED") {
+      gameState.gamePhase = "PLAYING";
+      p.logs.game_info.push({
+        data: { phase: "PLAYING" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+
+  // R - Restart
+  if (keyCode === 82) {
+    restartGameCallback(p); // Use the provided callback
+  }
+
+  // SPACE - Toggle aiming or launch
+  if (keyCode === 32 && gameState.gamePhase === "PLAYING") {
+    if (!gameState.isAiming) {
+      // Start aiming if bird is available and no active birds
+      if (gameState.birdsRemaining.length > 0 && gameState.activeBirds.length === 0) {
+        gameState.isAiming = true;
+        gameState.slingshotPullPos = { x: 0, y: 0 };
+      }
+    } else {
+      // Launch the bird
+      launchBird(p);
+    }
+  }
+
+  // Z - Activate bird ability
+  if (keyCode === 90 && gameState.gamePhase === "PLAYING") {
+    activateBirdAbility(p);
+  }
+}
+
+export function handleKeyReleased(p, key, keyCode) {
+  // Track key state for continuous controls
+  gameState.keysPressed[keyCode] = false;
+
+  // Log input
+  p.logs.inputs.push({
+    input_type: 'keyReleased',
+    data: { key, keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function updateAiming(p) {
+  // Continuous aim adjustment when aiming and arrow keys are held
+  if (gameState.isAiming && gameState.slingshotPullPos) {
+    const pullSpeed = 2; // Continuous speed per frame (slower than tap-based)
+    let changed = false;
+
+    if (gameState.keysPressed[37]) { // LEFT
+      gameState.slingshotPullPos.x -= pullSpeed;
+      changed = true;
+    }
+    if (gameState.keysPressed[39]) { // RIGHT
+      gameState.slingshotPullPos.x += pullSpeed;
+      changed = true;
+    }
+    if (gameState.keysPressed[38]) { // UP
+      gameState.slingshotPullPos.y -= pullSpeed;
+      changed = true;
+    }
+    if (gameState.keysPressed[40]) { // DOWN
+      gameState.slingshotPullPos.y += pullSpeed;
+      changed = true;
+    }
+
+    // Clamp to max pull distance if changed
+    if (changed) {
+      const dist = Math.sqrt(
+        gameState.slingshotPullPos.x * gameState.slingshotPullPos.x +
+        gameState.slingshotPullPos.y * gameState.slingshotPullPos.y
+      );
+      if (dist > MAX_PULL_DISTANCE) {
+        const scale = MAX_PULL_DISTANCE / dist;
+        gameState.slingshotPullPos.x *= scale;
+        gameState.slingshotPullPos.y *= scale;
+      }
+    }
+  }
+}
+
+export function updateTestingControls(p) {
+  if (gameState.controlMode === 'HUMAN') return;
+
+  if (gameState.controlMode === 'TEST_1') {
+    // Basic testing - auto-launch at medium power
+    if (gameState.gamePhase === "START" && p.frameCount % 10 === 0) {
+      startGame(p); // Use imported startGame
+    }
+    
+    if (gameState.gamePhase === "PLAYING" && !gameState.isAiming && gameState.birdsRemaining.length > 0 && gameState.activeBirds.length === 0) {
+      if (p.frameCount % 120 === 0) {
+        gameState.isAiming = true;
+        gameState.slingshotPullPos = { x: 30, y: 20 };
+      }
+    }
+    
+    if (gameState.isAiming && p.frameCount % 10 === 0) {
+      launchBird(p);
+    }
+  }
+
+  if (gameState.controlMode === 'TEST_2') {
+    // Test to win - smart targeting
+    if (gameState.gamePhase === "START" && p.frameCount % 10 === 0) {
+      startGame(p); // Use imported startGame
+    }
+    
+    if (gameState.gamePhase === "PLAYING" && !gameState.isAiming && gameState.birdsRemaining.length > 0 && gameState.activeBirds.length === 0) {
+      if (p.frameCount % 120 === 0) {
+        gameState.isAiming = true;
+        // Aim at structures
+        gameState.slingshotPullPos = { x: 45, y: 25 };
+      }
+    }
+    
+    if (gameState.isAiming && p.frameCount % 10 === 0) {
+      launchBird(p);
+    }
+    
+    // Auto-use abilities
+    if (gameState.activeBirds.length > 0 && p.frameCount % 30 === 15) {
+      activateBirdAbility(p);
+    }
+    
+    // Auto-advance
+    if (gameState.gamePhase === "LEVEL_COMPLETE" && p.frameCount % 120 === 60) {
+      loadNextLevel(p); // Use imported loadNextLevel
+    }
+  }
+}
+
+// REMOVED: startGame function (now imported from game.js)
+// REMOVED: loadNextLevel function (now imported from game.js)
+// REMOVED: updateHighScore function (now imported from game.js)
+// REMOVED: restartGame function (now imported from game.js)
+
+function launchBird(p) {
+  if (gameState.birdsRemaining.length === 0) return;
+
+  const birdType = gameState.birdsRemaining.shift();
+  const bird = new Bird(SLINGSHOT_X, SLINGSHOT_Y, birdType);
+  
+  // Apply launch force
+  const vx = -gameState.slingshotPullPos.x * LAUNCH_POWER_MULTIPLIER;
+  const vy = -gameState.slingshotPullPos.y * LAUNCH_POWER_MULTIPLIER;
+  Body.setVelocity(bird.body, { x: vx, y: vy });
+  
+  gameState.activeBirds.push(bird);
+  gameState.entities.push(bird);
+  gameState.isAiming = false;
+  gameState.slingshotPullPos = null;
+}
+
+function activateBirdAbility(p) {
+  if (gameState.activeBirds.length === 0) return;
+
+  const bird = gameState.activeBirds[0];
+  if (bird && !bird.abilityUsed && bird.active) {
+    const newBirds = bird.useAbility(gameState, p);
+    if (newBirds) {
+      gameState.activeBirds.push(...newBirds);
+      gameState.entities.push(...newBirds);
+    }
+  }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

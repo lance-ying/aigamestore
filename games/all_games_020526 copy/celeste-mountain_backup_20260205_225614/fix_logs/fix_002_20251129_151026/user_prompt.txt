@@ -1,0 +1,1560 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you generate/modify the levels so that there are 6 levels, 2 easy levels, 2 medium levels, and 2 hard levels, and right now I am not required to use my dash as often, can you go ahead and get rid of my 2x jump and just make it a one jump, and make sure that the game is designed to use the cherries, and make sure the 2 easy levels and very easy, the 2 medium levels and medium/normla difficulty, and the hard levels are quite difficulty requiring tight timing 
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">CELESTE MOUNTAIN</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic Movement)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win Strategy)</button>
+        <button id="test_3_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_3')">TEST (Hazard Test)</button>
+        <button id="test_4_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_4')">TEST (Mechanics Test)</button>
+        <button id="test_5_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_5')">TEST (Collection Test)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Help Madeline climb Celeste Mountain and reach the summit while overcoming challenging platforming obstacles. Jump across gaps, dash through the air, and climb walls to navigate hand-crafted levels. Avoid deadly spikes and falling into pits. Each screen presents new challenges that test your precision and timing. Collect strawberries for bonus points as you ascend the mountain!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Keys: Move left/right, climb up/down on walls | Space: Jump (press again in air for double jump) | Z: Air dash in the direction you're moving (limited uses, recharges on landing) | Enter: Start game | ESC: Pause/Unpause | R: Restart to main menu</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+// automated_testing_controller.js - Automated testing implementation
+
+import { gameState, GAME_PHASES } from './globals.js';
+import { LEVELS, getLevelData, isSolidTile, isSpikeTile } from './levels.js';
+
+class TestHistory {
+  constructor() {
+    this.positions = [];
+    this.maxHistory = 60;
+    this.stuckCounter = 0;
+  }
+
+  addPosition(x, y) {
+    this.positions.push({ x, y });
+    if (this.positions.length > this.maxHistory) {
+      this.positions.shift();
+    }
+  }
+
+  isStuck() {
+    if (this.positions.length < this.maxHistory) return false;
+    
+    const recent = this.positions.slice(-30);
+    const avgX = recent.reduce((sum, p) => sum + p.x, 0) / recent.length;
+    const avgY = recent.reduce((sum, p) => sum + p.y, 0) / recent.length;
+    const variance = recent.reduce((sum, p) => sum + Math.pow(p.x - avgX, 2) + Math.pow(p.y - avgY, 2), 0) / recent.length;
+    
+    if (variance < 100) {
+      this.stuckCounter++;
+      return this.stuckCounter > 3;
+    }
+    this.stuckCounter = 0;
+    return false;
+  }
+
+  reset() {
+    this.positions = [];
+    this.stuckCounter = 0;
+  }
+}
+
+const testHistory = new TestHistory();
+
+// Basic movement test
+function getBasicTestAction(gameState) {
+  const action = { left: false, right: false, up: false, down: false, jump: false, dash: false };
+  
+  if (!gameState.player) return action;
+  
+  const level = getLevelData(gameState.currentLevel);
+  if (!level) return action;
+  
+  // Simple strategy: move right, jump over gaps
+  action.right = true;
+  
+  // Jump if near a gap or obstacle
+  if (gameState.player.onGround && Math.random() < 0.3) {
+    action.jump = true;
+  }
+  
+  return action;
+}
+
+// Win strategy - optimal play
+function getTestWinAction(gameState) {
+  const action = { left: false, right: false, up: false, down: false, jump: false, dash: false };
+  
+  if (!gameState.player) return action;
+  
+  testHistory.addPosition(gameState.player.x, gameState.player.y);
+  
+  const level = getLevelData(gameState.currentLevel);
+  if (!level) return action;
+  
+  // Find goal position
+  let goalX = -1, goalY = -1;
+  for (let row = 0; row < level.tiles.length; row++) {
+    for (let col = 0; col < level.tiles[row].length; col++) {
+      if (level.tiles[row][col] === 3) {
+        goalX = col * 20 + 10;
+        goalY = row * 20 + 10;
+        break;
+      }
+    }
+    if (goalX > 0) break;
+  }
+  
+  const dx = goalX - gameState.player.x;
+  const dy = goalY - gameState.player.y;
+  
+  // Basic navigation toward goal
+  if (Math.abs(dx) > 10) {
+    if (dx > 0) {
+      action.right = true;
+    } else {
+      action.left = true;
+    }
+  }
+  
+  // Jump logic
+  if (gameState.player.onGround) {
+    // Jump if we need to go up or if stuck
+    if (dy < -20 || testHistory.isStuck()) {
+      action.jump = true;
+      testHistory.reset();
+    }
+    
+    // Jump over gaps
+    const aheadX = gameState.player.x + (dx > 0 ? 30 : -30);
+    const checkY = gameState.player.y + 20;
+    const tileAhead = getTileAtPosition(level, aheadX, checkY);
+    if (!isSolidTile(tileAhead)) {
+      action.jump = true;
+    }
+  }
+  
+  // Use dash for long gaps
+  if (!gameState.player.onGround && gameState.player.dashesRemaining > 0 && Math.abs(dx) > 80) {
+    action.dash = true;
+    action.right = dx > 0;
+    action.left = dx < 0;
+  }
+  
+  // Climb walls if needed
+  if (gameState.player.onWall !== 0 && dy < 0) {
+    action.up = true;
+    if (Math.abs(dx) > 20) {
+      action.jump = true; // Wall jump
+    }
+  }
+  
+  return action;
+}
+
+// Test hazard interaction
+function getTestHazardAction(gameState) {
+  const action = { left: false, right: false, up: false, down: false, jump: false, dash: false };
+  
+  if (!gameState.player) return action;
+  
+  const level = getLevelData(gameState.currentLevel);
+  if (!level) return action;
+  
+  // Find spikes and intentionally move toward them
+  let spikeX = -1, spikeY = -1;
+  for (let row = 0; row < level.tiles.length; row++) {
+    for (let col = 0; col < level.tiles[row].length; col++) {
+      if (isSpikeTile(level.tiles[row][col])) {
+        spikeX = col * 20 + 10;
+        spikeY = row * 20 + 10;
+        break;
+      }
+    }
+    if (spikeX > 0) break;
+  }
+  
+  if (spikeX > 0) {
+    const dx = spikeX - gameState.player.x;
+    action.right = dx > 0;
+    action.left = dx < 0;
+  } else {
+    // If no spikes nearby, just fall off the edge
+    action.right = true;
+  }
+  
+  return action;
+}
+
+// Test dash and wall climb mechanics
+function getTestMechanicsAction(gameState) {
+  const action = { left: false, right: false, up: false, down: false, jump: false, dash: false };
+  
+  if (!gameState.player) return action;
+  
+  // Alternate between testing dash and wall climbing
+  const testPhase = Math.floor(gameState.player.x / 100) % 2;
+  
+  if (testPhase === 0) {
+    // Test dashing
+    action.right = true;
+    if (!gameState.player.onGround && gameState.player.dashesRemaining > 0) {
+      action.dash = true;
+    }
+    if (gameState.player.onGround) {
+      action.jump = true;
+    }
+  } else {
+    // Test wall climbing
+    if (gameState.player.onWall !== 0) {
+      action.up = true;
+    } else {
+      action.right = true;
+      if (gameState.player.onGround) {
+        action.jump = true;
+      }
+    }
+  }
+  
+  return action;
+}
+
+// Test strawberry collection
+function getTestCollectionAction(gameState) {
+  const action = { left: false, right: false, up: false, down: false, jump: false, dash: false };
+  
+  if (!gameState.player) return action;
+  
+  const level = getLevelData(gameState.currentLevel);
+  if (!level) return action;
+  
+  // Find nearest uncollected strawberry
+  let nearestDist = Infinity;
+  let targetX = -1, targetY = -1;
+  
+  for (let row = 0; row < level.tiles.length; row++) {
+    for (let col = 0; col < level.tiles[row].length; col++) {
+      if (level.tiles[row][col] === 4) {
+        const key = `${gameState.currentLevel}-${row}-${col}`;
+        if (!gameState.collectedStrawberries.has(key)) {
+          const sx = col * 20 + 10;
+          const sy = row * 20 + 10;
+          const dist = Math.sqrt(Math.pow(sx - gameState.player.x, 2) + Math.pow(sy - gameState.player.y, 2));
+          if (dist < nearestDist) {
+            nearestDist = dist;
+            targetX = sx;
+            targetY = sy;
+          }
+        }
+      }
+    }
+  }
+  
+  if (targetX > 0) {
+    const dx = targetX - gameState.player.x;
+    const dy = targetY - gameState.player.y;
+    
+    action.right = dx > 10;
+    action.left = dx < -10;
+    
+    if (gameState.player.onGround && (dy < -20 || nearestDist > 100)) {
+      action.jump = true;
+    }
+    
+    if (!gameState.player.onGround && gameState.player.dashesRemaining > 0 && nearestDist < 100) {
+      action.dash = true;
+    }
+  } else {
+    // No strawberries left, go for goal
+    return getTestWinAction(gameState);
+  }
+  
+  return action;
+}
+
+function getTileAtPosition(level, x, y) {
+  const col = Math.floor(x / 20);
+  const row = Math.floor(y / 20);
+  
+  if (row < 0 || row >= level.tiles.length || col < 0 || col >= level.tiles[0].length) {
+    return 0;
+  }
+  
+  return level.tiles[row][col];
+}
+
+function getRandomAction(gameState) {
+  const action = {
+    left: Math.random() < 0.3,
+    right: Math.random() < 0.3,
+    up: Math.random() < 0.2,
+    down: Math.random() < 0.2,
+    jump: Math.random() < 0.2,
+    dash: Math.random() < 0.1
+  };
+  return action;
+}
+
+export function get_automated_testing_action(gameState) {
+  // Don't provide actions during non-playing phases
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) {
+    return { left: false, right: false, up: false, down: false, jump: false, dash: false };
+  }
+  
+  switch (gameState.controlMode) {
+    case "TEST_1":
+      return getBasicTestAction(gameState);
+    case "TEST_2":
+      return getTestWinAction(gameState);
+    case "TEST_3":
+      return getTestHazardAction(gameState);
+    case "TEST_4":
+      return getTestMechanicsAction(gameState);
+    case "TEST_5":
+      return getTestCollectionAction(gameState);
+    default:
+      return getRandomAction(gameState);
+  }
+}
+
+// Expose globally
+window.get_automated_testing_action = get_automated_testing_action;
+export default get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+// globals.js - Global constants and game state
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const CONTROL_MODES = {
+  HUMAN: "HUMAN",
+  TEST_1: "TEST_1",
+  TEST_2: "TEST_2",
+  TEST_3: "TEST_3",
+  TEST_4: "TEST_4",
+  TEST_5: "TEST_5"
+};
+
+// Player constants
+export const PLAYER_SIZE = 12;
+export const PLAYER_SPEED = 3;
+export const JUMP_STRENGTH = -8;
+export const GRAVITY = 0.4;
+export const MAX_FALL_SPEED = 10;
+export const DASH_SPEED = 8;
+export const DASH_DURATION = 10;
+export const WALL_SLIDE_SPEED = 2;
+export const WALL_JUMP_X = 5;
+export const WALL_JUMP_Y = -7;
+
+// Game constants
+export const TILE_SIZE = 20;
+export const SCREEN_COLS = CANVAS_WIDTH / TILE_SIZE;
+export const SCREEN_ROWS = CANVAS_HEIGHT / TILE_SIZE;
+export const STARTING_LIVES = 5;
+
+// Game state
+export const gameState = {
+  player: null,
+  entities: [],
+  currentLevel: 0,
+  score: 0,
+  lives: STARTING_LIVES,
+  gamePhase: GAME_PHASES.START,
+  controlMode: CONTROL_MODES.HUMAN,
+  collectedStrawberries: new Set(),
+  levelStartPosition: { x: 0, y: 0 }
+};
+
+// Make getGameState available globally
+window.getGameState = function() {
+  return gameState;
+};
+</file>
+
+<file name="game.js">
+// game.js - Main game file
+
+import { 
+  CANVAS_WIDTH, CANVAS_HEIGHT, TARGET_FPS, GAME_PHASES, CONTROL_MODES, gameState
+} from './globals.js';
+import { getLevelData } from './levels.js';
+import { InputState, updateInputFromKeyboard, updateInputFromAction } from './input.js';
+import { initGame, updateGame } from './game_logic.js';
+import { 
+  drawStartScreen, drawPauseIndicator, drawGameOverScreen, 
+  drawLevel, drawUI, drawBackground 
+} from './rendering.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  let inputs;
+
+  // Initialize logs
+  p.logs = {
+    game_info: [],
+    inputs: [],
+    player_info: []
+  };
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(TARGET_FPS);
+    p.randomSeed(42);
+    
+    inputs = new InputState();
+    
+    // Log initialization
+    p.logs.game_info.push({
+      data: { event: "setup_complete", phase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+
+  p.draw = function() {
+    // Clear background once
+    p.background(20, 20, 40);
+    
+    if (gameState.gamePhase === GAME_PHASES.START) {
+      drawStartScreen(p);
+    } else if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      // Get input based on control mode
+      if (gameState.controlMode === CONTROL_MODES.HUMAN) {
+        updateInputFromKeyboard(p, inputs);
+      } else {
+        const action = get_automated_testing_action(gameState);
+        updateInputFromAction(action, inputs);
+      }
+      
+      // Update game
+      updateGame(p, inputs);
+      
+      // Render
+      drawBackground(p);
+      const level = getLevelData(gameState.currentLevel);
+      drawLevel(p, level);
+      
+      // Draw entities
+      for (let entity of gameState.entities) {
+        if (entity.draw) {
+          entity.draw(p);
+        }
+      }
+      
+      drawUI(p);
+    } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+      // Still draw the game, but frozen
+      drawBackground(p);
+      const level = getLevelData(gameState.currentLevel);
+      drawLevel(p, level);
+      
+      for (let entity of gameState.entities) {
+        if (entity.draw) {
+          entity.draw(p);
+        }
+      }
+      
+      drawUI(p);
+      drawPauseIndicator(p);
+    } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || 
+               gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+      // Draw final game state
+      drawBackground(p);
+      const level = getLevelData(gameState.currentLevel);
+      drawLevel(p, level);
+      
+      for (let entity of gameState.entities) {
+        if (entity.draw) {
+          entity.draw(p);
+        }
+      }
+      
+      drawUI(p);
+      drawGameOverScreen(p);
+    }
+  };
+
+  p.keyPressed = function() {
+    // Log input
+    p.logs.inputs.push({
+      input_type: "keyPressed",
+      data: { key: p.key, keyCode: p.keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    
+    // Handle game phase transitions
+    if (p.keyCode === 13) { // ENTER
+      if (gameState.gamePhase === GAME_PHASES.START) {
+        gameState.gamePhase = GAME_PHASES.PLAYING;
+        initGame(p);
+        
+        p.logs.game_info.push({
+          data: { event: "game_started", phase: gameState.gamePhase },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    } else if (p.keyCode === 27) { // ESC
+      if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+        gameState.gamePhase = GAME_PHASES.PAUSED;
+        
+        p.logs.game_info.push({
+          data: { event: "game_paused", phase: gameState.gamePhase },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+        gameState.gamePhase = GAME_PHASES.PLAYING;
+        
+        p.logs.game_info.push({
+          data: { event: "game_resumed", phase: gameState.gamePhase },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    } else if (p.keyCode === 82) { // R
+      if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || 
+          gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE ||
+          gameState.gamePhase === GAME_PHASES.PLAYING ||
+          gameState.gamePhase === GAME_PHASES.PAUSED) {
+        gameState.gamePhase = GAME_PHASES.START;
+        
+        p.logs.game_info.push({
+          data: { event: "game_restarted", phase: gameState.gamePhase },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+    
+    // Prevent default for game keys
+    if ([13, 27, 32, 37, 38, 39, 40, 82, 90].includes(p.keyCode)) {
+      return false;
+    }
+  };
+});
+
+// Expose globally
+window.gameInstance = gameInstance;
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn', 'test_3_ModeBtn', 'test_4_ModeBtn', 'test_5_ModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const modeMap = {
+    'HUMAN': 'humanModeBtn',
+    'TEST_1': 'test_1_ModeBtn',
+    'TEST_2': 'test_2_ModeBtn',
+    'TEST_3': 'test_3_ModeBtn',
+    'TEST_4': 'test_4_ModeBtn',
+    'TEST_5': 'test_5_ModeBtn'
+  };
+  
+  const activeBtn = document.getElementById(modeMap[mode]);
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+  
+  gameInstance.logs.game_info.push({
+    data: { event: "control_mode_changed", mode: mode },
+    framecount: gameInstance.frameCount,
+    timestamp: Date.now()
+  });
+};
+</file>
+
+<file name="rendering.js">
+// rendering.js - Rendering functions for the game
+
+import { 
+  CANVAS_WIDTH, CANVAS_HEIGHT, TILE_SIZE, GAME_PHASES, gameState
+} from './globals.js';
+import { LEVELS } from './levels.js';
+
+export function drawStartScreen(p) {
+  p.background(20, 20, 40);
+  
+  // Title with mountain silhouette
+  p.fill(50, 50, 80);
+  p.triangle(CANVAS_WIDTH/2, 80, CANVAS_WIDTH/2 - 100, 180, CANVAS_WIDTH/2 + 100, 180);
+  p.triangle(CANVAS_WIDTH/2 - 60, 120, CANVAS_WIDTH/2 - 150, 180, CANVAS_WIDTH/2 + 30, 180);
+  p.triangle(CANVAS_WIDTH/2 + 60, 130, CANVAS_WIDTH/2 - 20, 180, CANVAS_WIDTH/2 + 140, 180);
+  
+  p.textAlign(p.CENTER, p.CENTER);
+  p.fill(255, 200, 200);
+  p.textSize(48);
+  p.text("CELESTE", CANVAS_WIDTH / 2, 100);
+  
+  p.fill(200, 200, 255);
+  p.textSize(16);
+  p.text("Climb Celeste Mountain", CANVAS_WIDTH / 2, 200);
+  
+  p.fill(255);
+  p.textSize(14);
+  p.text("CONTROLS:", CANVAS_WIDTH / 2, 240);
+  p.textSize(12);
+  p.text("Arrow Keys - Move / Climb", CANVAS_WIDTH / 2, 260);
+  p.text("Space - Jump (press again in air for double jump)", CANVAS_WIDTH / 2, 280);
+  p.text("Z - Dash (recharges on landing)", CANVAS_WIDTH / 2, 300);
+  
+  p.fill(150, 255, 150);
+  p.textSize(14);
+  p.text("Avoid spikes! Reach the flag to advance!", CANVAS_WIDTH / 2, 330);
+  p.text("Collect strawberries for bonus points!", CANVAS_WIDTH / 2, 350);
+  
+  // Flashing start prompt
+  if (Math.floor(p.frameCount / 30) % 2 === 0) {
+    p.fill(255, 255, 100);
+    p.textSize(18);
+    p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 380);
+  }
+}
+
+export function drawPauseIndicator(p) {
+  p.push();
+  p.textAlign(p.RIGHT, p.TOP);
+  p.fill(255, 255, 100);
+  p.textSize(16);
+  p.text("PAUSED", CANVAS_WIDTH - 10, 10);
+  p.pop();
+}
+
+export function drawGameOverScreen(p) {
+  p.background(0, 0, 0, 200);
+  
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN) {
+    p.fill(150, 255, 150);
+    p.textSize(48);
+    p.text("SUMMIT!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 60);
+    
+    p.fill(255);
+    p.textSize(20);
+    p.text("You reached the top of Celeste Mountain!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+  } else {
+    p.fill(255, 100, 100);
+    p.textSize(48);
+    p.text("GAME OVER", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 60);
+    
+    p.fill(255);
+    p.textSize(20);
+    p.text("You ran out of lives", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 20);
+  }
+  
+  p.fill(200, 200, 255);
+  p.textSize(24);
+  p.text(`Score: ${gameState.score}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+  p.text(`Level: ${gameState.currentLevel + 1}/${LEVELS.length}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+  
+  p.fill(255, 255, 100);
+  p.textSize(18);
+  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 100);
+}
+
+export function drawLevel(p, level) {
+  if (!level) return;
+  
+  for (let row = 0; row < level.tiles.length; row++) {
+    for (let col = 0; col < level.tiles[row].length; col++) {
+      const tile = level.tiles[row][col];
+      const x = col * TILE_SIZE;
+      const y = row * TILE_SIZE;
+      
+      if (tile === 1) {
+        // Solid platform
+        p.fill(80, 80, 100);
+        p.stroke(100, 100, 120);
+        p.strokeWeight(1);
+        p.rect(x, y, TILE_SIZE, TILE_SIZE);
+      } else if (tile === 2) {
+        // Spikes
+        p.fill(200, 50, 50);
+        p.noStroke();
+        for (let i = 0; i < TILE_SIZE; i += TILE_SIZE / 3) {
+          p.triangle(
+            x + i, y + TILE_SIZE,
+            x + i + TILE_SIZE / 6, y + TILE_SIZE / 2,
+            x + i + TILE_SIZE / 3, y + TILE_SIZE
+          );
+        }
+      } else if (tile === 3) {
+        // Goal flag
+        p.fill(100, 255, 100);
+        p.noStroke();
+        p.rect(x + TILE_SIZE / 2 - 2, y + 5, 4, TILE_SIZE - 10);
+        p.fill(255, 200, 100);
+        p.triangle(
+          x + TILE_SIZE / 2, y + 5,
+          x + TILE_SIZE / 2, y + 12,
+          x + TILE_SIZE - 5, y + 8
+        );
+      } else if (tile === 4) {
+        // Strawberry
+        const key = `${gameState.currentLevel}-${row}-${col}`;
+        if (!gameState.collectedStrawberries.has(key)) {
+          p.fill(255, 100, 150);
+          p.noStroke();
+          p.circle(x + TILE_SIZE / 2, y + TILE_SIZE / 2, 8);
+          p.fill(100, 200, 100);
+          p.circle(x + TILE_SIZE / 2, y + TILE_SIZE / 2 - 5, 3);
+        }
+      } else if (tile === 5) {
+        // Climbable wall
+        p.fill(60, 80, 60);
+        p.noStroke();
+        p.rect(x, y, TILE_SIZE, TILE_SIZE);
+        // Add texture
+        p.stroke(80, 100, 80);
+        for (let i = 0; i < 4; i++) {
+          p.line(x + i * 5, y, x + i * 5, y + TILE_SIZE);
+        }
+      }
+    }
+  }
+}
+
+export function drawUI(p) {
+  p.push();
+  p.textAlign(p.LEFT, p.TOP);
+  p.fill(255);
+  p.noStroke();
+  p.textSize(16);
+  p.text(`Lives: ${gameState.lives}`, 10, 10);
+  p.text(`Score: ${gameState.score}`, 10, 30);
+  p.text(`Level: ${gameState.currentLevel + 1}/${LEVELS.length}`, 10, 50);
+  
+  // Show dashes and jumps
+  if (gameState.player) {
+    const dashText = gameState.player.dashesRemaining > 0 ? "Dash: Ready" : "Dash: Used";
+    const jumpText = gameState.player.hasDoubleJump ? "2x Jump" : "1x Jump";
+    p.text(dashText, CANVAS_WIDTH - 120, 10);
+    p.text(jumpText, CANVAS_WIDTH - 120, 30);
+  }
+  
+  p.pop();
+}
+
+export function drawBackground(p) {
+  // Gradient background
+  for (let y = 0; y < CANVAS_HEIGHT; y++) {
+    const inter = y / CANVAS_HEIGHT;
+    const c1 = [20, 20, 40];
+    const c2 = [60, 40, 80];
+    const col = [
+      c1[0] + (c2[0] - c1[0]) * inter,
+      c1[1] + (c2[1] - c1[1]) * inter,
+      c1[2] + (c2[2] - c1[2]) * inter
+    ];
+    p.stroke(...col);
+    p.line(0, y, CANVAS_WIDTH, y);
+  }
+}
+</file>
+
+<file name="levels.js">
+// levels.js - Level definitions
+
+import { TILE_SIZE, SCREEN_COLS, SCREEN_ROWS } from './globals.js';
+
+// Level tiles:
+// 0 = empty
+// 1 = solid platform
+// 2 = spike (deadly)
+// 3 = goal flag
+// 4 = strawberry (collectible)
+// 5 = wall (climbable)
+
+export const LEVELS = [
+  {
+    name: "Beginning",
+    startX: 1,
+    startY: 15,
+    tiles: [
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+      [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+    ]
+  },
+  {
+    name: "Gap Jump",
+    startX: 1,
+    startY: 15,
+    tiles: [
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [1,1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+      [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+    ]
+  },
+  {
+    name: "Wall Climb",
+    startX: 1,
+    startY: 15,
+    tiles: [
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,5,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [1,1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+      [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+    ]
+  },
+  {
+    name: "Dash Challenge",
+    startX: 1,
+    startY: 15,
+    tiles: [
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [1,1,1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+      [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+    ]
+  },
+  {
+    name: "Summit",
+    startX: 1,
+    startY: 15,
+    tiles: [
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,4,0,0,0,1,1,1],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,5,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,5,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      [1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],
+      [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+    ]
+  }
+];
+
+export function getLevelData(levelIndex) {
+  if (levelIndex < 0 || levelIndex >= LEVELS.length) {
+    return null;
+  }
+  return LEVELS[levelIndex];
+}
+
+export function getTileAt(level, x, y) {
+  const col = Math.floor(x / TILE_SIZE);
+  const row = Math.floor(y / TILE_SIZE);
+  
+  if (row < 0 || row >= level.tiles.length || col < 0 || col >= level.tiles[0].length) {
+    return 0;
+  }
+  
+  return level.tiles[row][col];
+}
+
+export function isSolidTile(tile) {
+  return tile === 1 || tile === 5;
+}
+
+export function isWallTile(tile) {
+  return tile === 5;
+}
+
+export function isSpikeTile(tile) {
+  return tile === 2;
+}
+
+export function isGoalTile(tile) {
+  return tile === 3;
+}
+
+export function isStrawberryTile(tile) {
+  return tile === 4;
+}
+</file>
+
+<file name="player.js">
+// player.js - Player character implementation
+
+import { 
+  PLAYER_SIZE, PLAYER_SPEED, JUMP_STRENGTH, GRAVITY, MAX_FALL_SPEED,
+  DASH_SPEED, DASH_DURATION, WALL_SLIDE_SPEED, WALL_JUMP_X, WALL_JUMP_Y,
+  TILE_SIZE, CANVAS_WIDTH, CANVAS_HEIGHT
+} from './globals.js';
+import { getTileAt, isSolidTile, isWallTile, isSpikeTile, isGoalTile, isStrawberryTile } from './levels.js';
+
+export class Player {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.vx = 0;
+    this.vy = 0;
+    this.size = PLAYER_SIZE;
+    this.onGround = false;
+    this.canJump = true;
+    this.hasDoubleJump = true;
+    this.dashesRemaining = 1;
+    this.isDashing = false;
+    this.dashTimer = 0;
+    this.dashDirX = 0;
+    this.dashDirY = 0;
+    this.isClimbing = false;
+    this.onWall = 0; // -1 left, 1 right, 0 none
+    this.dead = false;
+    this.reachedGoal = false;
+  }
+
+  update(p, level, inputs) {
+    if (this.dead || this.reachedGoal) {
+      return;
+    }
+
+    // Handle dashing
+    if (this.isDashing) {
+      this.dashTimer--;
+      if (this.dashTimer <= 0) {
+        this.isDashing = false;
+        this.vx = this.dashDirX * 2;
+        this.vy = this.dashDirY * 2;
+      } else {
+        this.x += this.dashDirX * DASH_SPEED;
+        this.y += this.dashDirY * DASH_SPEED;
+        return; // Skip normal physics during dash
+      }
+    }
+
+    // Apply gravity
+    if (!this.isClimbing) {
+      this.vy += GRAVITY;
+      if (this.vy > MAX_FALL_SPEED) {
+        this.vy = MAX_FALL_SPEED;
+      }
+    }
+
+    // Horizontal movement
+    if (inputs.left && !inputs.right) {
+      this.vx = -PLAYER_SPEED;
+    } else if (inputs.right && !inputs.left) {
+      this.vx = PLAYER_SPEED;
+    } else {
+      this.vx *= 0.8; // Friction
+    }
+
+    // Wall sliding
+    this.checkWalls(level);
+    if (this.onWall !== 0 && !this.onGround && this.vy > 0) {
+      this.vy = WALL_SLIDE_SPEED;
+      this.isClimbing = true;
+      // Restore abilities on wall
+      this.hasDoubleJump = true;
+      this.dashesRemaining = 1;
+    } else {
+      this.isClimbing = false;
+    }
+
+    // Climbing movement on walls
+    if (this.isClimbing && this.onWall !== 0) {
+      if (inputs.up) {
+        this.vy = -PLAYER_SPEED;
+      } else if (inputs.down) {
+        this.vy = PLAYER_SPEED;
+      } else {
+        this.vy = 0;
+      }
+    }
+
+    // Jumping
+    if (inputs.jump && !inputs.jumpHeld) {
+      if (this.onGround || this.canJump) {
+        this.vy = JUMP_STRENGTH;
+        this.onGround = false;
+        this.canJump = false;
+      } else if (this.hasDoubleJump && !this.onGround && !this.isClimbing) {
+        this.vy = JUMP_STRENGTH;
+        this.hasDoubleJump = false;
+      } else if (this.isClimbing && this.onWall !== 0) {
+        // Wall jump
+        this.vx = -this.onWall * WALL_JUMP_X;
+        this.vy = WALL_JUMP_Y;
+        this.isClimbing = false;
+        this.onWall = 0;
+      }
+      inputs.jumpHeld = true;
+    }
+    if (!inputs.jump) {
+      inputs.jumpHeld = false;
+    }
+
+    // Dashing
+    if (inputs.dash && !inputs.dashHeld && this.dashesRemaining > 0) {
+      this.startDash(inputs);
+      inputs.dashHeld = true;
+    }
+    if (!inputs.dash) {
+      inputs.dashHeld = false;
+    }
+
+    // Move and check collisions
+    this.x += this.vx;
+    this.handleCollisions(p, level, true, false);
+    
+    this.y += this.vy;
+    this.handleCollisions(p, level, false, true);
+
+    // Check if on ground
+    this.checkGround(level);
+    if (this.onGround) {
+      this.hasDoubleJump = true;
+      this.dashesRemaining = 1;
+      this.canJump = true;
+    }
+
+    // Keep player in bounds
+    if (this.x < this.size / 2) this.x = this.size / 2;
+    if (this.x > CANVAS_WIDTH - this.size / 2) this.x = CANVAS_WIDTH - this.size / 2;
+    if (this.y > CANVAS_HEIGHT + 50) {
+      this.dead = true;
+    }
+
+    // Check hazards and goals
+    this.checkTileInteractions(p, level);
+  }
+
+  startDash(inputs) {
+    let dirX = 0;
+    let dirY = 0;
+
+    if (inputs.left) dirX = -1;
+    if (inputs.right) dirX = 1;
+    if (inputs.up) dirY = -1;
+    if (inputs.down) dirY = 1;
+
+    // Default to right if no direction
+    if (dirX === 0 && dirY === 0) {
+      dirX = 1;
+    }
+
+    // Normalize diagonal
+    if (dirX !== 0 && dirY !== 0) {
+      const len = Math.sqrt(dirX * dirX + dirY * dirY);
+      dirX /= len;
+      dirY /= len;
+    }
+
+    this.isDashing = true;
+    this.dashTimer = DASH_DURATION;
+    this.dashDirX = dirX;
+    this.dashDirY = dirY;
+    this.dashesRemaining--;
+    this.vx = 0;
+    this.vy = 0;
+  }
+
+  handleCollisions(p, level, horizontal, vertical) {
+    // Inset collision points to prevent catching on adjacent tiles
+    // This prevents "tripping" on the floor when moving horizontally
+    // and catching on walls when moving vertically
+    const padding = 2;
+    
+    const corners = [
+      { 
+        x: this.x - this.size / 2 + (vertical ? padding : 0), 
+        y: this.y - this.size / 2 + (horizontal ? padding : 0) 
+      },
+      { 
+        x: this.x + this.size / 2 - (vertical ? padding : 0), 
+        y: this.y - this.size / 2 + (horizontal ? padding : 0) 
+      },
+      { 
+        x: this.x - this.size / 2 + (vertical ? padding : 0), 
+        y: this.y + this.size / 2 - (horizontal ? padding : 0) 
+      },
+      { 
+        x: this.x + this.size / 2 - (vertical ? padding : 0), 
+        y: this.y + this.size / 2 - (horizontal ? padding : 0) 
+      }
+    ];
+
+    for (let corner of corners) {
+      const tile = getTileAt(level, corner.x, corner.y);
+      if (isSolidTile(tile)) {
+        if (horizontal) {
+          if (this.vx > 0) {
+            this.x = Math.floor(corner.x / TILE_SIZE) * TILE_SIZE - this.size / 2;
+          } else if (this.vx < 0) {
+            this.x = Math.ceil(corner.x / TILE_SIZE) * TILE_SIZE + this.size / 2;
+          }
+          this.vx = 0;
+        }
+        if (vertical) {
+          if (this.vy > 0) {
+            this.y = Math.floor(corner.y / TILE_SIZE) * TILE_SIZE - this.size / 2;
+            this.onGround = true;
+          } else if (this.vy < 0) {
+            this.y = Math.ceil(corner.y / TILE_SIZE) * TILE_SIZE + this.size / 2;
+          }
+          this.vy = 0;
+        }
+      }
+    }
+  }
+
+  checkGround(level) {
+    const checkY = this.y + this.size / 2 + 1;
+    const leftTile = getTileAt(level, this.x - this.size / 2 + 2, checkY);
+    const rightTile = getTileAt(level, this.x + this.size / 2 - 2, checkY);
+    this.onGround = isSolidTile(leftTile) || isSolidTile(rightTile);
+  }
+
+  checkWalls(level) {
+    const checkLeft = this.x - this.size / 2 - 1;
+    const checkRight = this.x + this.size / 2 + 1;
+    const midY = this.y;
+    
+    const leftTile = getTileAt(level, checkLeft, midY);
+    const rightTile = getTileAt(level, checkRight, midY);
+    
+    if (isWallTile(leftTile) || isSolidTile(leftTile)) {
+      this.onWall = -1;
+    } else if (isWallTile(rightTile) || isSolidTile(rightTile)) {
+      this.onWall = 1;
+    } else {
+      this.onWall = 0;
+    }
+  }
+
+  checkTileInteractions(p, level) {
+    const col = Math.floor(this.x / TILE_SIZE);
+    const row = Math.floor(this.y / TILE_SIZE);
+    
+    // Check surrounding tiles
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        const r = row + dr;
+        const c = col + dc;
+        if (r >= 0 && r < level.tiles.length && c >= 0 && c < level.tiles[0].length) {
+          const tile = level.tiles[r][c];
+          const tileX = c * TILE_SIZE + TILE_SIZE / 2;
+          const tileY = r * TILE_SIZE + TILE_SIZE / 2;
+          
+          if (isSpikeTile(tile)) {
+            const dist = p.dist(this.x, this.y, tileX, tileY);
+            if (dist < this.size / 2 + TILE_SIZE / 2) {
+              this.dead = true;
+            }
+          } else if (isGoalTile(tile)) {
+            const dist = p.dist(this.x, this.y, tileX, tileY);
+            if (dist < this.size / 2 + TILE_SIZE / 2) {
+              this.reachedGoal = true;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  draw(p) {
+    p.push();
+    
+    // Draw player body (pink/red hair)
+    if (this.isDashing) {
+      p.fill(255, 100, 100, 150);
+    } else {
+      p.fill(255, 150, 150);
+    }
+    p.noStroke();
+    p.circle(this.x, this.y, this.size);
+    
+    // Draw face details
+    p.fill(50);
+    p.circle(this.x - 3, this.y - 2, 2); // Left eye
+    p.circle(this.x + 3, this.y - 2, 2); // Right eye
+    
+    // Show climbing state
+    if (this.isClimbing) {
+      p.stroke(100, 255, 100);
+      p.strokeWeight(2);
+      p.noFill();
+      p.circle(this.x, this.y, this.size + 4);
+    }
+    
+    // Show dash indicator
+    p.noStroke();
+    if (this.dashesRemaining > 0) {
+      p.fill(100, 200, 255);
+      p.circle(this.x, this.y - this.size / 2 - 5, 4);
+    }
+    
+    p.pop();
+  }
+}
+</file>
+
+<file name="game_logic.js">
+// game_logic.js - Core game logic
+
+import { gameState, GAME_PHASES, STARTING_LIVES, TILE_SIZE } from './globals.js';
+import { LEVELS, getLevelData, isStrawberryTile } from './levels.js';
+import { Player } from './player.js';
+
+export function initGame(p) {
+  gameState.currentLevel = 0;
+  gameState.score = 0;
+  gameState.lives = STARTING_LIVES;
+  gameState.collectedStrawberries = new Set();
+  loadLevel(p, 0);
+  
+  p.logs.game_info.push({
+    data: { event: "game_initialized", level: 0 },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function loadLevel(p, levelIndex) {
+  const level = getLevelData(levelIndex);
+  if (!level) {
+    return false;
+  }
+  
+  gameState.currentLevel = levelIndex;
+  
+  // Create player at start position
+  const startX = level.startX * TILE_SIZE + TILE_SIZE / 2;
+  const startY = level.startY * TILE_SIZE + TILE_SIZE / 2;
+  gameState.player = new Player(startX, startY);
+  
+  // Store level start position
+  gameState.levelStartPosition = { x: startX, y: startY };
+  
+  // Clear and rebuild entities array
+  gameState.entities = [gameState.player];
+  
+  p.logs.game_info.push({
+    data: { event: "level_loaded", level: levelIndex, levelName: level.name },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  
+  return true;
+}
+
+export function respawnPlayer(p) {
+  if (gameState.player) {
+    gameState.player.x = gameState.levelStartPosition.x;
+    gameState.player.y = gameState.levelStartPosition.y;
+    gameState.player.vx = 0;
+    gameState.player.vy = 0;
+    gameState.player.dead = false;
+    gameState.player.onGround = false;
+    gameState.player.hasDoubleJump = true;
+    gameState.player.dashesRemaining = 1;
+    gameState.player.isDashing = false;
+    gameState.player.isClimbing = false;
+    gameState.player.onWall = 0;
+    
+    p.logs.game_info.push({
+      data: { event: "player_respawned", lives: gameState.lives },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+
+export function checkStrawberryCollection(p, level) {
+  if (!gameState.player || !level) return;
+  
+  const col = Math.floor(gameState.player.x / TILE_SIZE);
+  const row = Math.floor(gameState.player.y / TILE_SIZE);
+  
+  // Check surrounding tiles
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      const r = row + dr;
+      const c = col + dc;
+      if (r >= 0 && r < level.tiles.length && c >= 0 && c < level.tiles[0].length) {
+        const tile = level.tiles[r][c];
+        const key = `${gameState.currentLevel}-${r}-${c}`;
+        
+        if (isStrawberryTile(tile) && !gameState.collectedStrawberries.has(key)) {
+          const tileX = c * TILE_SIZE + TILE_SIZE / 2;
+          const tileY = r * TILE_SIZE + TILE_SIZE / 2;
+          const dist = p.dist(gameState.player.x, gameState.player.y, tileX, tileY);
+          
+          if (dist < 15) {
+            gameState.collectedStrawberries.add(key);
+            gameState.score += 100;
+            
+            p.logs.game_info.push({
+              data: { event: "strawberry_collected", score: gameState.score },
+              framecount: p.frameCount,
+              timestamp: Date.now()
+            });
+          }
+        }
+      }
+    }
+  }
+}
+
+export function updateGame(p, inputs) {
+  const level = getLevelData(gameState.currentLevel);
+  if (!level || !gameState.player) return;
+  
+  // Update player
+  gameState.player.update(p, level, inputs);
+  
+  // Check strawberry collection
+  checkStrawberryCollection(p, level);
+  
+  // Log player position periodically
+  if (p.frameCount % 30 === 0) {
+    p.logs.player_info.push({
+      screen_x: gameState.player.x,
+      screen_y: gameState.player.y,
+      game_x: gameState.player.x,
+      game_y: gameState.player.y,
+      framecount: p.frameCount
+    });
+  }
+  
+  // Check death
+  if (gameState.player.dead) {
+    gameState.lives--;
+    
+    p.logs.game_info.push({
+      data: { event: "player_died", lives: gameState.lives },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    
+    if (gameState.lives <= 0) {
+      gameState.gamePhase = GAME_PHASES.GAME_OVER_LOSE;
+      
+      p.logs.game_info.push({
+        data: { event: "game_over", result: "lose", score: gameState.score },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    } else {
+      respawnPlayer(p);
+    }
+  }
+  
+  // Check goal reached
+  if (gameState.player.reachedGoal) {
+    gameState.score += 500; // Level completion bonus
+    
+    p.logs.game_info.push({
+      data: { event: "level_completed", level: gameState.currentLevel, score: gameState.score },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    
+    // Advance to next level
+    if (gameState.currentLevel < LEVELS.length - 1) {
+      loadLevel(p, gameState.currentLevel + 1);
+    } else {
+      // Won the game!
+      gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
+      
+      p.logs.game_info.push({
+        data: { event: "game_over", result: "win", score: gameState.score },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+}
+</file>
+
+<file name="input.js">
+// input.js - Input handling
+
+export class InputState {
+  constructor() {
+    this.left = false;
+    this.right = false;
+    this.up = false;
+    this.down = false;
+    this.jump = false;
+    this.jumpHeld = false;
+    this.dash = false;
+    this.dashHeld = false;
+  }
+
+  reset() {
+    this.left = false;
+    this.right = false;
+    this.up = false;
+    this.down = false;
+    this.jump = false;
+    this.jumpHeld = false;
+    this.dash = false;
+    this.dashHeld = false;
+  }
+}
+
+export function updateInputFromKeyboard(p, inputs) {
+  inputs.left = p.keyIsDown(37);
+  inputs.right = p.keyIsDown(39);
+  inputs.up = p.keyIsDown(38);
+  inputs.down = p.keyIsDown(40);
+  inputs.jump = p.keyIsDown(32);
+  inputs.dash = p.keyIsDown(90);
+}
+
+export function updateInputFromAction(action, inputs) {
+  inputs.reset();
+  
+  if (action.left) inputs.left = true;
+  if (action.right) inputs.right = true;
+  if (action.up) inputs.up = true;
+  if (action.down) inputs.down = true;
+  if (action.jump) inputs.jump = true;
+  if (action.dash) inputs.dash = true;
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

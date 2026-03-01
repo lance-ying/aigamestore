@@ -1,0 +1,1286 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you make sure every platform gap I can jump over, just make the platforms always closer, and can you make the gravity less so that its more floatier
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Twist Jump 3D</title>
+    <style>
+      html, body { 
+        margin: 0; 
+        padding: 0; 
+        height: 100%; 
+        overflow: hidden; 
+        background: #111; 
+        color: #fff;
+        font-family: Arial, sans-serif;
+      }
+      body { 
+        display: flex; 
+        flex-direction: column; 
+        justify-content: center; 
+        align-items: center; 
+      }
+      #game-container {
+        box-shadow: 0 0 20px rgba(0, 255, 255, 0.2);
+      }
+      .control-buttons { 
+        display: flex; 
+        gap: 10px; 
+        margin-bottom: 10px; 
+        flex-wrap: wrap; 
+        justify-content: center; 
+      }
+      .control-button { 
+        padding: 8px 16px; 
+        cursor: pointer; 
+        background: #444; 
+        color: #fff; 
+        border: none; 
+        border-radius: 4px; 
+        transition: background 0.2s;
+      }
+      .control-button:hover {
+        background: #555;
+      }
+      .control-button.active { 
+        background: #007bff; 
+      }
+      h1 { margin-bottom: 10px; }
+      p { max-width: 600px; text-align: center; color: #aaa; font-size: 14px; margin-bottom: 5px;}
+    </style>
+  </head>
+  <body>
+    <h1>Twist Jump 3D</h1>
+    
+    <div class="control-buttons">
+      <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN', this)">Human Mode</button>
+      <button id="test_1_ModeBtn" class="control-button" onclick="setMode('TEST_1', this)">TEST (Jump)</button>
+      <button id="test_2_ModeBtn" class="control-button" onclick="setMode('TEST_2', this)">TEST (Auto)</button>
+    </div>
+
+    <p>Use Left/Right Arrows to Rotate. Space to Jump.</p>
+    
+    <!-- Game container will be injected here by game.js -->
+    
+    <script src="https://cdn.jsdelivr.net/npm/seedrandom@3.0.5/seedrandom.min.js"></script>
+    <script>
+      function setMode(mode, btn) {
+        if (window.setControlMode) {
+          window.setControlMode(mode);
+          // Update UI
+          document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+        }
+      }
+    </script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// Game Constants
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TUNNEL_RADIUS = 5;
+export const PLAYER_RADIUS = 0.4;
+export const GRAVITY = 0.015;
+export const JUMP_FORCE = 0.35;
+export const BASE_SPEED = 0.12; // Reduced from 0.15
+export const ROTATION_SPEED = 0.05;
+export const LANE_TOLERANCE = 0.5; // Angle tolerance for landing on platform (radians)
+
+// Global Game State
+export const gameState = {
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2, etc.
+    
+    // Core Three.js components
+    scene: null,
+    camera: null,
+    renderer: null,
+    gameContainer: null,
+    
+    // Lighting
+    lights: [],
+    ambientLight: null,
+    directionalLight: null,
+    
+    // Game Entities & Data
+    player: null,
+    platformManager: null,
+    collectibleManager: null,
+    particleSystem: null,
+    
+    // Dynamic Game Variables
+    score: 0,
+    distanceTraveled: 0,
+    currentSpeed: BASE_SPEED,
+    worldRotation: 0, // The rotation angle of the tunnel
+    
+    // Frame Timing
+    frameCount: 0,
+    deltaTime: 0,
+    time: 0,
+    
+    // Testing Flags
+    testActive: false,
+    testState: {}
+};
+
+// Expose gameState globally
+export function getGameState() {
+    return gameState;
+}
+window.getGameState = getGameState;
+
+// Logging System (Write-only)
+export const logs = {
+    game_info: [],
+    player_info: [],
+    inputs: []
+};
+window.logs = logs;
+
+export function logGameInfo(info) {
+    logs.game_info.push({
+        ...info,
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+}
+
+export function logPlayerInfo(player) {
+    if (!player) return;
+    logs.player_info.push({
+        game_x: player.mesh.position.x,
+        game_y: player.mesh.position.y,
+        game_z: player.mesh.position.z,
+        world_rotation: gameState.worldRotation,
+        velocity_y: player.velocity.y,
+        grounded: player.onGround,
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+}
+
+export function logInput(type, key, code) {
+    logs.inputs.push({
+        input_type: type,
+        data: { key, code },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+}
+</file>
+
+<file name="game.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { 
+    gameState, getGameState, 
+    CANVAS_WIDTH, CANVAS_HEIGHT, 
+    ROTATION_SPEED, 
+    logGameInfo, logPlayerInfo 
+} from './globals.js';
+import { setupInputHandling, getRotationInput } from './input.js';
+import { Player, PlatformManager, CollectibleManager, ParticleSystem } from './entities.js';
+import { setupCamera, updateCamera } from './camera.js';
+import { setupUI, renderUI } from './ui.js';
+
+// ==========================================
+// INITIALIZATION
+// ==========================================
+function init() {
+    // 1. Setup Container
+    const gameContainer = document.createElement('div');
+    gameContainer.id = 'game-container';
+    gameContainer.style.width = `${CANVAS_WIDTH}px`;
+    gameContainer.style.height = `${CANVAS_HEIGHT}px`;
+    gameContainer.style.position = 'relative';
+    gameContainer.style.overflow = 'hidden';
+    document.body.appendChild(gameContainer);
+    gameState.gameContainer = gameContainer;
+
+    // 2. Setup Three.js Scene
+    gameState.scene = new THREE.Scene();
+    gameState.scene.background = new THREE.Color(0x111122);
+    gameState.scene.fog = new THREE.Fog(0x111122, 20, 60);
+
+    // 3. Setup Renderer
+    gameState.renderer = new THREE.WebGLRenderer({ antialias: true });
+    gameState.renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+    gameState.renderer.shadowMap.enabled = true;
+    gameContainer.appendChild(gameState.renderer.domElement);
+
+    // 4. Setup Lighting
+    const ambient = new THREE.AmbientLight(0xffffff, 0.4);
+    gameState.scene.add(ambient);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(10, 20, 10);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 1024;
+    dirLight.shadow.mapSize.height = 1024;
+    dirLight.shadow.camera.near = 0.5;
+    dirLight.shadow.camera.far = 100;
+    gameState.scene.add(dirLight);
+
+    // 5. Setup Managers
+    gameState.platformManager = new PlatformManager();
+    gameState.collectibleManager = new CollectibleManager();
+    gameState.particleSystem = new ParticleSystem();
+
+    // 6. Setup Player
+    gameState.player = new Player();
+
+    // 7. Setup Camera
+    setupCamera();
+
+    // 8. Setup Inputs & UI
+    setupInputHandling();
+    setupUI();
+
+    // 9. Start Loop
+    gameState.time = performance.now();
+    requestAnimationFrame(gameLoop);
+    
+    // Seed Randomness for reproducibility
+    Math.seedrandom('42');
+    
+    // Log Start
+    logGameInfo({ event: "init", status: "success" });
+    
+    // Setup AI Test Hook
+    window.setControlMode = (mode) => {
+        gameState.controlMode = mode;
+        console.log("Control Mode set to:", mode);
+    };
+}
+
+// ==========================================
+// MAIN LOOP
+// ==========================================
+function gameLoop(currentTime) {
+    requestAnimationFrame(gameLoop);
+
+    // Delta Time Calculation
+    const dt = Math.min((currentTime - gameState.time) / 1000, 0.1); // Cap at 0.1s
+    gameState.time = currentTime;
+    gameState.deltaTime = dt;
+    gameState.frameCount++;
+
+    if (gameState.gamePhase === "PLAYING") {
+        updatePlaying(dt);
+    } else if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+        // Still update camera/particles for visual polish
+        if (gameState.particleSystem) gameState.particleSystem.update(dt);
+    }
+
+    // Render
+    gameState.renderer.render(gameState.scene, gameState.camera);
+    renderUI();
+}
+
+function updatePlaying(dt) {
+    const player = gameState.player;
+    
+    // 1. Handle World Rotation (The "Twist" Mechanic)
+    let rotationInput = 0;
+    
+    if (gameState.controlMode === "HUMAN") {
+        rotationInput = getRotationInput();
+    } else {
+        // AI Logic for testing
+        rotationInput = handleAI(dt);
+    }
+    
+    // Apply rotation
+    gameState.worldRotation += rotationInput * ROTATION_SPEED;
+    
+    // Rotate the entire scene content around Z axis?
+    // Actually, physically rotating thousands of objects is slow.
+    // Better: Rotate the camera orbit?
+    // Or: Rotate the geometry container?
+    // Implementation: We keep player X=0. We rotate the Platform container.
+    // But entities.js adds platforms to scene directly.
+    // Let's iterate platforms and rotate them?
+    // No, better:
+    // Create a pivot object in scene, attach all platforms/gems to it.
+    // Rotate the pivot.
+    
+    if (!gameState.worldPivot) {
+        gameState.worldPivot = new THREE.Group();
+        gameState.scene.add(gameState.worldPivot);
+        // We need to move existing items to pivot if we switch methods mid-stream
+        // But for now, let's assume PlatformManager adds to scene.
+        // Let's refactor PlatformManager slightly to add to pivot?
+        // Or just iterate:
+    }
+    
+    // Update Pivot Rotation
+    // Note: PlatformManager spawns platforms at absolute positions based on current generation angle.
+    // But the "World Rotation" is the player's view offset.
+    // Visually, the Camera is fixed up. The World rotates.
+    // We can simulate this by rotating the camera around 0,0,Z?
+    // No, camera.js fixes camera position.
+    // Let's rotate the SCENE ROOT (except player/camera).
+    
+    // Actually, simple solution:
+    // Player is fixed at Top (Angle 0).
+    // Platform `mesh.rotation.z` includes `worldRotation`.
+    // Platform `mesh.position` is rotated by `worldRotation`.
+    // This requires updating all platform transforms every frame.
+    // Efficient enough for < 100 objects.
+    
+    // Update Platform Positions based on World Rotation
+    updateWorldTransforms();
+
+    // 2. Update Entities
+    gameState.platformManager.update(player.mesh.position.z);
+    gameState.collectibleManager.update(dt, player);
+    gameState.particleSystem.update(dt);
+    player.update(dt); // Physics checks happen here relative to logical rotation
+    
+    // 3. Update Camera
+    updateCamera();
+    
+    // 4. Update Score
+    gameState.distanceTraveled = player.mesh.position.z;
+    gameState.score += speedFactor(dt);
+    
+    // 5. Increase Speed
+    gameState.currentSpeed += 0.00002; // Reduced acceleration
+    
+    // Logging
+    if (gameState.frameCount % 10 === 0) {
+        logPlayerInfo(player);
+    }
+}
+
+function updateWorldTransforms() {
+    // Rotate all world objects (platforms, gems) around Z axis to match gameState.worldRotation
+    // The logical angle of a platform is p.angle.
+    // The visual angle is p.angle + gameState.worldRotation.
+    
+    const r = gameState.worldRotation;
+    
+    // Platforms
+    for (const p of gameState.platformManager.platforms) {
+        const visualAngle = p.angle + r;
+        
+        // Update Position
+        // x = rad * sin(visualAngle)
+        // y = rad * cos(visualAngle)
+        const rad = 5; // TUNNEL_RADIUS
+        p.mesh.position.x = rad * Math.sin(visualAngle);
+        p.mesh.position.y = rad * Math.cos(visualAngle);
+        
+        // Update Rotation (face center)
+        p.mesh.rotation.z = -visualAngle;
+    }
+    
+    // Gems
+    for (const g of gameState.collectibleManager.gems) {
+        const visualAngle = g.angle + r;
+        const rad = g.radius;
+        g.mesh.position.x = rad * Math.sin(visualAngle);
+        g.mesh.position.y = rad * Math.cos(visualAngle);
+        g.mesh.rotation.z = -visualAngle;
+    }
+}
+
+function speedFactor(dt) {
+    return dt * 10;
+}
+
+// ==========================================
+// AI / TESTING
+// ==========================================
+function handleAI(dt) {
+    // Simple AI to stay alive
+    if (gameState.controlMode === "TEST_1") {
+        // Just jump constantly
+        gameState.player.jumpCooldown = 0; // cheat
+        gameState.player.velocity.y = 0.1;
+        return 0; // No rotation
+    }
+    
+    if (gameState.controlMode === "TEST_2") {
+        // Perfect Play
+        // Look ahead for platforms
+        const playerZ = gameState.player.mesh.position.z;
+        const lookAhead = 5;
+        
+        // Find platform at z + lookAhead
+        // We need to know the angle of the next platform relative to current world rotation
+        // We want visualAngle to be 0 (top)
+        
+        // Find target platform
+        let targetAngle = null;
+        for (const p of gameState.platformManager.platforms) {
+            if (p.zStart <= playerZ + lookAhead && p.zEnd >= playerZ + lookAhead) {
+                targetAngle = p.angle;
+                break;
+            }
+        }
+        
+        if (targetAngle !== null) {
+            // Calculate error
+            // current visual angle = targetAngle + worldRotation
+            // we want visual angle = 0
+            // so worldRotation should be -targetAngle
+            
+            const currentVisual = targetAngle + gameState.worldRotation;
+            
+            // Normalize
+            let diff = currentVisual;
+            while (diff <= -Math.PI) diff += Math.PI * 2;
+            while (diff > Math.PI) diff -= Math.PI * 2;
+            
+            // Steer to minimize diff (bring it to 0)
+            if (diff > 0.1) return -1; // Rotate left
+            if (diff < -0.1) return 1; // Rotate right
+            
+            // Auto jump if gap coming?
+            // Simplified for constraint: just steer.
+        }
+        
+        // Jump logic
+        const groundNow = gameState.platformManager.getGroundHeight(playerZ + 1, -gameState.worldRotation);
+        if (groundNow === null && gameState.player.onGround) {
+             // Gap ahead! Jump!
+             // Trigger jump via key simulation or direct call
+             gameState.player.velocity.y = 0.35;
+             gameState.player.onGround = false;
+        }
+        
+        return 0;
+    }
+    
+    return 0;
+}
+
+// Start Game
+init();
+</file>
+
+<file name="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+let uiContext = null;
+
+export function setupUI() {
+    const uiCanvas = document.createElement('canvas');
+    uiCanvas.width = CANVAS_WIDTH;
+    uiCanvas.height = CANVAS_HEIGHT;
+    uiCanvas.style.position = 'absolute';
+    uiCanvas.style.top = '0';
+    uiCanvas.style.left = '0';
+    uiCanvas.style.pointerEvents = 'none';
+    uiCanvas.style.zIndex = '100';
+    
+    if (gameState.gameContainer) {
+        gameState.gameContainer.appendChild(uiCanvas);
+    } else {
+        document.body.appendChild(uiCanvas); // Fallback
+    }
+    
+    uiContext = uiCanvas.getContext('2d');
+}
+
+export function renderUI() {
+    if (!uiContext) return;
+    
+    // Clear
+    uiContext.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    // Render based on Phase
+    switch (gameState.gamePhase) {
+        case "START":
+            renderStartScreen();
+            break;
+        case "PLAYING":
+            renderHUD();
+            break;
+        case "PAUSED":
+            renderHUD();
+            renderPauseScreen();
+            break;
+        case "GAME_OVER_WIN":
+        case "GAME_OVER_LOSE":
+            renderHUD(); // Show final score behind
+            renderGameOverScreen();
+            break;
+    }
+}
+
+function renderStartScreen() {
+    drawOverlay('rgba(0, 0, 0, 0.7)');
+    
+    drawText('TWIST JUMP 3D', CANVAS_WIDTH/2, 120, 48, '#00ffff');
+    drawText('Stay on the platforms!', CANVAS_WIDTH/2, 180, 24, '#ffffff');
+    drawText('Use Left/Right Arrows to Twist the World', CANVAS_WIDTH/2, 220, 18, '#aaaaaa');
+    drawText('Use Space/Up to Jump', CANVAS_WIDTH/2, 250, 18, '#aaaaaa');
+    
+    // Pulsing press start
+    const alpha = 0.5 + Math.sin(Date.now() * 0.005) * 0.5;
+    drawText('PRESS ENTER TO START', CANVAS_WIDTH/2, 320, 24, `rgba(255, 255, 255, ${alpha})`);
+}
+
+function renderHUD() {
+    // Score
+    drawText(`Score: ${Math.floor(gameState.score)}`, 20, 40, 24, '#ffffff', 'left');
+    
+    // Distance
+    const dist = Math.floor(gameState.player ? gameState.player.mesh.position.z : 0);
+    drawText(`Distance: ${dist}m`, 20, 70, 18, '#aaaaaa', 'left');
+    
+    // Controls Hint (small)
+    drawText('Controls: Arrows + Space', CANVAS_WIDTH - 20, 30, 12, '#888888', 'right');
+}
+
+function renderPauseScreen() {
+    drawOverlay('rgba(0, 0, 0, 0.5)');
+    drawText('PAUSED', CANVAS_WIDTH/2, CANVAS_HEIGHT/2, 48, '#ffffff');
+    drawText('Press ESC to Resume', CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 50, 20, '#cccccc');
+}
+
+function renderGameOverScreen() {
+    drawOverlay('rgba(20, 0, 0, 0.8)');
+    
+    const msg = gameState.gamePhase === "GAME_OVER_WIN" ? "VICTORY!" : "GAME OVER";
+    const color = gameState.gamePhase === "GAME_OVER_WIN" ? "#00ff00" : "#ff0000";
+    
+    drawText(msg, CANVAS_WIDTH/2, 140, 56, color);
+    drawText(`Final Score: ${Math.floor(gameState.score)}`, CANVAS_WIDTH/2, 220, 32, '#ffffff');
+    drawText('Press R to Restart', CANVAS_WIDTH/2, 300, 24, '#cccccc');
+}
+
+// Helpers
+function drawOverlay(color) {
+    uiContext.fillStyle = color;
+    uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+}
+
+function drawText(text, x, y, size, color, align = 'center') {
+    uiContext.fillStyle = color;
+    uiContext.font = `bold ${size}px Arial`;
+    uiContext.textAlign = align;
+    uiContext.shadowColor = 'black';
+    uiContext.shadowBlur = 4;
+    uiContext.fillText(text, x, y);
+    uiContext.shadowBlur = 0;
+}
+</file>
+
+<file name="entities.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, TUNNEL_RADIUS, PLAYER_RADIUS, GRAVITY, JUMP_FORCE, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { isJumpPressed } from './input.js';
+
+// ==========================================
+// PLAYER CLASS
+// ==========================================
+export class Player {
+    constructor() {
+        // Create mesh
+        const geometry = new THREE.SphereGeometry(PLAYER_RADIUS, 32, 32);
+        
+        // Create a cool looking material
+        const material = new THREE.MeshStandardMaterial({
+            color: 0x00ffff,
+            metalness: 0.7,
+            roughness: 0.1,
+            emissive: 0x004444,
+            emissiveIntensity: 0.5
+        });
+        
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.castShadow = true;
+        this.mesh.receiveShadow = true;
+        
+        // State
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        this.onGround = false;
+        this.jumpCooldown = 0;
+        
+        // Visual rotation for rolling effect
+        this.rollAxis = new THREE.Vector3(1, 0, 0);
+        
+        // Add to scene
+        gameState.scene.add(this.mesh);
+        
+        this.reset();
+    }
+    
+    reset() {
+        // Player position relative to the camera/world center
+        // In this "Twist" implementation, the player stays at (0, y, z) visually mostly, 
+        // but physically Z increases.
+        this.mesh.position.set(0, TUNNEL_RADIUS + PLAYER_RADIUS, 0);
+        this.velocity.set(0, 0, 0);
+        this.onGround = true;
+        this.jumpCooldown = 0;
+        
+        // Reset rotation
+        this.mesh.rotation.set(0, 0, 0);
+    }
+    
+    update(deltaTime) {
+        // 1. Move forward (Z) logic is handled by "distanceTraveled" in game loop usually,
+        // but here let's actually move the player mesh in Z and have camera follow.
+        // It simplifies physics checks.
+        
+        const speed = gameState.currentSpeed;
+        this.mesh.position.z += speed; // Move forward in world space
+        
+        // 2. Physics: Gravity and Jumping
+        // Apply Gravity
+        this.velocity.y -= GRAVITY;
+        
+        // Apply Velocity
+        this.mesh.position.y += this.velocity.y;
+        
+        // Ground Collision Check happens in game.js or physics.js usually, 
+        // but we can delegate to a helper here if passed the platform manager
+        this.checkCollisions();
+        
+        // 3. Jump Input
+        if (this.onGround && isJumpPressed() && this.jumpCooldown <= 0) {
+            this.velocity.y = JUMP_FORCE;
+            this.onGround = false;
+            this.jumpCooldown = 10; // Frames
+            
+            // Spawn jump particles
+            if(gameState.particleSystem) {
+                gameState.particleSystem.emit(this.mesh.position, 10, 0x00ffff);
+            }
+        }
+        
+        if (this.jumpCooldown > 0) this.jumpCooldown--;
+        
+        // 4. Visual Rolling
+        // Rotate the sphere mesh around X axis based on speed
+        const rollSpeed = speed / PLAYER_RADIUS;
+        this.mesh.rotateOnAxis(this.rollAxis, -rollSpeed);
+        
+        // 5. Game Over Check
+        // If player falls too far below the tunnel radius
+        if (this.mesh.position.y < -10) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+        }
+    }
+    
+    checkCollisions() {
+        // This requires querying the Platform Manager
+        // We calculate where the player IS in terms of Angle and Z
+        
+        const playerZ = this.mesh.position.z;
+        const playerAngle = 0; // Visually, player is always at angle 0 (top)
+        
+        // The WORLD is rotated by gameState.worldRotation.
+        // So the point on the tunnel directly below the player corresponds to angle:
+        // -gameState.worldRotation
+        // We need to normalize this angle to 0..2PI or -PI..PI
+        
+        let checkAngle = -gameState.worldRotation;
+        
+        // Normalize to -PI to PI
+        while (checkAngle <= -Math.PI) checkAngle += Math.PI * 2;
+        while (checkAngle > Math.PI) checkAngle -= Math.PI * 2;
+        
+        // Check if there is a platform at (playerZ, checkAngle)
+        const groundHeight = gameState.platformManager.getGroundHeight(playerZ, checkAngle);
+        
+        if (groundHeight !== null) {
+            // Platform exists below
+            const feetPos = this.mesh.position.y - PLAYER_RADIUS;
+            
+            // If feet are falling through the ground (and we were previously above or near it)
+            // Added tolerance check: only snap if feet are within 1.0 unit of the ground surface
+            // This prevents "teleporting" from deep below up to the platform
+            if (feetPos <= groundHeight && feetPos >= groundHeight - 1.0 && this.velocity.y <= 0) {
+                // Snap to ground
+                this.mesh.position.y = groundHeight + PLAYER_RADIUS;
+                this.velocity.y = 0;
+                this.onGround = true;
+            } else {
+                // We are in the air above the platform OR too far below
+                this.onGround = false;
+            }
+        } else {
+            // No platform below (gap)
+            this.onGround = false;
+        }
+    }
+}
+
+// ==========================================
+// PLATFORM MANAGER
+// ==========================================
+export class PlatformManager {
+    constructor() {
+        this.platforms = [];
+        this.pool = []; // Object pool for performance
+        this.chunkSize = 10;
+        this.nextSpawnZ = 0;
+        
+        // Procedural Generation State
+        this.currentAngle = 0;
+        this.platformLength = 10;
+        this.gapLength = 3;
+        
+        this.materials = [
+            new THREE.MeshStandardMaterial({ color: 0xff0055, roughness: 0.3 }),
+            new THREE.MeshStandardMaterial({ color: 0x55ff00, roughness: 0.3 }),
+            new THREE.MeshStandardMaterial({ color: 0x0055ff, roughness: 0.3 }),
+            new THREE.MeshStandardMaterial({ color: 0xffff00, roughness: 0.3 })
+        ];
+        
+        this.reset();
+    }
+    
+    reset() {
+        // Remove active platforms
+        for (const p of this.platforms) {
+            gameState.scene.remove(p.mesh);
+            this.pool.push(p);
+        }
+        this.platforms = [];
+        this.nextSpawnZ = -10; // Start a bit behind
+        this.currentAngle = 0;
+        
+        // Initial safe zone
+        this.createPlatform(0, 40, 0); // 40 units long start platform
+        this.nextSpawnZ = 40;
+    }
+    
+    update(playerZ) {
+        // 1. Cleanup old platforms
+        const removeThreshold = playerZ - 20;
+        for (let i = this.platforms.length - 1; i >= 0; i--) {
+            if (this.platforms[i].zEnd < removeThreshold) {
+                const p = this.platforms[i];
+                gameState.scene.remove(p.mesh);
+                this.pool.push(p);
+                this.platforms.splice(i, 1);
+            }
+        }
+        
+        // 2. Spawn new platforms ahead
+        const spawnThreshold = playerZ + 100;
+        while (this.nextSpawnZ < spawnThreshold) {
+            this.spawnNextSequence();
+        }
+    }
+    
+    spawnNextSequence() {
+        // Logic to generate the twisting path
+        // Decide next segment properties
+        const isGap = Math.random() < 0.3 && this.nextSpawnZ > 50; // 30% chance of gap, but not at start
+        
+        if (isGap) {
+            this.nextSpawnZ += this.gapLength + Math.random() * 3; // Random gap size
+        }
+        
+        // Change angle for the twist
+        const angleChange = (Math.random() - 0.5) * 1.5; // Rotate left or right
+        this.currentAngle += angleChange;
+        
+        // Normalize angle
+        // Keep it simple for spawning, wrap visual logic in creation
+        
+        const length = this.platformLength + Math.random() * 10;
+        
+        this.createPlatform(this.nextSpawnZ, length, this.currentAngle);
+        
+        // Maybe spawn a gem
+        if (Math.random() < 0.5) {
+            gameState.collectibleManager.spawnGem(
+                this.nextSpawnZ + length / 2, 
+                this.currentAngle, 
+                TUNNEL_RADIUS + 1.5
+            );
+        }
+        
+        this.nextSpawnZ += length;
+    }
+    
+    createPlatform(zStart, length, angle) {
+        let p;
+        if (this.pool.length > 0) {
+            p = this.pool.pop();
+        } else {
+            // Create new mesh if pool empty
+            const geometry = new THREE.BoxGeometry(1, 1, 1); // Unit size, scaled later
+            const mesh = new THREE.Mesh(geometry, this.materials[0]);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            p = { mesh: mesh };
+        }
+        
+        // Configure platform logic
+        p.zStart = zStart;
+        p.zEnd = zStart + length;
+        p.angle = angle;
+        p.widthAngle = 0.8; // Width in radians (approx 45 degrees)
+        p.valid = true;
+        
+        // Configure mesh transformation
+        // We want a platform at radius R, angle A.
+        // It's a box.
+        // Width (arc length) ~ Radius * widthAngle
+        const arcWidth = TUNNEL_RADIUS * p.widthAngle;
+        const thickness = 1;
+        
+        p.mesh.scale.set(arcWidth, thickness, length);
+        
+        // Position
+        // Convert Cylindrical(r, theta, z) to Cartesian(x, y, z)
+        // x = r * sin(theta)
+        // y = r * cos(theta)
+        // z = center of platform
+        
+        const r = TUNNEL_RADIUS;
+        const x = r * Math.sin(angle);
+        const y = r * Math.cos(angle);
+        const z = zStart + length / 2;
+        
+        p.mesh.position.set(x, y, z);
+        
+        // Rotation
+        // The box needs to face the center.
+        // Z rotation = -angle
+        p.mesh.rotation.set(0, 0, -angle);
+        
+        // Pick random color
+        const matIndex = Math.floor(Math.random() * this.materials.length);
+        p.mesh.material = this.materials[matIndex];
+        
+        gameState.scene.add(p.mesh);
+        this.platforms.push(p);
+    }
+    
+    getGroundHeight(z, checkAngle) {
+        // Find platform at z
+        for (const p of this.platforms) {
+            if (z >= p.zStart && z <= p.zEnd) {
+                // Check angle overlap
+                // We need to handle angle wrapping (e.g. PI and -PI are close)
+                
+                let diff = checkAngle - p.angle;
+                // Normalize diff to -PI..PI
+                while (diff <= -Math.PI) diff += Math.PI * 2;
+                while (diff > Math.PI) diff -= Math.PI * 2;
+                
+                if (Math.abs(diff) < p.widthAngle / 2) {
+                    // Collision!
+                    // Return the surface height. 
+                    // Since the platforms form a tunnel, the "height" is relative to the radius.
+                    // The player logic expects a Y value. 
+                    // But wait, the player moves in world space Y? 
+                    // Actually, the player's Y is checked against the ROTATED world.
+                    // If we rotate the world so the platform is down, the platform surface is at TUNNEL_RADIUS + thickness/2.
+                    return TUNNEL_RADIUS + 0.5; // Box height is 1, so surface is at +0.5 from center
+                }
+            }
+        }
+        return null; // Gap
+    }
+}
+
+// ==========================================
+// COLLECTIBLE MANAGER
+// ==========================================
+export class CollectibleManager {
+    constructor() {
+        this.gems = [];
+        this.geometry = new THREE.OctahedronGeometry(0.5, 0);
+        this.material = new THREE.MeshStandardMaterial({ 
+            color: 0xff00ff,
+            emissive: 0xff00ff,
+            emissiveIntensity: 0.8,
+            metalness: 0.8,
+            roughness: 0.2
+        });
+    }
+    
+    reset() {
+        for (const g of this.gems) {
+            gameState.scene.remove(g.mesh);
+        }
+        this.gems = [];
+    }
+    
+    spawnGem(z, angle, radius) {
+        const mesh = new THREE.Mesh(this.geometry, this.material);
+        
+        const x = radius * Math.sin(angle);
+        const y = radius * Math.cos(angle);
+        
+        mesh.position.set(x, y, z);
+        mesh.rotation.z = -angle; // Align with surface
+        
+        // Store logical data
+        const gem = {
+            mesh: mesh,
+            z: z,
+            angle: angle,
+            radius: radius,
+            active: true
+        };
+        
+        gameState.scene.add(mesh);
+        this.gems.push(gem);
+    }
+    
+    update(deltaTime, player) {
+        const rotationSpeed = 2.0;
+        
+        // Update gems
+        for (let i = this.gems.length - 1; i >= 0; i--) {
+            const gem = this.gems[i];
+            
+            // Animate
+            gem.mesh.rotation.y += rotationSpeed * deltaTime;
+            
+            // Check Collision
+            // Simple distance check if player is close in Z
+            if (Math.abs(gem.z - player.mesh.position.z) < 1.0) {
+                // Check angular distance (is player rotated correctly?)
+                let checkAngle = -gameState.worldRotation;
+                while (checkAngle <= -Math.PI) checkAngle += Math.PI * 2;
+                while (checkAngle > Math.PI) checkAngle -= Math.PI * 2;
+                
+                let diff = checkAngle - gem.angle;
+                while (diff <= -Math.PI) diff += Math.PI * 2;
+                while (diff > Math.PI) diff -= Math.PI * 2;
+                
+                // If aligned and height matches (player y vs gem radius)
+                // Player Y is typically TUNNEL_RADIUS when grounded
+                // Gem is at TUNNEL_RADIUS + 1.5
+                // Player jumps to ~ TUNNEL_RADIUS + 3.0
+                
+                const distY = Math.abs(player.mesh.position.y - gem.radius);
+                
+                if (Math.abs(diff) < 0.5 && distY < 1.5) {
+                    // Collected!
+                    this.collect(i);
+                }
+            }
+            
+            // Remove if passed
+            if (gem.z < player.mesh.position.z - 10) {
+                gameState.scene.remove(gem.mesh);
+                this.gems.splice(i, 1);
+            }
+        }
+    }
+    
+    collect(index) {
+        const gem = this.gems[index];
+        gameState.scene.remove(gem.mesh);
+        this.gems.splice(index, 1);
+        
+        gameState.score += 50;
+        
+        // Particles
+        if (gameState.particleSystem) {
+            gameState.particleSystem.emit(gem.mesh.position, 20, 0xff00ff);
+        }
+    }
+}
+
+// ==========================================
+// PARTICLE SYSTEM
+// ==========================================
+export class ParticleSystem {
+    constructor() {
+        this.particles = [];
+        const geometry = new THREE.BufferGeometry();
+        const material = new THREE.PointsMaterial({
+            size: 0.2,
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.8
+        });
+        
+        // We'll use individual meshes for simplicity in this constraints context 
+        // or a shared geometry if we wanted to be very optimized.
+        // Given constraints "make visual assets using code", let's use simple meshes for particles
+        // actually THREE.Points is better.
+        
+        // Let's stick to a simple object pool of Meshes for "chunky" particles
+        this.pool = [];
+        this.active = [];
+        this.geometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
+    }
+    
+    reset() {
+        for (const p of this.active) {
+            gameState.scene.remove(p.mesh);
+            this.pool.push(p);
+        }
+        this.active = [];
+    }
+    
+    emit(position, count, colorHex) {
+        for (let i = 0; i < count; i++) {
+            let p;
+            if (this.pool.length > 0) {
+                p = this.pool.pop();
+            } else {
+                p = {
+                    mesh: new THREE.Mesh(
+                        this.geometry, 
+                        new THREE.MeshBasicMaterial()
+                    ),
+                    velocity: new THREE.Vector3(),
+                    life: 0
+                };
+            }
+            
+            p.mesh.position.copy(position);
+            
+            // Random velocity explosion
+            p.velocity.set(
+                (Math.random() - 0.5) * 0.5,
+                (Math.random() - 0.5) * 0.5 + 0.2, // Upward bias
+                (Math.random() - 0.5) * 0.5
+            );
+            
+            p.life = 1.0;
+            p.mesh.material.color.setHex(colorHex);
+            p.mesh.visible = true;
+            
+            gameState.scene.add(p.mesh);
+            this.active.push(p);
+        }
+    }
+    
+    update(deltaTime) {
+        for (let i = this.active.length - 1; i >= 0; i--) {
+            const p = this.active[i];
+            
+            p.life -= deltaTime * 2.0; // Fade out speed
+            
+            if (p.life <= 0) {
+                gameState.scene.remove(p.mesh);
+                this.pool.push(p);
+                this.active.splice(i, 1);
+                continue;
+            }
+            
+            // Physics
+            p.velocity.y -= GRAVITY * 0.5;
+            p.mesh.position.add(p.velocity);
+            
+            // Rotate particle
+            p.mesh.rotation.x += 0.1;
+            p.mesh.rotation.y += 0.1;
+            
+            // Scale/Fade
+            p.mesh.scale.setScalar(p.life);
+        }
+    }
+}
+</file>
+
+<file name="camera.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+
+export function setupCamera() {
+    const camera = new THREE.PerspectiveCamera(
+        60, // FOV
+        600 / 400, // Aspect
+        0.1, // Near
+        1000 // Far
+    );
+    gameState.camera = camera;
+    return camera;
+}
+
+export function updateCamera() {
+    if (!gameState.player) return;
+    
+    const playerPos = gameState.player.mesh.position;
+    
+    // Camera follows player in Z
+    // Camera is positioned "above" and "behind" the player relative to the tunnel rotation
+    // In our implementation, the player stays visually at the top (0, r, z).
+    // The world rotates.
+    // So camera can just be fixed relative to player's Z.
+    
+    const offsetZ = -8;
+    const offsetY = 5;
+    const targetZ = playerPos.z + offsetZ;
+    
+    // Smooth follow Z
+    if (!gameState.camera.position.z) gameState.camera.position.z = targetZ;
+    gameState.camera.position.z = THREE.MathUtils.lerp(gameState.camera.position.z, targetZ, 0.1);
+    
+    // Fixed height relative to tunnel center
+    gameState.camera.position.y = offsetY + 3; // +3 for tunnel radius offset approx
+    gameState.camera.position.x = 0;
+    
+    // Look ahead of player
+    const lookTarget = new THREE.Vector3(0, 2, playerPos.z + 10);
+    gameState.camera.lookAt(lookTarget);
+    
+    // Add some dynamic shake if speed is high or landing
+    // (Simplification: keep steady for now)
+}
+</file>
+
+<file name="input.js">
+import { gameState, logInput, BASE_SPEED } from './globals.js';
+
+export const keys = {
+    ArrowUp: false,
+    ArrowDown: false,
+    ArrowLeft: false,
+    ArrowRight: false,
+    w: false,
+    a: false,
+    s: false,
+    d: false,
+    " ": false,
+    Shift: false,
+    z: false
+};
+
+export function setupInputHandling() {
+    document.addEventListener('keydown', (e) => {
+        const key = e.key;
+        const code = e.keyCode;
+        
+        // Update key state map
+        if (keys.hasOwnProperty(key)) keys[key] = true;
+        if (keys.hasOwnProperty(e.code)) keys[e.code] = true;
+        
+        // Map WASD to keys object if needed, or just rely on direct check
+        if (code === 87) keys.w = true; // W
+        if (code === 65) keys.a = true; // A
+        if (code === 83) keys.s = true; // S
+        if (code === 68) keys.d = true; // D
+        if (code === 32) keys[" "] = true; // Space
+        
+        logInput('keydown', key, code);
+
+        handlePhaseControls(code);
+    });
+
+    document.addEventListener('keyup', (e) => {
+        const key = e.key;
+        const code = e.keyCode;
+        
+        if (keys.hasOwnProperty(key)) keys[key] = false;
+        
+        if (code === 87) keys.w = false;
+        if (code === 65) keys.a = false;
+        if (code === 83) keys.s = false;
+        if (code === 68) keys.d = false;
+        if (code === 32) keys[" "] = false;
+        
+        logInput('keyup', key, code);
+    });
+}
+
+function handlePhaseControls(keyCode) {
+    // ENTER (13) - Start Game
+    if (keyCode === 13) {
+        if (gameState.gamePhase === "START") {
+            startGame();
+        } else if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+            // Optional: Enter could also restart
+            resetGame();
+            startGame();
+        }
+    }
+
+    // R (82) - Restart Game
+    if (keyCode === 82) {
+        if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+            resetGame();
+            gameState.gamePhase = "START";
+        }
+    }
+
+    // ESC (27) - Pause/Unpause
+    if (keyCode === 27) {
+        if (gameState.gamePhase === "PLAYING") {
+            gameState.gamePhase = "PAUSED";
+        } else if (gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = "PLAYING";
+        }
+    }
+}
+
+function startGame() {
+    gameState.gamePhase = "PLAYING";
+    // Reset timestamp for delta calculation to avoid jump
+    gameState.time = performance.now();
+}
+
+function resetGame() {
+    // Reset core variables
+    gameState.score = 0;
+    gameState.distanceTraveled = 0;
+    gameState.currentSpeed = BASE_SPEED; // Use constant instead of hardcoded value
+    gameState.worldRotation = 0;
+    
+    // Reset Entities
+    if (gameState.player) gameState.player.reset();
+    if (gameState.platformManager) gameState.platformManager.reset();
+    if (gameState.collectibleManager) gameState.collectibleManager.reset();
+    if (gameState.particleSystem) gameState.particleSystem.reset();
+}
+
+export function isJumpPressed() {
+    return keys.ArrowUp || keys.w || keys[" "];
+}
+
+export function getRotationInput() {
+    let input = 0;
+    if (keys.ArrowLeft || keys.a) input -= 1;
+    if (keys.ArrowRight || keys.d) input += 1;
+    return input;
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

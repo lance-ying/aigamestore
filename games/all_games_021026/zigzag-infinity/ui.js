@@ -1,0 +1,74 @@
+/**
+ * UI Rendering.
+ */
+
+import { CANVAS_WIDTH, CANVAS_HEIGHT, COLORS, gameState } from './globals.js';
+
+export function renderUI(p) {
+    p.push();
+    
+    // HUD (Score) - Always visible in PLAYING/PAUSED/GAMEOVER
+    if (gameState.gamePhase !== "START") {
+        p.textAlign(p.LEFT, p.TOP);
+        p.textSize(32);
+        p.fill(COLORS.TEXT);
+        p.stroke(0);
+        p.strokeWeight(3);
+        p.text(gameState.score, 20, 20);
+        
+        // High Score
+        if (gameState.highScore > 0) {
+            p.textSize(16);
+            p.fill(COLORS.ACCENT);
+            p.strokeWeight(2);
+            p.text(`BEST: ${gameState.highScore}`, 20, 60);
+        }
+    }
+    
+    p.pop();
+
+    if (gameState.gamePhase === "START") {
+        drawOverlay(p, 0.6);
+        p.push();
+        p.textAlign(p.CENTER, p.CENTER);
+        p.fill(COLORS.TEXT);
+        
+        // Replaced game title with "press enter to begin"
+        p.textSize(50); // Make it prominent
+        p.noStroke(); // Keep it simple and clean
+        p.text("press enter to begin", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+        
+        p.textSize(14);
+        p.fill(200);
+        p.text("Space / Arrow Keys to Switch Direction", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60); // Adjusted position
+        p.pop();
+    }
+    else if (gameState.gamePhase === "GAME_OVER_LOSE") {
+        drawOverlay(p, 0.5);
+        p.push();
+        p.textAlign(p.CENTER, p.CENTER);
+        
+        p.fill(255, 100, 100);
+        p.textSize(50);
+        p.stroke(0);
+        p.strokeWeight(3);
+        p.text("GAME OVER", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 30);
+        
+        p.fill(COLORS.TEXT);
+        p.noStroke();
+        p.textSize(30);
+        p.text(`Score: ${gameState.score}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 20);
+        
+        p.textSize(20);
+        p.fill(200);
+        p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60);
+        p.pop();
+    }
+}
+
+function drawOverlay(p, alpha) {
+    p.push();
+    p.fill(0, 0, 0, alpha * 255);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.pop();
+}

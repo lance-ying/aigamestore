@@ -1,0 +1,176 @@
+<analysis>
+- Issue identified: The pause/unpause functionality is glitchy because the `togglePause` function is called repeatedly as long as the ESC key is held down. This is due to the pause logic being placed within `handleInput`, which runs every frame and checks the continuous state of the key using `isKeyPressed`.
+- Files affected: input.js
+- Changes needed: Move the `togglePause` call from the per-frame `handleInput` function to the `registerKeyPress` function, which is triggered only once when a key is initially pressed. This will ensure the pause state is toggled only once per key press.
+</analysis>
+<code filename="input.js">
+import { gameState } from './globals.js';
+import { Player } from './entities.js';
+import { LaneManager } from './lanes.js';
+
+let autoRestartTimeoutId = null; // To store setTimeout ID for cancellation
+
+export function handleInput(p) {
+    // Phase transitions
+    if (gameState.gamePhase === "START") {
+        if (isKeyPressed(13)) { // ENTER
+            startGame(p);
+        }
+    } else if (gameState.gamePhase === "PLAYING") {
+        // Removed: if (isKeyPressed(27)) { // ESC
+        // Removed:    gameState.gamePhase = "PAUSED";
+        // Removed:    logGameInfo(p, "Phase Changed to PAUSED");
+        // Removed: }
+    } else if (gameState.gamePhase === "PAUSED") {
+        // Removed: if (isKeyPressed(27)) { // ESC
+        // Removed:    gameState.gamePhase = "PLAYING";
+        // Removed:    logGameInfo(p, "Phase Changed to PLAYING");
+        // Removed: }
+    } else if (gameState.gamePhase.startsWith("GAME_OVER")) {
+        if (isKeyPressed(82)) { // R
+            restartGame(p); // Call the renamed restart function
+        }
+    }
+}
+
+// Helper to check key press only once per frame if needed, 
+// but for p5 keyPressed handles singular events. 
+// This is for continuous checks or specific logic.
+const keys = {};
+
+export function registerKeyPress(p, keyCode) {
+    keys[keyCode] = true;
+    
+    // Log input
+    if (p.logs) {
+        p.logs.inputs.push({
+            input_type: 'keyPressed',
+            data: { key: p.key, keyCode: keyCode },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+
+    // Direct gameplay input handling
+    if (gameState.gamePhase === "PLAYING" && gameState.player && !gameState.player.isMoving) {
+        // Check if double hop is armed (ENTER was pressed and hop charge available)
+        const useCharge = gameState.player.isDoubleHopArmed;
+        
+        if (keyCode === p.UP_ARROW) gameState.player.queueMove(0, -1, useCharge);
+        else if (keyCode === p.DOWN_ARROW) gameState.player.queueMove(0, 1, useCharge);
+        else if (keyCode === p.LEFT_ARROW) gameState.player.queueMove(-1, 0, useCharge);
+        else if (keyCode === p.RIGHT_ARROW) gameState.player.queueMove(1, 0, useCharge);
+        
+        // ENTER key to arm double hop (if hop charge is available)
+        if (keyCode === 13 && gameState.player.hasHopCharge) {
+            gameState.player.isDoubleHopArmed = !gameState.player.isDoubleHopArmed;
+        }
+    }
+    
+    // Global phase keys
+    if (keyCode === 13 && gameState.gamePhase === "START") startGame(p);
+    if (keyCode === 27) togglePause(p); // Moved pause logic here to trigger only on key press
+    if (keyCode === 82 && (gameState.gamePhase.startsWith("GAME_OVER"))) restartGame(p); // Call the renamed restart function
+}
+
+export function registerKeyRelease(p, keyCode) {
+    keys[keyCode] = false;
+    if (p.logs) {
+        p.logs.inputs.push({
+            input_type: 'keyReleased',
+            data: { key: p.key, keyCode: keyCode },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+
+function isKeyPressed(keyCode) {
+    return keys[keyCode] === true;
+}
+
+function startGame(p) {
+    // Prevent multiple calls in the same frame
+    if (gameState.gamePhase !== "START") {
+        return;
+    }
+    resetGame(p);
+    gameState.gamePhase = "PLAYING";
+    logGameInfo(p, "Game Started");
+}
+
+function togglePause(p) {
+    if (gameState.gamePhase === "PLAYING") {
+        gameState.gamePhase = "PAUSED";
+        logGameInfo(p, "Phase Changed to PAUSED");
+    } else if (gameState.gamePhase === "PAUSED") {
+        gameState.gamePhase = "PLAYING";
+        logGameInfo(p, "Phase Changed to PLAYING");
+    }
+}
+
+// Renamed from restartFromGameOver to restartGame
+function restartGame(p) {
+    // Clear any pending auto-restart
+    if (autoRestartTimeoutId) {
+        clearTimeout(autoRestartTimeoutId);
+        autoRestartTimeoutId = null;
+    }
+    
+    // Determine the target phase based on whether it was an auto-restart
+    let targetPhase = "START"; // Default for manual restart
+    if (gameState.autoRestartScheduled) {
+        targetPhase = "PLAYING";
+    }
+
+    gameState.autoRestartScheduled = false; // Clear the flag after determining the target phase
+    
+    resetGame(p);
+    gameState.gamePhase = targetPhase; // Set the phase based on whether it was auto-restarted
+    logGameInfo(p, "Restarting game");
+}
+
+// New function to schedule the auto-restart
+export function scheduleAutoRestart(p) {
+    if (gameState.autoRestartScheduled) {
+        return; // Already scheduled
+    }
+    gameState.autoRestartScheduled = true;
+    
+    autoRestartTimeoutId = setTimeout(() => {
+        // Only trigger restart if still in a game over phase
+        if (gameState.gamePhase.startsWith("GAME_OVER")) {
+            restartGame(p);
+        }
+        // Always reset the flag and ID after the timeout, regardless of whether restart happened
+        gameState.autoRestartScheduled = false;
+        autoRestartTimeoutId = null;
+    }, 1000); // 1 second delay
+}
+
+export function resetGame(p) {
+    gameState.score = 0;
+    gameState.cameraY = 0;
+    gameState.particles = [];
+    
+    // Reset Lanes (initSafeZone is called in LaneManager constructor)
+    gameState.laneManager = new LaneManager();
+    gameState.lanes = gameState.laneManager.lanes;
+    
+    // Reset Player
+    // Start player at center X, and a few lanes up from bottom
+    gameState.player = new Player(7, 0); // Grid X, Grid Y (relative to start)
+    
+    logGameInfo(p, "Game Reset");
+}
+
+function logGameInfo(p, info) {
+    if (p.logs) {
+        p.logs.game_info.push({
+            data: { info: info, phase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+</code>

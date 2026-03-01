@@ -1,0 +1,518 @@
+<analysis>
+- Issue identified: The automatic restart after a 'GAME_OVER_WIN' or 'GAME_OVER_LOSE' state currently calls the `restartGame` function, which sets the `gamePhase` back to 'START'. This requires the user to press 'Enter' again to begin playing, contradicting the expectation of an "auto restart" that should directly transition to a new game. The manual 'R' key restart should retain its current behavior of returning to the start screen.
+- Files affected:
+    - `game.js`: Needs to call a different function for auto-restart.
+    - `input.js`: Needs a new function for auto-restart and an import for `initializeLevel`.
+- Changes needed:
+    1.  Create a new function `startNewGameAutomatically` in `input.js`. This function will perform the necessary state resets (score, level, bubbles, projectiles) and then set `gameState.gamePhase` directly to 'PLAYING', also calling `initializeLevel(1, p)` to immediately set up the first level.
+    2.  Import `initializeLevel` into `input.js`.
+    3.  Modify `game.js` to call `startNewGameAutomatically` instead of `restartGame` in the `GAME_OVER_WIN` and `GAME_OVER_LOSE` auto-restart logic.
+</analysis>
+<code filename="game.js">
+// game.js - Main game file
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, SHOOTER_Y } from './globals.js';
+import { createShooter, generateNextBubble, drawAimingGuide } from './shooter.js';
+import { initializeLevel, calculateShotBonus } from './levels.js';
+import { checkProjectileCollision, checkLoseCondition, checkWinCondition } from './collision.js';
+import { drawUI, drawStartScreen, drawPausedIndicator, drawGameOverScreen, drawLevelTransition } from './ui.js';
+import { handleKeyPressed, handleContinuousInput, restartGame, startNewGameAutomatically } from './input.js'; // Import startNewGameAutomatically
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  let initialized = false;
+
+  // Initialize logs
+  p.logs = {
+    game_info: [],
+    inputs: [],
+    player_info: []
+  };
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+
+    // Initialize game state
+    gameState.player = createShooter();
+    gameState.entities = [];
+
+    initialized = true;
+
+    // Log initial state
+    p.logs.game_info.push({
+      data: { event: 'game_initialized', gamePhase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+
+  p.draw = function() {
+    p.background(20, 30, 50);
+
+    if (!initialized) return;
+
+    // Handle game phases
+    if (gameState.gamePhase === 'START') {
+      drawStartScreen(p);
+    } else if (gameState.gamePhase === 'PLAYING') {
+      updatePlayingPhase(p);
+      renderPlayingPhase(p);
+    } else if (gameState.gamePhase === 'PAUSED') {
+      renderPlayingPhase(p);
+      drawPausedIndicator(p);
+    } else if (gameState.gamePhase === 'LEVEL_TRANSITION') {
+      updateLevelTransition(p);
+      drawLevelTransition(p);
+    } else if (gameState.gamePhase === 'GAME_OVER_WIN') {
+      drawGameOverScreen(p, true);
+      // Auto-restart logic for GAME_OVER_WIN
+      if (!gameState.autoRestartScheduled) {
+        gameState.autoRestartScheduled = true;
+        gameState.autoRestartTimeoutId = setTimeout(() => {
+          startNewGameAutomatically(p); // Call the new auto-restart function
+        }, 1000); // 1 second delay
+      }
+    } else if (gameState.gamePhase === 'GAME_OVER_LOSE') {
+      drawGameOverScreen(p, false);
+      // Auto-restart logic for GAME_OVER_LOSE
+      if (!gameState.autoRestartScheduled) {
+        gameState.autoRestartScheduled = true;
+        gameState.autoRestartTimeoutId = setTimeout(() => {
+          startNewGameAutomatically(p); // Call the new auto-restart function
+        }, 1000); // 1 second delay
+      }
+    }
+  };
+
+  function updatePlayingPhase(p) {
+    // Initialize level if needed
+    if (gameState.bubbleGrid.length === 0) {
+      initializeLevel(gameState.currentLevel, p);
+    }
+
+    // Generate bubbles if needed
+    if (!gameState.projectileBubble && gameState.canFire) {
+      gameState.projectileBubble = generateNextBubble(p);
+    }
+    if (!gameState.nextBubble) {
+      gameState.nextBubble = generateNextBubble(p);
+    }
+
+    // Handle input
+    handleContinuousInput(p);
+    // Removed: executeTestAction(p);
+
+    // Update bubbles
+    gameState.bubbleGrid = gameState.bubbleGrid.filter(bubble => {
+      const shouldRemove = bubble.update();
+      return !shouldRemove;
+    });
+
+    // Update projectiles
+    for (let i = gameState.entities.length - 1; i >= 0; i--) {
+      const projectile = gameState.entities[i];
+      if (projectile.active) {
+        projectile.x += projectile.vx * projectile.speed;
+        projectile.y += projectile.vy * projectile.speed;
+
+        // Wall bouncing
+        if (projectile.x - projectile.radius < 0) {
+          projectile.x = projectile.radius;
+          projectile.vx = Math.abs(projectile.vx);
+        }
+        if (projectile.x + projectile.radius > CANVAS_WIDTH) {
+          projectile.x = CANVAS_WIDTH - projectile.radius;
+          projectile.vx = -Math.abs(projectile.vx);
+        }
+
+        // Check collisions
+        if (checkProjectileCollision(projectile, p)) {
+          gameState.entities.splice(i, 1);
+          gameState.canFire = true;
+
+          // Generate new next bubble
+          if (!gameState.nextBubble) {
+            gameState.nextBubble = generateNextBubble(p);
+          }
+        }
+      }
+    }
+
+    // Check win/lose conditions
+    if (checkLoseCondition()) {
+      transitionToGameOver(false, p);
+      return;
+    }
+
+    // Check shot limit lose condition
+    // We lose if no shots remaining, no active projectiles, and no bubbles currently popping/falling
+    const isGridStable = gameState.bubbleGrid.every(b => !b.popping && !b.falling);
+    if (gameState.shotsRemaining <= 0 && gameState.entities.length === 0 && isGridStable && gameState.bubbleGrid.length > 0) {
+      transitionToGameOver(false, p);
+      return;
+    }
+
+    if (checkWinCondition() && gameState.bubbleGrid.length === 0) {
+      // Add shot bonus
+      const bonus = calculateShotBonus();
+      gameState.score += bonus;
+
+      // Check if more levels
+      if (gameState.currentLevel < 9) {
+        transitionToNextLevel(p);
+      } else {
+        transitionToGameOver(true, p);
+      }
+    }
+
+    // Log player info periodically
+    if (p.frameCount % 30 === 0 && gameState.player) {
+      p.logs.player_info.push({
+        screen_x: gameState.player.x,
+        screen_y: gameState.player.y,
+        game_x: gameState.player.x,
+        game_y: gameState.player.y,
+        framecount: p.frameCount
+      });
+    }
+  }
+
+  function renderPlayingPhase(p) {
+    // Draw lose line
+    p.push();
+    p.stroke(255, 0, 0, 50);
+    p.strokeWeight(2);
+    p.line(0, CANVAS_HEIGHT - 100, CANVAS_WIDTH, CANVAS_HEIGHT - 100);
+    p.pop();
+
+    // Draw bubbles
+    for (const bubble of gameState.bubbleGrid) {
+      bubble.draw(p);
+    }
+
+    // Draw projectiles
+    for (const projectile of gameState.entities) {
+      if (projectile.active) {
+        p.push();
+        p.fill(...projectile.color);
+        p.stroke(255, 255, 255, 200);
+        p.strokeWeight(2);
+        p.ellipse(projectile.x, projectile.y, projectile.radius * 2);
+        p.pop();
+      }
+    }
+
+    // Draw shooter
+    if (gameState.player) {
+      drawAimingGuide(gameState.player, p);
+      gameState.player.draw(p);
+    }
+
+    // Draw current and next bubbles
+    if (gameState.projectileBubble) {
+      gameState.projectileBubble.x = CANVAS_WIDTH / 2;
+      gameState.projectileBubble.y = SHOOTER_Y;
+      gameState.projectileBubble.draw(p);
+    }
+
+    if (gameState.nextBubble) {
+      gameState.nextBubble.x = CANVAS_WIDTH / 2 + 60;
+      gameState.nextBubble.y = SHOOTER_Y;
+      p.push();
+      p.scale(0.7);
+      p.translate((CANVAS_WIDTH / 2 + 60) * 0.3 / 0.7, SHOOTER_Y * 0.3 / 0.7);
+      gameState.nextBubble.draw(p);
+      p.pop();
+
+      // Draw "NEXT" label
+      p.push();
+      p.fill(255);
+      p.textSize(12);
+      p.textAlign(p.CENTER, p.TOP);
+      p.noStroke();
+      p.text('NEXT', CANVAS_WIDTH / 2 + 60, SHOOTER_Y + 30);
+      p.pop();
+    }
+
+    // Draw UI
+    drawUI(p);
+  }
+
+  function transitionToNextLevel(p) {
+    gameState.gamePhase = 'LEVEL_TRANSITION';
+    gameState.currentLevel++;
+    gameState.transitionTimer = p.millis();
+    gameState.bubbleGrid = [];
+    gameState.entities = [];
+
+    p.logs.game_info.push({
+      data: { event: 'level_complete', level: gameState.currentLevel - 1, score: gameState.score },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+
+  function updateLevelTransition(p) {
+    if (p.millis() - gameState.transitionTimer > 3000) {
+      gameState.gamePhase = 'PLAYING';
+      initializeLevel(gameState.currentLevel, p);
+    }
+  }
+
+  function transitionToGameOver(isWin, p) {
+    gameState.gamePhase = isWin ? 'GAME_OVER_WIN' : 'GAME_OVER_LOSE';
+    gameState.finalScore = gameState.score;
+    // Reset auto-restart flags when transitioning to Game Over
+    gameState.autoRestartScheduled = false;
+    if (gameState.autoRestartTimeoutId) {
+      clearTimeout(gameState.autoRestartTimeoutId);
+      gameState.autoRestartTimeoutId = null;
+    }
+
+    p.logs.game_info.push({
+      data: { event: 'game_over', win: isWin, finalScore: gameState.finalScore },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+
+  p.keyPressed = function() {
+    handleKeyPressed(p);
+  };
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState(); // getGameState is exposed globally
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof restartGame === 'function') { // Use the comprehensive restartGame
+      restartGame(window.gameInstance); // Pass the p5 instance
+    } else if (typeof startGame === 'function') {
+      startGame(window.gameInstance);
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Control mode setter (simplified as only HUMAN mode remains)
+window.setControlMode = function(mode) {
+  // Since only "HUMAN" mode remains, we simply ensure the button is active.
+  // The mode parameter can still be used for consistency if other modes are added later.
+  gameState.controlMode = mode;
+
+  const humanModeBtn = document.getElementById('humanModeBtn');
+  if (humanModeBtn) {
+    humanModeBtn.classList.add('active');
+  }
+};
+</code>
+<code filename="input.js">
+// input.js - Input handling
+
+import { gameState } from './globals.js';
+import { initializeLevel } from './levels.js'; // New import for auto-restart
+
+export function handleKeyPressed(p) {
+  // Log input
+  p.logs.inputs.push({
+    input_type: 'keyPressed',
+    data: { key: p.key, keyCode: p.keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+
+  // Global controls
+  if (p.keyCode === 13) { // ENTER
+    if (gameState.gamePhase === 'START') {
+      startGame(p);
+    }
+  } else if (p.keyCode === 27) { // ESC
+    if (gameState.gamePhase === 'PLAYING') {
+      pauseGame(p);
+    } else if (gameState.gamePhase === 'PAUSED') {
+      unpauseGame(p);
+    }
+  } else if (p.keyCode === 82) { // R
+    // Manual restart always takes precedence
+    if (gameState.gamePhase === 'GAME_OVER_WIN' || gameState.gamePhase === 'GAME_OVER_LOSE' || gameState.gamePhase === 'START' || gameState.gamePhase === 'PLAYING' || gameState.gamePhase === 'PAUSED') {
+      restartGame(p); // Manual restart goes to START screen
+    }
+  }
+
+  // Gameplay controls
+  if (gameState.gamePhase === 'PLAYING' && gameState.controlMode === 'HUMAN') {
+    if (p.keyCode === 32) { // SPACE
+      fireProjectile(p);
+    } else if (p.keyCode === 90) { // Z
+      swapBubbles();
+    }
+  }
+}
+
+export function handleContinuousInput(p) {
+  if (gameState.gamePhase !== 'PLAYING' || gameState.controlMode !== 'HUMAN') return;
+
+  if (p.keyIsDown(37)) { // LEFT ARROW
+    if (gameState.player) {
+      gameState.player.rotateLeft();
+    }
+  }
+  if (p.keyIsDown(39)) { // RIGHT ARROW
+    if (gameState.player) {
+      gameState.player.rotateRight();
+    }
+  }
+}
+
+function startGame(p) {
+  gameState.gamePhase = 'PLAYING';
+  gameState.score = 0;
+  gameState.currentLevel = 1;
+  // Ensure auto-restart state is clean when starting a new game
+  if (gameState.autoRestartTimeoutId) {
+    clearTimeout(gameState.autoRestartTimeoutId);
+    gameState.autoRestartTimeoutId = null;
+  }
+  gameState.autoRestartScheduled = false;
+
+  // Initialize level will be called in game loop
+  p.logs.game_info.push({
+    data: { event: 'game_start', gamePhase: gameState.gamePhase },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function pauseGame(p) {
+  gameState.gamePhase = 'PAUSED';
+  p.logs.game_info.push({
+    data: { event: 'game_paused', gamePhase: gameState.gamePhase },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function unpauseGame(p) {
+  gameState.gamePhase = 'PLAYING';
+  // Adjust level start time to account for pause duration
+  const pauseDuration = p.millis() - gameState.levelStartTime;
+  gameState.levelStartTime += pauseDuration;
+
+  p.logs.game_info.push({
+    data: { event: 'game_unpaused', gamePhase: gameState.gamePhase },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function restartGame(p) {
+  // This function is for manual restarts (e.g., 'R' key) and returns to the START screen.
+  // Clear any pending auto-restart
+  if (gameState.autoRestartTimeoutId) {
+    clearTimeout(gameState.autoRestartTimeoutId);
+    gameState.autoRestartTimeoutId = null;
+  }
+  gameState.autoRestartScheduled = false; // Reset the flag
+
+  gameState.gamePhase = 'START';
+  gameState.score = 0;
+  gameState.currentLevel = 1;
+  gameState.bubbleGrid = [];
+  gameState.projectileBubble = null;
+  gameState.nextBubble = null;
+  gameState.canFire = true; // Ensure canFire is reset
+  gameState.swapAvailable = true; // Ensure swapAvailable is reset
+  gameState.entities = []; // Clear any flying projectiles
+
+  p.logs.game_info.push({
+    data: { event: 'game_restart', gamePhase: gameState.gamePhase },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+// New function for automatic restart after game over
+function startNewGameAutomatically(p) {
+  // Clear any pending auto-restart
+  if (gameState.autoRestartTimeoutId) {
+    clearTimeout(gameState.autoRestartTimeoutId);
+    gameState.autoRestartTimeoutId = null;
+  }
+  gameState.autoRestartScheduled = false; // Reset the flag
+
+  // Reset core game state elements
+  gameState.score = 0;
+  gameState.currentLevel = 1;
+  gameState.bubbleGrid = []; // Clear existing bubbles
+  gameState.projectileBubble = null; // Clear current projectile
+  gameState.nextBubble = null; // Clear next bubble
+  gameState.canFire = true;
+  gameState.swapAvailable = true;
+  gameState.entities = []; // Clear any flying projectiles
+
+  // Transition directly to playing and initialize the first level
+  gameState.gamePhase = 'PLAYING';
+  initializeLevel(1, p); // Directly initialize level 1
+
+  p.logs.game_info.push({
+    data: { event: 'auto_game_start', gamePhase: gameState.gamePhase },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function fireProjectile(p) {
+  if (!gameState.canFire || !gameState.projectileBubble) return;
+  if (gameState.shotsRemaining <= 0) return;
+
+  const shooter = gameState.player;
+  const dir = shooter.getShootDirection();
+  const startX = shooter.x + dir.x * 30;
+  const startY = shooter.y + dir.y * 30;
+
+  // Create projectile from current bubble
+  // Light bubbles shoot faster (12 instead of 8)
+  const projectileSpeed = gameState.projectileBubble.isLight ? 12 : 8;
+  
+  const projectile = {
+    x: startX,
+    y: startY,
+    vx: dir.x,
+    vy: dir.y,
+    colorIndex: gameState.projectileBubble.colorIndex,
+    color: gameState.projectileBubble.color,
+    radius: gameState.projectileBubble.radius,
+    speed: projectileSpeed,
+    active: true,
+    isLight: gameState.projectileBubble.isLight
+  };
+
+  gameState.entities.push(projectile);
+  gameState.canFire = false;
+  gameState.shotsRemaining--;
+
+  // Move next bubble to current
+  gameState.projectileBubble = gameState.nextBubble;
+  gameState.nextBubble = null;
+  gameState.swapAvailable = true;
+}
+
+function swapBubbles() {
+  if (!gameState.swapAvailable || !gameState.projectileBubble || !gameState.nextBubble) return;
+
+  const temp = gameState.projectileBubble;
+  gameState.projectileBubble = gameState.nextBubble;
+  gameState.nextBubble = temp;
+  gameState.swapAvailable = false;
+}
+
+export { startGame, pauseGame, unpauseGame, restartGame, fireProjectile, swapBubbles, startNewGameAutomatically };
+</code>

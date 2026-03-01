@@ -1,0 +1,296 @@
+<analysis>
+- Issue identified: The error `Uncaught ReferenceError: gameState is not defined` occurs within a `loadLevel` function. Although the traceback points to `levels.js:74`, the provided `levels.js` does not contain a `loadLevel` function nor is it 74 lines long. The `window.loadLevel` function is actually defined in `game.js`. This function has an overly complex and potentially fragile mechanism for retrieving the `gameState` object (checking `window.getGameState`, `window.gameState`, `window.gameInstance.gameState`). It also attempts to call `resetGame` or `startGame` which are not globally exposed. The root cause is the `window.loadLevel` function not reliably accessing the `gameState` object or correctly initializing a level.
+- Files affected:
+    - `game.js`: To simplify the `window.loadLevel` function and correctly import necessary game logic.
+    - `game_logic.js`: To explicitly export the `initializeLevel` function so it can be imported by `game.js`.
+- Changes needed:
+    - In `game_logic.js`, add `initializeLevel` to the export list.
+    - In `game.js`, import `initializeLevel` from `game_logic.js`.
+    - In `game.js`, rewrite `window.loadLevel` to directly use the module-scoped `gameState` and call the imported `initializeLevel` function, ensuring proper level setup.
+</analysis>
+<code filename="game.js">
+import { gameState, getGameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { renderStartScreen, renderPlayingScreen, renderPausedScreen, renderGameOverScreen } from './rendering.js';
+import { handleKeyPressed, processAutomatedInput } from './input_handler.js';
+import { updateExecution, initializeLevel } from './game_logic.js'; // Import initializeLevel
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Initialize logs
+    p.logs = {
+      game_info: [],
+      inputs: [],
+      player_info: []
+    };
+    
+    // Log game initialization
+    p.logs.game_info.push({
+      data: { event: "game_initialized" },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+  
+  p.draw = function() {
+    // Handle automated testing
+    if (gameState.controlMode !== "HUMAN") {
+      const action = get_automated_testing_action(gameState);
+      processAutomatedInput(p, action);
+    }
+    
+    // Render based on game phase
+    switch (gameState.gamePhase) {
+      case "START":
+        renderStartScreen(p);
+        break;
+      case "PLAYING":
+        renderPlayingScreen(p);
+        updateExecution(p);
+        break;
+      case "PAUSED":
+        renderPlayingScreen(p);
+        renderPausedScreen(p);
+        break;
+      case "GAME_OVER_WIN":
+      case "GAME_OVER_LOSE":
+        renderGameOverScreen(p);
+        break;
+    }
+  };
+  
+  p.keyPressed = function() {
+    if (gameState.controlMode === "HUMAN") {
+      handleKeyPressed(p, p.key, p.keyCode);
+    }
+    return false;
+  };
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  // Directly use the module-scoped gameState object which is available here
+  // and call the imported initializeLevel function for proper setup.
+  gameState.currentLevel = levelNum;
+  initializeLevel(gameState.currentLevel);
+  gameState.gamePhase = "PLAYING"; // Ensure the game transitions to playing state
+};
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const modeMap = {
+    'HUMAN': 'humanModeBtn',
+    'TEST_1': 'test_1_ModeBtn',
+    'TEST_2': 'test_2_ModeBtn'
+  };
+  
+  const activeBtn = document.getElementById(modeMap[mode]);
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+};
+</code>
+<code filename="game_logic.js">
+import { gameState, COMMAND_TYPES } from './globals.js';
+import { levels, getLevelCount } from './levels.js';
+import { Robot, Enemy, Exit, Obstacle } from './entities.js';
+import { executeCommand, checkLevelComplete } from './commands.js';
+
+export function initializeLevel(levelIndex) {
+  const level = levels[levelIndex];
+  if (!level) return false;
+  
+  gameState.robots = [];
+  gameState.enemies = [];
+  gameState.exits = [];
+  gameState.obstacles = [];
+  gameState.entities = [];
+  
+  // Create robots
+  for (let robotData of level.robots) {
+    const robot = new Robot(robotData.x, robotData.y, robotData.dir);
+    gameState.robots.push(robot);
+    gameState.entities.push(robot);
+  }
+  
+  // Create enemies
+  for (let enemyData of level.enemies) {
+    const enemy = new Enemy(enemyData.x, enemyData.y, enemyData.type);
+    gameState.enemies.push(enemy);
+    gameState.entities.push(enemy);
+  }
+  
+  // Create exits
+  for (let exitData of level.exits) {
+    const exit = new Exit(exitData.x, exitData.y);
+    gameState.exits.push(exit);
+    gameState.entities.push(exit);
+  }
+  
+  // Create obstacles
+  for (let obstacleData of level.obstacles) {
+    const obstacle = new Obstacle(obstacleData.x, obstacleData.y);
+    gameState.obstacles.push(obstacle);
+    gameState.entities.push(obstacle);
+  }
+  
+  // Store level info
+  gameState.entities.push({
+    objective: level.objective,
+    hint: level.hint,
+    name: level.name
+  });
+  
+  gameState.currentProgram = [];
+  gameState.isExecuting = false;
+  gameState.executionStep = 0;
+  gameState.currentRobotIndex = 0;
+  gameState.levelComplete = false;
+  gameState.levelFailed = false;
+  
+  return true;
+}
+
+export function startGame() {
+  gameState.score = 0;
+  gameState.currentLevel = 0;
+  gameState.selectedCommandIndex = 0;
+  initializeLevel(0);
+  gameState.gamePhase = "PLAYING";
+}
+
+export function executeProgram(p) {
+  if (gameState.currentProgram.length === 0) return;
+  
+  gameState.isExecuting = true;
+  gameState.executionStep = 0;
+  gameState.currentRobotIndex = 0;
+  gameState.executionTimer = 0;
+}
+
+export function updateExecution(p) {
+  if (!gameState.isExecuting) return;
+  
+  gameState.executionTimer++;
+  
+  if (gameState.executionTimer < gameState.executionDelay) {
+    return;
+  }
+  
+  gameState.executionTimer = 0;
+  
+  // Check if current robot finished its program
+  if (gameState.executionStep >= gameState.currentProgram.length) {
+    gameState.currentRobotIndex++;
+    gameState.executionStep = 0;
+    
+    // Check if all robots finished
+    if (gameState.currentRobotIndex >= gameState.robots.length) {
+      gameState.isExecuting = false;
+      
+      // Check level completion
+      const result = checkLevelComplete(gameState.robots, gameState.enemies, gameState.exits);
+      
+      if (result.complete) {
+        if (result.success) {
+          gameState.levelComplete = true;
+          gameState.score += 100 * (gameState.currentLevel + 1);
+          
+          p.logs.game_info.push({
+            data: { event: "level_complete", level: gameState.currentLevel },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+          
+          // Advance to next level
+          gameState.currentLevel++;
+          if (gameState.currentLevel >= getLevelCount()) {
+            gameState.gamePhase = "GAME_OVER_WIN";
+            p.logs.game_info.push({
+              data: { event: "game_over", result: "win", score: gameState.score },
+              framecount: p.frameCount,
+              timestamp: Date.now()
+            });
+          } else {
+            setTimeout(() => {
+              initializeLevel(gameState.currentLevel);
+              gameState.levelComplete = false;
+            }, 1000);
+          }
+        } else {
+          gameState.levelFailed = true;
+          gameState.gamePhase = "GAME_OVER_LOSE";
+          
+          p.logs.game_info.push({
+            data: { event: "game_over", result: "lose", score: gameState.score },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+        }
+      }
+      
+      return;
+    }
+    
+    return;
+  }
+  
+  // Execute current command for current robot
+  const robot = gameState.robots[gameState.currentRobotIndex];
+  if (!robot || !robot.isActive) {
+    gameState.currentRobotIndex++;
+    gameState.executionStep = 0;
+    return;
+  }
+  
+  const command = gameState.currentProgram[gameState.executionStep];
+  executeCommand(robot, command, gameState.obstacles, gameState.enemies);
+  
+  gameState.executionStep++;
+  
+  // Log player info
+  p.logs.player_info.push({
+    screen_x: robot.getScreenX(),
+    screen_y: robot.getScreenY(),
+    game_x: robot.gridX,
+    game_y: robot.gridY,
+    framecount: p.frameCount
+  });
+}
+
+export function addCommandToProgram(commandType) {
+  if (gameState.isExecuting) return;
+  
+  gameState.currentProgram.push({ type: commandType });
+}
+
+export function removeLastCommand() {
+  if (gameState.isExecuting) return;
+  if (gameState.currentProgram.length > 0) {
+    gameState.currentProgram.pop();
+  }
+}
+
+export function resetLevel() {
+  initializeLevel(gameState.currentLevel);
+}
+</code>

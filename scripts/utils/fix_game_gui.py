@@ -12,6 +12,7 @@ Usage:
     uv run python fix_game_gui.py
     uv run python fix_game_gui.py --port 7860
     uv run python fix_game_gui.py --share  # Create public URL
+    uv run python fix_game_gui.py --large-text  # Use larger font sizes
 """
 # /// script
 # dependencies = ["gradio", "anthropic", "openai", "pyyaml", "google-generativeai"]
@@ -129,6 +130,7 @@ game_server_thread = None
 # Configuration for multiple game directories
 GAME_DIRECTORIES = {
     "Games": "games/games",
+    "All Games 020526": "games/all_games_020926",
     "Single Prompt (nested)": "games/single_prompt_with_testing",
     "Single Prompt 1 (nested)": "games/single_prompt_with_testing_1",
     "Game Platform": "archive/games/games_platform",  # or "archive/games/public_platform" if you prefer
@@ -156,6 +158,9 @@ COLOR_HEX = {
     "blue": "#4444ff",
     "purple": "#aa44ff",
 }
+
+# Global setting for large text mode
+LARGE_TEXT_MODE = False
 
 
 def start_game_server(games_dir: str = "games/games"):
@@ -1291,9 +1296,17 @@ def update_flag_counts(games_dir: str = "games/games") -> str:
     
     total_flagged = sum(counts.values())
     
+    # Use larger font sizes if large text mode is enabled
+    if LARGE_TEXT_MODE:
+        header_font_size = "18px"
+        item_font_size = "15px"
+    else:
+        header_font_size = "14px"
+        item_font_size = "12px"
+    
     html_lines = [
         '<div style="background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 15px; font-family: monospace; color: #c9d1d9;">',
-        '<h3 style="margin: 0 0 15px 0; color: #c9d1d9; font-size: 14px;">Flag Counts</h3>',
+        f'<h3 style="margin: 0 0 15px 0; color: #c9d1d9; font-size: {header_font_size};">Flag Counts</h3>',
     ]
     
     for color in FLAG_COLORS:
@@ -1301,14 +1314,14 @@ def update_flag_counts(games_dir: str = "games/games") -> str:
         emoji = COLOR_EMOJIS[color]
         color_name = color.capitalize()
         html_lines.append(
-            f'<div style="margin-bottom: 8px; font-size: 12px;">'
+            f'<div style="margin-bottom: 8px; font-size: {item_font_size};">'
             f'<span style="margin-right: 8px;">{emoji}</span>'
             f'<span style="color: #8b949e;">{color_name}:</span> '
             f'<span style="color: #c9d1d9; font-weight: bold;">{count}</span>'
             f'</div>'
         )
     
-    html_lines.append('<div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #30363d; font-size: 12px;">')
+    html_lines.append(f'<div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #30363d; font-size: {item_font_size};">')
     html_lines.append(f'<span style="color: #8b949e;">Total Flagged:</span> ')
     html_lines.append(f'<span style="color: #c9d1d9; font-weight: bold;">{total_flagged}</span>')
     html_lines.append('</div>')
@@ -1668,8 +1681,14 @@ def regenerate_game_action(game_path: str, model: str, method: str) -> Tuple[str
                 pass
 
 
-def build_interface():
-    """Build the Gradio interface."""
+def build_interface(large_text: bool = False):
+    """Build the Gradio interface.
+    
+    Args:
+        large_text: If True, use larger font sizes for better readability
+    """
+    global LARGE_TEXT_MODE
+    LARGE_TEXT_MODE = large_text
     
     # Start game server
     start_game_server()
@@ -1694,42 +1713,60 @@ def build_interface():
     if not game_choices:
         game_choices = [("No games found", "")]
     
+    # Set font sizes based on large_text flag
+    if large_text:
+        base_font_size = "16px"
+        button_font_size = "16px"
+        label_font_size = "15px"
+    else:
+        base_font_size = "13px"
+        button_font_size = "13px"
+        label_font_size = "13px"
+    
     # Custom CSS for sleek dark mode code-style interface
-    custom_css = """
-    * {
+    custom_css = f"""
+    * {{
         font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'source-code-pro', monospace !important;
-    }
-    .gradio-container {
+    }}
+    .gradio-container {{
         max-width: 100% !important;
         background-color: #0d1117 !important;
-    }
-    body {
+    }}
+    body {{
         background-color: #0d1117 !important;
-    }
-    .dark, .dark * {
+        font-size: {base_font_size} !important;
+    }}
+    .dark, .dark * {{
         background-color: #0d1117 !important;
         color: #c9d1d9 !important;
-    }
-    button {
+    }}
+    button {{
         border-radius: 4px !important;
-        font-size: 13px !important;
+        font-size: {button_font_size} !important;
         background-color: #21262d !important;
         border: 1px solid #30363d !important;
         color: #c9d1d9 !important;
-    }
-    button:hover {
+    }}
+    button:hover {{
         background-color: #30363d !important;
-    }
-    .dropdown, input, textarea {
-        font-size: 13px !important;
+    }}
+    .dropdown, input, textarea {{
+        font-size: {base_font_size} !important;
         border-radius: 4px !important;
         background-color: #0d1117 !important;
         border: 1px solid #30363d !important;
         color: #c9d1d9 !important;
-    }
-    label {
+    }}
+    label {{
         color: #c9d1d9 !important;
-    }
+        font-size: {label_font_size} !important;
+    }}
+    textarea {{
+        font-size: {base_font_size} !important;
+    }}
+    .gradio-html {{
+        font-size: {base_font_size} !important;
+    }}
     """
     
     with gr.Blocks(title="Game Fix", theme=gr.themes.Monochrome(), css=custom_css) as app:
@@ -1800,6 +1837,7 @@ def build_interface():
                         ("Claude 4.5 Sonnet", "anthropic:claude-4.5-sonnet"),
                         ("Claude 4.5 Haiku", "anthropic:claude-4.5-haiku"),
                         ("Gemini 3 Pro Preview", "google:gemini-3-pro-preview"),
+                        ("Gemini 3 Flash Preview", "google:gemini-3-flash-preview"),
                         ("Gemini 2.5 Flash", "google:gemini-2.5-flash"),
                     ],
                     value="anthropic:claude-4.5-sonnet",
@@ -1827,6 +1865,7 @@ def build_interface():
                         choices=[
                             ("Claude 4.5 Sonnet", "anthropic:claude-4.5-sonnet"),
                             ("Gemini 3 Pro Preview", "google:gemini-3-pro-preview"),
+                            ("Gemini 3 Flash Preview", "google:gemini-3-flash-preview"),
                         ],
                         value="anthropic:claude-4.5-sonnet",
                         label="Model",
@@ -1947,16 +1986,23 @@ def main():
         action="store_true",
         help="Create a public Gradio link"
     )
+    parser.add_argument(
+        "--large-text",
+        action="store_true",
+        help="Use larger font sizes for better readability"
+    )
     
     args = parser.parse_args()
     
-    app = build_interface()
+    app = build_interface(large_text=args.large_text)
     
     print("\n" + "="*60)
     print("Game Fix GUI")
     print("="*60)
     print(f"\nStarting Gradio interface on http://localhost:{args.port}")
     print(f"Game server running on http://localhost:{GAME_SERVER_PORT}")
+    if args.large_text:
+        print("Large text mode enabled")
     print("\nPress Ctrl+C to stop\n")
     
     app.launch(

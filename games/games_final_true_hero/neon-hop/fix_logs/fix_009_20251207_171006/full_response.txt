@@ -1,0 +1,656 @@
+<analysis>
+- Issue identified:
+    1. Bounce rhythm is static (constant gravity/flight time), making higher levels feel slow despite forward speed.
+    2. Score from tiles is negligible compared to collectibles, making the player feel tiles don't matter for score.
+    3. Collectibles are not visually distinct enough.
+    4. Difficulty curve is too flat; levels feel similar.
+- Files affected: `globals.js`, `physics.js`, `entities.js`, `level.js`.
+- Changes needed:
+    1. `globals.js`: Implement dynamic gravity and bounce force scaling based on level to increase bounce tempo. Update `getSpacing` to calculate correct distance for the new flight times. Increase base speed progression.
+    2. `physics.js`: Apply dynamic gravity and bounce force in physics calculations. Increase score reward for bouncing on tiles significantly.
+    3. `entities.js`: Increase Collectible size, emissive intensity, and add a PointLight to make it pop.
+    4. `level.js`: Increase lateral deviation scaling in `spawnNextTile` to make higher levels require more movement.
+</analysis>
+
+<code filename="globals.js">
+/**
+ * Global constants and state management for Neon Hop
+ */
+
+// Canvas dimensions hard constrained
+export const CANVAS_WIDTH = 480;
+export const CANVAS_HEIGHT = 400;
+
+// Game constants
+export const BASE_GRAVITY = -0.05;
+export const BASE_BOUNCE_FORCE = 0.8;
+
+// Physics & Difficulty Scaling
+export function getGravity(level) {
+    // Gravity increases by 10% per level to make bounces snappier/faster rhythm
+    return BASE_GRAVITY * (1 + (Math.max(1, level) - 1) * 0.1);
+}
+
+export function getBounceForce(level) {
+    // Scale bounce force by sqrt of gravity scale to maintain roughly consistent jump height
+    // Height ~ v^2 / g. If g scales by S, v^2 must scale by S, so v scales by sqrt(S).
+    const gravityScale = 1 + (Math.max(1, level) - 1) * 0.1;
+    return BASE_BOUNCE_FORCE * Math.sqrt(gravityScale);
+}
+
+export const BASE_SPEED = 0.3125; 
+
+export function getSpeed(level) {
+    // Increase speed by ~8% per level (was 2%)
+    // This combined with faster gravity makes the game significantly faster
+    return BASE_SPEED + (Math.max(1, level) - 1) * 0.04;
+}
+
+export function getSpacing(level) {
+    // Physics sync: Distance = Speed * FlightTime
+    // FlightTime = 2 * Vy / |g| (in frames)
+    const g = Math.abs(getGravity(level));
+    const vy = getBounceForce(level);
+    const flightTime = (2 * vy) / g;
+    
+    return getSpeed(level) * flightTime;
+}
+
+export const LATERAL_SPEED = 0.4;
+export const LATERAL_FRICTION = 0.9;
+export const MAX_LATERAL_SPEED = 0.5;
+export const TILE_SIZE = 6;
+
+export const WIN_DISTANCE = Infinity; // Endless mode
+export const LEVEL_LENGTH = 500; // New level every 500m
+
+// Colors
+export const COLOR_BG = 0x110515; // Deep purple/black
+export const COLOR_PLAYER = 0x00ffff; // Cyan
+export const COLOR_TILE_BASE = 0x2a1a3a;
+export const COLOR_TILE_EMISSIVE = 0xff00ff; // Magenta
+export const COLOR_COLLECTIBLE = 0xffd700; // Gold
+
+// Level Palettes
+export const PALETTES = [
+    { base: 0x2a1a3a, emissive: 0xff00ff, bg: 0x110515 }, // Level 1: Neon Purple
+    { base: 0x001a33, emissive: 0x00ffff, bg: 0x000510 }, // Level 2: Cyber Blue
+    { base: 0x330000, emissive: 0xff3300, bg: 0x1a0500 }, // Level 3: Magma Red
+    { base: 0x002200, emissive: 0x33ff00, bg: 0x001100 }, // Level 4: Matrix Green
+    { base: 0x222222, emissive: 0xffffff, bg: 0x000000 }, // Level 5: Monochrome
+];
+
+// Game State Object
+export const gameState = {
+    // Core state
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2, TEST_3
+    
+    // Time tracking
+    frameCount: 0,
+    deltaTime: 0,
+    lastFrameTime: 0,
+    startTime: 0,
+    
+    // Three.js core
+    scene: null,
+    camera: null,
+    renderer: null,
+    gameContainer: null,
+    
+    // Lighting
+    lights: [],
+    ambientLight: null,
+    directionalLight: null,
+    
+    // Game entities and data
+    player: null,
+    entities: [],      // Generic entity list for updates
+    tiles: [],         // Specific list for platform logic
+    collectibles: [],  // Points
+    particles: [],     // Visual effects
+    
+    // Physics
+    gravity: { x: 0, y: BASE_GRAVITY, z: 0 }, // Initial value, updated by getGravity logic
+    
+    // Scoring
+    score: 0,
+    distance: 0,
+    level: 1,
+    combo: 0,
+    maxCombo: 0,
+    
+    // Camera state
+    cameraOffset: { x: 0, y: 12, z: -18 }, 
+    cameraLookAtOffset: { x: 0, y: 0, z: 10 },
+    
+    // Input state
+    keys: {
+        ArrowLeft: false,
+        ArrowRight: false,
+        ArrowUp: false,
+        ArrowDown: false,
+        KeyA: false,
+        KeyD: false,
+        KeyW: false,
+        KeyS: false,
+        Space: false,
+        Shift: false,
+        KeyZ: false
+    }
+};
+
+// Global accessor as required
+window.getGameState = () => gameState;
+
+// Logging system (write-only)
+export const logs = {
+    game_info: [],
+    player_info: [],
+    inputs: []
+};
+window.logs = logs;
+
+// Helper to log game info
+export function logGameInfo(info, data = {}) {
+    logs.game_info.push({
+        info: info,
+        data: data,
+        game_status: gameState.gamePhase,
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+}
+</code>
+
+<code filename="physics.js">
+/**
+ * Physics engine for bouncing ball mechanics
+ */
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, TILE_SIZE, getGravity, getBounceForce } from './globals.js';
+import { sphereIntersectsBox } from './utils.js';
+
+export function updatePhysics(deltaTime) {
+    const player = gameState.player;
+    if (!player) return;
+
+    // Apply Dynamic Gravity based on level
+    const currentGravity = getGravity(gameState.level);
+    
+    player.velocity.y += currentGravity * (deltaTime * 60); // Normalize to 60fps base
+
+    // Update Position
+    player.position.add(player.velocity.clone().multiplyScalar(deltaTime * 60));
+    
+    // Check floor/tile collisions
+    checkPlayerTileCollisions(player);
+    
+    // Update mesh position after physics and collision correction
+    // This ensures that if we snap the player, the mesh renders at the snapped position immediately
+    player.mesh.position.copy(player.position);
+    
+    // Check death plane
+    if (player.position.y < -10) {
+        handleDeath();
+    }
+}
+
+function checkPlayerTileCollisions(player) {
+    // Optimization: Only check tiles nearby based on Z index
+    // Since tiles are sorted by Z usually or we can filter
+    const playerZ = player.position.z;
+    const nearbyTiles = gameState.tiles.filter(t => 
+        Math.abs(t.position.z - playerZ) < (TILE_SIZE * 2)
+    );
+
+    let landed = false;
+
+    for (const tile of nearbyTiles) {
+        // Tile dimensions
+        const halfSize = TILE_SIZE / 2;
+        const tileTopSurface = tile.position.y + 0.5; // Box height is 1, so top is y + 0.5
+
+        // Horizontal (XZ plane) bounds check
+        const dx = Math.abs(player.position.x - tile.position.x);
+        const dz = Math.abs(player.position.z - tile.position.z);
+        
+        if (dx < halfSize + player.radius && 
+            dz < halfSize + player.radius) {
+            
+            // Vertical check for landing on top of the tile
+            const playerBottom = player.position.y - player.radius;
+
+            if (player.velocity.y < 0 && // Player is falling
+                playerBottom <= tileTopSurface && // Player's bottom is at or below tile's top surface
+                player.position.y > tile.position.y - 0.5) // Player's center is above tile's bottom
+            {
+                // BOUNCE!
+                // Use dynamic bounce force
+                player.velocity.y = getBounceForce(gameState.level);
+                player.position.y = tileTopSurface + player.radius; // Snap to surface
+                
+                // Snap Z axis to maintain rhythm, allow X to float
+                player.position.z = tile.position.z;
+                
+                landed = true;
+                
+                // Trigger tile effect
+                tile.onLand();
+                gameState.combo++;
+                
+                // Significant score increase per bounce
+                const baseScore = 50;
+                const comboBonus = gameState.combo * 10;
+                gameState.score += baseScore + comboBonus;
+                
+                // Create impact particles
+                createImpactEffect(player.position.clone().setY(tileTopSurface));
+                
+                break; // Only bounce off one tile
+            }
+        }
+    }
+    
+    if (!landed) {
+        gameState.combo = 0; // Reset combo if player misses a tile
+    }
+}
+
+function handleDeath() {
+    if (gameState.gamePhase === "PLAYING") {
+        gameState.gamePhase = "GAME_OVER_LOSE";
+        console.log("Player died!");
+    }
+}
+
+function createImpactEffect(position) {
+    if (gameState.player && gameState.player.spawnParticles) {
+        gameState.player.spawnParticles(position, 10, 0xffff00);
+    }
+}
+</code>
+
+<code filename="entities.js">
+/**
+ * Game entities: Player, Tile, Collectible
+ */
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, COLOR_PLAYER, COLOR_TILE_BASE, COLOR_TILE_EMISSIVE, TILE_SIZE, getSpeed, LATERAL_SPEED, LATERAL_FRICTION, MAX_LATERAL_SPEED } from './globals.js';
+import { Particle } from './particles.js';
+import { clamp, lerp } from './utils.js';
+
+export class Player {
+    constructor() {
+        this.radius = 0.9; // Larger ball
+        this.position = new THREE.Vector3(0, 0.9, 0); // Corrected initial Y position based on radius
+        this.velocity = new THREE.Vector3(0, 0, getSpeed(1));
+        
+        // Mesh
+        const geometry = new THREE.SphereGeometry(this.radius, 32, 32);
+        const material = new THREE.MeshStandardMaterial({
+            color: COLOR_PLAYER,
+            emissive: COLOR_PLAYER,
+            emissiveIntensity: 0.5,
+            roughness: 0.1,
+            metalness: 0.5
+        });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.castShadow = true;
+        this.mesh.receiveShadow = true;
+        
+        // Light
+        this.light = new THREE.PointLight(COLOR_PLAYER, 1, 10);
+        this.mesh.add(this.light);
+        
+        this.reset();
+    }
+    
+    reset() {
+        this.position.set(0, this.radius, 0); // Reset to radius height
+        this.velocity.set(0, 0, getSpeed(1));
+        this.mesh.position.copy(this.position);
+        this.rotationSpeed = 0;
+    }
+    
+    update(dt) {
+        // Movement Logic is partly handled in physics, but control logic is here
+        this.handleInput(dt);
+        
+        // Rotate ball based on movement
+        this.mesh.rotation.x -= this.velocity.z * 0.5;
+        this.mesh.rotation.z -= this.velocity.x * 0.5;
+        
+        // Update Log
+        if (gameState.frameCount % 10 === 0) {
+            if (window.logs && window.logs.player_info) {
+                 window.logs.player_info.push({
+                     x: this.position.x,
+                     y: this.position.y,
+                     z: this.position.z,
+                     frame: gameState.frameCount
+                 });
+            }
+        }
+    }
+    
+    handleInput(dt) {
+        // Control Mode Switching
+        if (gameState.controlMode === "HUMAN") {
+            this.handleHumanInput(dt);
+        } else if (gameState.controlMode.startsWith("TEST")) {
+            this.handleAIInput(dt);
+        }
+    }
+    
+    handleHumanInput(dt) {
+        const keys = gameState.keys;
+        const left = keys.ArrowLeft || keys.KeyA;
+        const right = keys.ArrowRight || keys.KeyD;
+        
+        // Acceleration (Flipped controls as per user feedback)
+        if (left) this.velocity.x += LATERAL_SPEED * 0.1; // Left arrow now adds to X, moving right
+        if (right) this.velocity.x -= LATERAL_SPEED * 0.1; // Right arrow now subtracts from X, moving left
+        
+        // Friction / Damping
+        this.velocity.x *= LATERAL_FRICTION;
+        
+        // Clamping
+        this.velocity.x = clamp(this.velocity.x, -MAX_LATERAL_SPEED, MAX_LATERAL_SPEED);
+        
+        // Progressive Forward Speed
+        this.velocity.z = getSpeed(gameState.level);
+    }
+    
+    handleAIInput(dt) {
+        // Simple AI: Look at next tile and steer towards x
+        // Find closest tile in front of player
+        const pz = this.position.z;
+        const upcomingTiles = gameState.tiles.filter(t => t.position.z > pz).sort((a, b) => a.position.z - b.position.z);
+        
+        if (upcomingTiles.length > 0) {
+            const target = upcomingTiles[0];
+            const targetX = target.position.x;
+            
+            // Suicide for Test 3
+            if (gameState.controlMode === "TEST_3") {
+                this.velocity.x = 0.5; // Hard right
+                return;
+            }
+            
+            // Steer
+            const diff = targetX - this.position.x;
+            if (Math.abs(diff) > 0.1) {
+                this.velocity.x += Math.sign(diff) * LATERAL_SPEED * 0.15;
+            }
+            
+            this.velocity.x *= LATERAL_FRICTION;
+            this.velocity.x = clamp(this.velocity.x, -MAX_LATERAL_SPEED, MAX_LATERAL_SPEED);
+        }
+        this.velocity.z = getSpeed(gameState.level);
+    }
+    
+    spawnParticles(pos, count, color) {
+        for(let i=0; i<count; i++) {
+            new Particle(pos, color, 0.1, 1.0);
+        }
+    }
+}
+
+export class Tile {
+    constructor(x, z, palette = null) {
+        this.size = TILE_SIZE;
+        this.position = new THREE.Vector3(x, -0.5, z); // Top surface at y=0 relative to origin, but mesh center is -0.5
+        
+        const geometry = new THREE.BoxGeometry(this.size, 1, this.size);
+        
+        // Use provided palette or default globals
+        const baseColor = palette ? palette.base : COLOR_TILE_BASE;
+        const emissiveColor = palette ? palette.emissive : COLOR_TILE_EMISSIVE;
+        
+        const material = new THREE.MeshStandardMaterial({
+            color: baseColor,
+            emissive: emissiveColor,
+            emissiveIntensity: 0.2,
+            roughness: 0.2,
+            metalness: 0.8
+        });
+        
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.copy(this.position);
+        this.mesh.receiveShadow = true;
+        
+        // Add a wireframe for the "neon" look
+        const edges = new THREE.EdgesGeometry(geometry);
+        const lineMat = new THREE.LineBasicMaterial({ color: emissiveColor });
+        const wireframe = new THREE.LineSegments(edges, lineMat);
+        this.mesh.add(wireframe);
+        
+        // Animation state
+        this.targetScale = 1;
+        this.currentScale = 0; // Pop in effect
+        
+        gameState.scene.add(this.mesh);
+        gameState.tiles.push(this);
+    }
+    
+    update(dt) {
+        // Pop in animation
+        if (this.currentScale < this.targetScale) {
+            this.currentScale = lerp(this.currentScale, this.targetScale, dt * 5);
+            this.mesh.scale.setScalar(this.currentScale);
+        }
+        
+        // Pulse if active
+        // Cleanup if far behind
+        if (gameState.player && this.position.z < gameState.player.position.z - 20) {
+            this.destroy();
+        }
+    }
+    
+    onLand() {
+        this.mesh.material.emissiveIntensity = 2.0; // Flash
+        // Reset slowly in update? simplified:
+        setTimeout(() => {
+             if(this.mesh) this.mesh.material.emissiveIntensity = 0.2;
+        }, 200);
+    }
+    
+    destroy() {
+        gameState.scene.remove(this.mesh);
+        this.mesh.geometry.dispose();
+        if (this.mesh.material) this.mesh.material.dispose();
+        
+        const idx = gameState.tiles.indexOf(this);
+        if (idx > -1) gameState.tiles.splice(idx, 1);
+    }
+}
+
+export class Collectible {
+    constructor(x, z) {
+        this.position = new THREE.Vector3(x, 1.5, z);
+        
+        // Made bigger (0.6 radius) and more apparent
+        const geometry = new THREE.OctahedronGeometry(0.6);
+        const material = new THREE.MeshStandardMaterial({
+            color: 0xffd700,
+            emissive: 0xffd700,
+            emissiveIntensity: 2.0, // Much brighter
+            roughness: 0.1,
+            metalness: 1.0
+        });
+        
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.copy(this.position);
+        
+        // Add a light to make it really pop
+        this.light = new THREE.PointLight(0xffd700, 1.5, 8);
+        this.mesh.add(this.light);
+        
+        gameState.scene.add(this.mesh);
+        gameState.collectibles.push(this);
+        
+        this.t = Math.random() * 100;
+    }
+    
+    update(dt) {
+        this.t += dt;
+        // Float and rotate
+        this.mesh.rotation.y += 3 * dt; // Faster rotation
+        this.mesh.rotation.x += 1 * dt;
+        this.mesh.position.y = 1.5 + Math.sin(this.t * 3) * 0.4;
+        
+        // Check collision
+        if (gameState.player) {
+            const dist = this.mesh.position.distanceTo(gameState.player.position);
+            if (dist < 1.0 + gameState.player.radius) { // Adjust for player size
+                this.collect();
+            }
+        }
+        
+        // Despawn
+        if (gameState.player && this.position.z < gameState.player.position.z - 10) {
+            this.destroy();
+        }
+    }
+    
+    collect() {
+        gameState.score += 300; // Increased value
+        // Particle effect
+        if (gameState.player.spawnParticles) {
+            gameState.player.spawnParticles(this.position, 10, 0xffd700);
+        }
+        this.destroy();
+    }
+    
+    destroy() {
+        gameState.scene.remove(this.mesh);
+        if (this.mesh.geometry) this.mesh.geometry.dispose();
+        if (this.mesh.material) this.mesh.material.dispose();
+        
+        const idx = gameState.collectibles.indexOf(this);
+        if (idx > -1) gameState.collectibles.splice(idx, 1);
+    }
+}
+</code>
+
+<code filename="level.js">
+/**
+ * Procedural Level Generation
+ */
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, getSpacing, getSpeed, LEVEL_LENGTH, PALETTES, COLOR_BG } from './globals.js';
+import { Tile, Collectible } from './entities.js';
+import { randomRange, randomInt, lerp } from './utils.js';
+
+let nextSpawnZ = 0;
+let lastX = 0;
+
+export function initLevel() {
+    nextSpawnZ = 0;
+    lastX = 0;
+    gameState.level = 1;
+    
+    // Reset background to initial
+    if (gameState.scene) {
+        gameState.scene.background = new THREE.Color(COLOR_BG);
+        gameState.scene.fog = new THREE.FogExp2(COLOR_BG, 0.02);
+    }
+    
+    // Spawn initial platform
+    new Tile(0, 0, PALETTES[0]);
+    nextSpawnZ += getSpacing(1);
+    
+    // Safe zone: Spawn 3 straight tiles to allow player to orient
+    for (let i = 0; i < 3; i++) {
+        spawnSafeTile();
+    }
+    
+    // Pre-spawn some normal tiles
+    for (let i = 0; i < 7; i++) {
+        spawnNextTile();
+    }
+}
+
+export function updateLevelGeneration() {
+    if (!gameState.player) return;
+    
+    const playerZ = gameState.player.position.z;
+    const renderDistance = 100;
+    
+    // Generate ahead
+    while (nextSpawnZ < playerZ + renderDistance) {
+        spawnNextTile();
+    }
+    
+    // Update Environment (Level Transition)
+    updateEnvironment(playerZ);
+}
+
+function updateEnvironment(playerZ) {
+    // Determine current level based on player position
+    const currentLevel = Math.floor(playerZ / LEVEL_LENGTH) + 1;
+    gameState.level = currentLevel;
+    
+    // Get palette for current level
+    const paletteIndex = (currentLevel - 1) % PALETTES.length;
+    const targetBgHex = PALETTES[paletteIndex].bg;
+    
+    // Smoothly lerp background color
+    if (gameState.scene) {
+        const currentBg = gameState.scene.background;
+        const targetBg = new THREE.Color(targetBgHex);
+        
+        currentBg.lerp(targetBg, 0.05);
+        gameState.scene.fog.color.copy(currentBg);
+    }
+}
+
+function spawnSafeTile() {
+    const tileLevel = Math.floor(nextSpawnZ / LEVEL_LENGTH) + 1;
+    const paletteIndex = (tileLevel - 1) % PALETTES.length;
+    const palette = PALETTES[paletteIndex];
+    
+    // Force straight line
+    let nextX = 0;
+    lastX = nextX;
+    
+    new Tile(nextX, nextSpawnZ, palette);
+    nextSpawnZ += getSpacing(tileLevel);
+}
+
+function spawnNextTile() {
+    // Determine level for this specific tile
+    const tileLevel = Math.floor(nextSpawnZ / LEVEL_LENGTH) + 1;
+    const paletteIndex = (tileLevel - 1) % PALETTES.length;
+    const palette = PALETTES[paletteIndex];
+    
+    // Difficulty Scaling
+    // Base deviation increased and scales more aggressively
+    const difficultyMultiplier = Math.min(tileLevel - 1, 15);
+    
+    // Wider variance as levels progress
+    const maxDev = Math.min(6 + (difficultyMultiplier * 2.5), 20);
+    
+    // Determine next position
+    let nextX = lastX + randomRange(-maxDev, maxDev);
+    
+    // Clamp to lane width, but allow lane to get slightly wider at high levels for more freedom
+    const laneWidth = 12 + (difficultyMultiplier * 0.5);
+    if (nextX > laneWidth) nextX = laneWidth;
+    if (nextX < -laneWidth) nextX = -laneWidth;
+    
+    lastX = nextX;
+    
+    new Tile(nextX, nextSpawnZ, palette);
+    
+    // Chance for collectible
+    if (Math.random() > 0.7) {
+        new Collectible(nextX, nextSpawnZ);
+    }
+    
+    // Calculate spacing based on the speed of the level this tile belongs to
+    // This ensures the jump arc matches the distance
+    nextSpawnZ += getSpacing(tileLevel);
+}
+</code>

@@ -1,0 +1,668 @@
+<analysis>
+- Issue identified: 
+    1. Game is too difficult (starts with 1 ball, high brick density).
+    2. Trajectory line is missing because of an incorrect async import in the render loop.
+    3. Physics trajectory preview logic relies on library behavior that might be inconsistent or failing, causing the line to not appear or crash.
+- Files affected: `input.js`, `entities.js`, `physics.js`.
+- Changes needed:
+    1. `input.js`: Increase initial balls to 5. Reduce brick spawn rate (0.7 -> 0.6) and increase item rate (0.1 -> 0.2).
+    2. `entities.js`: Change dynamic import of `physics.js` to static import to ensure trajectory renders synchronously.
+    3. `physics.js`: Rewrite `getTrajectoryPreview` to use a robust stepping raycast instead of relying on `p5.collideLineRect` return objects, ensuring the line stops at bricks and reflects off walls.
+</analysis>
+
+<code filename="input.js">
+/**
+ * Input handling and control logic
+ */
+import { gameState, logInput } from './globals.js';
+
+const KEY_LEFT = 37;
+const KEY_UP = 38;
+const KEY_RIGHT = 39;
+const KEY_DOWN = 40;
+const KEY_SPACE = 32;
+const KEY_SHIFT = 16;
+const KEY_Z = 90;
+const KEY_ENTER = 13;
+const KEY_ESC = 27;
+const KEY_R = 82;
+
+export function handleInput(p) {
+    if (gameState.gamePhase !== "PLAYING") return;
+    
+    // Z key for fast forward
+    if (p.keyIsDown(KEY_Z)) {
+        gameState.timeScale = 2.0;
+    } else {
+        gameState.timeScale = 1.0;
+    }
+
+    if (gameState.turnPhase === "AIMING") {
+        const rotationSpeed = 0.03;
+        const fineSpeed = 0.005;
+
+        if (p.keyIsDown(KEY_LEFT)) {
+            gameState.player.angle -= rotationSpeed;
+        }
+        if (p.keyIsDown(KEY_RIGHT)) {
+            gameState.player.angle += rotationSpeed;
+        }
+        // Fine tuning
+        if (p.keyIsDown(KEY_UP)) {
+            // Move angle closer to -PI/2 (center)
+            if (gameState.player.angle < -Math.PI/2) gameState.player.angle += fineSpeed;
+            else gameState.player.angle -= fineSpeed;
+        }
+        if (p.keyIsDown(KEY_DOWN)) {
+            // No specific action for down currently, maybe cancel fine tune?
+        }
+
+        // Clamp angle to prevent shooting into floor
+        // Allowed range: -170 deg to -10 deg approx
+        const minAngle = -Math.PI + 0.1;
+        const maxAngle = -0.1;
+        gameState.player.angle = Math.max(minAngle, Math.min(maxAngle, gameState.player.angle));
+    }
+}
+
+export function handleKeyPress(p) {
+    const k = p.keyCode;
+    logInput(p, 'keyPressed', { keyCode: k, key: p.key });
+
+    // Global Phase Controls
+    if (k === KEY_ENTER) {
+        if (gameState.gamePhase === "START") {
+            gameState.gamePhase = "PLAYING";
+            initGame(p);
+        }
+    } else if (k === KEY_R) {
+        if (gameState.gamePhase === "GAME_OVER_WIN" || 
+            gameState.gamePhase === "GAME_OVER_LOSE" || 
+            gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = "START";
+        }
+    } else if (k === KEY_ESC) {
+        if (gameState.gamePhase === "PLAYING") {
+            gameState.gamePhase = "PAUSED";
+        } else if (gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = "PLAYING";
+        }
+    }
+
+    // Gameplay Controls
+    if (gameState.gamePhase === "PLAYING" && gameState.turnPhase === "AIMING") {
+        if (k === KEY_SPACE) {
+            startFiring(p);
+        }
+    }
+}
+
+export function handleKeyRelease(p) {
+    logInput(p, 'keyReleased', { keyCode: p.keyCode });
+}
+
+import { Ball, Brick, Item, Launcher } from './entities.js';
+import { CANVAS_WIDTH, CANVAS_HEIGHT, CONFIG } from './globals.js';
+
+function initGame(p) {
+    gameState.score = 0;
+    gameState.level = 1;
+    gameState.ballCount = 5; // Start with more balls for better difficulty curve
+    gameState.player = new Launcher(CANVAS_WIDTH / 2, CANVAS_HEIGHT - CONFIG.BOTTOM_OFFSET);
+    gameState.balls = [];
+    gameState.bricks = [];
+    gameState.items = [];
+    gameState.particles = [];
+    gameState.turnPhase = "AIMING";
+    gameState.ballsActive = 0;
+    
+    // Spawn first row
+    spawnRow();
+}
+
+export function spawnRow() {
+    // Move existing down
+    for (let brick of gameState.bricks) {
+        if (brick.moveDown()) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+        }
+    }
+    for (let item of gameState.items) {
+        item.moveDown();
+    }
+    
+    // Add new row
+    // Strategy: Randomly place bricks, ensure at least one space usually?
+    // Ballz style: mostly full row with some gaps
+    
+    for (let c = 0; c < CONFIG.COLUMNS; c++) {
+        const rand = Math.random();
+        
+        // Adjusted probabilities for easier difficulty
+        if (rand < 0.2) { // 20% chance for Item (increased from 10%)
+            // Item (+1 Ball)
+            gameState.items.push(new Item(c, 0)); // Row 0 is the new top
+        } else if (rand < 0.6) { // 40% chance for Brick (reduced from 60%)
+            // Brick
+            // HP increases with level
+            const hp = gameState.level; 
+            gameState.bricks.push(new Brick(c, 0, hp));
+        }
+        // 40% empty space
+    }
+    gameState.level++;
+}
+
+function startFiring(p) {
+    gameState.turnPhase = "FIRING";
+    gameState.ballsReady = gameState.ballCount;
+    gameState.launchTimer = 0;
+    gameState.ballsActive = 0;
+    gameState.firstBallLanded = false;
+    
+    // Clear old balls array and replenish
+    gameState.balls = [];
+    for(let i=0; i<gameState.ballCount; i++) {
+        gameState.balls.push(new Ball(-100, -100)); // Offscreen init
+    }
+}
+</code>
+
+<code filename="entities.js">
+/**
+ * Game entities: Player (Launcher), Balls, Bricks, Items
+ */
+import { gameState, CONFIG, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS, BRICK_WIDTH } from './globals.js';
+import { createExplosion } from './particles.js';
+import { colorLerp } from './utils.js';
+import { getTrajectoryPreview } from './physics.js';
+
+export class Launcher {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.angle = -Math.PI / 2; // Pointing up
+        this.width = 20;
+        this.height = 20;
+    }
+
+    update(p) {
+        // Smoothly interpolate to new position between turns
+        // This is instant in this implementation logic (handled in game loop), 
+        // but we could add animation here if needed.
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        
+        // Draw Aim Line if aiming
+        if (gameState.turnPhase === "AIMING") {
+            this.renderTrajectory(p);
+        }
+
+        // Draw Launcher Base
+        p.noStroke();
+        p.fill(COLORS.LAUNCHER);
+        p.circle(0, 0, 15);
+        
+        // Draw Ball Count
+        p.fill(0);
+        p.textSize(10);
+        p.textAlign(p.CENTER, p.CENTER);
+        p.text(gameState.ballCount, 0, 0);
+        
+        p.pop();
+    }
+
+    renderTrajectory(p) {
+        // Calculate preview points synchronously
+        const points = getTrajectoryPreview(this.x, this.y, this.angle, p);
+        
+        p.stroke(255, 255, 255, 100);
+        p.strokeWeight(2);
+        p.setLineDash([5, 5]); // Dashed line
+        
+        p.beginShape();
+        for (let point of points) {
+            p.vertex(point.x, point.y);
+        }
+        p.endShape();
+        p.setLineDash([]); // Reset
+    }
+}
+
+export class Ball {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.radius = CONFIG.BALL_SIZE / 2;
+        this.vx = 0;
+        this.vy = 0;
+        this.speed = CONFIG.BALL_SPEED;
+        this.active = false;
+        this.launchDelay = 0;
+    }
+
+    launch(angle, delayFrames) {
+        this.x = gameState.player.x;
+        this.y = gameState.player.y;
+        this.active = true; // Wait for delay to actually move?
+        // To simplify, we'll manage launch queue in game loop, 
+        // here just set velocity.
+        this.vx = Math.cos(angle) * this.speed;
+        this.vy = Math.sin(angle) * this.speed;
+    }
+
+    update(p, dt) {
+        if (!this.active) return;
+        
+        // dt is percentage of frame, typically 1.0 or less if sub-stepping
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
+    }
+
+    render(p) {
+        if (!this.active) return;
+        p.noStroke();
+        p.fill(COLORS.BALL);
+        p.circle(this.x, this.y, this.radius * 2);
+    }
+}
+
+export class Brick {
+    constructor(col, row, hp) {
+        this.width = BRICK_WIDTH - CONFIG.BRICK_GUTTER;
+        this.height = CONFIG.BRICK_HEIGHT - CONFIG.BRICK_GUTTER;
+        this.col = col;
+        this.row = row;
+        
+        // Calculate screen position
+        this.updatePosition();
+        
+        this.maxHp = hp;
+        this.hp = hp;
+        this.isDead = false;
+    }
+
+    updatePosition() {
+        this.x = (this.col * BRICK_WIDTH) + CONFIG.WALL_PADDING + (CONFIG.BRICK_GUTTER / 2);
+        this.y = (this.row * CONFIG.BRICK_HEIGHT) + CONFIG.TOP_OFFSET + (CONFIG.BRICK_GUTTER / 2);
+    }
+
+    moveDown() {
+        this.row++;
+        this.updatePosition();
+        
+        // Check game over condition
+        if (this.y + this.height >= CANVAS_HEIGHT - CONFIG.BOTTOM_OFFSET) {
+            return true; // Reached bottom
+        }
+        return false;
+    }
+
+    hit(p) {
+        this.hp--;
+        if (this.hp <= 0) {
+            this.destroy(p);
+        }
+    }
+
+    destroy(p) {
+        this.isDead = true;
+        gameState.score += this.maxHp * 10;
+        createExplosion(this.x + this.width/2, this.y + this.height/2, this.getColor(p));
+        
+        // Remove from array happens in game loop cleanup or filter
+    }
+
+    getColor(p) {
+        // Interpolate color based on HP relative to level
+        // For visual variety, let's use a gradient from start to end color
+        const ratio = Math.min(1, this.hp / (gameState.level * 2)); // Dynamic range
+        
+        // Use p instance methods instead of p5.prototype to avoid colorMode errors
+        return p.lerpColor(
+            p.color(COLORS.BRICK_GRADIENT_START.r, COLORS.BRICK_GRADIENT_START.g, COLORS.BRICK_GRADIENT_START.b),
+            p.color(COLORS.BRICK_GRADIENT_END.r, COLORS.BRICK_GRADIENT_END.g, COLORS.BRICK_GRADIENT_END.b),
+            1 - ratio // High HP = Start Color, Low HP = End Color
+        );
+    }
+
+    render(p) {
+        if (this.isDead) return;
+
+        p.push();
+        p.fill(this.getColor(p));
+        p.stroke(255, 50);
+        p.rect(this.x, this.y, this.width, this.height, 4);
+        
+        // Draw HP text
+        p.fill(255);
+        p.noStroke();
+        p.textAlign(p.CENTER, p.CENTER);
+        p.textSize(12);
+        p.text(this.hp, this.x + this.width/2, this.y + this.height/2);
+        p.pop();
+    }
+}
+
+export class Item {
+    constructor(col, row) {
+        this.col = col;
+        this.row = row;
+        this.radius = 10;
+        this.updatePosition();
+        this.collected = false;
+    }
+
+    updatePosition() {
+        this.x = (this.col * BRICK_WIDTH) + CONFIG.WALL_PADDING + BRICK_WIDTH/2;
+        this.y = (this.row * CONFIG.BRICK_HEIGHT) + CONFIG.TOP_OFFSET + CONFIG.BRICK_HEIGHT/2;
+    }
+
+    moveDown() {
+        this.row++;
+        this.updatePosition();
+        if (this.y > CANVAS_HEIGHT - CONFIG.BOTTOM_OFFSET) {
+            this.collected = true; // Remove if it goes off screen (or player misses it)
+        }
+    }
+
+    collect() {
+        if (this.collected) return;
+        this.collected = true;
+        gameState.ballCount++;
+        createExplosion(this.x, this.y, COLORS.ITEM_ADD_BALL);
+    }
+
+    render(p) {
+        if (this.collected) return;
+        
+        p.push();
+        p.stroke(COLORS.ITEM_ADD_BALL);
+        p.noFill();
+        
+        // Pulsing animation
+        const s = 10 + Math.sin(p.frameCount * 0.1) * 2;
+        p.circle(this.x, this.y, s);
+        
+        p.fill(COLORS.ITEM_ADD_BALL);
+        p.noStroke();
+        p.circle(this.x, this.y, 6);
+        p.pop();
+    }
+}
+
+// Add setLineDash to p5 prototype if missing (older versions)
+if (!p5.prototype.setLineDash) {
+    p5.prototype.setLineDash = function(list) {
+        this.drawingContext.setLineDash(list);
+    }
+}
+</code>
+
+<code filename="physics.js">
+/**
+ * Physics engine handling collision detection and resolution
+ * Optimized for high-speed ball movement using sub-stepping
+ */
+
+import { gameState, CONFIG, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { distSq } from './utils.js';
+// Removed: import { collideRectCircle, collideLineRect } from 'https://cdn.jsdelivr.net/npm/p5.collide2d@1.0.0/+esm';
+
+// Sub-steps for physics stability
+const PHYSICS_STEPS = 4;
+
+export function updatePhysics(p) {
+    // Only update physics if items are moving
+    if (gameState.turnPhase !== "FIRING" && gameState.turnPhase !== "RESOLVING") return;
+    
+    const dt = 1 / PHYSICS_STEPS;
+    
+    // Perform sub-steps
+    for (let step = 0; step < PHYSICS_STEPS; step++) {
+        // Update Balls
+        gameState.balls.forEach(ball => {
+            if (ball.active) {
+                ball.update(p, dt * gameState.timeScale);
+                checkCollisions(p, ball);
+            }
+        });
+    }
+}
+
+function checkCollisions(p, ball) {
+    // 1. Wall Collisions
+    
+    // Left Wall
+    if (ball.x - ball.radius < 0) {
+        ball.x = ball.radius;
+        ball.vx = Math.abs(ball.vx); // Force positive
+    }
+    
+    // Right Wall
+    if (ball.x + ball.radius > CANVAS_WIDTH) {
+        ball.x = CANVAS_WIDTH - ball.radius;
+        ball.vx = -Math.abs(ball.vx); // Force negative
+    }
+    
+    // Top Wall
+    if (ball.y - ball.radius < CONFIG.TOP_OFFSET) {
+        ball.y = CONFIG.TOP_OFFSET + ball.radius;
+        ball.vy = Math.abs(ball.vy); // Force positive
+    }
+    
+    // Bottom (Floor) - Ball Retrieval
+    if (ball.y + ball.radius > CANVAS_HEIGHT - 5) { // 5px buffer
+        handleBallReturn(ball);
+        return;
+    }
+    
+    // 2. Brick Collisions
+    // Optimization: Spatial partitioning or only check nearby bricks could be used
+    // For this grid size, brute force is acceptable but we skip inactive/far bricks
+    
+    let hitOccurred = false;
+    
+    for (let i = gameState.bricks.length - 1; i >= 0; i--) {
+        const brick = gameState.bricks[i];
+        if (brick.isDead) continue;
+        
+        // Simple bounding box check first for performance
+        if (ball.x + ball.radius < brick.x || 
+            ball.x - ball.radius > brick.x + brick.width ||
+            ball.y + ball.radius < brick.y || 
+            ball.y - ball.radius > brick.y + brick.height) {
+            continue;
+        }
+        
+        // Detailed Collision Check
+        // We use a modified closest-point on AABB approach for circle collision
+        
+        const closestX = Math.max(brick.x, Math.min(ball.x, brick.x + brick.width));
+        const closestY = Math.max(brick.y, Math.min(ball.y, brick.y + brick.height));
+        
+        const distanceX = ball.x - closestX;
+        const distanceY = ball.y - closestY;
+        const distanceSquared = (distanceX * distanceX) + (distanceY * distanceY);
+        
+        if (distanceSquared < (ball.radius * ball.radius)) {
+            // Collision detected
+            resolveBrickCollision(p, ball, brick, closestX, closestY);
+            hitOccurred = true;
+            break; // Only handle one brick collision per step to prevent weirdness
+        }
+    }
+    
+    // 3. Item Collisions
+    if (!hitOccurred) {
+        for (let i = gameState.items.length - 1; i >= 0; i--) {
+            const item = gameState.items[i];
+            const dSq = distSq(ball.x, ball.y, item.x, item.y);
+            // item.radius + ball.radius approx 20
+            if (dSq < 400) { 
+                item.collect();
+            }
+        }
+    }
+}
+
+function resolveBrickCollision(p, ball, brick, closestX, closestY) {
+    brick.hit(p);
+    
+    // Determine reflection normal
+    // Check which side of the brick box was hit based on the closest point relative to center
+    // Or compare previous position to current intersection
+    
+    // Simple resolution based on overlap depth
+    const overlapX = ball.x - closestX;
+    const overlapY = ball.y - closestY;
+    
+    // If we hit exactly on a corner, it's tricky.
+    // Prioritize the axis with the larger penetration or based on velocity
+    
+    // Calculate normal from closest point to ball center
+    let nx = overlapX;
+    let ny = overlapY;
+    
+    const len = Math.sqrt(nx*nx + ny*ny);
+    
+    if (len === 0) {
+        // Ball center is exactly inside/on edge (rare)
+        // Reverse velocity based on heading
+        ball.vx *= -1;
+        ball.vy *= -1;
+        return;
+    }
+    
+    nx /= len;
+    ny /= len;
+    
+    // Usually for AABB, we want to snap the normal to strict axes unless it's a corner
+    // Determine dominant axis
+    if (Math.abs(overlapX) > Math.abs(overlapY)) {
+        // Check if it's really a horizontal hit or a corner hit
+        // If the ball is within the vertical span of the brick, it's a side hit
+        const withinY = ball.y > brick.y && ball.y < brick.y + brick.height;
+        if (withinY) {
+            ball.vx *= -1;
+            // Push out
+            ball.x += (ball.vx > 0 ? 1 : -1) * (ball.radius - Math.abs(overlapX) + 1);
+            return;
+        }
+    } else {
+        const withinX = ball.x > brick.x && ball.x < brick.x + brick.width;
+        if (withinX) {
+            ball.vy *= -1;
+            // Push out
+            ball.y += (ball.vy > 0 ? 1 : -1) * (ball.radius - Math.abs(overlapY) + 1);
+            return;
+        }
+    }
+    
+    // Corner hit (or uncertain), reflect vector across normal
+    // V_new = V_old - 2 * (V_old . N) * N
+    const dot = ball.vx * nx + ball.vy * ny;
+    ball.vx = ball.vx - 2 * dot * nx;
+    ball.vy = ball.vy - 2 * dot * ny;
+    
+    // Add a tiny bit of noise to prevent infinite loops on perfect angles
+    ball.vx += (Math.random() - 0.5) * 0.1;
+    ball.vy += (Math.random() - 0.5) * 0.1;
+}
+
+function handleBallReturn(ball) {
+    if (!gameState.firstBallLanded) {
+        gameState.firstBallLanded = true;
+        gameState.nextLauncherX = Math.max(
+            CONFIG.BALL_SIZE + 2, 
+            Math.min(CANVAS_WIDTH - CONFIG.BALL_SIZE - 2, ball.x)
+        );
+    }
+    
+    ball.active = false;
+    ball.vx = 0;
+    ball.vy = 0;
+    // We don't snap X immediately, we wait for turn end, but visuals might look weird.
+    // In this game, usually balls zip to the new location once they hit floor.
+    // We'll hide this ball and increment 'ballsReady' counter effectively.
+    ball.x = -1000; 
+    ball.y = -1000;
+    
+    gameState.ballsActive--;
+}
+
+/**
+ * Predicts the trajectory for the aiming line
+ * Uses a simplified ray stepping method to avoid complex library dependencies
+ */
+export function getTrajectoryPreview(startX, startY, angle, p) {
+    const points = [{x: startX, y: startY}];
+    let cx = startX;
+    let cy = startY;
+    let cvx = Math.cos(angle);
+    let cvy = Math.sin(angle);
+    
+    // Ray casting steps
+    const stepSize = 8;
+    const maxSteps = 100; // Limit length
+    
+    for (let i = 0; i < maxSteps; i++) {
+        // Move
+        cx += cvx * stepSize;
+        cy += cvy * stepSize;
+        
+        // Wall check
+        let hitWall = false;
+        
+        if (cx < 0) { 
+            cx = 0; 
+            cvx *= -1; 
+            hitWall = true; 
+        } else if (cx > CANVAS_WIDTH) { 
+            cx = CANVAS_WIDTH; 
+            cvx *= -1; 
+            hitWall = true; 
+        }
+        
+        if (cy < CONFIG.TOP_OFFSET) { 
+            cy = CONFIG.TOP_OFFSET; 
+            cvy *= -1; 
+            hitWall = true; 
+        }
+        
+        if (hitWall) {
+            points.push({x: cx, y: cy});
+            // Stop after one bounce for cleaner look, or continue?
+            // Let's continue for a bit to show bank shots
+        }
+        
+        // Check Bricks (Simple point-in-rect)
+        let hitBrick = false;
+        for (const brick of gameState.bricks) {
+            if (!brick.isDead) {
+                // Check if point is inside brick
+                if (cx >= brick.x && cx <= brick.x + brick.width &&
+                    cy >= brick.y && cy <= brick.y + brick.height) {
+                    hitBrick = true;
+                    break;
+                }
+            }
+        }
+        
+        if (hitBrick) {
+            points.push({x: cx, y: cy});
+            break; // Stop line at brick
+        }
+    }
+    
+    // Always add the final point if we didn't hit a brick (to draw the last segment)
+    if (points[points.length-1].x !== cx || points[points.length-1].y !== cy) {
+        points.push({x: cx, y: cy});
+    }
+    
+    return points;
+}
+</code>

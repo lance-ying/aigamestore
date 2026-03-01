@@ -1,0 +1,254 @@
+/**
+ * Physics engine handling collision detection and resolution
+ * Optimized for high-speed ball movement using sub-stepping
+ */
+
+import { gameState, CONFIG, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { distSq } from './utils.js';
+import { collideRectCircle, collideLineRect } from 'https://cdn.jsdelivr.net/npm/p5.collide2d@1.0.0/+esm';
+
+// Sub-steps for physics stability
+const PHYSICS_STEPS = 4;
+
+export function updatePhysics(p) {
+    // Only update physics if items are moving
+    if (gameState.turnPhase !== "FIRING" && gameState.turnPhase !== "RESOLVING") return;
+    
+    const dt = 1 / PHYSICS_STEPS;
+    
+    // Perform sub-steps
+    for (let step = 0; step < PHYSICS_STEPS; step++) {
+        // Update Balls
+        gameState.balls.forEach(ball => {
+            if (ball.active) {
+                ball.update(p, dt * gameState.timeScale);
+                checkCollisions(p, ball);
+            }
+        });
+    }
+}
+
+function checkCollisions(p, ball) {
+    // 1. Wall Collisions
+    
+    // Left Wall
+    if (ball.x - ball.radius < 0) {
+        ball.x = ball.radius;
+        ball.vx = Math.abs(ball.vx); // Force positive
+    }
+    
+    // Right Wall
+    if (ball.x + ball.radius > CANVAS_WIDTH) {
+        ball.x = CANVAS_WIDTH - ball.radius;
+        ball.vx = -Math.abs(ball.vx); // Force negative
+    }
+    
+    // Top Wall
+    if (ball.y - ball.radius < CONFIG.TOP_OFFSET) {
+        ball.y = CONFIG.TOP_OFFSET + ball.radius;
+        ball.vy = Math.abs(ball.vy); // Force positive
+    }
+    
+    // Bottom (Floor) - Ball Retrieval
+    if (ball.y + ball.radius > CANVAS_HEIGHT - 5) { // 5px buffer
+        handleBallReturn(ball);
+        return;
+    }
+    
+    // 2. Brick Collisions
+    // Optimization: Spatial partitioning or only check nearby bricks could be used
+    // For this grid size, brute force is acceptable but we skip inactive/far bricks
+    
+    let hitOccurred = false;
+    
+    for (let i = gameState.bricks.length - 1; i >= 0; i--) {
+        const brick = gameState.bricks[i];
+        if (brick.isDead) continue;
+        
+        // Simple bounding box check first for performance
+        if (ball.x + ball.radius < brick.x || 
+            ball.x - ball.radius > brick.x + brick.width ||
+            ball.y + ball.radius < brick.y || 
+            ball.y - ball.radius > brick.y + brick.height) {
+            continue;
+        }
+        
+        // Detailed Collision Check
+        // We use a modified closest-point on AABB approach for circle collision
+        
+        const closestX = Math.max(brick.x, Math.min(ball.x, brick.x + brick.width));
+        const closestY = Math.max(brick.y, Math.min(ball.y, brick.y + brick.height));
+        
+        const distanceX = ball.x - closestX;
+        const distanceY = ball.y - closestY;
+        const distanceSquared = (distanceX * distanceX) + (distanceY * distanceY);
+        
+        if (distanceSquared < (ball.radius * ball.radius)) {
+            // Collision detected
+            resolveBrickCollision(ball, brick, closestX, closestY);
+            hitOccurred = true;
+            break; // Only handle one brick collision per step to prevent weirdness
+        }
+    }
+    
+    // 3. Item Collisions
+    if (!hitOccurred) {
+        for (let i = gameState.items.length - 1; i >= 0; i--) {
+            const item = gameState.items[i];
+            const dSq = distSq(ball.x, ball.y, item.x, item.y);
+            // item.radius + ball.radius approx 20
+            if (dSq < 400) { 
+                item.collect();
+            }
+        }
+    }
+}
+
+function resolveBrickCollision(ball, brick, closestX, closestY) {
+    brick.hit();
+    
+    // Determine reflection normal
+    // Check which side of the brick box was hit based on the closest point relative to center
+    // Or compare previous position to current intersection
+    
+    // Simple resolution based on overlap depth
+    const overlapX = ball.x - closestX;
+    const overlapY = ball.y - closestY;
+    
+    // If we hit exactly on a corner, it's tricky.
+    // Prioritize the axis with the larger penetration or based on velocity
+    
+    // Calculate normal from closest point to ball center
+    let nx = overlapX;
+    let ny = overlapY;
+    
+    const len = Math.sqrt(nx*nx + ny*ny);
+    
+    if (len === 0) {
+        // Ball center is exactly inside/on edge (rare)
+        // Reverse velocity based on heading
+        ball.vx *= -1;
+        ball.vy *= -1;
+        return;
+    }
+    
+    nx /= len;
+    ny /= len;
+    
+    // Usually for AABB, we want to snap the normal to strict axes unless it's a corner
+    // Determine dominant axis
+    if (Math.abs(overlapX) > Math.abs(overlapY)) {
+        // Check if it's really a horizontal hit or a corner hit
+        // If the ball is within the vertical span of the brick, it's a side hit
+        const withinY = ball.y > brick.y && ball.y < brick.y + brick.height;
+        if (withinY) {
+            ball.vx *= -1;
+            // Push out
+            ball.x += (ball.vx > 0 ? 1 : -1) * (ball.radius - Math.abs(overlapX) + 1);
+            return;
+        }
+    } else {
+        const withinX = ball.x > brick.x && ball.x < brick.x + brick.width;
+        if (withinX) {
+            ball.vy *= -1;
+            // Push out
+            ball.y += (ball.vy > 0 ? 1 : -1) * (ball.radius - Math.abs(overlapY) + 1);
+            return;
+        }
+    }
+    
+    // Corner hit (or uncertain), reflect vector across normal
+    // V_new = V_old - 2 * (V_old . N) * N
+    const dot = ball.vx * nx + ball.vy * ny;
+    ball.vx = ball.vx - 2 * dot * nx;
+    ball.vy = ball.vy - 2 * dot * ny;
+    
+    // Add a tiny bit of noise to prevent infinite loops on perfect angles
+    ball.vx += (Math.random() - 0.5) * 0.1;
+    ball.vy += (Math.random() - 0.5) * 0.1;
+}
+
+function handleBallReturn(ball) {
+    if (!gameState.firstBallLanded) {
+        gameState.firstBallLanded = true;
+        gameState.nextLauncherX = Math.max(
+            CONFIG.BALL_SIZE + 2, 
+            Math.min(CANVAS_WIDTH - CONFIG.BALL_SIZE - 2, ball.x)
+        );
+    }
+    
+    ball.active = false;
+    ball.vx = 0;
+    ball.vy = 0;
+    // We don't snap X immediately, we wait for turn end, but visuals might look weird.
+    // In this game, usually balls zip to the new location once they hit floor.
+    // We'll hide this ball and increment 'ballsReady' counter effectively.
+    ball.x = -1000; 
+    ball.y = -1000;
+    
+    gameState.ballsActive--;
+}
+
+/**
+ * Predicts the trajectory for the aiming line
+ * Uses a simplified physics step (no brick destruction)
+ */
+export function getTrajectoryPreview(startX, startY, angle, p) {
+    const points = [{x: startX, y: startY}];
+    let cx = startX;
+    let cy = startY;
+    let cvx = Math.cos(angle);
+    let cvy = Math.sin(angle);
+    
+    // Ray casting steps
+    const stepSize = 10;
+    const maxSteps = 100; // Limit length
+    
+    for (let i = 0; i < maxSteps; i++) {
+        // Move
+        cx += cvx * stepSize;
+        cy += cvy * stepSize;
+        
+        // Wall check
+        let hit = false;
+        let normal = { x: 0, y: 0 };
+        
+        if (cx < 0) { cx = 0; normal.x = 1; hit = true; }
+        else if (cx > CANVAS_WIDTH) { cx = CANVAS_WIDTH; normal.x = -1; hit = true; }
+        else if (cy < CONFIG.TOP_OFFSET) { cy = CONFIG.TOP_OFFSET; normal.y = 1; hit = true; }
+        
+        if (hit) {
+            points.push({x: cx, y: cy});
+            
+            // Reflect
+            if (normal.x !== 0) cvx *= -1;
+            if (normal.y !== 0) cvy *= -1;
+            
+            // Only one reflection for preview usually looks cleaner
+            break; 
+        }
+        
+        // Check Bricks (simplified line-rect)
+        // We iterate all bricks - might be heavy but only runs on aim update
+        let hitBrick = null;
+        for (const brick of gameState.bricks) {
+            const hitRect = collideLineRect(
+                points[points.length-1].x, points[points.length-1].y,
+                cx, cy,
+                brick.x, brick.y, brick.width, brick.height,
+                true // calcIntersection
+            );
+            
+            if (hitRect.left || hitRect.right || hitRect.top || hitRect.bottom) {
+                // Determine intersection point (collideLineRect returns object with booleans, need actual point)
+                // Using p5.collide2d basic return isn't giving point. 
+                // Let's just stop at the brick center approx for visual
+                points.push({x: cx, y: cy});
+                return points;
+            }
+        }
+    }
+    
+    points.push({x: cx, y: cy});
+    return points;
+}

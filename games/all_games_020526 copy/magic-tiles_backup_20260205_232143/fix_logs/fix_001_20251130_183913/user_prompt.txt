@@ -1,0 +1,1431 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you make it so that there are 6 distinct levels, 2 easy levels, 2 medium dififcult levels, and 2 hard levels? and they can be differentiated by the color of the tiles (maybe like a light hue), the difficulty can be determined by the amount of notes and the speed of notes, and also after a level is complete you proceed to the next level with your lives reset to full, and the criteria of proceeding to the next level should be hitting X amount of notes. 20 notes for level 1 for example, 30 notes for level 2, etc etc
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; } /* active button for current control mode */
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Magic Tiles</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic testing)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
+        <button id="test_3_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_3')">TEST (Difficulty)</button>
+        <button id="test_4_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_4')">TEST (Combo)</button>
+        <button id="test_5_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_5')">TEST (Loss)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Magic Tiles is a rhythm-based game where you must tap black tiles as they scroll down the screen while avoiding white tiles. Each correctly tapped black tile awards points and continues your combo. Miss a black tile or tap a white tile, and you lose. The game progressively gets faster, challenging your reflexes and timing. How long can you keep up with the increasing difficulty?</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">
+        <strong>Arrow Keys Control Lanes:</strong><br>
+        ↓ DOWN ARROW: Leftmost lane (Lane 1)<br>
+        ← LEFT ARROW: Second lane (Lane 2)<br>
+        ↑ UP ARROW: Third lane (Lane 3)<br>
+        → RIGHT ARROW: Rightmost lane (Lane 4)<br><br>
+        <strong>Game Controls:</strong><br>
+        ENTER: Start the game • ESC: Pause/unpause • R: Restart
+      </p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="globals.js"></script>
+    <script type="module" src="tile.js"></script>
+    <script type="module" src="automated_testing_controller.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+import { gameState, LANE_KEYS, LANE_COUNT, TARGET_ZONE_Y, TILE_HEIGHT } from './globals.js';
+
+// Helper function to find the closest tile to the target zone in a specific lane
+function findClosestTileInLane(laneIndex) {
+  let closestTile = null;
+  let closestDistance = Infinity;
+  
+  for (const tile of gameState.tiles) {
+    if (tile.laneIndex === laneIndex && !tile.hit) {
+      // Calculate the distance to the perfect hit point in the target zone
+      const tileMiddle = tile.y + tile.height/2;
+      const targetMiddle = TARGET_ZONE_Y + TILE_HEIGHT/2;
+      const distance = Math.abs(tileMiddle - targetMiddle);
+      
+      // Check if this tile is closer than the previous closest
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestTile = tile;
+      }
+    }
+  }
+  
+  return { tile: closestTile, distance: closestDistance };
+}
+
+// TEST_1: Basic game functionality test with sticky keys
+function getStickyKeysAction(gameState) {
+  // Tracks the last time we changed actions
+  const actionChangeInterval = 20; // frames
+  
+  // Store state between calls using static variables
+  if (typeof getStickyKeysAction.lastActionChange === 'undefined') {
+    getStickyKeysAction.lastActionChange = 0;
+    getStickyKeysAction.currentAction = null;
+  }
+  
+  // Check if we need to change actions
+  if (gameState.gamePhase === "PLAYING" && 
+      (getStickyKeysAction.currentAction === null || 
+       gameState.gameInstance.frameCount - getStickyKeysAction.lastActionChange > actionChangeInterval)) {
+    
+    // Find any tile that's close to the target zone
+    let bestLane = -1;
+    let bestDistance = Infinity;
+    
+    for (let i = 0; i < LANE_COUNT; i++) {
+      const { tile, distance } = findClosestTileInLane(i);
+      
+      if (tile && distance < bestDistance && tile.isInTargetZone()) {
+        bestDistance = distance;
+        bestLane = i;
+      }
+    }
+    
+    // If we found a tile to hit, use that lane's key
+    if (bestLane !== -1) {
+      getStickyKeysAction.currentAction = LANE_KEYS[bestLane];
+    } else {
+      // Otherwise, pick a random lane
+      const randomLane = Math.floor(Math.random() * LANE_COUNT);
+      getStickyKeysAction.currentAction = LANE_KEYS[randomLane];
+    }
+    
+    getStickyKeysAction.lastActionChange = gameState.gameInstance.frameCount;
+  }
+  
+  return getStickyKeysAction.currentAction;
+}
+
+// TEST_2: Perfect play to win the game
+function getTestWinAction(gameState) {
+  if (gameState.gamePhase !== "PLAYING") return null;
+  
+  // Find the lane with the tile closest to the perfect hit point
+  let bestLane = -1;
+  let bestDistance = Infinity;
+  
+  for (let i = 0; i < LANE_COUNT; i++) {
+    const { tile, distance } = findClosestTileInLane(i);
+    
+    if (tile && tile.isInTargetZone() && distance < bestDistance) {
+      bestDistance = distance;
+      bestLane = i;
+    }
+  }
+  
+  // Only tap when a tile is in the perfect zone (distance < 20)
+  if (bestLane !== -1 && bestDistance < 20) {
+    return LANE_KEYS[bestLane];
+  }
+  
+  return null;
+}
+
+// TEST_3: Test difficulty progression
+function getTestDifficultyProgressionAction(gameState) {
+  if (gameState.gamePhase !== "PLAYING") return null;
+  
+  // Track the last observed difficulty level
+  if (typeof getTestDifficultyProgressionAction.lastDifficultyLevel === 'undefined') {
+    getTestDifficultyProgressionAction.lastDifficultyLevel = gameState.difficultyLevel;
+  }
+  
+  // Log when difficulty changes
+  if (gameState.difficultyLevel > getTestDifficultyProgressionAction.lastDifficultyLevel) {
+    console.log(`Difficulty increased to level ${gameState.difficultyLevel}`);
+    getTestDifficultyProgressionAction.lastDifficultyLevel = gameState.difficultyLevel;
+  }
+  
+  // Use the win strategy to play well
+  return getTestWinAction(gameState);
+}
+
+// TEST_4: Test combo system
+function getTestComboAction(gameState) {
+  if (gameState.gamePhase !== "PLAYING") return null;
+  
+  // Track the highest combo achieved
+  if (typeof getTestComboAction.highestCombo === 'undefined') {
+    getTestComboAction.highestCombo = 0;
+  }
+  
+  // Log when combo increases
+  if (gameState.player.combo > getTestComboAction.highestCombo) {
+    console.log(`New highest combo: ${gameState.player.combo}`);
+    getTestComboAction.highestCombo = gameState.player.combo;
+  }
+  
+  // Use the win strategy to build combos
+  return getTestWinAction(gameState);
+}
+
+// TEST_5: Test loss condition
+function getTestLossAction(gameState) {
+  if (gameState.gamePhase !== "PLAYING") return null;
+  
+  // Play normally until we reach a certain score
+  const targetScoreBeforeLoss = 100;
+  
+  if (gameState.player.score < targetScoreBeforeLoss) {
+    return getTestWinAction(gameState);
+  } else {
+    // Once we reach the target score, deliberately miss tiles
+    // by not returning any action
+    return null;
+  }
+}
+
+// Main testing controller function
+export function game_testing_controller(gameState) {
+  switch (gameState.controlMode) {
+    case "TEST_1":
+      return getStickyKeysAction(gameState);
+    case "TEST_2":
+      return getTestWinAction(gameState);
+    case "TEST_3":
+      return getTestDifficultyProgressionAction(gameState);
+    case "TEST_4":
+      return getTestComboAction(gameState);
+    case "TEST_5":
+      return getTestLossAction(gameState);
+    default:
+      return null;
+  }
+}
+
+// Expose the game_testing_controller function globally
+window.game_testing_controller = game_testing_controller;
+export default game_testing_controller;
+</file>
+
+<file name="globals.js">
+// Game state and constants
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const LANE_COUNT = 4;
+export const LANE_WIDTH = CANVAS_WIDTH / LANE_COUNT;
+export const TARGET_ZONE_HEIGHT = 50;
+export const TARGET_ZONE_Y = CANVAS_HEIGHT - TARGET_ZONE_HEIGHT;
+export const TILE_HEIGHT = 120;
+export const PERFECT_SCORE = 10;
+export const GOOD_SCORE = 5;
+export const WIN_SCORE = 500;
+export const STARTING_SPEED = 3;
+export const MAX_SPEED = 12;
+export const SPEED_INCREMENT = 0.5;
+export const SPEED_INCREASE_THRESHOLD = 100;
+export const TAP_DEBOUNCE_MS = 150; // Minimum time between taps for same lane
+export const MAX_HEALTH = 3;
+
+// Game state object
+export const gameState = {
+  player: {
+    score: 0,
+    combo: 0,
+    maxCombo: 0,
+    misses: 0,
+    lastHitTime: 0,
+    health: MAX_HEALTH
+  },
+  tiles: [],
+  gamePhase: "START",
+  controlMode: "HUMAN",
+  speed: STARTING_SPEED,
+  lastSpawnTime: 0,
+  spawnInterval: 60,
+  spawnCountdown: 60,
+  difficultyLevel: 1,
+  damageFlash: 0,
+  lanes: Array(LANE_COUNT).fill().map(() => ({
+    active: false,
+    lastPressed: 0,
+    lastTapTime: 0, // For debouncing
+    pressAnimation: 0,
+    glowIntensity: 0
+  }))
+};
+
+// Lane to key mapping
+export const LANE_KEYS = {
+  0: 40, // DOWN arrow for leftmost lane
+  1: 37, // LEFT arrow for second lane
+  2: 38, // UP arrow for third lane
+  3: 39  // RIGHT arrow for rightmost lane
+};
+
+// Get game state function for testing
+export function getGameState() {
+  return gameState;
+}
+
+// Set control mode function
+export function setControlMode(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  document.querySelectorAll('.control-button').forEach(btn => {
+    btn.classList.remove('active');
+  });
+  
+  const activeBtn = document.getElementById(
+    mode === 'HUMAN' ? 'humanModeBtn' : `test_${mode.split('_')[1]}_ModeBtn`
+  );
+  
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+}
+
+// Expose functions globally
+window.getGameState = getGameState;
+window.setControlMode = setControlMode;
+</file>
+
+<file name="game.js">
+import { 
+  CANVAS_WIDTH, CANVAS_HEIGHT, LANE_COUNT, LANE_WIDTH, 
+  TARGET_ZONE_HEIGHT, TARGET_ZONE_Y, TILE_HEIGHT, 
+  PERFECT_SCORE, GOOD_SCORE, WIN_SCORE, STARTING_SPEED, 
+  MAX_SPEED, SPEED_INCREMENT, SPEED_INCREASE_THRESHOLD,
+  TAP_DEBOUNCE_MS, MAX_HEALTH,
+  gameState, LANE_KEYS, getGameState, setControlMode
+} from './globals.js';
+import { Tile } from './tile.js';
+import { game_testing_controller } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Initialize variables
+  let lastFrameCount = 0;
+  let keyQueue = [];
+  let controllerAction = null;
+  let lastProcessedKeys = {}; // Track last processed time per keyCode
+  
+  // Initialize the logs
+  p.logs = {
+    "game_info": [],
+    "player_info": [],
+    "inputs": []
+  };
+  
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Log initial game state
+    logGameInfo("Game initialized", {});
+  };
+  
+  p.draw = function() {
+    p.background(220);
+    
+    // Handle game state
+    switch(gameState.gamePhase) {
+      case "START":
+        drawStartScreen();
+        break;
+      case "PLAYING":
+        updateGame();
+        drawGame();
+        break;
+      case "PAUSED":
+        drawGame();
+        drawPauseScreen();
+        break;
+      case "GAME_OVER_WIN":
+        drawGame();
+        drawGameOverScreen(true);
+        break;
+      case "GAME_OVER_LOSE":
+        drawGame();
+        drawGameOverScreen(false);
+        break;
+    }
+    
+    // Process automated testing if not in HUMAN mode
+    if (gameState.gamePhase === "PLAYING" && gameState.controlMode !== "HUMAN") {
+      processAutomatedTesting();
+    }
+    
+    // Process any queued key presses
+    processKeyQueue();
+  };
+  
+  // Key handling - only queue press events, ignore releases for game logic
+  p.keyPressed = function() {
+    // Log key press
+    logInput("keyPressed", { key: p.key, keyCode: p.keyCode });
+    
+    // Queue the key press to be processed in the next draw cycle
+    keyQueue.push({ type: "press", keyCode: p.keyCode, frameCount: p.frameCount, timestamp: Date.now() });
+    
+    // Prevent default behavior for game control keys
+    if ([13, 27, 32, 37, 38, 39, 40, 82, 16, 90].includes(p.keyCode)) {
+      return false;
+    }
+  };
+  
+  p.keyReleased = function() {
+    // Log key release for debugging, but don't queue for processing
+    logInput("keyReleased", { key: p.key, keyCode: p.keyCode });
+    
+    // Prevent default behavior for game control keys
+    if ([13, 27, 32, 37, 38, 39, 40, 82, 16, 90].includes(p.keyCode)) {
+      return false;
+    }
+  };
+  
+  // Process queued key events with debouncing
+  function processKeyQueue() {
+    const currentTime = Date.now();
+    
+    while (keyQueue.length > 0) {
+      const keyEvent = keyQueue.shift();
+      
+      if (keyEvent.type === "press") {
+        // Debounce: Check if this key was recently processed
+        const lastTime = lastProcessedKeys[keyEvent.keyCode] || 0;
+        const timeSinceLastPress = currentTime - lastTime;
+        
+        // Only process if enough time has passed since last press of this key
+        if (timeSinceLastPress >= TAP_DEBOUNCE_MS) {
+          lastProcessedKeys[keyEvent.keyCode] = currentTime;
+          handleKeyPress(keyEvent.keyCode);
+        } else {
+          // Skip this repeated keypress (from holding key down)
+          logInput("keyPress_debounced", { 
+            keyCode: keyEvent.keyCode, 
+            timeSinceLastPress: timeSinceLastPress 
+          });
+        }
+      }
+    }
+  }
+  
+  // Handle key press - each key press is ONE discrete action
+  function handleKeyPress(keyCode) {
+    switch(gameState.gamePhase) {
+      case "START":
+        if (keyCode === 13) { // ENTER
+          startGame();
+        }
+        break;
+      case "PLAYING":
+        if (keyCode === 27) { // ESC
+          pauseGame();
+        } else if (gameState.controlMode === "HUMAN") {
+          handleGameplayControls(keyCode);
+        }
+        break;
+      case "PAUSED":
+        if (keyCode === 27) { // ESC
+          resumeGame();
+        }
+        break;
+      case "GAME_OVER_WIN":
+      case "GAME_OVER_LOSE":
+        if (keyCode === 82) { // R
+          resetGame();
+        }
+        break;
+    }
+  }
+  
+  // Handle gameplay controls - single tap per action
+  function handleGameplayControls(keyCode) {
+    const currentTime = Date.now();
+    
+    // Check if the key corresponds to a lane
+    for (let i = 0; i < LANE_COUNT; i++) {
+      if (keyCode === LANE_KEYS[i]) {
+        // Additional per-lane debouncing
+        const timeSinceLastTap = currentTime - gameState.lanes[i].lastTapTime;
+        
+        if (timeSinceLastTap >= TAP_DEBOUNCE_MS) {
+          gameState.lanes[i].lastTapTime = currentTime;
+          tapLane(i);
+        }
+        break;
+      }
+    }
+  }
+  
+  // Process automated testing - also respects debouncing
+  function processAutomatedTesting() {
+    if (p.frameCount !== lastFrameCount) {
+      lastFrameCount = p.frameCount;
+      
+      // Get action from testing controller
+      controllerAction = game_testing_controller(getGameState());
+      
+      // Process the action if one is returned
+      if (controllerAction !== null) {
+        const currentTime = Date.now();
+        
+        // Check if this action was recently processed (debounce for controller too)
+        const lastTime = lastProcessedKeys[controllerAction] || 0;
+        const timeSinceLastPress = currentTime - lastTime;
+        
+        if (timeSinceLastPress >= TAP_DEBOUNCE_MS) {
+          lastProcessedKeys[controllerAction] = currentTime;
+          handleGameplayControls(controllerAction);
+        }
+      }
+    }
+  }
+  
+  // Game state functions
+  function startGame() {
+    gameState.gamePhase = "PLAYING";
+    gameState.player.score = 0;
+    gameState.player.combo = 0;
+    gameState.player.maxCombo = 0;
+    gameState.player.misses = 0;
+    gameState.player.lastHitTime = p.frameCount;
+    gameState.player.health = MAX_HEALTH;
+    gameState.tiles = [];
+    gameState.speed = STARTING_SPEED;
+    gameState.lastSpawnTime = 0;
+    gameState.spawnInterval = 60;
+    gameState.spawnCountdown = 60;
+    gameState.difficultyLevel = 1;
+    gameState.damageFlash = 0;
+    
+    // Reset lane states and debounce timers
+    for (let i = 0; i < LANE_COUNT; i++) {
+      gameState.lanes[i].active = false;
+      gameState.lanes[i].lastPressed = 0;
+      gameState.lanes[i].lastTapTime = 0;
+      gameState.lanes[i].pressAnimation = 0;
+      gameState.lanes[i].glowIntensity = 0;
+    }
+    
+    // Clear debounce tracking
+    lastProcessedKeys = {};
+    
+    logGameInfo("Game started", {});
+  }
+  
+  function pauseGame() {
+    gameState.gamePhase = "PAUSED";
+    logGameInfo("Game paused", {});
+  }
+  
+  function resumeGame() {
+    gameState.gamePhase = "PLAYING";
+    logGameInfo("Game resumed", {});
+  }
+  
+  function resetGame() {
+    gameState.gamePhase = "START";
+    // Clear debounce tracking on reset
+    lastProcessedKeys = {};
+    logGameInfo("Game reset", {});
+  }
+  
+  function gameOver(win) {
+    gameState.gamePhase = win ? "GAME_OVER_WIN" : "GAME_OVER_LOSE";
+    logGameInfo("Game over", { 
+      win: win, 
+      score: gameState.player.score, 
+      maxCombo: gameState.player.maxCombo,
+      misses: gameState.player.misses
+    });
+  }
+  
+  // Game update logic
+  function updateGame() {
+    // Update tiles
+    updateTiles();
+    
+    // Spawn new tiles
+    spawnTiles();
+    
+    // Update lane animations
+    updateLaneAnimations();
+    
+    // Update particles
+    updateParticles();
+    
+    // Update damage flash
+    if (gameState.damageFlash > 0) {
+      gameState.damageFlash = Math.max(0, gameState.damageFlash - 0.05);
+    }
+    
+    // Check for win condition
+    if (gameState.player.score >= WIN_SCORE) {
+      gameOver(true);
+    }
+    
+    // Update difficulty based on score
+    updateDifficulty();
+    
+    // Log player info periodically
+    if (p.frameCount % 30 === 0) {
+      logPlayerInfo();
+    }
+  }
+  
+  function updateTiles() {
+    for (let i = gameState.tiles.length - 1; i >= 0; i--) {
+      const tile = gameState.tiles[i];
+      tile.update(gameState.speed);
+      
+      // Check if tile was missed
+      if (tile.missed && tile.active === false) {
+        handleMissedTile();
+        gameState.tiles.splice(i, 1);
+      } else if (!tile.active && tile.y > CANVAS_HEIGHT) {
+        // Remove inactive tiles that are off screen
+        gameState.tiles.splice(i, 1);
+      }
+    }
+  }
+  
+  function spawnTiles() {
+    gameState.spawnCountdown--;
+    
+    if (gameState.spawnCountdown <= 0) {
+      // Choose a random lane for the new tile
+      const laneIndex = Math.floor(p.random(LANE_COUNT));
+      
+      // Create a new tile
+      const newTile = new Tile(laneIndex);
+      gameState.tiles.push(newTile);
+      
+      // Reset spawn countdown with some randomness
+      gameState.spawnCountdown = gameState.spawnInterval - 10 + Math.floor(p.random(20));
+      
+      // Decrease spawn interval as game progresses (for difficulty)
+      if (gameState.spawnInterval > 30) {
+        gameState.spawnInterval -= 0.1;
+      }
+    }
+  }
+  
+  function updateDifficulty() {
+    // Increase speed based on score
+    const newLevel = Math.floor(gameState.player.score / SPEED_INCREASE_THRESHOLD) + 1;
+    
+    if (newLevel > gameState.difficultyLevel) {
+      gameState.difficultyLevel = newLevel;
+      gameState.speed = Math.min(MAX_SPEED, STARTING_SPEED + (newLevel - 1) * SPEED_INCREMENT);
+      logGameInfo("Difficulty increased", { level: gameState.difficultyLevel, speed: gameState.speed });
+    }
+  }
+  
+  // Animation update functions
+  function updateLaneAnimations() {
+    for (let i = 0; i < LANE_COUNT; i++) {
+      const lane = gameState.lanes[i];
+      
+      // Decay press animation
+      if (lane.pressAnimation > 0) {
+        lane.pressAnimation = Math.max(0, lane.pressAnimation - 0.05);
+      }
+      
+      // Decay glow intensity
+      if (lane.glowIntensity > 0) {
+        lane.glowIntensity = Math.max(0, lane.glowIntensity - 0.02);
+      }
+    }
+  }
+  
+  // Particle system
+  let particles = [];
+  
+  function createParticles(x, y, type) {
+    const count = type === "perfect" ? 8 : 5;
+    for (let i = 0; i < count; i++) {
+      particles.push({
+        x: x,
+        y: y,
+        vx: p.random(-4, 4),
+        vy: p.random(-6, -2),
+        life: 1.0,
+        type: type,
+        size: p.random(4, 8)
+      });
+    }
+  }
+  
+  function updateParticles() {
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const particle = particles[i];
+      particle.x += particle.vx;
+      particle.y += particle.vy;
+      particle.vy += 0.2; // gravity
+      particle.life -= 0.02;
+      
+      if (particle.life <= 0) {
+        particles.splice(i, 1);
+      }
+    }
+  }
+  
+  // Single discrete tap action for a lane
+  function tapLane(laneIndex) {
+    gameState.lanes[laneIndex].active = true;
+    gameState.lanes[laneIndex].lastPressed = p.frameCount;
+    gameState.lanes[laneIndex].pressAnimation = 1.0;
+    
+    // Check for tiles in this lane
+    let hitTile = false;
+    let hitResult = "miss";
+    
+    for (let i = 0; i < gameState.tiles.length; i++) {
+      const tile = gameState.tiles[i];
+      
+      if (tile.laneIndex === laneIndex && tile.isInTargetZone() && !tile.hit) {
+        hitResult = tile.checkHit();
+        hitTile = true;
+        
+        // Set hit animation properties
+        tile.hitAnimation = 1.0;
+        tile.hitTime = p.frameCount;
+        
+        // Award points based on hit quality
+        if (hitResult === "perfect") {
+          gameState.player.score += PERFECT_SCORE * (1 + gameState.player.combo * 0.1);
+          gameState.player.combo++;
+          gameState.lanes[laneIndex].glowIntensity = 1.0;
+          // Create particle effect for perfect hit
+          createParticles(laneIndex * LANE_WIDTH + LANE_WIDTH/2, tile.y + tile.height/2, "perfect");
+        } else if (hitResult === "good") {
+          gameState.player.score += GOOD_SCORE * (1 + gameState.player.combo * 0.05);
+          gameState.player.combo++;
+          gameState.lanes[laneIndex].glowIntensity = 0.7;
+          // Create particle effect for good hit
+          createParticles(laneIndex * LANE_WIDTH + LANE_WIDTH/2, tile.y + tile.height/2, "good");
+        }
+        
+        // Update max combo
+        if (gameState.player.combo > gameState.player.maxCombo) {
+          gameState.player.maxCombo = gameState.player.combo;
+        }
+        
+        gameState.player.lastHitTime = p.frameCount;
+        break;
+      }
+    }
+    
+    // Check if player tapped a white space (miss)
+    if (!hitTile) {
+      handleMissedTile();
+    }
+    
+    // Log the tap
+    logGameInfo("Lane tapped", { 
+      lane: laneIndex, 
+      result: hitResult, 
+      score: gameState.player.score, 
+      combo: gameState.player.combo 
+    });
+  }
+  
+  function handleMissedTile() {
+    gameState.player.combo = 0;
+    gameState.player.misses++;
+    gameState.player.health--;
+    gameState.damageFlash = 1.0;
+    
+    // Log damage taken
+    logGameInfo("Damage taken", { 
+      healthRemaining: gameState.player.health,
+      misses: gameState.player.misses 
+    });
+    
+    // Game over only when health reaches 0
+    if (gameState.player.health <= 0) {
+      gameOver(false);
+    }
+  }
+  
+  // Drawing functions
+  function drawStartScreen() {
+    // Animated background
+    p.background(20);
+    for (let i = 0; i < 50; i++) {
+      const alpha = p.sin(p.frameCount * 0.02 + i) * 50 + 100;
+      p.fill(40, 40, 60, alpha);
+      p.noStroke();
+      p.ellipse(p.random(CANVAS_WIDTH), p.random(CANVAS_HEIGHT), 3, 3);
+    }
+    
+    // Draw title with glow effect
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    // Title glow
+    p.fill(100, 100, 255, 100);
+    for (let i = 0; i < 3; i++) {
+      p.textSize(42 + i * 2);
+      p.text("MAGIC TILES", CANVAS_WIDTH / 2 + i, CANVAS_HEIGHT / 4 + i);
+    }
+    
+    // Main title
+    p.fill(255);
+    p.textSize(40);
+    p.text("MAGIC TILES", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 4);
+    
+    // Draw instructions
+    p.textSize(16);
+    p.fill(200, 200, 255);
+    p.text("Tap the black tiles as they reach the bottom", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 50);
+    p.fill(255, 200, 200);
+    p.text("Don't miss any black tiles or tap white spaces!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 25);
+    p.fill(255, 255, 150);
+    p.text("You have 3 lives - make them count!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+    
+    // Draw visual control mapping
+    p.textSize(14);
+    p.fill(255, 255, 150);
+    p.text("Use arrow keys to tap lanes:", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 30);
+    
+    // Draw lane preview with arrows
+    const previewY = CANVAS_HEIGHT / 2 + 60;
+    const previewHeight = 30;
+    const lanePreviewWidth = LANE_WIDTH * 0.8;
+    const startX = (CANVAS_WIDTH - (lanePreviewWidth * LANE_COUNT)) / 2;
+    
+    const arrows = ["↓", "←", "↑", "→"];
+    
+    for (let i = 0; i < LANE_COUNT; i++) {
+      const x = startX + i * lanePreviewWidth;
+      
+      // Lane preview
+      p.fill(100, 100, 100);
+      p.stroke(150);
+      p.strokeWeight(1);
+      p.rect(x, previewY, lanePreviewWidth, previewHeight);
+      
+      // Arrow indicator
+      p.fill(255, 255, 100);
+      p.textSize(20);
+      p.text(arrows[i], x + lanePreviewWidth/2, previewY + previewHeight + 20);
+      
+      // Lane number
+      p.fill(200);
+      p.textSize(12);
+      p.text(`Lane ${i+1}`, x + lanePreviewWidth/2, previewY + previewHeight/2);
+    }
+    
+    // Draw start prompt with pulsing effect
+    const pulseFactor = 1 + 0.2 * p.sin(p.frameCount * 0.1);
+    p.push();
+    p.translate(CANVAS_WIDTH / 2, CANVAS_HEIGHT * 3/4);
+    p.scale(pulseFactor);
+    p.fill(255, 255, 0);
+    p.textSize(20);
+    p.text("PRESS ENTER TO START", 0, 0);
+    p.pop();
+  }
+  
+  function drawGame() {
+    // Gradient background
+    for (let i = 0; i <= CANVAS_HEIGHT; i += 5) {
+      const alpha = p.map(i, 0, CANVAS_HEIGHT, 250, 220);
+      p.stroke(alpha);
+      p.line(0, i, CANVAS_WIDTH, i);
+    }
+    
+    // Draw damage flash overlay
+    if (gameState.damageFlash > 0) {
+      p.noStroke();
+      const flashAlpha = gameState.damageFlash * 100;
+      p.fill(255, 0, 0, flashAlpha);
+      p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    }
+    
+    // Draw lane backgrounds with glow effects
+    p.noStroke();
+    for (let i = 0; i < LANE_COUNT; i++) {
+      const lane = gameState.lanes[i];
+      
+      // Lane glow effect
+      if (lane.glowIntensity > 0) {
+        const glowAlpha = lane.glowIntensity * 50;
+        p.fill(100, 255, 100, glowAlpha);
+        p.rect(i * LANE_WIDTH - 5, 0, LANE_WIDTH + 10, CANVAS_HEIGHT);
+      }
+      
+      // Press animation effect
+      if (lane.pressAnimation > 0) {
+        const pressAlpha = lane.pressAnimation * 80;
+        p.fill(150, 150, 255, pressAlpha);
+        p.rect(i * LANE_WIDTH, 0, LANE_WIDTH, CANVAS_HEIGHT);
+      }
+    }
+    
+    // Draw lane dividers
+    p.stroke(180);
+    p.strokeWeight(3);
+    for (let i = 1; i < LANE_COUNT; i++) {
+      p.line(i * LANE_WIDTH, 0, i * LANE_WIDTH, CANVAS_HEIGHT);
+    }
+    
+    // Draw target zone with pulsing effect
+    p.noStroke();
+    const pulseAlpha = 100 + 30 * p.sin(p.frameCount * 0.1);
+    p.fill(220, 220, 255, pulseAlpha);
+    p.rect(0, TARGET_ZONE_Y, CANVAS_WIDTH, TARGET_ZONE_HEIGHT);
+    
+    // Draw target zone border
+    p.stroke(200, 200, 255);
+    p.strokeWeight(2);
+    p.noFill();
+    p.rect(0, TARGET_ZONE_Y, CANVAS_WIDTH, TARGET_ZONE_HEIGHT);
+    
+    // Draw tiles
+    gameState.tiles.forEach(tile => tile.draw(p));
+    
+    // Draw particles
+    drawParticles();
+    
+    // Draw arrow key indicators
+    drawArrowIndicators();
+    
+    // Draw HUD
+    drawHUD();
+  }
+  
+  function drawHUD() {
+    // Score with shadow effect
+    p.fill(50);
+    p.textSize(20);
+    p.textAlign(p.LEFT, p.TOP);
+    p.text(`Score: ${Math.floor(gameState.player.score)}`, 12, 12);
+    p.fill(255);
+    p.text(`Score: ${Math.floor(gameState.player.score)}`, 10, 10);
+    
+    // Hearts in top right corner
+    drawHearts();
+    
+    // Combo with glow effect
+    if (gameState.player.combo > 0) {
+      p.textAlign(p.RIGHT, p.TOP);
+      // Glow effect for combo
+      p.fill(255, 100, 150, 100);
+      for (let i = 0; i < 3; i++) {
+        p.text(`Combo: ${gameState.player.combo}x`, CANVAS_WIDTH - 8 + i, 42 + i);
+      }
+      p.fill(255, 0, 100);
+      p.text(`Combo: ${gameState.player.combo}x`, CANVAS_WIDTH - 10, 40);
+    }
+    
+    // Level indicator with pulsing effect
+    p.textAlign(p.CENTER, p.TOP);
+    const levelPulse = 1 + 0.1 * p.sin(p.frameCount * 0.1);
+    p.push();
+    p.translate(CANVAS_WIDTH / 2, 20);
+    p.scale(levelPulse);
+    p.fill(50);
+    p.text(`Level ${gameState.difficultyLevel}`, 2, 2);
+    p.fill(100, 150, 255);
+    p.text(`Level ${gameState.difficultyLevel}`, 0, 0);
+    p.pop();
+  }
+  
+  function drawHearts() {
+    const heartSize = 20;
+    const heartSpacing = 28;
+    const startX = CANVAS_WIDTH - 95;
+    const startY = 15;
+    
+    for (let i = 0; i < MAX_HEALTH; i++) {
+      const x = startX + i * heartSpacing;
+      const y = startY;
+      
+      // Determine if this heart is filled or empty
+      const isFilled = i < gameState.player.health;
+      
+      // Add pulse animation to remaining hearts
+      let scale = 1;
+      if (isFilled && gameState.damageFlash > 0) {
+        scale = 1 + gameState.damageFlash * 0.3;
+      }
+      
+      p.push();
+      p.translate(x, y);
+      p.scale(scale);
+      
+      // Draw heart shape
+      p.noStroke();
+      
+      if (isFilled) {
+        // Filled heart (red)
+        p.fill(255, 50, 50);
+      } else {
+        // Empty heart (gray outline)
+        p.fill(100, 100, 100);
+      }
+      
+      // Draw heart using bezier curves and triangles
+      p.beginShape();
+      p.vertex(0, -heartSize/4);
+      p.bezierVertex(-heartSize/2, -heartSize*0.75, -heartSize, -heartSize/4, -heartSize/2, heartSize/4);
+      p.vertex(0, heartSize*0.75);
+      p.vertex(heartSize/2, heartSize/4);
+      p.bezierVertex(heartSize, -heartSize/4, heartSize/2, -heartSize*0.75, 0, -heartSize/4);
+      p.endShape(p.CLOSE);
+      
+      // Add outline for empty hearts
+      if (!isFilled) {
+        p.stroke(150);
+        p.strokeWeight(2);
+        p.noFill();
+        p.beginShape();
+        p.vertex(0, -heartSize/4);
+        p.bezierVertex(-heartSize/2, -heartSize*0.75, -heartSize, -heartSize/4, -heartSize/2, heartSize/4);
+        p.vertex(0, heartSize*0.75);
+        p.vertex(heartSize/2, heartSize/4);
+        p.bezierVertex(heartSize, -heartSize/4, heartSize/2, -heartSize*0.75, 0, -heartSize/4);
+        p.endShape(p.CLOSE);
+      }
+      
+      p.pop();
+    }
+  }
+  
+  function drawParticles() {
+    p.noStroke();
+    particles.forEach(particle => {
+      const alpha = particle.life * 255;
+      
+      if (particle.type === "perfect") {
+        p.fill(0, 255, 0, alpha);
+      } else {
+        p.fill(255, 255, 0, alpha);
+      }
+      
+      const size = particle.size * particle.life;
+      p.ellipse(particle.x, particle.y, size, size);
+    });
+  }
+  
+  function drawArrowIndicators() {
+    const arrowSize = 20;
+    const arrowY = CANVAS_HEIGHT - 30;
+    
+    // Arrow symbols and their rotations
+    const arrows = [
+      { symbol: "↓", rotation: 0 }, // DOWN
+      { symbol: "←", rotation: 0 }, // LEFT  
+      { symbol: "↑", rotation: 0 }, // UP
+      { symbol: "→", rotation: 0 }  // RIGHT
+    ];
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(arrowSize);
+    
+    for (let i = 0; i < LANE_COUNT; i++) {
+      const x = i * LANE_WIDTH + LANE_WIDTH / 2;
+      const lane = gameState.lanes[i];
+      
+      // Background circle for arrow
+      p.fill(0, 0, 0, 100);
+      p.ellipse(x, arrowY, arrowSize + 10, arrowSize + 10);
+      
+      // Highlight if lane was recently pressed
+      if (lane.pressAnimation > 0) {
+        const highlightAlpha = lane.pressAnimation * 200;
+        p.fill(255, 255, 100, highlightAlpha);
+        p.ellipse(x, arrowY, arrowSize + 15, arrowSize + 15);
+      }
+      
+      // Draw arrow
+      p.fill(255);
+      if (lane.pressAnimation > 0) {
+        p.fill(255, 255, 0);
+      }
+      p.text(arrows[i].symbol, x, arrowY - 2);
+    }
+  }
+  
+  function drawPauseScreen() {
+    // Animated overlay
+    const overlayAlpha = 150 + 20 * p.sin(p.frameCount * 0.05);
+    p.fill(0, 0, 0, overlayAlpha);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    // Pause text with glow
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    // Glow effect
+    p.fill(100, 100, 255, 100);
+    for (let i = 0; i < 3; i++) {
+      p.textSize(26 + i * 2);
+      p.text("PAUSED", CANVAS_WIDTH / 2 + i, CANVAS_HEIGHT / 2 + i);
+    }
+    
+    // Main text
+    p.fill(255, 255, 100);
+    p.textSize(24);
+    p.text("PAUSED", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+    
+    // Instructions with pulsing
+    const pulseFactor = 1 + 0.1 * p.sin(p.frameCount * 0.15);
+    p.push();
+    p.translate(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 40);
+    p.scale(pulseFactor);
+    p.fill(200, 200, 255);
+    p.textSize(16);
+    p.text("Press ESC to resume", 0, 0);
+    p.pop();
+  }
+  
+  function drawGameOverScreen(win) {
+    // Animated overlay
+    const overlayAlpha = 180 + 30 * p.sin(p.frameCount * 0.03);
+    p.fill(0, 0, 0, overlayAlpha);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    // Game over text with effects
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    if (win) {
+      // Victory effects
+      // Glow effect
+      p.fill(0, 255, 0, 100);
+      for (let i = 0; i < 4; i++) {
+        p.textSize(42 + i * 3);
+        p.text("YOU WIN!", CANVAS_WIDTH / 2 + i, CANVAS_HEIGHT / 3 + i);
+      }
+      
+      // Main text with pulsing
+      const winPulse = 1 + 0.2 * p.sin(p.frameCount * 0.1);
+      p.push();
+      p.translate(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 3);
+      p.scale(winPulse);
+      p.fill(100, 255, 100);
+      p.textSize(40);
+      p.text("YOU WIN!", 0, 0);
+      p.pop();
+      
+      // Celebration particles
+      for (let i = 0; i < 5; i++) {
+        const x = CANVAS_WIDTH / 2 + p.sin(p.frameCount * 0.05 + i) * 100;
+        const y = CANVAS_HEIGHT / 4 + p.cos(p.frameCount * 0.07 + i) * 30;
+        p.fill(255, 255, 0, 150);
+        p.ellipse(x, y, 8, 8);
+      }
+    } else {
+      // Game over effects
+      // Red glow
+      p.fill(255, 0, 0, 100);
+      for (let i = 0; i < 4; i++) {
+        p.textSize(42 + i * 3);
+        p.text("GAME OVER", CANVAS_WIDTH / 2 + i, CANVAS_HEIGHT / 3 + i);
+      }
+      
+      // Main text
+      p.fill(255, 100, 100);
+      p.textSize(40);
+      p.text("GAME OVER", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 3);
+    }
+    
+    // Score summary with better styling
+    p.fill(255, 255, 150);
+    p.textSize(22);
+    p.text(`Final Score: ${Math.floor(gameState.player.score)}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+    
+    p.fill(150, 255, 150);
+    p.textSize(18);
+    p.text(`Max Combo: ${gameState.player.maxCombo}x`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 35);
+    
+    // Performance rating
+    const accuracy = gameState.player.maxCombo > 0 ? (gameState.player.score / (gameState.player.score + gameState.player.misses * 10)) : 0;
+    let rating = "Try Again!";
+    let ratingColor = [255, 150, 150];
+    
+    if (accuracy > 0.9) {
+      rating = "PERFECT!";
+      ratingColor = [100, 255, 100];
+    } else if (accuracy > 0.7) {
+      rating = "Great!";
+      ratingColor = [150, 255, 150];
+    } else if (accuracy > 0.5) {
+      rating = "Good!";
+      ratingColor = [255, 255, 150];
+    }
+    
+    p.fill(ratingColor[0], ratingColor[1], ratingColor[2]);
+    p.textSize(16);
+    p.text(rating, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 60);
+    
+    // Restart prompt with pulsing
+    const restartPulse = 1 + 0.15 * p.sin(p.frameCount * 0.12);
+    p.push();
+    p.translate(CANVAS_WIDTH / 2, CANVAS_HEIGHT * 3/4);
+    p.scale(restartPulse);
+    p.fill(255, 255, 100);
+    p.textSize(18);
+    p.text("PRESS R TO RESTART", 0, 0);
+    p.pop();
+  }
+  
+  // Logging functions
+  function logGameInfo(status, data) {
+    p.logs.game_info.push({
+      game_status: status,
+      data: data,
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+  
+  function logPlayerInfo() {
+    p.logs.player_info.push({
+      screen_x: 0, // Not applicable for this game
+      screen_y: 0, // Not applicable for this game
+      game_x: 0,   // Not applicable for this game
+      game_y: 0,   // Not applicable for this game
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+  
+  function logInput(inputType, data) {
+    p.logs.inputs.push({
+      input_type: inputType,
+      data: data,
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+});
+
+// Expose the game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+</file>
+
+<file name="tile.js">
+import { LANE_WIDTH, TILE_HEIGHT, TARGET_ZONE_Y, CANVAS_HEIGHT } from './globals.js';
+
+export class Tile {
+  constructor(laneIndex, y = -TILE_HEIGHT) {
+    this.laneIndex = laneIndex;
+    this.x = laneIndex * LANE_WIDTH;
+    this.y = y;
+    this.width = LANE_WIDTH;
+    this.height = TILE_HEIGHT;
+    this.hit = false;
+    this.missed = false;
+    this.perfect = false;
+    this.good = false;
+    this.active = true;
+    this.scale = 0.8; // Start slightly smaller for spawn animation
+    this.rotation = 0;
+    this.hitAnimation = 0;
+    this.hitTime = 0;
+    this.glowIntensity = 0;
+  }
+
+  update(speed) {
+    if (!this.active && this.hitAnimation <= 0) return;
+    
+    this.y += speed;
+    
+    // Animate scale for spawn effect
+    if (this.scale < 1.0) {
+      this.scale = Math.min(1.0, this.scale + 0.05);
+    }
+    
+    // Update hit animation
+    if (this.hitAnimation > 0) {
+      this.hitAnimation = Math.max(0, this.hitAnimation - 0.03);
+      this.scale = 1.0 + this.hitAnimation * 0.3; // Scale up on hit
+    }
+    
+    // Update glow intensity
+    if (this.glowIntensity > 0) {
+      this.glowIntensity = Math.max(0, this.glowIntensity - 0.02);
+    }
+    
+    // Check if the tile is completely off screen
+    if (this.y > CANVAS_HEIGHT) {
+      this.active = false;
+      if (!this.hit) {
+        this.missed = true;
+      }
+    }
+  }
+
+  draw(p) {
+    if (!this.active && this.hitAnimation <= 0) return;
+    
+    const centerX = this.x + this.width / 2;
+    const centerY = this.y + this.height / 2;
+    
+    p.push();
+    p.translate(centerX, centerY);
+    p.rotate(this.rotation);
+    p.scale(this.scale);
+    
+    // Draw glow effect
+    if (this.glowIntensity > 0 || this.hitAnimation > 0) {
+      const glowSize = Math.max(this.glowIntensity, this.hitAnimation) * 20;
+      p.noStroke();
+      
+      // Multiple glow layers for better effect
+      for (let i = 3; i > 0; i--) {
+        const alpha = (this.glowIntensity * 30) / i;
+        if (this.perfect) {
+          p.fill(0, 255, 0, alpha);
+        } else if (this.good) {
+          p.fill(255, 255, 0, alpha);
+        } else {
+          p.fill(100, 100, 255, alpha);
+        }
+        const size = glowSize * i;
+        p.rect(-this.width/2 - size/2, -this.height/2 - size/2, this.width + size, this.height + size);
+      }
+    }
+    
+    // Draw the main tile with gradient effect
+    if (this.hit) {
+      // Fade out hit tiles
+      const fadeAlpha = this.hitAnimation * 150 + 50;
+      p.fill(80, 80, 80, fadeAlpha);
+    } else {
+      // Draw gradient for active tiles
+      p.fill(0);
+    }
+    
+    p.stroke(60, 60, 60);
+    p.strokeWeight(2);
+    p.rect(-this.width/2, -this.height/2, this.width, this.height);
+    
+    // Add inner highlight for 3D effect
+    if (!this.hit) {
+      p.stroke(40, 40, 40);
+      p.strokeWeight(1);
+      p.noFill();
+      p.rect(-this.width/2 + 2, -this.height/2 + 2, this.width - 4, this.height - 4);
+    }
+    
+    p.pop();
+    
+    // Draw hit feedback text (outside of transform)
+    if (this.hit && this.hitAnimation > 0) {
+      const textAlpha = this.hitAnimation * 255;
+      const textY = centerY - (1 - this.hitAnimation) * 30; // Float upward
+      
+      p.textAlign(p.CENTER, p.CENTER);
+      p.textSize(16 + this.hitAnimation * 8);
+      
+      // Text shadow
+      p.fill(0, 0, 0, textAlpha * 0.5);
+      if (this.perfect) {
+        p.text("PERFECT!", centerX + 1, textY + 1);
+        p.fill(0, 255, 0, textAlpha);
+        p.text("PERFECT!", centerX, textY);
+      } else if (this.good) {
+        p.text("GOOD!", centerX + 1, textY + 1);
+        p.fill(255, 255, 0, textAlpha);
+        p.text("GOOD!", centerX, textY);
+      }
+    }
+  }
+
+  checkHit() {
+    // Check if the tile is in the target zone
+    const tileBottom = this.y + this.height;
+    const tileMiddle = this.y + this.height/2;
+    
+    if (tileBottom >= TARGET_ZONE_Y && this.y <= TARGET_ZONE_Y + TILE_HEIGHT) {
+      // Tile is in the target zone
+      this.hit = true;
+      this.active = false;
+      
+      // Check if it's a perfect hit
+      if (Math.abs(tileMiddle - (TARGET_ZONE_Y + TILE_HEIGHT/2)) < 20) {
+        this.perfect = true;
+        this.glowIntensity = 1.0;
+        return "perfect";
+      } else {
+        this.good = true;
+        this.glowIntensity = 0.7;
+        return "good";
+      }
+    }
+    
+    return "miss";
+  }
+
+  isInTargetZone() {
+    const tileBottom = this.y + this.height;
+    return tileBottom >= TARGET_ZONE_Y && this.y <= TARGET_ZONE_Y + TILE_HEIGHT;
+  }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

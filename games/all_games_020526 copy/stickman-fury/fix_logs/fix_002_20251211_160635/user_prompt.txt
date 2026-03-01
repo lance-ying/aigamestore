@@ -1,0 +1,1485 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you add more enemy types, like more multi hit enemies
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Stickman Fury</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+      canvas { border: 2px solid #444; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; justify-content: center; }
+      .control-button { 
+          padding: 8px 16px; 
+          cursor: pointer; 
+          background: #444; 
+          color: #fff; 
+          border: 1px solid #555; 
+          border-radius: 4px; 
+          font-weight: bold;
+          transition: background 0.2s;
+      }
+      .control-button:hover { background: #555; }
+      .control-button:active { background: #333; }
+      
+      h1 { color: #f0f0f0; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 10px; font-size: 24px; }
+      p { color: #aaa; font-size: 14px; max-width: 600px; text-align: center; margin: 5px 0; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle">Stickman Fury</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST 1 (Basic)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST 2 (Perfect)</button>
+      </div>
+      <p id="gameDescription">
+        Rhythm-based brawler. Enemies approach from Left and Right. <br>
+        Wait for them to reach the markers and strike!
+      </p>
+      <p id="gameControls" style="color: #4da6ff;">
+        Controls: LEFT/RIGHT Arrows to Attack | SPACE for Fury | ESC to Pause
+      </p>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.7.0/lib/p5.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/p5.collide2d@0.7.3/p5.collide2d.min.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+/**
+ * automated_testing_controller.js
+ * Controls the automated playing logic for TEST_1 and TEST_2 modes.
+ */
+
+import { gameState, CANVAS_WIDTH, ATTACK_RANGE } from './globals.js';
+import { handleAttackInput, handleFury } from './combat_manager.js';
+
+export function updateAutomatedTest() {
+    if (gameState.gamePhase !== 'PLAYING') return;
+
+    if (gameState.controlMode === 'TEST_1') {
+        runTestStrategyBasic();
+    } else if (gameState.controlMode === 'TEST_2') {
+        runTestStrategyPerfect();
+    }
+}
+
+function runTestStrategyBasic() {
+    // Strategy: Cautious. Attack only when enemy is very close (guaranteed hit).
+    // range safety buffer: 20px
+    const safeRange = ATTACK_RANGE - 20;
+    const center = CANVAS_WIDTH / 2;
+
+    // Check Left
+    if (gameState.leftSideEnemies.length > 0) {
+        const enemy = gameState.leftSideEnemies[0];
+        const dist = Math.abs(enemy.x - center);
+        if (dist < safeRange && !gameState.isMissStunned) {
+            handleAttackInput(-1);
+            return;
+        }
+    }
+
+    // Check Right
+    if (gameState.rightSideEnemies.length > 0) {
+        const enemy = gameState.rightSideEnemies[0];
+        const dist = Math.abs(enemy.x - center);
+        if (dist < safeRange && !gameState.isMissStunned) {
+            handleAttackInput(1);
+            return;
+        }
+    }
+}
+
+function runTestStrategyPerfect() {
+    // Strategy: Frame-perfect. Hit as soon as they enter valid range.
+    // Also use Fury whenever available.
+    
+    const center = CANVAS_WIDTH / 2;
+    
+    // Fury
+    if (gameState.furyMeter >= 100) {
+        handleFury();
+        return;
+    }
+
+    // Check Left
+    if (gameState.leftSideEnemies.length > 0) {
+        const enemy = gameState.leftSideEnemies[0];
+        const dist = Math.abs(enemy.x - center);
+        if (dist <= ATTACK_RANGE && !gameState.isMissStunned) {
+            handleAttackInput(-1);
+            // In perfect mode, we can potentially attack multiple times per frame if needed? 
+            // No, usually limited by animation or game loop. But stick to one action per frame to be safe.
+            return;
+        }
+    }
+
+    // Check Right
+    if (gameState.rightSideEnemies.length > 0) {
+        const enemy = gameState.rightSideEnemies[0];
+        const dist = Math.abs(enemy.x - center);
+        if (dist <= ATTACK_RANGE && !gameState.isMissStunned) {
+            handleAttackInput(1);
+            return;
+        }
+    }
+}
+</file>
+
+<file name="globals.js">
+/**
+ * globals.js
+ * Contains global constants, game state definition, and shared configuration.
+ * This file serves as the central source of truth for game tuning and state management.
+ */
+
+// ==========================================
+// CONFIGURATION CONSTANTS
+// ==========================================
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+
+// World & Physics
+export const GROUND_Y = 320;
+export const GRAVITY = 0.6;
+export const DRAG = 0.9;
+
+// Gameplay Mechanics
+export const PLAYER_X = CANVAS_WIDTH / 2;
+export const ATTACK_RANGE = 130; // Distance from player center where hits are valid
+export const HIT_SWEET_SPOT = 100; // Visual marker for "perfect" hit range
+export const MISS_PENALTY_FRAMES = 30; // Frames player is frozen if they miss
+export const COMBO_DECAY_FRAMES = 120; // Frames before combo resets
+export const FURY_MAX = 100; // Max value for fury meter
+export const FURY_GAIN_PER_HIT = 5;
+
+// Enemy Spawning
+export const SPAWN_RATE_INITIAL = 120; // Frames between spawns initially
+export const SPAWN_RATE_MIN = 30; // Fastest spawn rate
+export const DIFFICULTY_RAMP_INTERVAL = 600; // Every 10 seconds, difficulty increases
+
+// Colors (using RGB arrays for p5 usage)
+export const COLOR_BG = [20, 20, 25];
+export const COLOR_PLAYER = [255, 255, 255];
+export const COLOR_ENEMY_BASIC = [150, 150, 150];
+export const COLOR_ENEMY_FAST = [255, 100, 100];
+export const COLOR_ENEMY_TANK = [100, 100, 255];
+export const COLOR_GROUND = [50, 50, 60];
+export const COLOR_UI_ACCENT = [255, 215, 0]; // Gold
+
+// ==========================================
+// GAME STATE MANAGEMENT
+// ==========================================
+
+/**
+ * The central game state object.
+ * This object is mutated throughout the game loop to reflect the current status.
+ */
+export const gameState = {
+    // System State
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Gameplay State
+    score: 0,
+    highScore: 0,
+    combo: 0,
+    maxCombo: 0,
+    furyMeter: 0,
+    difficultyLevel: 1,
+    timeSinceLastKill: 0,
+    isMissStunned: false,
+    missStunTimer: 0,
+    
+    // Entities
+    player: null,
+    enemies: [],      // All active enemies
+    particles: [],    // Visual effects
+    floatingTexts: [], // Damage numbers, "Miss!", "Perfect!"
+    backgroundEffects: [], // Speed lines, flashes
+    
+    // Combat Queues (Optimization for rapid lookup)
+    leftSideEnemies: [],
+    rightSideEnemies: [],
+    
+    // Camera / Screen Shake
+    shakeIntensity: 0,
+    shakeDecay: 0.9,
+    cameraOffset: { x: 0, y: 0 },
+    
+    // Stats Tracking
+    kills: 0,
+    misses: 0,
+    perfectHits: 0
+};
+
+/**
+ * Returns the current game state.
+ * Exposed globally for debugging and automated testing.
+ */
+export function getGameState() {
+    return gameState;
+}
+
+// Expose globally
+if (typeof window !== 'undefined') {
+    window.getGameState = getGameState;
+}
+</file>
+
+<file name="game.js">
+/**
+ * game.js
+ * Main Entry Point.
+ * Initializes p5.js instance, runs the game loop, and coordinates all modules.
+ */
+
+import { 
+    gameState, CANVAS_WIDTH, CANVAS_HEIGHT, COLOR_BG, GROUND_Y, COLOR_GROUND 
+} from './globals.js';
+import { Player } from './entities.js';
+import { updateCombat, initCombat } from './combat_manager.js';
+import { handleKeyPress, startGame, resetGame } from './input.js';
+import { renderUI, renderStartScreen, renderPauseScreen, renderGameOverScreen } from './ui.js';
+import { updateAutomatedTest } from './automated_testing_controller.js';
+import { createSpeedLines } from './particle_system.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    // Initialize Write-Only Logs
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        // Initialize Game State logic
+        resetGame(); // Sets up player, etc.
+        gameState.gamePhase = "START"; // Override to START
+        
+        // Expose control mode setter for HTML buttons
+        window.setControlMode = (mode) => {
+            gameState.controlMode = mode;
+            console.log("Control Mode set to:", mode);
+            // Reset focus to canvas to ensure keys work
+            p.canvas.focus();
+        };
+
+        p.logs.game_info.push({
+            data: { gamePhase: gameState.gamePhase, action: "SETUP" },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    };
+
+    p.draw = function() {
+        // Time management
+        gameState.frameCount = p.frameCount;
+        const currentTime = p.millis();
+        gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = currentTime;
+        
+        // Automated Inputs
+        if (gameState.gamePhase === 'PLAYING') {
+            updateAutomatedTest();
+        }
+
+        // ============================
+        // UPDATE LOGIC
+        // ============================
+        
+        // Screen Shake Decay
+        let shakeX = 0;
+        let shakeY = 0;
+        if (gameState.shakeIntensity > 0) {
+            shakeX = p.random(-1, 1) * gameState.shakeIntensity;
+            shakeY = p.random(-1, 1) * gameState.shakeIntensity;
+            gameState.shakeIntensity *= gameState.shakeDecay;
+            if (gameState.shakeIntensity < 0.5) gameState.shakeIntensity = 0;
+        }
+
+        // ============================
+        // RENDER LOGIC
+        // ============================
+        
+        p.push();
+        p.translate(shakeX, shakeY);
+        
+        // Background
+        p.background(COLOR_BG);
+        
+        // Dynamic Background (Speed Lines)
+        if (gameState.combo > 10 || gameState.furyMeter >= 100) {
+             if (p.frameCount % 10 === 0) createSpeedLines(p, 2);
+        }
+        
+        gameState.backgroundEffects.forEach((eff, i) => {
+            eff.update();
+            eff.render(p);
+            if (eff.life <= 0) gameState.backgroundEffects.splice(i, 1);
+        });
+
+        // Ground
+        p.noStroke();
+        p.fill(COLOR_GROUND);
+        p.rect(0, GROUND_Y, CANVAS_WIDTH, CANVAS_HEIGHT - GROUND_Y);
+
+        if (gameState.gamePhase === 'PLAYING' || gameState.gamePhase === 'PAUSED' || gameState.gamePhase.startsWith('GAME_OVER')) {
+            
+            if (gameState.gamePhase === 'PLAYING') {
+                updateCombat(p);
+                
+                // Update Player
+                if (gameState.player) gameState.player.update();
+                
+                // Update Particles
+                for (let i = gameState.particles.length - 1; i >= 0; i--) {
+                    const part = gameState.particles[i];
+                    part.update();
+                    if (part.life <= 0) gameState.particles.splice(i, 1);
+                }
+                
+                // Update Floating Text
+                for (let i = gameState.floatingTexts.length - 1; i >= 0; i--) {
+                    const txt = gameState.floatingTexts[i];
+                    txt.update();
+                    if (txt.life <= 0) gameState.floatingTexts.splice(i, 1);
+                }
+                
+                // Log Player Info occasionally
+                if (p.frameCount % 30 === 0 && gameState.player) {
+                    p.logs.player_info.push({
+                        screen_x: gameState.player.x,
+                        screen_y: gameState.player.y,
+                        game_x: gameState.player.x,
+                        game_y: gameState.player.y,
+                        health: gameState.player.health,
+                        combo: gameState.combo,
+                        framecount: p.frameCount,
+                        timestamp: Date.now()
+                    });
+                }
+            }
+
+            // Render Entities (Back to Front)
+            // Enemies
+            gameState.enemies.forEach(e => e.render(p));
+            
+            // Player
+            if (gameState.player) gameState.player.render(p);
+            
+            // Particles
+            gameState.particles.forEach(part => part.render(p));
+            gameState.floatingTexts.forEach(txt => txt.render(p));
+            
+            // UI Overlay
+            renderUI(p);
+        }
+
+        p.pop(); // End Shake
+
+        // Overlays
+        if (gameState.gamePhase === 'START') {
+            renderStartScreen(p);
+        } else if (gameState.gamePhase === 'PAUSED') {
+            renderPauseScreen(p);
+        } else if (gameState.gamePhase === 'GAME_OVER_WIN' || gameState.gamePhase === 'GAME_OVER_LOSE') {
+            renderGameOverScreen(p);
+        }
+    };
+
+    p.keyPressed = function() {
+        handleKeyPress(p);
+    };
+});
+
+window.gameInstance = gameInstance;
+</file>
+
+<file name="renderer.js">
+/**
+ * renderer.js
+ * Contains procedural drawing functions for stickman animations.
+ * Allows for dynamic posing without sprites.
+ */
+
+/**
+ * Draws a stickman with a specific pose.
+ * @param {p5} p - p5 instance
+ * @param {number} x - Center X position
+ * @param {number} y - Foot Y position (ground level)
+ * @param {Array} color - [r, g, b]
+ * @param {string} pose - 'IDLE', 'RUN', 'ATTACK_HIGH', 'ATTACK_LOW', 'KICK', 'HURT'
+ * @param {number} facing - 1 for right, -1 for left
+ * @param {number} scale - Size multiplier
+ */
+export function drawStickman(p, x, y, color, pose = 'IDLE', facing = 1, scale = 1.0) {
+    p.push();
+    p.translate(x, y);
+    p.scale(facing * scale, scale); // Flip horizontally if facing left
+    
+    // Config
+    p.stroke(color);
+    p.strokeWeight(3);
+    p.noFill();
+    p.strokeCap(p.ROUND);
+    p.strokeJoin(p.ROUND);
+
+    const headSize = 15;
+    const torsoLen = 25;
+    const limbLen = 20;
+
+    // Default Joint Positions (Relative to Hip at 0, -30)
+    // Hip is approximately at (0, -30) relative to feet at (0,0)
+    // Actually, let's define 0,0 as the feet point on the ground.
+    
+    let hipX = 0;
+    let hipY = -25;
+    let shoulderX = 0;
+    let shoulderY = hipY - torsoLen;
+    let headX = 0;
+    let headY = shoulderY - headSize/2;
+
+    // Limbs target offsets
+    let elbowL_X = -10, elbowL_Y = shoulderY + 10;
+    let handL_X = -15, handL_Y = shoulderY + 20;
+    
+    let elbowR_X = 10, elbowR_Y = shoulderY + 10;
+    let handR_X = 15, handR_Y = shoulderY + 20;
+    
+    let kneeL_X = -5, kneeL_Y = hipY + 12;
+    let footL_X = -10, footL_Y = 0;
+    
+    let kneeR_X = 5, kneeR_Y = hipY + 12;
+    let footR_X = 10, footR_Y = 0;
+
+    // Apply Pose Modifications
+    const time = p.millis() * 0.01; // For idle breathing
+
+    switch (pose) {
+        case 'IDLE':
+            shoulderY += Math.sin(time) * 2;
+            headY += Math.sin(time) * 2;
+            handL_Y = hipY; 
+            handR_Y = hipY;
+            break;
+
+        case 'RUN':
+            const runCycle = time * 2;
+            footL_X = Math.cos(runCycle) * 15;
+            footL_Y = Math.min(0, Math.sin(runCycle) * 5 - 5);
+            kneeL_X = footL_X / 2;
+            
+            footR_X = Math.cos(runCycle + Math.PI) * 15;
+            footR_Y = Math.min(0, Math.sin(runCycle + Math.PI) * 5 - 5);
+            kneeR_X = footR_X / 2;
+            
+            // Arms swing opposite to legs
+            handL_X = Math.cos(runCycle + Math.PI) * 15;
+            handL_Y = shoulderY + 10;
+            handR_X = Math.cos(runCycle) * 15;
+            handR_Y = shoulderY + 10;
+            
+            // Lean forward
+            shoulderX = 5;
+            headX = 8;
+            break;
+
+        case 'ATTACK_PUNCH':
+            // Punch forward (Right hand)
+            shoulderX = 5;
+            handR_X = 35;
+            handR_Y = shoulderY;
+            elbowR_X = 15;
+            elbowR_Y = shoulderY - 5;
+            
+            // Left hand guard
+            handL_X = 5;
+            handL_Y = shoulderY + 5;
+            
+            // Lunge legs
+            footR_X = 20;
+            footL_X = -20;
+            hipY += 5; // Lower stance
+            break;
+
+        case 'ATTACK_KICK':
+            // Kick forward (Right leg)
+            footR_X = 35;
+            footR_Y = hipY - 5;
+            kneeR_X = 15;
+            kneeR_Y = hipY - 5;
+            
+            // Balance on left leg
+            footL_X = -5;
+            hipX = -5;
+            
+            // Arms balance
+            handL_X = -20;
+            handL_Y = shoulderY;
+            handR_X = 20;
+            handR_Y = shoulderY + 10;
+            break;
+
+        case 'HURT':
+            // Knocked back
+            shoulderX = -10;
+            headX = -15;
+            handL_X = -10; handL_Y = shoulderY - 20; // Hands up
+            handR_X = 10; handR_Y = shoulderY - 20;
+            break;
+            
+        case 'WIN':
+             // Victory pose
+             handL_X = -15; handL_Y = shoulderY - 25;
+             handR_X = 15; handR_Y = shoulderY - 25;
+             break;
+    }
+
+    // Drawing
+    // Head
+    p.fill(color); // Filled head looks better
+    p.noStroke();
+    p.circle(headX, headY, headSize);
+    
+    p.noFill();
+    p.stroke(color);
+    
+    // Torso
+    p.line(shoulderX, shoulderY, hipX, hipY);
+
+    // Arms (Shoulder -> Elbow -> Hand)
+    // Left Arm
+    p.beginShape();
+    p.vertex(shoulderX, shoulderY);
+    p.vertex(elbowL_X, elbowL_Y);
+    p.vertex(handL_X, handL_Y);
+    p.endShape();
+    
+    // Right Arm
+    p.beginShape();
+    p.vertex(shoulderX, shoulderY);
+    p.vertex(elbowR_X, elbowR_Y);
+    p.vertex(handR_X, handR_Y);
+    p.endShape();
+
+    // Legs (Hip -> Knee -> Foot)
+    // Left Leg
+    p.beginShape();
+    p.vertex(hipX, hipY);
+    p.vertex(kneeL_X, kneeL_Y);
+    p.vertex(footL_X, footL_Y);
+    p.endShape();
+
+    // Right Leg
+    p.beginShape();
+    p.vertex(hipX, hipY);
+    p.vertex(kneeR_X, kneeR_Y);
+    p.vertex(footR_X, footR_Y);
+    p.endShape();
+
+    p.pop();
+}
+</file>
+
+<file name="ui.js">
+/**
+ * ui.js
+ * Renders all game screens and the Heads-Up Display (HUD).
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, ATTACK_RANGE, COLOR_UI_ACCENT, FURY_MAX } from './globals.js';
+import { formatScore } from './utils.js'; // Correctly import formatScore from utils.js
+
+export function renderUI(p) {
+    p.push();
+    
+    // 1. Attack Range Indicators (Ground Markers)
+    const centerX = CANVAS_WIDTH / 2;
+    const groundY = 320;
+    
+    p.strokeWeight(2);
+    // Left Marker
+    p.stroke(255, 255, 255, 100);
+    if (gameState.leftSideEnemies.length > 0 && Math.abs(gameState.leftSideEnemies[0].x - centerX) < ATTACK_RANGE) {
+        p.stroke(0, 255, 0, 200); // Green if enemy in range
+    }
+    p.line(centerX - ATTACK_RANGE, groundY - 10, centerX - ATTACK_RANGE, groundY + 10);
+    
+    // Right Marker
+    p.stroke(255, 255, 255, 100);
+    if (gameState.rightSideEnemies.length > 0 && Math.abs(gameState.rightSideEnemies[0].x - centerX) < ATTACK_RANGE) {
+        p.stroke(0, 255, 0, 200);
+    }
+    p.line(centerX + ATTACK_RANGE, groundY - 10, centerX + ATTACK_RANGE, groundY + 10);
+
+    // 2. HUD
+    // Score
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(24);
+    p.fill(255);
+    p.noStroke();
+    p.text(`SCORE: ${formatScore(gameState.score)}`, 20, 20);
+    
+    // Combo (Centered, Scales with size)
+    if (gameState.combo > 1) {
+        p.textAlign(p.CENTER, p.TOP);
+        let size = Math.min(60, 20 + gameState.combo * 2);
+        p.textSize(size);
+        p.fill(COLOR_UI_ACCENT);
+        p.text(`${gameState.combo} HITS`, CANVAS_WIDTH/2, 50);
+    }
+    
+    // Health Bar
+    const hpW = 200;
+    const hpH = 15;
+    const hpX = CANVAS_WIDTH / 2 - hpW / 2;
+    const hpY = 20;
+    
+    p.noFill();
+    p.stroke(255);
+    p.strokeWeight(2);
+    p.rect(hpX, hpY, hpW, hpH);
+    
+    if (gameState.player) {
+        const hpRatio = gameState.player.health / gameState.player.maxHealth;
+        p.fill(255 - hpRatio * 255, hpRatio * 255, 0); // Red to Green
+        p.noStroke();
+        p.rect(hpX + 2, hpY + 2, (hpW - 4) * hpRatio, hpH - 4);
+    }
+    
+    // Fury Meter (Bottom)
+    const furyW = 300;
+    const furyH = 10;
+    const furyX = CANVAS_WIDTH/2 - furyW/2;
+    const furyY = CANVAS_HEIGHT - 30;
+    
+    p.noFill();
+    p.stroke(255, 100);
+    p.rect(furyX, furyY, furyW, furyH);
+    
+    const furyRatio = gameState.furyMeter / FURY_MAX;
+    if (furyRatio >= 1.0) {
+        p.fill(0, 200, 255); // Blue glowing when ready
+        // Pulse effect
+        if (p.frameCount % 20 < 10) p.fill(255);
+    } else {
+        p.fill(0, 100, 255);
+    }
+    p.rect(furyX, furyY, furyW * furyRatio, furyH);
+    
+    p.textAlign(p.CENTER, p.BOTTOM);
+    p.textSize(12);
+    p.fill(255, 150);
+    p.text("FURY METER (SPACE)", CANVAS_WIDTH/2, furyY - 5);
+    
+    // Stun Indicator
+    if (gameState.isMissStunned) {
+        p.textAlign(p.CENTER, p.CENTER);
+        p.textSize(40);
+        p.fill(200);
+        p.text("MISSED!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 50);
+    }
+
+    p.pop();
+}
+
+export function renderStartScreen(p) {
+    p.background(0, 0, 0, 200);
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    p.fill(COLOR_UI_ACCENT);
+    p.textSize(48);
+    p.text("STICKMAN FURY", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 60);
+    p.textSize(24);
+    p.text("TWO-FINGER DEATH PUNCH", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 20);
+    
+    p.fill(255);
+    p.textSize(16);
+    p.text("LEFT ARROW / RIGHT ARROW to Attack", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+    p.text("Wait for enemies to enter range!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 70);
+    
+    p.textSize(20);
+    if (p.frameCount % 60 < 30) {
+        p.text("PRESS ENTER TO START", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 120);
+    }
+}
+
+export function renderPauseScreen(p) {
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(255);
+    p.textSize(40);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    p.textSize(20);
+    p.text("Press ESC to Resume", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+}
+
+export function renderGameOverScreen(p) {
+    p.fill(0, 0, 0, 220);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(255, 50, 50);
+    p.textSize(50);
+    p.text("GAME OVER", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 50);
+    
+    p.fill(255);
+    p.textSize(30);
+    p.text(`Final Score: ${formatScore(gameState.score)}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 10);
+    p.textSize(20);
+    p.text(`Max Combo: ${gameState.maxCombo}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+    
+    p.fill(COLOR_UI_ACCENT);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 90);
+}
+</file>
+
+<file name="combat_manager.js">
+/**
+ * combat_manager.js
+ * Handles the logic for registering hits, misses, spawning enemies, and managing queues.
+ */
+
+import { 
+    gameState, CANVAS_WIDTH, ATTACK_RANGE, MISS_PENALTY_FRAMES, 
+    SPAWN_RATE_INITIAL, SPAWN_RATE_MIN, DIFFICULTY_RAMP_INTERVAL 
+} from './globals.js';
+import { Enemy } from './entities.js';
+import { createFloatingText, createExplosion } from './particle_system.js';
+import { randomRange } from './utils.js';
+
+let spawnTimer = 0;
+let currentSpawnRate = SPAWN_RATE_INITIAL;
+
+export function initCombat() {
+    spawnTimer = 0;
+    currentSpawnRate = SPAWN_RATE_INITIAL;
+}
+
+export function updateCombat(p) {
+    if (gameState.gamePhase !== 'PLAYING') return;
+
+    // 1. Spawning Logic
+    spawnTimer++;
+    
+    // Ramp up difficulty
+    if (gameState.frameCount % DIFFICULTY_RAMP_INTERVAL === 0) {
+        gameState.difficultyLevel++;
+        currentSpawnRate = Math.max(SPAWN_RATE_MIN, currentSpawnRate - 5);
+        createFloatingText(CANVAS_WIDTH/2, 100, "SPEED UP!", [255, 50, 50], 30);
+    }
+    
+    if (spawnTimer > currentSpawnRate) {
+        spawnEnemy();
+        spawnTimer = 0;
+    }
+
+    // 2. Sort/Clean Queues (Remove dead enemies)
+    gameState.enemies = gameState.enemies.filter(e => !e.markedForDeletion);
+    
+    // Re-categorize for queue accuracy
+    gameState.leftSideEnemies = gameState.enemies
+        .filter(e => e.side === -1)
+        .sort((a, b) => b.x - a.x); // Sort by closeness to center (descending x for left side)
+        
+    gameState.rightSideEnemies = gameState.enemies
+        .filter(e => e.side === 1)
+        .sort((a, b) => a.x - b.x); // Sort by closeness to center (ascending x for right side)
+        
+    // 3. Update all enemies
+    gameState.enemies.forEach(e => e.update());
+}
+
+function spawnEnemy() {
+    // Determine side (try to balance or random)
+    const side = (Math.random() > 0.5) ? 1 : -1;
+    
+    // Determine type based on difficulty
+    let type = 'BASIC';
+    const roll = Math.random() * 100;
+    
+    if (gameState.difficultyLevel > 3 && roll < 20) type = 'TANK';
+    else if (gameState.difficultyLevel > 1 && roll < 40) type = 'FAST';
+    
+    const enemy = new Enemy(side, type);
+    gameState.enemies.push(enemy);
+}
+
+/**
+ * Player attempts an attack.
+ * @param {number} side - -1 for Left, 1 for Right
+ */
+export function handleAttackInput(side) {
+    if (gameState.isMissStunned) return; // Cannot attack while stunned
+    if (gameState.gamePhase !== 'PLAYING') return;
+
+    const center = CANVAS_WIDTH / 2;
+    let target = null;
+    
+    // Check the appropriate queue
+    // The queues are sorted by closeness to player. Index 0 is the closest.
+    if (side === -1) {
+        if (gameState.leftSideEnemies.length > 0) {
+            target = gameState.leftSideEnemies[0];
+        }
+    } else {
+        if (gameState.rightSideEnemies.length > 0) {
+            target = gameState.rightSideEnemies[0];
+        }
+    }
+    
+    // Validation
+    let validHit = false;
+    if (target) {
+        const dist = Math.abs(target.x - center);
+        if (dist <= ATTACK_RANGE) {
+            validHit = true;
+        }
+    }
+    
+    // Execute
+    gameState.player.attack(side);
+    
+    if (validHit) {
+        // Successful Hit
+        gameState.player.vx = side * 5; // Slight lunge visual
+        target.takeHit(1);
+        
+        gameState.shakeIntensity = 5;
+        
+        // visual feedback
+        const dist = Math.abs(target.x - center);
+        if (dist < 80) {
+             createFloatingText(target.x, target.y - 50, "PERFECT!", [255, 215, 0], 24);
+             gameState.perfectHits++;
+             gameState.score += 50;
+        }
+        
+    } else {
+        // Miss!
+        handleMiss();
+    }
+}
+
+export function handleFury() {
+    if (gameState.furyMeter >= 100 && !gameState.isMissStunned) {
+        // Unleash Fury
+        gameState.furyMeter = 0;
+        gameState.shakeIntensity = 20;
+        gameState.backgroundEffects = []; // Clear current effects
+        
+        // Kill all enemies on screen
+        gameState.enemies.forEach(e => {
+            if (Math.abs(e.x - CANVAS_WIDTH/2) < CANVAS_WIDTH/2) {
+                e.takeHit(100);
+            }
+        });
+        
+        createFloatingText(CANVAS_WIDTH/2, CANVAS_HEIGHT/2, "FURY BLAST!", [255, 0, 0], 40);
+    }
+}
+
+function handleMiss() {
+    gameState.combo = 0;
+    gameState.misses++;
+    gameState.isMissStunned = true;
+    gameState.missStunTimer = MISS_PENALTY_FRAMES;
+    
+    createFloatingText(CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 50, "MISS!", [150, 150, 150], 30);
+    
+    // Visual feedback for miss (gray flash?)
+    gameState.shakeIntensity = 2;
+}
+</file>
+
+<file name="particle_system.js">
+/**
+ * particle_system.js
+ * Handles visual effects, explosions, blood splatters, and hit indicators.
+ * Essential for the "Juice" and feel of a brawler game.
+ */
+
+import { gameState, DRAG, GRAVITY, COLOR_UI_ACCENT } from './globals.js';
+
+/**
+ * Base Particle Class
+ */
+export class Particle {
+    constructor(x, y, type = "NORMAL") {
+        this.x = x;
+        this.y = y;
+        this.vx = (Math.random() - 0.5) * 5;
+        this.vy = (Math.random() - 0.5) * 5;
+        this.life = 1.0;
+        this.decay = 0.02 + Math.random() * 0.03;
+        this.size = 5 + Math.random() * 5;
+        this.type = type; // NORMAL, BLOOD, SPARK, SMOKE, TEXT
+        this.color = [255, 255, 255];
+        this.rotation = Math.random() * Math.PI * 2;
+        this.rotationSpeed = (Math.random() - 0.5) * 0.2;
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        
+        // Physics per type
+        if (this.type === "BLOOD") {
+            this.vy += GRAVITY * 0.5; // Blood drips
+            this.vx *= 0.95;
+        } else if (this.type === "SPARK") {
+            this.vy += GRAVITY * 0.2;
+            this.vx *= DRAG;
+        } else if (this.type === "SMOKE") {
+            this.vy -= 0.05; // Smoke rises
+            this.vx *= 0.9;
+        }
+
+        this.rotation += this.rotationSpeed;
+        this.life -= this.decay;
+    }
+
+    render(p) {
+        if (this.life <= 0) return;
+
+        p.push();
+        p.translate(this.x, this.y);
+        p.rotate(this.rotation);
+        
+        const alpha = this.life * 255;
+        
+        if (this.type === "BLOOD") {
+            p.noStroke();
+            p.fill(200, 0, 0, alpha);
+            p.ellipse(0, 0, this.size * this.life, this.size * this.life);
+        } else if (this.type === "SPARK") {
+            p.noStroke();
+            p.fill(255, 255, 100, alpha);
+            p.rectMode(p.CENTER);
+            p.rect(0, 0, this.size * 0.5, this.size * 2);
+        } else if (this.type === "SMOKE") {
+            p.noStroke();
+            p.fill(100, 100, 100, alpha * 0.5);
+            p.circle(0, 0, this.size * 2);
+        } else {
+            p.noStroke();
+            p.fill(this.color[0], this.color[1], this.color[2], alpha);
+            p.circle(0, 0, this.size);
+        }
+        
+        p.pop();
+    }
+}
+
+/**
+ * Floating Text Particle (e.g., "Hit!", "Miss!", "100")
+ */
+export class FloatingText {
+    constructor(x, y, text, color = [255, 255, 255], size = 20) {
+        this.x = x;
+        this.y = y;
+        this.text = text;
+        this.color = color;
+        this.size = size;
+        this.vy = -2;
+        this.life = 1.0;
+        this.decay = 0.02;
+    }
+
+    update() {
+        this.y += this.vy;
+        this.vy *= 0.9; // Slow down ascent
+        this.life -= this.decay;
+    }
+
+    render(p) {
+        if (this.life <= 0) return;
+        p.push();
+        p.textAlign(p.CENTER, p.CENTER);
+        p.textSize(this.size);
+        p.noStroke();
+        p.fill(this.color[0], this.color[1], this.color[2], this.life * 255);
+        p.text(this.text, this.x, this.y);
+        p.stroke(0, this.life * 255);
+        p.strokeWeight(1);
+        p.noFill();
+        p.text(this.text, this.x, this.y);
+        p.pop();
+    }
+}
+
+/**
+ * Speed Line Effect (Background)
+ */
+export class SpeedLine {
+    constructor(x, y, angle, speed) {
+        this.x = x;
+        this.y = y;
+        this.angle = angle;
+        this.speed = speed;
+        this.length = 50 + Math.random() * 100;
+        this.thickness = 1 + Math.random() * 3;
+        this.life = 1.0;
+        this.decay = 0.05;
+    }
+
+    update() {
+        this.x += Math.cos(this.angle) * this.speed;
+        this.y += Math.sin(this.angle) * this.speed;
+        this.life -= this.decay;
+    }
+
+    render(p) {
+        if (this.life <= 0) return;
+        p.push();
+        p.stroke(255, 255, 255, this.life * 100);
+        p.strokeWeight(this.thickness);
+        const tailX = this.x - Math.cos(this.angle) * this.length;
+        const tailY = this.y - Math.sin(this.angle) * this.length;
+        p.line(this.x, this.y, tailX, tailY);
+        p.pop();
+    }
+}
+
+/**
+ * Manager functions to spawn effects
+ */
+export function createExplosion(x, y, type, count = 10) {
+    for (let i = 0; i < count; i++) {
+        const p = new Particle(x, y, type);
+        gameState.particles.push(p);
+    }
+}
+
+export function createFloatingText(x, y, text, color, size) {
+    gameState.floatingTexts.push(new FloatingText(x, y, text, color, size));
+}
+
+export function createSpeedLines(p, count = 5) {
+    // Spawns lines radiating from center or moving horizontally
+    for (let i = 0; i < count; i++) {
+        const angle = (Math.random() < 0.5) ? 0 : Math.PI; // Left or Right
+        const x = (Math.random() < 0.5) ? 0 : p.width;
+        const y = Math.random() * p.height;
+        const speed = 20 + Math.random() * 20;
+        
+        // Adjust angle to point towards center roughly
+        const dir = (x === 0) ? 0 : Math.PI; 
+        
+        gameState.backgroundEffects.push(new SpeedLine(x, y, dir, speed));
+    }
+}
+</file>
+
+<file name="entities.js">
+/**
+ * entities.js
+ * Defines the Player and Enemy classes.
+ * Handles movement, state transitions, and interaction logic.
+ */
+
+import { 
+    gameState, CANVAS_WIDTH, GROUND_Y, ATTACK_RANGE, 
+    COLOR_PLAYER, COLOR_ENEMY_BASIC, COLOR_ENEMY_FAST, COLOR_ENEMY_TANK,
+    GRAVITY
+} from './globals.js';
+import { drawStickman } from './renderer.js';
+import { createExplosion } from './particle_system.js';
+
+/**
+ * The Player Character
+ */
+export class Player {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.vx = 0;
+        this.vy = 0;
+        
+        this.facing = 1; // 1 = Right, -1 = Left
+        this.state = 'IDLE'; // IDLE, ATTACK_LEFT, ATTACK_RIGHT, HURT
+        this.animTimer = 0;
+        this.animDuration = 10; // Frames for attack animation
+        
+        this.health = 100;
+        this.maxHealth = 100;
+    }
+
+    update() {
+        // Animation State Management
+        if (this.state !== 'IDLE') {
+            this.animTimer--;
+            if (this.animTimer <= 0) {
+                this.state = 'IDLE';
+            }
+        }
+
+        // Miss stun recovery
+        if (gameState.isMissStunned) {
+            gameState.missStunTimer--;
+            if (gameState.missStunTimer <= 0) {
+                gameState.isMissStunned = false;
+            }
+        }
+        
+        // Simple Physics (mostly for jump/hit recoil effects, player stays mostly centered)
+        this.x = CANVAS_WIDTH / 2; // Lock x
+        this.y = GROUND_Y; // Lock y
+    }
+
+    attack(direction) {
+        this.facing = direction; // 1 or -1
+        // Alternate animations
+        this.state = (Math.random() > 0.5) ? 'ATTACK_PUNCH' : 'ATTACK_KICK';
+        this.animTimer = 8; // Quick snap
+    }
+    
+    takeDamage(amount) {
+        this.health = Math.max(0, this.health - amount);
+        this.state = 'HURT';
+        this.animTimer = 15;
+        
+        createExplosion(this.x, this.y - 30, "BLOOD", 5);
+        
+        if (this.health <= 0) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+        }
+    }
+
+    render(p) {
+        // Color changes if stunned
+        let color = COLOR_PLAYER;
+        if (gameState.isMissStunned) {
+            color = [100, 100, 100]; // Darker/Gray when stunned
+            // Shake effect on player
+            const shake = (Math.random() - 0.5) * 4;
+            drawStickman(p, this.x + shake, this.y, color, 'HURT', this.facing);
+        } else {
+            drawStickman(p, this.x, this.y, color, this.state, this.facing);
+        }
+    }
+}
+
+/**
+ * The Enemy Character
+ */
+export class Enemy {
+    constructor(side, type = 'BASIC') {
+        // Spawn off-screen
+        this.side = side; // -1 (Left) or 1 (Right)
+        this.x = (side === -1) ? -50 : CANVAS_WIDTH + 50;
+        this.y = GROUND_Y;
+        
+        this.type = type;
+        this.speed = (type === 'FAST') ? 4 + Math.random() : 2 + Math.random();
+        if (type === 'TANK') this.speed *= 0.7;
+        
+        // Difficulty scaling
+        this.speed *= (1 + gameState.difficultyLevel * 0.1);
+        
+        this.state = 'RUN';
+        this.markedForDeletion = false;
+        
+        // Stats
+        this.hp = (type === 'TANK') ? 2 : 1;
+        this.damage = 10;
+        
+        // Visuals
+        this.color = (type === 'BASIC') ? COLOR_ENEMY_BASIC :
+                     (type === 'FAST') ? COLOR_ENEMY_FAST :
+                     COLOR_ENEMY_TANK;
+                     
+        this.scale = (type === 'TANK') ? 1.2 : 1.0;
+    }
+
+    update() {
+        if (this.markedForDeletion) return;
+        
+        // Move towards player (center)
+        const targetX = CANVAS_WIDTH / 2;
+        const distToPlayer = Math.abs(this.x - targetX);
+        
+        // Stop if hit player
+        if (distToPlayer > 20) {
+            this.x += this.speed * -this.side; // Move opposite to side
+            this.state = 'RUN';
+        } else {
+            // Reached player, attack!
+            this.attackPlayer();
+        }
+    }
+    
+    attackPlayer() {
+        if (gameState.player && !gameState.isMissStunned) {
+            gameState.player.takeDamage(this.damage);
+            // Enemy effectively dies after hitting player (suicide attack style common in these games)
+            // Or bounces back. Let's make them die on hit for simplicity of flow.
+            this.markedForDeletion = true;
+            createExplosion(this.x, this.y - 20, "SMOKE", 5);
+        }
+    }
+    
+    takeHit(damage) {
+        this.hp -= damage;
+        createExplosion(this.x, this.y - 30, "BLOOD", 8);
+        createExplosion(this.x, this.y - 30, "SPARK", 3);
+        
+        if (this.hp <= 0) {
+            this.die();
+        } else {
+            // Knockback
+            this.x += this.side * 40; 
+            this.state = 'HURT';
+        }
+    }
+    
+    die() {
+        this.markedForDeletion = true;
+        
+        // Ragdoll effect or just explosion
+        createExplosion(this.x, this.y - 25, "BLOOD", 15);
+        
+        // Update Game State
+        gameState.score += (this.type === 'TANK') ? 200 : 100;
+        gameState.kills++;
+        gameState.furyMeter = Math.min(gameState.furyMeter + 5, 100);
+        gameState.timeSinceLastKill = 0;
+        gameState.combo++;
+        if (gameState.combo > gameState.maxCombo) gameState.maxCombo = gameState.combo;
+    }
+
+    render(p) {
+        // Facing opposite to side (Face the player)
+        const facing = -this.side;
+        drawStickman(p, this.x, this.y, this.color, this.state, facing, this.scale);
+        
+        // Draw HP dots for Tanks
+        if (this.type === 'TANK') {
+             p.push();
+             p.fill(255, 0, 0);
+             p.noStroke();
+             for(let i=0; i<this.hp; i++) {
+                 p.circle(this.x - (this.hp*5)/2 + i*10, this.y - 65, 5);
+             }
+             p.pop();
+        }
+    }
+}
+</file>
+
+<file name="utils.js">
+/**
+ * utils.js
+ * Helper functions for math, geometry, and common utilities.
+ */
+
+import { CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+/**
+ * Linear interpolation
+ */
+export function lerp(start, end, amt) {
+    return (1 - amt) * start + amt * end;
+}
+
+/**
+ * Clamps a value between min and max
+ */
+export function clamp(val, min, max) {
+    return Math.max(min, Math.min(max, val));
+}
+
+/**
+ * Returns a random number between min and max
+ * NOTE: In p5 instance mode, we should ideally use p.random, but for pure logic
+ * independent of the p5 instance (if needed), this uses Math.random.
+ * For this game, we prefer passing the 'p' instance to functions.
+ */
+export function randomRange(min, max) {
+    return Math.random() * (max - min) + min;
+}
+
+/**
+ * Calculates distance between two points
+ */
+export function dist(x1, y1, x2, y2) {
+    return Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
+}
+
+/**
+ * Checks if a point is on screen (with some margin)
+ */
+export function isOnScreen(x, y, margin = 50) {
+    return (
+        x > -margin && 
+        x < CANVAS_WIDTH + margin && 
+        y > -margin && 
+        y < CANVAS_HEIGHT + margin
+    );
+}
+
+/**
+ * Easing function for smooth animations (Ease Out Cubic)
+ */
+export function easeOutCubic(t) {
+    return 1 - Math.pow(1 - t, 3);
+}
+
+/**
+ * Easing function for smooth animations (Ease Out Elastic)
+ */
+export function easeOutElastic(x) {
+    const c4 = (2 * Math.PI) / 3;
+    return x === 0
+      ? 0
+      : x === 1
+      ? 1
+      : Math.pow(2, -10 * x) * Math.sin((x * 10 - 0.75) * c4) + 1;
+}
+
+/**
+ * Formats a number with commas for score display
+ */
+export function formatScore(num) {
+    return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+</file>
+
+<file name="input.js">
+/**
+ * input.js
+ * Handles keyboard input events and maps them to game actions.
+ */
+
+import { gameState } from './globals.js';
+import { handleAttackInput, handleFury, initCombat } from './combat_manager.js';
+import { Player } from './entities.js';
+import { CANVAS_WIDTH, GROUND_Y } from './globals.js';
+
+export function handleKeyPress(p) {
+    const k = p.keyCode;
+    
+    // Log input
+    p.logs.inputs.push({
+        input_type: 'keyPressed',
+        data: { key: p.key, keyCode: k },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+    });
+
+    // Global Controls
+    if (k === 27) { // ESC
+        if (gameState.gamePhase === 'PLAYING') {
+            gameState.gamePhase = 'PAUSED';
+        } else if (gameState.gamePhase === 'PAUSED') {
+            gameState.gamePhase = 'PLAYING';
+        }
+    }
+
+    if (gameState.gamePhase === 'START') {
+        if (k === 13) { // ENTER
+            startGame();
+        }
+    } else if (gameState.gamePhase === 'PLAYING') {
+        if (gameState.controlMode === 'HUMAN') {
+            if (k === 37) { // LEFT ARROW
+                handleAttackInput(-1);
+            } else if (k === 39) { // RIGHT ARROW
+                handleAttackInput(1);
+            } else if (k === 32) { // SPACE
+                handleFury();
+            }
+        }
+    } else if (gameState.gamePhase === 'GAME_OVER_WIN' || gameState.gamePhase === 'GAME_OVER_LOSE') {
+        if (k === 82) { // R
+            resetGame();
+        }
+    }
+}
+
+export function startGame() {
+    resetGame(); // Ensure fresh state
+    gameState.gamePhase = 'PLAYING';
+}
+
+export function resetGame() {
+    gameState.gamePhase = 'START';
+    gameState.score = 0;
+    gameState.combo = 0;
+    gameState.furyMeter = 0;
+    gameState.enemies = [];
+    gameState.particles = [];
+    gameState.floatingTexts = [];
+    gameState.difficultyLevel = 1;
+    gameState.kills = 0;
+    gameState.misses = 0;
+    gameState.perfectHits = 0;
+    gameState.player = new Player(CANVAS_WIDTH / 2, GROUND_Y);
+    gameState.isMissStunned = false;
+    
+    initCombat();
+    
+    // Log reset
+    if (window.gameInstance && window.gameInstance.logs) {
+         window.gameInstance.logs.game_info.push({
+            data: { event: "GAME_RESET" },
+            framecount: window.gameInstance.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

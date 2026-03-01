@@ -1,0 +1,57 @@
+The user is reporting that the HUD (Heads-Up Display) is offset to the left, causing the "qualified", "level", and "score" fields to be cut off. Let me examine the relevant files.
+
+Looking at `ui.js`, the HUD is drawn using a 2D canvas overlay. The `drawHUD()` function draws:
+1. Qualified count at position (20, 40)
+2. Level info at position (20, 70)
+3. Score at position (20, 100)
+4. Timer at position (CANVAS_WIDTH - 120, 40)
+
+The issue mentions the HUD is "offset to the left", making fields cut off. Let me look at the setup:
+
+In `ui.js`:
+```javascript
+export function setupUI() {
+    uiCanvas = document.createElement('canvas');
+    uiCanvas.width = CANVAS_WIDTH;
+    uiCanvas.height = CANVAS_HEIGHT;
+    uiCanvas.style.position = 'absolute';
+    uiCanvas.style.top = '0';
+    uiCanvas.style.left = '0';
+    uiCanvas.style.pointerEvents = 'none';
+    uiCanvas.style.zIndex = '100';
+    
+    if (gameState.gameContainer) {
+        gameState.gameContainer.appendChild(uiCanvas);
+    }
+    
+    uiContext = uiCanvas.getContext('2d');
+}
+```
+
+The UI canvas is positioned absolutely at `top: 0` and `left: 0`, and it's appended to the `gameContainer`. This should be fine.
+
+But wait, looking at `index.html`, I see:
+```html
+<style>
+  ...
+  #game-container { position: relative; width: 600px; height: 400px; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+  canvas { display: block; width: 100% !important; height: 100% !important; }
+
+
+```
+
+The CSS rule `canvas { display: block; width: 100% !important; height: 100% !important; }` applies to ALL canvas elements, including both the WebGL canvas and the UI overlay canvas. The canvas width/height attributes set the internal resolution, while the CSS width/height set the display size. If these don't match, the content gets scaled and offset. The UI canvas's internal resolution (600x400) needs to align with how it's being displayed on screen.
+
+The HUD text being cut off on the left suggests the UI canvas is being scaled incorrectly by the CSS rule. Since the UI overlay needs exact pixel positioning for its elements, applying the 100% sizing to it causes rendering issues. I should either make the CSS rule specific to just the WebGL canvas, or override the styling for the UI canvas to prevent the 100% scaling from affecting it. The structure has `gameState.renderer.domElement` as the WebGL canvas and `uiCanvas` as the separate overlay, so they need different CSS treatment. = 'bold 20px Arial';
+    uiContext.fillStyle = 'white';
+    uiContext.strokeStyle = 'black';
+    uiContext.lineWidth = 3;
+    
+    // Qualified Count
+    const text = `Qualified: ${gameState.qualifiedCount} / ${gameState.qualificationLimit}`;
+    uiContext.strokeText(text, 20, 40);
+    uiContext.fillText(text, 20, 40);
+
+The text is drawn at position x=20, so it should sit 20 pixels from the left edge. If it's appearing offset, the canvas itself might be misaligned. The `width: 100% !important` and `height: 100% !important` styling could be stretching the canvas beyond its intended 600x400 resolution, causing the coordinate system to scale incorrectly and shift the rendered content leftward.
+
+I need to give the UI canvas its own class or ID and apply explicit sizing in CSS to prevent the generic canvas rule from distorting it. This way the internal resolution stays locked at 600x400 without any scaling interference.

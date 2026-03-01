@@ -1,0 +1,913 @@
+The following changes address the issues:
+1.  **Multiple Levels**: Implemented a level system where reaching the stairs advances to the next level instead of winning immediately. The game now spans 3 levels.
+2.  **Exit Bug Fix**: Modified the dungeon generation in `grid.js` to ensure the player and exit never spawn on the same tile, and that the exit tile is not overwritten by the player's start position logic. This prevents the "missing stairs" issue when rooms overlap or only one room is generated.
+
+Here are the updated files:
+
+<analysis>
+- Issue identified: 
+    1. Reaching the exit immediately ends the game instead of advancing to a new level.
+    2. The exit stairs sometimes disappear because the player spawn logic can overwrite the exit tile if they share coordinates (common in single-room layouts), or if the player spawns on top of it.
+- Files affected: `globals.js`, `grid.js`, `physics.js`, `game.js`, `ui.js`
+- Changes needed:
+    1. `globals.js`: Add `level` and `maxLevels` to state.
+    2. `grid.js`: Randomize start/exit positions within rooms and ensure they don't overlap. Prevent overwriting the Exit tile.
+    3. `physics.js`: Set a `triggerNextLevel` flag on exit collision instead of immediate win.
+    4. `game.js`: Implement `nextLevel` and `startLevel` functions to handle progression while preserving stats.
+    5. `ui.js`: Display current level in the HUD.
+</analysis>
+
+<code filename="globals.js">
+/**
+ * Global constants and state management for Crypt of the Rhythm Knight
+ */
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TILE_SIZE = 40;
+export const GRID_WIDTH = 15; // 600 / 40
+export const GRID_HEIGHT = 9; // 360 / 40 (leaving 40px for HUD)
+export const HUD_HEIGHT = 40;
+
+// Rhythm Constants
+export const BPM = 120;
+export const BEAT_MS = 60000 / BPM;
+export const INPUT_WINDOW = 150; // ms window around the beat to accept input
+
+// Colors
+export const COLORS = {
+    BACKGROUND: [20, 15, 25],
+    GRID_DARK: [30, 25, 35],
+    GRID_LIGHT: [35, 30, 40],
+    WALL: [60, 50, 70],
+    PLAYER: [100, 200, 255],
+    ENEMY_SLIME: [100, 255, 100],
+    ENEMY_BAT: [200, 100, 255],
+    ENEMY_SKELETON: [255, 255, 255],
+    GOLD: [255, 215, 0],
+    POTION: [255, 50, 50],
+    EXIT: [255, 255, 0],
+    BEAT_BAR: [0, 255, 255],
+    BEAT_PERFECT: [0, 255, 0],
+    BEAT_MISS: [255, 0, 0]
+};
+
+// Game State
+export const gameState = {
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2
+    
+    // Level
+    level: 1,
+    maxLevels: 3,
+    triggerNextLevel: false,
+
+    // Time & Rhythm
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    startTime: 0,
+    lastBeatTime: 0,
+    beatCount: 0,
+    nextBeatTime: 0,
+    
+    // Player Stats
+    score: 0,
+    multiplier: 1,
+    combo: 0,
+    health: 3,
+    maxHealth: 3,
+    
+    // World
+    entities: [],
+    particles: [],
+    grid: [], // 2D array of tiles
+    player: null,
+    exit: null,
+    
+    // Input state
+    lastInputBeat: -1, // Track which beat the player last acted on to prevent double moves
+    
+    // Camera Shake
+    shakeAmount: 0,
+    
+    // Debug/Logging
+    logs: {
+        game_info: [],
+        inputs: [],
+        player_info: []
+    }
+};
+
+/**
+ * Expose gameState globally
+ */
+export function getGameState() {
+    return gameState;
+}
+
+// Attach to window
+window.getGameState = getGameState;
+
+/**
+ * Reset game state for a new run
+ */
+export function resetGameState() {
+    gameState.score = 0;
+    gameState.multiplier = 1;
+    gameState.combo = 0;
+    gameState.health = 3;
+    gameState.level = 1;
+    gameState.triggerNextLevel = false;
+    
+    gameState.entities = [];
+    gameState.particles = [];
+    gameState.shakeAmount = 0;
+    gameState.lastInputBeat = -1;
+    gameState.beatCount = 0;
+    gameState.startTime = 0; // Will be set in game.js on start
+}
+</code>
+
+<code filename="grid.js">
+/**
+ * Grid and Dungeon Generation
+ */
+
+import { 
+    gameState, GRID_WIDTH, GRID_HEIGHT, TILE_SIZE, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS 
+} from './globals.js';
+import { Wall, Floor, Exit } from './entities.js';
+
+export class Dungeon {
+    constructor() {
+        this.width = GRID_WIDTH;
+        this.height = GRID_HEIGHT;
+        this.tiles = []; // 2D array
+    }
+
+    /**
+     * Initialize empty grid
+     */
+    initGrid() {
+        this.tiles = [];
+        for (let y = 0; y < this.height; y++) {
+            const row = [];
+            for (let x = 0; x < this.width; x++) {
+                row.push(null);
+            }
+            this.tiles.push(row);
+        }
+    }
+
+    /**
+     * Generate a procedural level
+     * @param {object} p - p5 instance for random
+     */
+    generateLevel(p) {
+        this.initGrid();
+        
+        // 1. Fill with walls
+        for (let y = 0; y < this.height; y++) {
+            for (let x = 0; x < this.width; x++) {
+                this.tiles[y][x] = new Wall(x, y);
+            }
+        }
+
+        // 2. Create rooms (BSP or Random Walk)
+        // Simple approach: Random Rectangles connected by corridors
+        const rooms = [];
+        const numRooms = p.floor(p.random(3, 6));
+
+        for (let i = 0; i < numRooms; i++) {
+            const w = p.floor(p.random(3, 6));
+            const h = p.floor(p.random(3, 6));
+            const x = p.floor(p.random(1, this.width - w - 1));
+            const y = p.floor(p.random(1, this.height - h - 1));
+            
+            const newRoom = { x, y, w, h };
+            
+            // Check overlap
+            let overlap = false;
+            for (let r of rooms) {
+                if (x < r.x + r.w + 1 && x + w + 1 > r.x && 
+                    y < r.y + r.h + 1 && y + h + 1 > r.y) {
+                    overlap = true;
+                    break;
+                }
+            }
+            
+            if (!overlap) {
+                this.carveRoom(newRoom);
+                rooms.push(newRoom);
+            }
+        }
+
+        // Ensure at least one room exists (fallback)
+        if (rooms.length === 0) {
+            const w = 5;
+            const h = 5;
+            const x = p.floor(this.width/2 - w/2);
+            const y = p.floor(this.height/2 - h/2);
+            const room = {x, y, w, h};
+            this.carveRoom(room);
+            rooms.push(room);
+        }
+
+        // 3. Connect rooms
+        for (let i = 0; i < rooms.length - 1; i++) {
+            const r1 = rooms[i];
+            const r2 = rooms[i + 1];
+            
+            // Center points
+            const c1 = { x: p.floor(r1.x + r1.w / 2), y: p.floor(r1.y + r1.h / 2) };
+            const c2 = { x: p.floor(r2.x + r2.w / 2), y: p.floor(r2.y + r2.h / 2) };
+            
+            this.carveCorridor(c1.x, c1.y, c2.x, c2.y);
+        }
+
+        // 4. Place Player in first room
+        const firstRoom = rooms[0];
+        // Pick random spot in room for player
+        const startX = p.floor(p.random(firstRoom.x, firstRoom.x + firstRoom.w));
+        const startY = p.floor(p.random(firstRoom.y, firstRoom.y + firstRoom.h));
+        
+        // Ensure start pos is floor (and not a wall, though carveRoom makes them floors)
+        if (this.tiles[startY][startX].type !== 'FLOOR') {
+            this.tiles[startY][startX] = new Floor(startX, startY);
+        }
+
+        // 5. Place Exit in last room (or same room if only 1)
+        const lastRoom = rooms[rooms.length - 1];
+        let exitX, exitY;
+        let attempts = 0;
+        
+        do {
+            exitX = p.floor(p.random(lastRoom.x, lastRoom.x + lastRoom.w));
+            exitY = p.floor(p.random(lastRoom.y, lastRoom.y + lastRoom.h));
+            attempts++;
+        } while (exitX === startX && exitY === startY && attempts < 10);
+        
+        // Force different spot if still same after attempts (scan room)
+        if (exitX === startX && exitY === startY) {
+            for(let y = lastRoom.y; y < lastRoom.y + lastRoom.h; y++) {
+                for(let x = lastRoom.x; x < lastRoom.x + lastRoom.w; x++) {
+                    if (x !== startX || y !== startY) {
+                        exitX = x;
+                        exitY = y;
+                        break;
+                    }
+                }
+                if (exitX !== startX || exitY !== startY) break;
+            }
+        }
+
+        this.tiles[exitY][exitX] = new Exit(exitX, exitY);
+        gameState.exit = this.tiles[exitY][exitX];
+        
+        return { startX, startY, rooms };
+    }
+
+    carveRoom(room) {
+        for (let y = room.y; y < room.y + room.h; y++) {
+            for (let x = room.x; x < room.x + room.w; x++) {
+                this.tiles[y][x] = new Floor(x, y);
+            }
+        }
+    }
+
+    carveCorridor(x1, y1, x2, y2) {
+        // Horizontal then Vertical
+        let x = x1;
+        let y = y1;
+        
+        while (x !== x2) {
+            this.tiles[y][x] = new Floor(x, y);
+            x += (x < x2) ? 1 : -1;
+        }
+        while (y !== y2) {
+            this.tiles[y][x] = new Floor(x, y);
+            y += (y < y2) ? 1 : -1;
+        }
+        this.tiles[y2][x2] = new Floor(x2, y2);
+    }
+
+    /**
+     * Get tile at grid coordinates
+     */
+    getTile(x, y) {
+        if (x < 0 || x >= this.width || y < 0 || y >= this.height) return null;
+        return this.tiles[y][x];
+    }
+    
+    /**
+     * Check if tile is walkable (not a wall)
+     */
+    isWalkable(x, y) {
+        const tile = this.getTile(x, y);
+        return tile && tile.walkable;
+    }
+
+    render(p) {
+        for (let y = 0; y < this.height; y++) {
+            for (let x = 0; x < this.width; x++) {
+                if (this.tiles[y][x]) {
+                    this.tiles[y][x].render(p);
+                }
+            }
+        }
+    }
+}
+</code>
+
+<code filename="physics.js">
+/**
+ * Collision and Movement Logic
+ */
+
+import { gameState, GRID_WIDTH, GRID_HEIGHT, TILE_SIZE } from './globals.js';
+import { createParticleEffect, createFloatingText } from './particles.js';
+import { Player, Enemy, Item } from './entities.js';
+
+export class PhysicsSystem {
+    
+    /**
+     * Attempt to move an entity to a target grid position
+     * @returns {boolean} true if moved, false if blocked
+     */
+    tryMoveEntity(entity, dx, dy) {
+        const targetX = entity.gridX + dx;
+        const targetY = entity.gridY + dy;
+        
+        // Bounds check
+        if (targetX < 0 || targetX >= GRID_WIDTH || targetY < 0 || targetY >= GRID_HEIGHT) {
+            return false;
+        }
+
+        // Wall check
+        if (gameState.dungeon && !gameState.dungeon.isWalkable(targetX, targetY)) {
+            // Bump effect against wall
+            entity.bump(dx * 0.5, dy * 0.5);
+            return false;
+        }
+
+        // Entity Collision check
+        const occupant = this.getEntityAt(targetX, targetY);
+        
+        if (entity.type === 'PLAYER') {
+            return this.handlePlayerCollision(entity, targetX, targetY, occupant, dx, dy);
+        } else if (entity.type === 'ENEMY') {
+            return this.handleEnemyCollision(entity, targetX, targetY, occupant);
+        }
+
+        return false;
+    }
+
+    getEntityAt(x, y) {
+        // Check regular entities
+        for (let e of gameState.entities) {
+            if (e.gridX === x && e.gridY === y) return e;
+        }
+        // Check player separately if not in list (though usually added to list)
+        if (gameState.player && gameState.player.gridX === x && gameState.player.gridY === y) return gameState.player;
+        
+        return null;
+    }
+
+    handlePlayerCollision(player, x, y, occupant, dx, dy) {
+        if (!occupant) {
+            // Move freely
+            player.moveTo(x, y);
+            
+            // Check for exit
+            if (gameState.exit && gameState.exit.gridX === x && gameState.exit.gridY === y) {
+                gameState.triggerNextLevel = true;
+                return true;
+            }
+            return true;
+        }
+        
+        if (occupant.type === 'ENEMY') {
+            // Attack!
+            player.bump(dx, dy);
+            occupant.takeDamage(1);
+            occupant.bump(dx * 0.5, dy * 0.5); // Knockback visual
+            createParticleEffect(occupant.pixelX + TILE_SIZE/2, occupant.pixelY + TILE_SIZE/2, [255, 255, 255], 5);
+            createFloatingText(occupant.pixelX + TILE_SIZE/2, occupant.pixelY, "HIT!", [255, 255, 255]);
+            return true; // Action taken (attack), but didn't move into tile
+        }
+        
+        if (occupant.type === 'ITEM') {
+            // Collect
+            this.collectItem(player, occupant);
+            player.moveTo(x, y);
+            return true;
+        }
+
+        return false;
+    }
+
+    handleEnemyCollision(enemy, x, y, occupant) {
+        if (!occupant) {
+            enemy.moveTo(x, y);
+            return true;
+        }
+        
+        if (occupant.type === 'PLAYER') {
+            // Enemy attacks player
+            this.damagePlayer(1);
+            enemy.bump((x - enemy.gridX), (y - enemy.gridY));
+            return true;
+        }
+
+        // Enemies don't attack other enemies or items
+        return false;
+    }
+
+    damagePlayer(amount) {
+        gameState.player.health -= amount;
+        gameState.shakeAmount = 10; // Screen shake
+        createFloatingText(gameState.player.pixelX + TILE_SIZE/2, gameState.player.pixelY, "-1 HP", [255, 0, 0]);
+        
+        // Reset combo
+        gameState.combo = 0;
+        gameState.multiplier = 1;
+        
+        if (gameState.player.health <= 0) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+        }
+    }
+
+    collectItem(player, item) {
+        if (item.itemType === 'GOLD') {
+            gameState.score += 10 * gameState.multiplier;
+            createFloatingText(player.pixelX, player.pixelY, `+${10 * gameState.multiplier}`, [255, 215, 0]);
+        } else if (item.itemType === 'POTION') {
+            gameState.health = Math.min(gameState.health + 1, gameState.maxHealth);
+            createFloatingText(player.pixelX, player.pixelY, "+1 HP", [0, 255, 0]);
+        }
+        
+        // Remove item
+        const idx = gameState.entities.indexOf(item);
+        if (idx > -1) gameState.entities.splice(idx, 1);
+    }
+}
+
+export const physics = new PhysicsSystem();
+</code>
+
+<code filename="game.js">
+/**
+ * Main Game Loop and p5.js Setup
+ */
+
+import { 
+    gameState, getGameState, resetGameState, 
+    CANVAS_WIDTH, CANVAS_HEIGHT, COLORS 
+} from './globals.js';
+import { rhythmManager } from './rhythm.js';
+import { Dungeon } from './grid.js';
+import { Player, Enemy, Item } from './entities.js';
+import { handleInput } from './input.js';
+import { renderUI, renderStartScreen, renderGameOver, renderPaused } from './ui.js';
+import { updateParticles, renderParticles } from './particles.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    p.logs = gameState.logs; // Link logs
+    
+    // Setup
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        // Log initial
+        p.logs.game_info.push({
+            data: { gamePhase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+        
+        // Initial setup
+        startGame(p);
+    };
+
+    // Draw Loop
+    p.draw = function() {
+        // Update Time
+        const currentTime = p.millis();
+        gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = currentTime;
+        gameState.frameCount = p.frameCount;
+        
+        // Background
+        p.background(COLORS.BACKGROUND);
+        
+        // Automated Inputs
+        if (gameState.controlMode !== 'HUMAN') {
+            const action = get_automated_testing_action(gameState);
+            if (action) {
+                p.keyPressed({ keyCode: action.keyCode });
+                // We simulate the key press logic manually since p.keyPressed is an event
+                handleKeyPress(p, action.keyCode);
+            }
+        }
+        
+        // State Machine
+        switch(gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                break;
+                
+            case "PLAYING":
+                updateGame(p);
+                renderGame(p);
+                renderUI(p);
+                break;
+                
+            case "PAUSED":
+                renderGame(p);
+                renderUI(p); // Show UI even when paused
+                renderPaused(p);
+                break;
+                
+            case "GAME_OVER_WIN":
+            case "GAME_OVER_LOSE":
+                renderGame(p);
+                renderGameOver(p, gameState.gamePhase === "GAME_OVER_WIN");
+                break;
+        }
+    };
+    
+    p.keyPressed = function(e) {
+        // Handle physical key press
+        // If simulated, e might be just { keyCode: ... }
+        const code = e.keyCode || e;
+        handleKeyPress(p, code);
+    };
+});
+
+function handleKeyPress(p, keyCode) {
+    // Log
+    p.logs.inputs.push({
+        type: 'press',
+        key: keyCode,
+        frame: p.frameCount,
+        time: p.millis()
+    });
+    
+    if (keyCode === 82) { // R - Restart
+        if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+             startGame(p);
+             gameState.gamePhase = "START";
+             return;
+        }
+    }
+    
+    handleInput(p, keyCode);
+}
+
+function startGame(p) {
+    resetGameState();
+    startLevel(p);
+}
+
+function nextLevel(p) {
+    gameState.level++;
+    if (gameState.level > gameState.maxLevels) {
+        gameState.gamePhase = "GAME_OVER_WIN";
+    } else {
+        startLevel(p);
+    }
+}
+
+function startLevel(p) {
+    // Clear previous entities but keep player stats if exists
+    gameState.entities = [];
+    gameState.particles = [];
+    
+    // Create Dungeon
+    const dungeon = new Dungeon();
+    gameState.dungeon = dungeon;
+    const startData = dungeon.generateLevel(p);
+    
+    gameState.grid = dungeon.tiles;
+    
+    // Create Player
+    // If player exists, preserve stats
+    let hp = 3;
+    let score = 0;
+    let combo = 0;
+    let multiplier = 1;
+    
+    if (gameState.player) {
+        hp = gameState.player.health;
+        score = gameState.score;
+        combo = gameState.combo;
+        multiplier = gameState.multiplier;
+    }
+    
+    gameState.player = new Player(startData.startX, startData.startY);
+    gameState.player.health = hp;
+    gameState.score = score;
+    gameState.combo = combo;
+    gameState.multiplier = multiplier;
+    
+    gameState.entities.push(gameState.player);
+    
+    // Create Enemies
+    const rooms = startData.rooms;
+    // Iterate all rooms for enemies, ensuring distance from player
+    for (let i = 0; i < rooms.length; i++) {
+        const r = rooms[i];
+        
+        // Chance to spawn enemies in this room
+        // More enemies in later levels
+        const enemyCount = p.floor(p.random(0, 2 + gameState.level));
+        
+        for(let j=0; j<enemyCount; j++) {
+            const ex = p.floor(p.random(r.x, r.x + r.w));
+            const ey = p.floor(p.random(r.y, r.y + r.h));
+            
+            // Don't spawn on player or exit
+            if (ex === gameState.player.gridX && ey === gameState.player.gridY) continue;
+            if (gameState.exit && ex === gameState.exit.gridX && ey === gameState.exit.gridY) continue;
+            
+            // Random enemy type based on level
+            const rand = p.random();
+            let type = 'SLIME';
+            if (gameState.level > 1 && rand > 0.5) type = 'SKELETON';
+            if (gameState.level > 2 && rand > 0.8) type = 'BAT';
+            
+            gameState.entities.push(new Enemy(ex, ey, type));
+        }
+    }
+    
+    // Create Items
+    for (let i = 0; i < rooms.length; i++) {
+        if (p.random() > 0.5) {
+            const r = rooms[i];
+            const x = p.floor(p.random(r.x, r.x + r.w));
+            const y = p.floor(p.random(r.y, r.y + r.h));
+            
+            // Avoid collisions
+            let occupied = false;
+            if (x === gameState.player.gridX && y === gameState.player.gridY) occupied = true;
+            if (gameState.exit && x === gameState.exit.gridX && y === gameState.exit.gridY) occupied = true;
+            
+            if (!occupied) {
+                gameState.entities.push(new Item(x, y, p.random() > 0.7 ? 'POTION' : 'GOLD'));
+            }
+        }
+    }
+}
+
+function updateGame(p) {
+    // Check for level transition
+    if (gameState.triggerNextLevel) {
+        gameState.triggerNextLevel = false;
+        nextLevel(p);
+        return;
+    }
+
+    // Rhythm Update
+    rhythmManager.update(p.millis());
+    
+    // Entity Updates (Animation mostly, physics logic is turn based in input.js)
+    gameState.entities.forEach(e => e.updatePosition());
+    
+    // Particle Updates
+    updateParticles();
+    
+    // Screen Shake Decay
+    if (gameState.shakeAmount > 0) {
+        gameState.shakeAmount *= 0.9;
+        if (gameState.shakeAmount < 0.5) gameState.shakeAmount = 0;
+    }
+    
+    // Log Player State occasionally
+    if (p.frameCount % 60 === 0 && gameState.player) {
+        p.logs.player_info.push({
+            x: gameState.player.gridX,
+            y: gameState.player.gridY,
+            health: gameState.player.health,
+            score: gameState.score,
+            combo: gameState.combo
+        });
+    }
+}
+
+function renderGame(p) {
+    p.push();
+    
+    // Screen Shake
+    if (gameState.shakeAmount > 0) {
+        p.translate(p.random(-gameState.shakeAmount, gameState.shakeAmount), p.random(-gameState.shakeAmount, gameState.shakeAmount));
+    }
+    
+    // Center Camera on Player
+    if (gameState.player) {
+        // Pixel Center
+        const px = gameState.player.pixelX + 20;
+        const py = gameState.player.pixelY + 20;
+        
+        // No camera translation needed for standard grid size
+    }
+    
+    // Render World
+    if (gameState.dungeon) gameState.dungeon.render(p);
+    
+    // Render Entities (Sort by Y for depth)
+    const sortedEntities = [...gameState.entities].sort((a,b) => a.pixelY - b.pixelY);
+    sortedEntities.forEach(e => e.render(p));
+    
+    // Render Particles (on top)
+    renderParticles(p);
+    
+    p.pop();
+}
+
+window.gameInstance = gameInstance;
+window.setControlMode = (mode) => {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+};
+</code>
+
+<code filename="ui.js">
+/**
+ * User Interface: HUD, Metronome, Menus
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, HUD_HEIGHT, COLORS, BPM, TILE_SIZE } from './globals.js';
+import { rhythmManager } from './rhythm.js';
+
+export function renderUI(p) {
+    // Background bar
+    p.fill(0);
+    p.stroke(50);
+    p.strokeWeight(2);
+    p.rect(0, CANVAS_HEIGHT - HUD_HEIGHT, CANVAS_WIDTH, HUD_HEIGHT);
+    
+    // Heart/Metronome
+    renderMetronome(p);
+    
+    // Stats
+    p.noStroke();
+    p.fill(255);
+    p.textSize(16);
+    p.textAlign(p.LEFT, p.CENTER);
+    
+    // Health (Hearts)
+    let heartStr = "HP: ";
+    for(let i=0; i<gameState.maxHealth; i++) {
+        if (i < gameState.health) heartStr += "♥ ";
+        else heartStr += "♡ ";
+    }
+    p.fill(255, 50, 50);
+    p.text(heartStr, 20, CANVAS_HEIGHT - HUD_HEIGHT/2);
+    
+    // Score & Multiplier
+    p.fill(255, 215, 0);
+    p.text(`Score: ${gameState.score}`, 150, CANVAS_HEIGHT - HUD_HEIGHT/2);
+    
+    if (gameState.multiplier > 1) {
+        p.fill(0, 255, 255);
+        p.textSize(20);
+        p.text(`x${gameState.multiplier}`, 250, CANVAS_HEIGHT - HUD_HEIGHT/2);
+    }
+    
+    // Combo
+    if (gameState.combo > 0) {
+        p.fill(255);
+        p.textSize(12);
+        p.text(`Combo: ${gameState.combo}`, 300, CANVAS_HEIGHT - HUD_HEIGHT/2);
+    }
+
+    // Level
+    p.fill(200);
+    p.textSize(14);
+    p.textAlign(p.RIGHT, p.CENTER);
+    p.text(`Level ${gameState.level}/${gameState.maxLevels}`, CANVAS_WIDTH - 20, CANVAS_HEIGHT - HUD_HEIGHT/2);
+}
+
+function renderMetronome(p) {
+    const barCenterY = CANVAS_HEIGHT - HUD_HEIGHT/2;
+    const barCenterX = CANVAS_WIDTH / 2 + 100;
+    const barWidth = 200;
+    const barHeight = 20;
+    
+    // Beat marker center
+    p.fill(50);
+    p.stroke(100);
+    p.rectMode(p.CENTER);
+    p.rect(barCenterX, barCenterY, barWidth, barHeight);
+    
+    // Target Line
+    p.stroke(255);
+    p.strokeWeight(3);
+    p.line(barCenterX, barCenterY - 15, barCenterX, barCenterY + 15);
+    
+    // Moving Bars
+    // We want bars moving from sides to center.
+    // Speed depends on BPM.
+    // rhythmManager.beatProgress is 0->1. 
+    // We visualize future beats.
+    
+    const offset = rhythmManager.getBeatOffset(); // -0.5 to 0.5
+    // Ideally we want to show bars approaching.
+    // Let's draw lines based on time.
+    
+    p.noStroke();
+    p.fill(COLORS.BEAT_BAR);
+    
+    // Current Beat Pulse
+    const pulseSize = 10 + (1 - Math.abs(offset * 2)) * 10;
+    p.circle(barCenterX, barCenterY, pulseSize);
+    
+    // Approaching bars
+    // Calculate position of coming beats
+    // Time to next beat is (1 - beatProgress) * BEAT_MS
+    
+    // Simple visual: two bars closing in from left and right
+    const progress = rhythmManager.beatProgress; // 0 to 1
+    // If progress is 0.9, we are close to next beat.
+    // Distance from center should be proportional to (1 - progress)
+    
+    const maxDist = barWidth / 2;
+    const dist = (1 - progress) * maxDist;
+    
+    // Left bar moving right
+    p.rect(barCenterX - dist, barCenterY, 4, 15);
+    // Right bar moving left
+    p.rect(barCenterX + dist, barCenterY, 4, 15);
+    
+    p.rectMode(p.CORNER); // Reset
+}
+
+export function renderStartScreen(p) {
+    p.background(COLORS.BACKGROUND);
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    p.textSize(40);
+    p.text("Crypt of the Rhythm Knight", CANVAS_WIDTH/2, 100);
+    
+    p.textSize(16);
+    p.fill(200);
+    const desc = "Move to the beat! Use Arrow Keys.\nDon't miss the rhythm or you'll lose your combo.\nFind the Golden Stairs to escape.";
+    p.text(desc, CANVAS_WIDTH/2, 180);
+    
+    p.textSize(20);
+    p.fill(COLORS.BEAT_BAR);
+    p.text("PRESS ENTER TO START", CANVAS_WIDTH/2, 300);
+    
+    p.textSize(12);
+    p.fill(100);
+    p.text("Testing Mode: " + gameState.controlMode, CANVAS_WIDTH/2, 350);
+}
+
+export function renderGameOver(p, won) {
+    p.push();
+    p.fill(0, 0, 0, 200);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    if (won) {
+        p.fill(COLORS.GOLD);
+        p.textSize(50);
+        p.text("ESCAPED!", CANVAS_WIDTH/2, 150);
+    } else {
+        p.fill(255, 0, 0);
+        p.textSize(50);
+        p.text("DEFEATED", CANVAS_WIDTH/2, 150);
+    }
+    
+    p.fill(255);
+    p.textSize(24);
+    p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH/2, 220);
+    
+    p.textSize(18);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, 300);
+    p.pop();
+}
+
+export function renderPaused(p) {
+    p.push();
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(255);
+    p.textSize(40);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    p.textSize(16);
+    p.text("Press ESC to Resume", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+    p.pop();
+}
+</code>

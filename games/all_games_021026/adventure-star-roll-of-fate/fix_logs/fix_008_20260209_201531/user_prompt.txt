@@ -1,0 +1,2482 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+when paused, can you make sure not to hide hud
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+      .game-header { text-align: center; margin-bottom: 15px; max-width: 600px; }
+    </style>
+  </head>
+  <body>
+    <div class="game-header">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin: 0 0 8px 0;"></h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; margin: 8px auto; line-height: 1.3; font-size: 13px;">Navigate 9 levels to reach the exit. Defeat all enemies to unlock the exit and buy weapons from the shop.</p>
+      <p id="gameControls" style="color: #aaa; font-family: Arial, sans-serif; margin: 5px auto 0 auto; line-height: 1.2; font-size: 11px;">Arrow Keys/WASD: Move | Space: Shoot | E: Interact | H: Heal (100 gold) | S: Shop | Enter: Start | Esc: Pause | R: Restart</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="enemy.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+// globals.js - Global constants and game state
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+
+export const PLAYER_TITLE = "Hero";
+
+export const GAME_PHASE = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE",
+  LEVEL_TRANSITION: "LEVEL_TRANSITION"
+};
+
+export const CONTROL_MODE = {
+  HUMAN: "HUMAN",
+  TEST_1: "TEST_1",
+  TEST_2: "TEST_2"
+};
+
+export const GRID_CONFIG = {
+  tileSize: 38,
+  offsetX: 30,
+  offsetY: 105
+};
+
+// Function to update grid offsets for centering
+export function updateGridOffsets(mapWidth, mapHeight) {
+  const gridPixelWidth = mapWidth * GRID_CONFIG.tileSize;
+  const gridPixelHeight = mapHeight * GRID_CONFIG.tileSize;
+  
+  // Center horizontally
+  GRID_CONFIG.offsetX = Math.floor((CANVAS_WIDTH - gridPixelWidth) / 2);
+  
+  // Center vertically, accounting for UI at top (about 64 pixels)
+  const uiHeight = 64;
+  const availableHeight = CANVAS_HEIGHT - uiHeight;
+  GRID_CONFIG.offsetY = uiHeight + Math.floor((availableHeight - gridPixelHeight) / 2);
+}
+
+export const TILE_TYPES = {
+  EMPTY: "EMPTY",
+  WALL: "WALL",
+  EXIT: "EXIT",
+  EVENT_TREASURE: "EVENT_TREASURE",
+  EVENT_TRAP: "EVENT_TRAP",
+  EVENT_ENEMY: "EVENT_ENEMY",
+  EVENT_NPC: "EVENT_NPC",
+  EVENT_MYSTERY: "EVENT_MYSTERY",
+  WEAPON: "WEAPON"
+};
+
+export const WEAPONS = {
+  PISTOL: {
+    name: "Pistol",
+    damage: 1,
+    speed: 3,
+    cost: 0,
+    icon: "🔫",
+    color: [255, 255, 100]
+  },
+  SWORD: {
+    name: "Sword",
+    damage: 2,
+    speed: 3,
+    cost: 500,
+    icon: "⚔️",
+    color: [200, 200, 255]
+  },
+  SHOTGUN: {
+    name: "Shotgun",
+    damage: 2,
+    speed: 4,
+    cost: 800,
+    icon: "💥",
+    color: [255, 150, 50]
+  },
+  RIFLE: {
+    name: "Rifle",
+    damage: 3,
+    speed: 2,
+    cost: 1500,
+    icon: "🎯",
+    color: [100, 255, 255]
+  },
+  LASER: {
+    name: "Laser Gun",
+    damage: 4,
+    speed: 1,
+    cost: 2500,
+    icon: "⚡",
+    color: [255, 100, 255]
+  }
+};
+
+export const gameState = {
+  player: null,
+  entities: [],
+  enemies: [], // Array of moving Enemy instances
+  projectiles: [], // Array of active projectiles
+  score: 0,
+  gamePhase: GAME_PHASE.START,
+  controlMode: CONTROL_MODE.HUMAN,
+  currentLevel: 1,
+  maxLevel: 9,
+  hp: 100,
+  maxHp: 100,
+  currentMap: null,
+  eventMessage: "",
+  eventMessageTimer: 0,
+  eventMessageDuration: 120,
+  levelTransitionTimer: 0,
+  levelTransitionDuration: 90,
+  playerDamageFlash: 0,
+  highScore: 0,
+  luckFactor: 1.0,
+  luck: 50,
+  needsInteraction: false,
+  testModeActionQueue: [],
+  testModeActionIndex: 0,
+  weaponPower: 1,
+  currentWeapon: "PISTOL",
+  ownedWeapons: ["PISTOL"],
+  shopOpen: false
+};
+
+// Load high score from localStorage
+if (typeof window !== 'undefined' && window.localStorage) {
+  const stored = localStorage.getItem('adventureStarHighScore');
+  if (stored) {
+    gameState.highScore = parseInt(stored, 10) || 0;
+  }
+}
+
+export function saveHighScore() {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    localStorage.setItem('adventureStarHighScore', gameState.highScore.toString());
+  }
+}
+</file>
+
+<file name="events.js">
+// events.js - Event handling system
+
+import { gameState } from './globals.js';
+
+export function triggerEvent(tile, level, p) {
+  if (tile.interacted) {
+    return "Already interacted with this tile.";
+  }
+  
+  tile.interacted = true;
+  
+  // Luck influences outcomes
+  const luckBonus = (gameState.luck - 50) / 100; // -0.5 to +0.5
+  
+  switch (tile.type) {
+    case 'EVENT_TREASURE':
+      return handleTreasure(level, luckBonus, p);
+    case 'EVENT_TRAP':
+      return handleTrap(level, luckBonus, p);
+    case 'EVENT_ENEMY':
+      return handleEnemy(level, luckBonus, p);
+    case 'EVENT_NPC':
+      return handleNPC(level, luckBonus, p);
+    case 'EVENT_MYSTERY':
+      return handleMystery(level, luckBonus, p);
+    case 'EXIT':
+      return handleExit(level);
+    default:
+      return "";
+  }
+}
+
+function handleTreasure(level, luckBonus, p) {
+  const rand = p.random();
+  const luckAdjusted = rand + luckBonus * 0.3;
+  
+  if (luckAdjusted > 0.9) {
+    // Major treasure
+    const points = 200 + level * 20;
+    gameState.score += points;
+    return `★ JACKPOT! Found ${points} gold! ★`;
+  } else if (luckAdjusted > 0.5) {
+    // Good treasure
+    const points = 100 + level * 15;
+    gameState.score += points;
+    return `Found ${points} gold!`;
+  } else {
+    // Minor treasure
+    const points = 60 + level * 10;
+    gameState.score += points;
+    return `Found ${points} gold.`;
+  }
+}
+
+function handleTrap(level, luckBonus, p) {
+  const rand = p.random();
+  const luckAdjusted = rand + luckBonus * 0.2;
+  
+  if (luckAdjusted > 0.7) {
+    // Avoided or minor
+    const damage = 8 + level * 2;
+    gameState.player.takeDamage(damage);
+    gameState.score += 20;
+    return `Minor trap triggered! -${damage} HP (+20 gold)`;
+  } else if (luckAdjusted > 0.3) {
+    // Moderate trap
+    const damage = 15 + level * 3;
+    gameState.player.takeDamage(damage);
+    gameState.score += 30;
+    return `TRAP! Lost ${damage} HP (+30 gold)`;
+  } else {
+    // Severe trap
+    const damage = 25 + level * 5;
+    gameState.player.takeDamage(damage);
+    gameState.score += 40;
+    return `DEADLY TRAP! Lost ${damage} HP (+40 gold)`;
+  }
+}
+
+function handleEnemy(level, luckBonus, p) {
+  const rand = p.random();
+  const luckAdjusted = rand + luckBonus * 0.15;
+  
+  if (luckAdjusted > 0.75) {
+    // Easy victory
+    const damage = 10 + level * 2;
+    gameState.player.takeDamage(damage);
+    const points = 80 + level * 10;
+    gameState.score += points;
+    return `Enemy defeated! -${damage} HP (+${points} gold)`;
+  } else if (luckAdjusted > 0.4) {
+    // Normal fight
+    const damage = 20 + level * 4;
+    gameState.player.takeDamage(damage);
+    const points = 70 + level * 10;
+    gameState.score += points;
+    return `Battle won! -${damage} HP (+${points} gold)`;
+  } else {
+    // Hard fight
+    const damage = 30 + level * 6;
+    gameState.player.takeDamage(damage);
+    const points = 90 + level * 15;
+    gameState.score += points;
+    return `Tough battle! -${damage} HP (+${points} gold)`;
+  }
+}
+
+function handleNPC(level, luckBonus, p) {
+  const rand = p.random();
+  const luckAdjusted = rand + luckBonus * 0.4;
+  
+  if (luckAdjusted > 0.7) {
+    // Helpful NPC
+    const heal = 20 + level * 5;
+    gameState.player.heal(heal);
+    const points = 50;
+    gameState.score += points;
+    return `Kind stranger heals you! +${heal} HP (+${points} gold)`;
+  } else if (luckAdjusted > 0.4) {
+    // Neutral NPC
+    const points = 40 + level * 5;
+    gameState.score += points;
+    return `Interesting conversation! (+${points} gold)`;
+  } else {
+    // Hostile NPC
+    const damage = 15;
+    gameState.player.takeDamage(damage);
+    gameState.score += 30;
+    return `Argument! Lost ${damage} HP (+30 gold)`;
+  }
+}
+
+function handleMystery(level, luckBonus, p) {
+  const rand = p.random();
+  const luckAdjusted = rand + luckBonus * 0.3;
+  
+  if (luckAdjusted > 0.8) {
+    // Very positive
+    const heal = 30 + level * 5;
+    gameState.player.heal(heal);
+    const points = 120;
+    gameState.score += points;
+    return `MYSTERY BONUS! +${heal} HP & +${points} gold!`;
+  } else if (luckAdjusted > 0.6) {
+    // Positive
+    const points = 80 + level * 10;
+    gameState.score += points;
+    return `Lucky find! +${points} gold`;
+  } else if (luckAdjusted > 0.4) {
+    // Neutral
+    gameState.luck = Math.min(100, gameState.luck + 10);
+    const points = 30;
+    gameState.score += points;
+    return `You feel lucky... (Luck +10, +${points} gold)`;
+  } else if (luckAdjusted > 0.2) {
+    // Negative
+    const damage = 15 + level * 2;
+    gameState.player.takeDamage(damage);
+    gameState.score += 25;
+    return `Mysterious curse! -${damage} HP (+25 gold)`;
+  } else {
+    // Very negative
+    const damage = 25 + level * 3;
+    gameState.player.takeDamage(damage);
+    gameState.luck = Math.max(0, gameState.luck - 10);
+    gameState.score += 35;
+    return `CURSED! -${damage} HP, Luck -10 (+35 gold)`;
+  }
+}
+
+function handleExit(level) {
+  const bonusHP = Math.floor(gameState.player.hp / 10) * 10;
+  gameState.score += 300 + bonusHP;
+  return `Level Complete! +300 gold (+${bonusHP} HP bonus)`;
+}
+</file>
+
+<file name="game.js">
+// game.js - Main game file
+
+import { gameState, GAME_PHASE, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Player, Projectile } from './player.js';
+import { createRandomEnemy } from './enemy.js';
+import { GameMap } from './map.js';
+import { renderGame } from './renderer.js';
+import { handleKeyPressed } from './input.js';
+import { BasicTestController, WinTestController } from './testing.js';
+
+const p5 = window.p5;
+
+let testController = null;
+
+let gameInstance = new p5(p => {
+  // Initialize logs
+  p.logs = {
+    game_info: [],
+    inputs: [],
+    player_info: []
+  };
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    
+    // Load high score
+    try {
+      const savedHighScore = localStorage.getItem('adventureStarHighScore');
+      if (savedHighScore) {
+        gameState.highScore = parseInt(savedHighScore);
+      }
+    } catch (e) {
+      console.log('Could not load high score');
+    }
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: 'Game Initialized',
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+
+  p.draw = function() {
+    // Handle automated testing
+    if (gameState.controlMode !== 'HUMAN' && testController) {
+      const action = testController.update(p);
+      if (action) {
+        simulateKeyPress(p, action.keyCode);
+      }
+    }
+
+    // Update game state
+    updateGame(p);
+    
+    // Render
+    renderGame(p);
+  };
+
+  p.keyPressed = function() {
+    if (gameState.controlMode === 'HUMAN') {
+      handleKeyPressed(p);
+    }
+    return false; // Prevent default browser behavior
+  };
+
+  function updateGame(p) {
+    if (gameState.gamePhase === GAME_PHASE.PLAYING) {
+      // Update player
+      if (gameState.player) {
+        gameState.player.update(p);
+        
+        // Check for game over
+        if (gameState.player.hp <= 0) {
+          updateHighScore();
+          gameState.gamePhase = GAME_PHASE.GAME_OVER_LOSE;
+          p.logs.game_info.push({
+            data: 'Game Over - Lose',
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+        }
+      }
+      
+      // Update enemies (continuous movement)
+      if (gameState.enemies && gameState.enemies.length > 0) {
+        gameState.enemies.forEach(enemy => {
+          if (enemy.active) {
+            enemy.update(gameState.currentMap, gameState.player, gameState.projectiles);
+          }
+        });
+      }
+      
+      // Update projectiles (both player and enemy)
+      if (gameState.projectiles && gameState.projectiles.length > 0) {
+        gameState.projectiles.forEach(proj => {
+          if (proj.active) {
+            if (proj.isEnemyProjectile) {
+              proj.update(gameState.currentMap, gameState.player);
+            } else {
+              proj.update(gameState.currentMap, gameState.enemies);
+            }
+          }
+        });
+        // Remove inactive projectiles
+        gameState.projectiles = gameState.projectiles.filter(proj => proj.active);
+      }
+      
+      // Update event message timer
+      if (gameState.eventMessageTimer > 0) {
+        gameState.eventMessageTimer--;
+      }
+    } else if (gameState.gamePhase === GAME_PHASE.LEVEL_TRANSITION) {
+      gameState.levelTransitionTimer--;
+      
+      if (gameState.levelTransitionTimer <= 0) {
+        // Start next level
+        startLevel(p, gameState.currentLevel);
+      }
+    }
+  }
+
+  function startLevel(p, level) {
+    gameState.currentMap = new GameMap(level);
+    gameState.player.gridX = gameState.currentMap.startX;
+    gameState.player.gridY = gameState.currentMap.startY;
+    gameState.needsInteraction = false;
+    gameState.eventMessage = "";
+    gameState.eventMessageTimer = 0;
+    gameState.projectiles = [];
+    
+    // Spawn enemies with variety
+    gameState.enemies = [];
+    if (gameState.currentMap.enemySpawns) {
+      gameState.currentMap.enemySpawns.forEach(spawn => {
+        gameState.enemies.push(createRandomEnemy(spawn.x, spawn.y, level));
+      });
+    }
+    
+    gameState.gamePhase = GAME_PHASE.PLAYING;
+    
+    p.logs.game_info.push({
+      data: `Level ${level} Started with ${gameState.enemies.length} enemies`,
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    
+    p.logs.player_info.push({
+      screen_x: gameState.player.getScreenX(),
+      screen_y: gameState.player.getScreenY(),
+      game_x: gameState.player.gridX,
+      game_y: gameState.player.gridY,
+      framecount: p.frameCount
+    });
+  }
+
+  function updateHighScore() {
+    if (gameState.score > gameState.highScore) {
+      gameState.highScore = gameState.score;
+      try {
+        localStorage.setItem('adventureStarHighScore', gameState.highScore.toString());
+      } catch (e) {
+        console.log('Could not save high score');
+      }
+    }
+  }
+
+  function simulateKeyPress(p, keyCode) {
+    p.keyCode = keyCode;
+    
+    // Set key character
+    if (keyCode === 37) p.key = 'ArrowLeft';
+    else if (keyCode === 38) p.key = 'ArrowUp';
+    else if (keyCode === 39) p.key = 'ArrowRight';
+    else if (keyCode === 40) p.key = 'ArrowDown';
+    else if (keyCode === 32) p.key = ' ';
+    else if (keyCode === 13) p.key = 'Enter';
+    else if (keyCode === 27) p.key = 'Escape';
+    else if (keyCode === 82) p.key = 'r';
+    else if (keyCode === 69) p.key = 'e';
+    else p.key = String.fromCharCode(keyCode);
+    
+    handleKeyPressed(p);
+  }
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Expose getGameState function
+window.getGameState = function() {
+  return {
+    phase: gameState.gamePhase,
+    gamePhase: gameState.gamePhase,
+    score: gameState.score,
+    currentLevel: gameState.currentLevel,
+    hp: gameState.player ? gameState.player.hp : 0
+  };
+};
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Initialize test controller if needed
+  if (mode === 'TEST_1') {
+    testController = new BasicTestController();
+  } else if (mode === 'TEST_2') {
+    testController = new WinTestController();
+  } else {
+    testController = null;
+  }
+  
+  // Update button states
+  const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const activeBtn = document.getElementById(mode === 'HUMAN' ? 'humanModeBtn' : mode.toLowerCase() + '_ModeBtn');
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+  
+  console.log('Control mode set to:', mode);
+};
+</file>
+
+<file name="renderer.js">
+// renderer.js - Rendering functions
+
+import { gameState, GAME_PHASE, CANVAS_WIDTH, CANVAS_HEIGHT, GRID_CONFIG, TILE_TYPES, WEAPONS } from './globals.js';
+
+export function renderGame(p) {
+  p.background(40, 40, 50);
+  
+  switch (gameState.gamePhase) {
+    case GAME_PHASE.START:
+      renderStartScreen(p);
+      break;
+    case GAME_PHASE.PLAYING:
+      renderPlaying(p);
+      if (gameState.shopOpen) {
+        renderShop(p);
+      }
+      break;
+    case GAME_PHASE.PAUSED:
+      // When paused, we only render the game world (map and entities)
+      // and skip all overlays, UI, and the shop.
+      renderPlaying(p);
+      break;
+    case GAME_PHASE.LEVEL_TRANSITION:
+      renderLevelTransition(p);
+      break;
+    case GAME_PHASE.GAME_OVER_WIN:
+      renderGameOver(p, true);
+      break;
+    case GAME_PHASE.GAME_OVER_LOSE:
+      renderGameOver(p, false);
+      break;
+  }
+}
+
+function renderStartScreen(p) {
+  p.push();
+  
+  // New main title: "press enter to begin"
+  p.fill(255); // White color
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(36); // Larger text size for the main message
+  p.text('press enter to begin', CANVAS_WIDTH / 2, 120); // Centered where the old title was
+  
+  // High Score
+  p.textSize(20);
+  p.fill(255, 255, 100);
+  p.text(`High Score: ${gameState.highScore}`, CANVAS_WIDTH / 2, 160); // Adjusted Y position
+  
+  // Instructions (preserved as they do not contain the game name)
+  p.textSize(14);
+  p.fill(220, 220, 220);
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  const instructions = [
+    'Navigate levels to reach the exit!',
+    '',
+    'Move: ARROW KEYS or WASD',
+    'Shoot: SPACEBAR | Shop: S KEY',
+    'Interact: E KEY | Heal (100 gold): H',
+    '',
+    'BUY WEAPONS at the shop!',
+    'DEFEAT ALL enemies to unlock the exit!',
+    'Enemy types: Normal, Fast, Tank, Ranged'
+  ];
+  
+  let y = 190; // Adjusted Y position to accommodate new title
+  instructions.forEach(line => {
+    p.text(line, CANVAS_WIDTH / 2, y);
+    y += 18;
+  });
+  
+  p.pop();
+}
+
+function renderPlaying(p) {
+  if (!gameState.currentMap || !gameState.player) return;
+  
+  const isPaused = gameState.gamePhase === GAME_PHASE.PAUSED;
+
+  // Only render UI and messages if NOT paused to comply with "NO visual overlay" and "NO instructions"
+  if (!isPaused) {
+    // Render UI at top (before map so it doesn't overlap)
+    renderUI(p);
+    
+    // Render event message at top if active (between UI and grid)
+    if (gameState.eventMessageTimer > 0) {
+      renderEventMessage(p);
+    }
+  }
+  
+  // Render map
+  renderMap(p, gameState.currentMap);
+  
+  // Render projectiles (both player and enemy)
+  if (gameState.projectiles && gameState.projectiles.length > 0) {
+    gameState.projectiles.forEach(proj => {
+      if (proj.active) {
+        proj.render(p);
+      }
+    });
+  }
+  
+  // Render enemies
+  if (gameState.enemies && gameState.enemies.length > 0) {
+    gameState.enemies.forEach(enemy => {
+      enemy.render(p);
+    });
+  }
+  
+  // Render player
+  gameState.player.render(p);
+  
+  // Render interaction prompt only if NOT paused
+  if (!isPaused && gameState.needsInteraction) {
+    renderInteractionPrompt(p);
+  }
+}
+
+function renderMap(p, map) {
+  const tileSize = GRID_CONFIG.tileSize;
+  const offsetX = GRID_CONFIG.offsetX;
+  const offsetY = GRID_CONFIG.offsetY;
+  
+  for (let y = 0; y < map.height; y++) {
+    for (let x = 0; x < map.width; x++) {
+      const tile = map.tiles[y][x];
+      const screenX = offsetX + x * tileSize;
+      const screenY = offsetY + y * tileSize;
+      
+      // Base tile
+      if (tile.type === TILE_TYPES.WALL) {
+        p.fill(60, 60, 70);
+      } else if (tile.visited) {
+        p.fill(200, 200, 210);
+      } else {
+        p.fill(150, 150, 160);
+      }
+      
+      p.stroke(100, 100, 110);
+      p.strokeWeight(1);
+      p.rect(screenX, screenY, tileSize, tileSize);
+      
+      // Tile content
+      if (tile.type === TILE_TYPES.EXIT) {
+        // Check if all enemies defeated
+        const activeEnemies = gameState.enemies.filter(e => e.active).length;
+        if (activeEnemies > 0) {
+          // Locked exit
+          p.fill(150, 50, 50);
+          p.noStroke();
+          p.rect(screenX + 3, screenY + 3, tileSize - 6, tileSize - 6);
+          p.fill(255, 100, 100);
+          p.textAlign(p.CENTER, p.CENTER);
+          p.textSize(16);
+          p.text('🔒', screenX + tileSize / 2, screenY + tileSize / 2);
+        } else {
+          // Unlocked exit
+          p.fill(50, 255, 50);
+          p.noStroke();
+          p.rect(screenX + 3, screenY + 3, tileSize - 6, tileSize - 6);
+          p.fill(0);
+          p.textAlign(p.CENTER, p.CENTER);
+          p.textSize(20);
+          p.text('E', screenX + tileSize / 2, screenY + tileSize / 2);
+        }
+      } else if (!tile.interacted) {
+        renderTileIcon(p, tile.type, screenX + tileSize / 2, screenY + tileSize / 2);
+      }
+    }
+  }
+}
+
+function renderTileIcon(p, type, x, y) {
+  p.push();
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(18);
+  p.strokeWeight(1);
+  
+  switch (type) {
+    case TILE_TYPES.EVENT_TREASURE:
+      p.fill(255, 215, 0);
+      p.stroke(200, 150, 0);
+      p.text('★', x, y);
+      break;
+    case TILE_TYPES.EVENT_TRAP:
+      p.fill(200, 50, 50);
+      p.stroke(150, 0, 0);
+      p.text('!', x, y);
+      break;
+    case TILE_TYPES.EVENT_ENEMY:
+      p.fill(255, 100, 100);
+      p.stroke(200, 0, 0);
+      p.text('☠', x, y);
+      break;
+    case TILE_TYPES.EVENT_NPC:
+      p.fill(150, 150, 255);
+      p.stroke(100, 100, 200);
+      p.text('N', x, y);
+      break;
+    case TILE_TYPES.EVENT_MYSTERY:
+      p.fill(200, 150, 255);
+      p.stroke(150, 100, 200);
+      p.text('?', x, y);
+      break;
+    case TILE_TYPES.WEAPON:
+      p.fill(255, 150, 50);
+      p.stroke(200, 100, 0);
+      p.text('⚔', x, y);
+      break;
+  }
+  p.pop();
+}
+
+function renderUI(p) {
+  p.push();
+  
+  // HP Bar
+  const hpBarX = 10;
+  const hpBarY = 10;
+  const hpBarWidth = 150;
+  const hpBarHeight = 18;
+  
+  p.fill(80, 80, 80);
+  p.stroke(200, 200, 200);
+  p.strokeWeight(2);
+  p.rect(hpBarX, hpBarY, hpBarWidth, hpBarHeight);
+  
+  const hpPercent = gameState.player.hp / gameState.player.maxHP;
+  const hpColor = hpPercent > 0.5 ? [50, 255, 50] : hpPercent > 0.25 ? [255, 200, 50] : [255, 50, 50];
+  p.fill(...hpColor);
+  p.noStroke();
+  p.rect(hpBarX + 2, hpBarY + 2, (hpBarWidth - 4) * hpPercent, hpBarHeight - 4);
+  
+  p.fill(255);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(11);
+  p.text(`HP: ${gameState.player.hp}/${gameState.player.maxHP}`, hpBarX + 5, hpBarY + 3);
+  
+  // Gold/Score
+  p.fill(255, 215, 0);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(16);
+  p.text(`GOLD: ${gameState.score}`, CANVAS_WIDTH - 10, 10);
+  
+  // Current weapon
+  const weapon = WEAPONS[gameState.currentWeapon];
+  p.fill(...weapon.color);
+  p.textSize(14);
+  p.text(`${weapon.icon} ${weapon.name}`, CANVAS_WIDTH - 10, 30);
+  
+  // Level
+  p.fill(150, 200, 255);
+  p.textAlign(p.CENTER, p.TOP);
+  p.textSize(18);
+  p.text(`LEVEL ${gameState.currentLevel}`, CANVAS_WIDTH / 2, 10);
+  
+  // Enemy count
+  const activeEnemies = gameState.enemies.filter(e => e.active).length;
+  p.fill(255, 100, 100);
+  p.textSize(12);
+  p.text(`Enemies: ${activeEnemies}`, CANVAS_WIDTH / 2, 32);
+  
+  // Controls hint
+  p.fill(180, 180, 180);
+  p.textSize(10);
+  p.text('SPACE: Shoot | E: Interact | H: Heal | S: Shop', CANVAS_WIDTH / 2, 48);
+  
+  p.pop();
+}
+
+function renderShop(p) {
+  p.push();
+  
+  // Overlay
+  p.fill(0, 0, 0, 180);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  // Shop box
+  const boxWidth = 520;
+  const boxHeight = 340;
+  const boxX = (CANVAS_WIDTH - boxWidth) / 2;
+  const boxY = (CANVAS_HEIGHT - boxHeight) / 2;
+  
+  p.fill(40, 40, 50);
+  p.stroke(255, 215, 0);
+  p.strokeWeight(3);
+  p.rect(boxX, boxY, boxWidth, boxHeight, 10);
+  
+  // Title
+  p.fill(255, 215, 0);
+  p.noStroke();
+  p.textAlign(p.CENTER, p.TOP);
+  p.textSize(28);
+  p.text('🏪 WEAPON SHOP 🏪', CANVAS_WIDTH / 2, boxY + 15);
+  
+  p.textSize(14);
+  p.fill(200, 200, 200);
+  p.text(`Your Gold: ${gameState.score}`, CANVAS_WIDTH / 2, boxY + 50);
+  
+  // Weapons list
+  const weaponList = ["PISTOL", "SWORD", "SHOTGUN", "RIFLE", "LASER"];
+  const startY = boxY + 85;
+  const spacing = 48;
+  
+  weaponList.forEach((weaponKey, index) => {
+    const weapon = WEAPONS[weaponKey];
+    const y = startY + index * spacing;
+    const owned = gameState.ownedWeapons.includes(weaponKey);
+    const equipped = gameState.currentWeapon === weaponKey;
+    
+    // Background
+    if (equipped) {
+      p.fill(100, 200, 100, 100);
+      p.noStroke();
+      p.rect(boxX + 10, y - 5, boxWidth - 20, 40, 5);
+    }
+    
+    // Weapon info
+    p.textAlign(p.LEFT, p.CENTER);
+    p.textSize(18);
+    
+    if (owned) {
+      p.fill(100, 255, 100);
+    } else {
+      p.fill(255, 255, 255);
+    }
+    
+    const numberKey = index + 1;
+    p.text(`${numberKey}. ${weapon.icon} ${weapon.name}`, boxX + 30, y + 10);
+    
+    // Stats
+    p.textSize(12);
+    p.fill(200, 200, 200);
+    p.text(`DMG: ${weapon.damage} | SPD: ${6 - weapon.speed}`, boxX + 220, y + 10);
+    
+    // Price or status
+    p.textAlign(p.RIGHT, p.CENTER);
+    p.textSize(14);
+    if (owned) {
+      if (equipped) {
+        p.fill(100, 255, 100);
+        p.text('EQUIPPED', boxX + boxWidth - 30, y + 10);
+      } else {
+        p.fill(255, 215, 0);
+        p.text('OWNED', boxX + boxWidth - 30, y + 10);
+      }
+    } else {
+      if (gameState.score >= weapon.cost) {
+        p.fill(255, 215, 0);
+      } else {
+        p.fill(150, 150, 150);
+      }
+      p.text(`${weapon.cost} gold`, boxX + boxWidth - 30, y + 10);
+    }
+  });
+  
+  // Instructions
+  p.fill(255, 255, 100);
+  p.textAlign(p.CENTER, p.TOP);
+  p.textSize(12);
+  p.text('Press 1-5 to buy/equip weapons | Press S to close shop', CANVAS_WIDTH / 2, boxY + boxHeight - 30);
+  
+  p.pop();
+}
+
+function renderEventMessage(p) {
+  p.push();
+  
+  const boxWidth = 500;
+  const boxHeight = 35;
+  const boxX = (CANVAS_WIDTH - boxWidth) / 2;
+  const boxY = 64;
+  
+  // Box background
+  p.fill(0, 0, 0, 220);
+  p.stroke(255, 220, 100);
+  p.strokeWeight(2);
+  p.rect(boxX, boxY, boxWidth, boxHeight, 5);
+  
+  // Message text
+  p.fill(255, 255, 255);
+  p.noStroke();
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(14);
+  p.text(gameState.eventMessage, CANVAS_WIDTH / 2, boxY + boxHeight / 2);
+  
+  p.pop();
+}
+
+function renderInteractionPrompt(p) {
+  p.push();
+  
+  const tile = gameState.currentMap.getTileAt(gameState.player.gridX, gameState.player.gridY);
+  let message = 'Press E to interact';
+  
+  // Check if exit and enemies alive
+  if (tile && tile.type === 'EXIT') {
+    const activeEnemies = gameState.enemies.filter(e => e.active).length;
+    if (activeEnemies > 0) {
+      message = `Defeat ${activeEnemies} enemies to unlock exit!`;
+      p.fill(255, 100, 100, 220);
+    } else {
+      message = 'Press E to exit level';
+      p.fill(100, 255, 100, 220);
+    }
+  } else {
+    p.fill(255, 255, 100, 220);
+  }
+  
+  p.stroke(0);
+  p.strokeWeight(2);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(13);
+  const promptY = 85;
+  p.text(message, CANVAS_WIDTH / 2, promptY);
+  
+  p.pop();
+}
+
+function renderLevelTransition(p) {
+  p.background(20, 20, 30);
+  
+  p.push();
+  
+  p.fill(100, 255, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(36);
+  p.text(`Level ${gameState.currentLevel - 1} Complete!`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 40);
+  
+  p.fill(200, 200, 255);
+  p.textSize(24);
+  p.text(`Preparing Level ${gameState.currentLevel}...`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+  
+  p.pop();
+}
+
+function renderGameOver(p, isWin) {
+  p.background(20, 20, 30);
+  
+  p.push();
+  
+  if (isWin) {
+    p.fill(100, 255, 100);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(56);
+    p.text('YOU WIN!', CANVAS_WIDTH / 2, 100);
+    
+    p.fill(255, 220, 100);
+    p.textSize(28);
+    p.text('★ Congratulations! ★', CANVAS_WIDTH / 2, 160);
+  } else {
+    p.fill(255, 100, 100);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(48);
+    p.text('GAME OVER', CANVAS_WIDTH / 2, 120);
+  }
+  
+  p.fill(255, 255, 255);
+  p.textSize(24);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 220);
+  
+  if (gameState.score > gameState.highScore) {
+    p.fill(255, 220, 100);
+    p.textSize(20);
+    p.text('NEW HIGH SCORE!', CANVAS_WIDTH / 2, 260);
+  } else {
+    p.fill(200, 200, 200);
+    p.textSize(18);
+    p.text(`High Score: ${gameState.highScore}`, CANVAS_WIDTH / 2, 260);
+  }
+  
+  p.fill(150, 200, 255);
+  p.textSize(20);
+  p.text('Press R to Restart', CANVAS_WIDTH / 2, 330);
+  
+  p.pop();
+}
+// Removed renderPausedOverlay function as requested
+</file>
+
+<file name="testing.js">
+// testing.js - Automated testing controllers
+
+import { gameState, GAME_PHASE } from './globals.js';
+
+export class TestController {
+  constructor(type) {
+    this.type = type;
+    this.actionQueue = [];
+    this.actionDelay = 0;
+    this.initialized = false;
+  }
+
+  update(p) {
+    if (gameState.gamePhase === GAME_PHASE.START && !this.initialized) {
+      this.initialize(p);
+      this.initialized = true;
+    }
+
+    if (this.actionDelay > 0) {
+      this.actionDelay--;
+      return null;
+    }
+
+    if (this.actionQueue.length > 0) {
+      const action = this.actionQueue.shift();
+      this.actionDelay = action.delay || 5;
+      return action;
+    }
+
+    // Generate actions based on game state
+    return this.generateAction(p);
+  }
+
+  initialize(p) {
+    // Start game
+    this.actionQueue.push({ keyCode: 13, delay: 30 }); // ENTER
+  }
+
+  generateAction(p) {
+    if (gameState.gamePhase === GAME_PHASE.PLAYING) {
+      return this.generatePlayingAction(p);
+    }
+    return null;
+  }
+
+  generatePlayingAction(p) {
+    // Override in subclasses
+    return null;
+  }
+}
+
+export class BasicTestController extends TestController {
+  constructor() {
+    super('TEST_1');
+  }
+
+  generatePlayingAction(p) {
+    if (!gameState.player || !gameState.currentMap) return null;
+
+    const player = gameState.player;
+    const map = gameState.currentMap;
+
+    // If on event tile, interact
+    const currentTile = map.getTileAt(player.gridX, player.gridY);
+    if (gameState.needsInteraction) {
+      return { keyCode: 32, delay: 20 }; // SPACE
+    }
+
+    // Move towards exit
+    const dx = map.exitX - player.gridX;
+    const dy = map.exitY - player.gridY;
+
+    if (Math.abs(dx) > Math.abs(dy)) {
+      return { keyCode: dx > 0 ? 39 : 37, delay: 8 }; // RIGHT or LEFT
+    } else {
+      return { keyCode: dy > 0 ? 40 : 38, delay: 8 }; // DOWN or UP
+    }
+  }
+}
+
+export class WinTestController extends TestController {
+  constructor() {
+    super('TEST_2');
+    this.pathfindingAttempts = 0;
+  }
+
+  generatePlayingAction(p) {
+    if (!gameState.player || !gameState.currentMap) return null;
+
+    const player = gameState.player;
+    const map = gameState.currentMap;
+
+    // If on event tile, interact
+    if (gameState.needsInteraction) {
+      return { keyCode: 32, delay: 15 }; // SPACE
+    }
+
+    // Smart pathfinding towards exit
+    const path = this.findPath(player.gridX, player.gridY, map.exitX, map.exitY, map);
+    
+    if (path && path.length > 1) {
+      const nextStep = path[1];
+      const dx = nextStep.x - player.gridX;
+      const dy = nextStep.y - player.gridY;
+
+      if (dx > 0) return { keyCode: 39, delay: 6 }; // RIGHT
+      if (dx < 0) return { keyCode: 37, delay: 6 }; // LEFT
+      if (dy > 0) return { keyCode: 40, delay: 6 }; // DOWN
+      if (dy < 0) return { keyCode: 38, delay: 6 }; // UP
+    }
+
+    // Fallback: random valid move
+    const validMoves = [];
+    if (player.canMoveTo(player.gridX - 1, player.gridY, map)) validMoves.push(37);
+    if (player.canMoveTo(player.gridX + 1, player.gridY, map)) validMoves.push(39);
+    if (player.canMoveTo(player.gridX, player.gridY - 1, map)) validMoves.push(38);
+    if (player.canMoveTo(player.gridX, player.gridY + 1, map)) validMoves.push(40);
+
+    if (validMoves.length > 0) {
+      const randomMove = validMoves[Math.floor(Math.random() * validMoves.length)];
+      return { keyCode: randomMove, delay: 6 };
+    }
+
+    return null;
+  }
+
+  findPath(startX, startY, endX, endY, map) {
+    // Simple A* pathfinding
+    const openSet = [{ x: startX, y: startY, g: 0, h: this.heuristic(startX, startY, endX, endY), parent: null }];
+    const closedSet = new Set();
+
+    while (openSet.length > 0) {
+      openSet.sort((a, b) => (a.g + a.h) - (b.g + b.h));
+      const current = openSet.shift();
+
+      const key = `${current.x},${current.y}`;
+      if (closedSet.has(key)) continue;
+      closedSet.add(key);
+
+      if (current.x === endX && current.y === endY) {
+        return this.reconstructPath(current);
+      }
+
+      const neighbors = [
+        { x: current.x - 1, y: current.y },
+        { x: current.x + 1, y: current.y },
+        { x: current.x, y: current.y - 1 },
+        { x: current.x, y: current.y + 1 }
+      ];
+
+      for (const neighbor of neighbors) {
+        if (neighbor.x < 0 || neighbor.x >= map.width || neighbor.y < 0 || neighbor.y >= map.height) continue;
+        const tile = map.tiles[neighbor.y][neighbor.x];
+        if (tile.type === 'WALL') continue;
+
+        const neighborKey = `${neighbor.x},${neighbor.y}`;
+        if (closedSet.has(neighborKey)) continue;
+
+        const g = current.g + 1;
+        const h = this.heuristic(neighbor.x, neighbor.y, endX, endY);
+        openSet.push({ x: neighbor.x, y: neighbor.y, g, h, parent: current });
+      }
+    }
+
+    return null;
+  }
+
+  heuristic(x1, y1, x2, y2) {
+    return Math.abs(x1 - x2) + Math.abs(y1 - y2);
+  }
+
+  reconstructPath(node) {
+    const path = [];
+    while (node) {
+      path.unshift({ x: node.x, y: node.y });
+      node = node.parent;
+    }
+    return path;
+  }
+}
+</file>
+
+<file name="enemy.js">
+// enemy.js - Enemy entity with autonomous movement AI
+
+import { GRID_CONFIG, PLAYER_TITLE } from './globals.js';
+
+export class Enemy {
+  constructor(gridX, gridY, level, type = "NORMAL") {
+    this.gridX = gridX;
+    this.gridY = gridY;
+    this.level = level;
+    this.type = type;
+    this.direction = Math.floor(Math.random() * 4); // 0=left, 1=right, 2=up, 3=down
+    this.active = true;
+    
+    // Set stats based on type
+    this.setStats();
+    
+    // Movement timing
+    this.moveTimer = 0;
+    this.moveDelay = this.calculateMoveDelay();
+    
+    // Attack cooldown to prevent constant damage
+    this.attackCooldown = 0;
+    this.attackDelay = 60; // 60 frames = 1 second at 60fps
+  }
+
+  setStats() {
+    switch (this.type) {
+      case "FAST":
+        this.damage = 4 + this.level * 1; 
+        this.hp = 1;
+        this.maxHp = 1;
+        this.moveChance = 0.7; 
+        this.baseSpeed = 45; // Slower movement (was 25)
+        this.color = [255, 150, 50];
+        this.name = "Fast";
+        break;
+      case "TANK":
+        this.damage = 12 + this.level * 2; 
+        this.hp = 4;
+        this.maxHp = 4;
+        this.moveChance = 0.3; 
+        this.baseSpeed = 90; // Slower movement (was 50)
+        this.color = [100, 255, 100];
+        this.name = "Tank";
+        break;
+      case "RANGED":
+        this.damage = 7 + this.level * 2; 
+        this.hp = 2;
+        this.maxHp = 2;
+        this.moveChance = 0.4; 
+        this.baseSpeed = 70; // Slower movement (was 35)
+        this.color = [150, 100, 255];
+        this.name = "Ranged";
+        this.shootCooldown = 0;
+        this.shootDelay = 180; // Shoots every 180 frames (3 seconds at 60fps)
+        break;
+      default: // NORMAL
+        this.damage = 9 + this.level * 2; 
+        this.hp = 2;
+        this.maxHp = 2;
+        this.moveChance = 0.5; 
+        this.baseSpeed = 60; // Slower movement (was 30)
+        this.color = [255, 50, 50];
+        this.name = "Normal";
+        break;
+    }
+    
+    // Ensure enemy name doesn't match player title
+    if (this.name === PLAYER_TITLE) {
+      this.name = this.name + " Enemy";
+    }
+  }
+
+  calculateMoveDelay() {
+    // Add randomness to movement timing
+    return this.baseSpeed + Math.floor(Math.random() * 20) - 10;
+  }
+
+  getScreenX() {
+    return GRID_CONFIG.offsetX + this.gridX * GRID_CONFIG.tileSize + GRID_CONFIG.tileSize / 2;
+  }
+
+  getScreenY() {
+    return GRID_CONFIG.offsetY + this.gridY * GRID_CONFIG.tileSize + GRID_CONFIG.tileSize / 2;
+  }
+
+  canMoveTo(gridX, gridY, map) {
+    if (gridX < 0 || gridX >= map.width || gridY < 0 || gridY >= map.height) {
+      return false;
+    }
+    const tile = map.tiles[gridY][gridX];
+    return tile.type !== 'WALL';
+  }
+
+  // Continuous update - called every frame
+  update(map, player, projectiles) {
+    if (!this.active) return;
+
+    // Update attack cooldown
+    if (this.attackCooldown > 0) {
+      this.attackCooldown--;
+    }
+
+    // Ranged enemies can shoot
+    if (this.type === "RANGED") {
+      this.shootCooldown--;
+      if (this.shootCooldown <= 0) {
+        this.shootAtPlayer(player, projectiles, map);
+        this.shootCooldown = this.shootDelay;
+      }
+    }
+
+    // Movement timing
+    this.moveTimer++;
+    if (this.moveTimer >= this.moveDelay) {
+      this.moveTimer = 0;
+      this.moveDelay = this.calculateMoveDelay();
+      
+      // Move based on moveChance
+      if (Math.random() <= this.moveChance) {
+        this.performMove(map, player);
+      }
+    }
+
+    // Check if adjacent to player (not on same tile)
+    const dx = Math.abs(player.gridX - this.gridX);
+    const dy = Math.abs(player.gridY - this.gridY);
+    const isAdjacent = (dx === 1 && dy === 0) || (dx === 0 && dy === 1);
+    
+    if (isAdjacent && this.attackCooldown === 0) {
+      this.attackPlayer(player);
+      this.attackCooldown = this.attackDelay; // Reset cooldown after attack
+    }
+  }
+
+  performMove(map, player) {
+    // Simple AI: move toward player with some randomness
+    const dx = player.gridX - this.gridX;
+    const dy = player.gridY - this.gridY;
+    const distToPlayer = Math.abs(dx) + Math.abs(dy);
+
+    // 70% chance to move toward player, 30% random
+    if (Math.random() < 0.7 && distToPlayer > 0) {
+      // Move toward player
+      if (Math.abs(dx) > Math.abs(dy)) {
+        this.direction = dx > 0 ? 1 : 0; // right or left
+      } else {
+        this.direction = dy > 0 ? 3 : 2; // down or up
+      }
+    } else {
+      // Random movement
+      this.direction = Math.floor(Math.random() * 4);
+    }
+
+    this.tryMove(map);
+  }
+
+  shootAtPlayer(player, projectiles, map) {
+    // Determine direction to player
+    const dx = player.gridX - this.gridX;
+    const dy = player.gridY - this.gridY;
+    
+    let direction;
+    if (Math.abs(dx) > Math.abs(dy)) {
+      direction = dx > 0 ? 1 : 0; // right or left
+    } else {
+      direction = dy > 0 ? 3 : 2; // down or up
+    }
+
+    // Create enemy projectile with reduced damage
+    const projectile = new EnemyProjectile(this.gridX, this.gridY, direction, this.damage * 0.4); // Reduced from 0.5
+    projectiles.push(projectile);
+  }
+
+  tryMove(map) {
+    let newX = this.gridX;
+    let newY = this.gridY;
+
+    switch (this.direction) {
+      case 0: newX--; break; // left
+      case 1: newX++; break; // right
+      case 2: newY--; break; // up
+      case 3: newY++; break; // down
+    }
+
+    if (this.canMoveTo(newX, newY, map)) {
+      this.gridX = newX;
+      this.gridY = newY;
+      return true;
+    }
+    return false;
+  }
+
+  attackPlayer(player) {
+    if (this.active) {
+      player.takeDamage(this.damage);
+    }
+  }
+
+  takeDamage(amount) {
+    this.hp -= amount;
+    if (this.hp <= 0) {
+      this.active = false;
+    }
+  }
+
+  render(p) {
+    if (!this.active) return;
+
+    const x = this.getScreenX();
+    const y = this.getScreenY();
+    const size = GRID_CONFIG.tileSize * 0.65;
+
+    p.push();
+    
+    // Enemy body - pulsing with type color
+    const pulse = Math.sin(p.frameCount * 0.1) * 0.15 + 0.85;
+    p.fill(this.color[0] * pulse, this.color[1] * pulse, this.color[2] * pulse);
+    p.stroke(this.color[0] * 0.6, this.color[1] * 0.6, this.color[2] * 0.6);
+    p.strokeWeight(2);
+    
+    // Different shapes for different types - all centered
+    if (this.type === "FAST") {
+      // Triangle centered at x, y
+      p.triangle(x, y - size * 0.5, x - size * 0.4, y + size * 0.4, x + size * 0.4, y + size * 0.4);
+    } else if (this.type === "TANK") {
+      // Rectangle centered
+      p.rectMode(p.CENTER);
+      p.rect(x, y, size, size);
+    } else {
+      // Ellipse is already centered
+      p.ellipse(x, y, size, size);
+    }
+    
+    // Eyes - centered on the shape
+    p.fill(255, 255, 0);
+    p.noStroke();
+    p.ellipse(x - size * 0.15, y - size * 0.1, size * 0.2, size * 0.2);
+    p.ellipse(x + size * 0.15, y - size * 0.1, size * 0.2, size * 0.2);
+    
+    // Pupils
+    p.fill(0);
+    p.ellipse(x - size * 0.15, y - size * 0.1, size * 0.1, size * 0.1);
+    p.ellipse(x + size * 0.15, y - size * 0.1, size * 0.1, size * 0.1);
+    
+    // Health bar - centered above enemy
+    const barWidth = size * 1.2;
+    const barHeight = 5;
+    const barX = x - barWidth / 2;
+    const barY = y - size * 0.6 - 8;
+    
+    // Background
+    p.fill(60, 60, 60);
+    p.noStroke();
+    p.rect(barX, barY, barWidth, barHeight);
+    
+    // Health fill
+    const hpPercent = this.hp / this.maxHp;
+    const hpColor = hpPercent > 0.5 ? [100, 255, 100] : hpPercent > 0.25 ? [255, 200, 50] : [255, 50, 50];
+    p.fill(...hpColor);
+    p.rect(barX, barY, barWidth * hpPercent, barHeight);
+    
+    // Border
+    p.noFill();
+    p.stroke(200, 200, 200);
+    p.strokeWeight(1);
+    p.rect(barX, barY, barWidth, barHeight);
+    
+    p.pop();
+  }
+}
+
+export class EnemyProjectile {
+  constructor(gridX, gridY, direction, damage) {
+    this.x = gridX;
+    this.y = gridY;
+    this.direction = direction;
+    this.damage = damage;
+    this.active = true;
+    this.moveDelay = 0;
+    this.moveSpeed = 6; // Slower projectile speed (was 4)
+    this.isEnemyProjectile = true;
+  }
+
+  update(map, player) {
+    if (!this.active) return;
+
+    this.moveDelay++;
+    if (this.moveDelay >= this.moveSpeed) {
+      this.moveDelay = 0;
+      
+      // Move in direction
+      let newX = this.x;
+      let newY = this.y;
+      
+      switch (this.direction) {
+        case 0: newX--; break; // left
+        case 1: newX++; break; // right
+        case 2: newY--; break; // up
+        case 3: newY++; break; // down
+      }
+
+      // Check if hit wall or out of bounds
+      if (newX < 0 || newX >= map.width || newY < 0 || newY >= map.height) {
+        this.active = false;
+        return;
+      }
+
+      const tile = map.tiles[newY][newX];
+      if (tile.type === 'WALL') {
+        this.active = false;
+        return;
+      }
+
+      this.x = newX;
+      this.y = newY;
+
+      // Check if hit player
+      if (player && player.gridX === this.x && player.gridY === this.y) {
+        player.takeDamage(this.damage);
+        this.active = false;
+      }
+    }
+  }
+
+  getScreenX() {
+    return GRID_CONFIG.offsetX + this.x * GRID_CONFIG.tileSize + GRID_CONFIG.tileSize / 2;
+  }
+
+  getScreenY() {
+    return GRID_CONFIG.offsetY + this.y * GRID_CONFIG.tileSize + GRID_CONFIG.tileSize / 2;
+  }
+
+  render(p) {
+    if (!this.active) return;
+
+    const x = this.getScreenX();
+    const y = this.getScreenY();
+
+    p.push();
+    p.fill(255, 100, 100);
+    p.stroke(200, 0, 0);
+    p.strokeWeight(2);
+    p.ellipse(x, y, 10, 10);
+    p.pop();
+  }
+}
+
+// Factory function to create random enemy type
+export function createRandomEnemy(gridX, gridY, level) {
+  const types = ["NORMAL", "FAST", "TANK", "RANGED"];
+  const rand = Math.random();
+  let type;
+  
+  if (rand < 0.4) {
+    type = "NORMAL";
+  } else if (rand < 0.6) {
+    type = "FAST";
+  } else if (rand < 0.8) {
+    type = "TANK";
+  } else {
+    type = "RANGED";
+  }
+  
+  return new Enemy(gridX, gridY, level, type);
+}
+</file>
+
+<file name="player.js">
+// player.js - Player entity
+
+import { gameState, GRID_CONFIG, WEAPONS, PLAYER_TITLE } from './globals.js';
+import { triggerEvent } from './events.js';
+
+export class Player {
+  constructor(gridX, gridY, maxHP) {
+    this.gridX = gridX;
+    this.gridY = gridY;
+    this.maxHP = maxHP;
+    this.hp = maxHP;
+    this.name = PLAYER_TITLE;
+    this.damageFlashTimer = 0;
+    this.moveDelay = 0;
+    this.moveDelayMax = 0; // No delay for turn-based movement
+    this.facingDirection = 1; // 0=left, 1=right, 2=up, 3=down
+  }
+
+  getScreenX() {
+    return GRID_CONFIG.offsetX + this.gridX * GRID_CONFIG.tileSize + GRID_CONFIG.tileSize / 2;
+  }
+
+  getScreenY() {
+    return GRID_CONFIG.offsetY + this.gridY * GRID_CONFIG.tileSize + GRID_CONFIG.tileSize / 2;
+  }
+
+  takeDamage(amount) {
+    this.hp -= amount;
+    if (this.hp < 0) this.hp = 0;
+    this.damageFlashTimer = 15; // flash for 15 frames
+  }
+
+  heal(amount) {
+    this.hp += amount;
+    if (this.hp > this.maxHP) this.hp = this.maxHP;
+  }
+
+  canMoveTo(gridX, gridY, map) {
+    if (gridX < 0 || gridX >= map.width || gridY < 0 || gridY >= map.height) {
+      return false;
+    }
+    const tile = map.tiles[gridY][gridX];
+    return tile.type !== 'WALL';
+  }
+
+  moveTo(gridX, gridY, map) {
+    if (this.canMoveTo(gridX, gridY, map)) {
+      // Update facing direction
+      if (gridX < this.gridX) this.facingDirection = 0; // left
+      else if (gridX > this.gridX) this.facingDirection = 1; // right
+      else if (gridY < this.gridY) this.facingDirection = 2; // up
+      else if (gridY > this.gridY) this.facingDirection = 3; // down
+
+      this.gridX = gridX;
+      this.gridY = gridY;
+      
+      const tile = map.tiles[gridY][gridX];
+      
+      // Mark all tiles as visited for consistent visual feedback
+      if (!tile.visited) {
+        tile.visited = true;
+        // Only give exploration points for empty tiles
+        if (tile.type === 'EMPTY') {
+          gameState.score += 5;
+        }
+      }
+
+      // Check for weapon pickup
+      if (tile.type === 'WEAPON' && !tile.interacted) {
+        tile.interacted = true;
+        gameState.weaponPower++;
+        gameState.eventMessage = `Weapon Upgrade! Attack Power: ${gameState.weaponPower}`;
+        gameState.eventMessageTimer = gameState.eventMessageDuration;
+        gameState.score += 50;
+      }
+    }
+  }
+
+  shoot(projectiles) {
+    // Create a Projectile instance in facing direction with current weapon
+    const weapon = WEAPONS[gameState.currentWeapon];
+    const projectile = new Projectile(
+      this.gridX,
+      this.gridY,
+      this.facingDirection,
+      weapon.damage,
+      weapon.speed,
+      weapon.color
+    );
+    projectiles.push(projectile);
+  }
+
+  update(p) {
+    if (this.damageFlashTimer > 0) {
+      this.damageFlashTimer--;
+    }
+    if (this.moveDelay > 0) {
+      this.moveDelay--;
+    }
+  }
+
+  render(p) {
+    const x = this.getScreenX();
+    const y = this.getScreenY();
+    const size = GRID_CONFIG.tileSize * 0.7;
+
+    // Draw player
+    p.push();
+    if (this.damageFlashTimer > 0 && this.damageFlashTimer % 6 < 3) {
+      p.fill(255, 100, 100);
+    } else {
+      p.fill(50, 150, 255);
+    }
+    p.stroke(0);
+    p.strokeWeight(2);
+    p.rectMode(p.CENTER);
+    p.rect(x, y, size, size, 5);
+    
+    // Draw "A" for Adventure
+    p.fill(255);
+    p.noStroke();
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(size * 0.6);
+    p.text('A', x, y);
+
+    // Draw direction indicator with weapon color
+    const weapon = WEAPONS[gameState.currentWeapon];
+    p.fill(...weapon.color);
+    const indicatorSize = 6;
+    let ix = x, iy = y;
+    switch (this.facingDirection) {
+      case 0: ix -= size * 0.5; break; // left
+      case 1: ix += size * 0.5; break; // right
+      case 2: iy -= size * 0.5; break; // up
+      case 3: iy += size * 0.5; break; // down
+    }
+    p.ellipse(ix, iy, indicatorSize, indicatorSize);
+
+    p.pop();
+  }
+}
+
+export class Projectile {
+  constructor(gridX, gridY, direction, damage, speed, color) {
+    this.x = gridX;
+    this.y = gridY;
+    this.direction = direction;
+    this.damage = damage;
+    this.speed = speed;
+    this.color = color;
+    this.active = true;
+    this.moveDelay = 0;
+    this.isEnemyProjectile = false;
+  }
+
+  update(map, enemies) {
+    if (!this.active) return;
+
+    this.moveDelay++;
+    if (this.moveDelay >= this.speed) {
+      this.moveDelay = 0;
+      
+      // Move in direction
+      let newX = this.x;
+      let newY = this.y;
+      
+      switch (this.direction) {
+        case 0: newX--; break; // left
+        case 1: newX++; break; // right
+        case 2: newY--; break; // up
+        case 3: newY++; break; // down
+      }
+
+      // Check if hit wall or out of bounds
+      if (newX < 0 || newX >= map.width || newY < 0 || newY >= map.height) {
+        this.active = false;
+        return;
+      }
+
+      const tile = map.tiles[newY][newX];
+      if (tile.type === 'WALL') {
+        this.active = false;
+        return;
+      }
+
+      this.x = newX;
+      this.y = newY;
+
+      // Check if hit enemy
+      enemies.forEach(enemy => {
+        if (enemy.active && enemy.gridX === this.x && enemy.gridY === this.y) {
+          enemy.takeDamage(this.damage);
+          this.active = false;
+          if (!enemy.active) {
+            gameState.score += 100;
+            gameState.eventMessage = `${enemy.name} Enemy defeated! +100 gold`;
+            gameState.eventMessageTimer = 60;
+          }
+        }
+      });
+    }
+  }
+
+  getScreenX() {
+    return GRID_CONFIG.offsetX + this.x * GRID_CONFIG.tileSize + GRID_CONFIG.tileSize / 2;
+  }
+
+  getScreenY() {
+    return GRID_CONFIG.offsetY + this.y * GRID_CONFIG.tileSize + GRID_CONFIG.tileSize / 2;
+  }
+
+  render(p) {
+    if (!this.active) return;
+
+    const x = this.getScreenX();
+    const y = this.getScreenY();
+
+    p.push();
+    p.fill(...this.color);
+    p.stroke(this.color[0] * 0.8, this.color[1] * 0.8, this.color[2] * 0.8);
+    p.strokeWeight(2);
+    p.ellipse(x, y, 10, 10);
+    p.pop();
+  }
+}
+</file>
+
+<file name="map.js">
+// map.js - Map generation and tile management
+
+import { TILE_TYPES, updateGridOffsets } from './globals.js';
+
+export class GameMap {
+  constructor(level) {
+    this.level = level;
+    this.width = 0;
+    this.height = 0;
+    this.tiles = [];
+    this.startX = 0;
+    this.startY = 0;
+    this.exitX = 0;
+    this.exitY = 0;
+    this.enemySpawns = []; // Track where to spawn moving enemies
+    
+    this.generateMap(level);
+    
+    // Update grid offsets for centering after map is generated
+    updateGridOffsets(this.width, this.height);
+  }
+
+  generateMap(level) {
+    // Map sizes that fit in canvas (600x400 with offset 30,80 = 540x300 usable)
+    // At 38px tiles = 14x8 max
+    // 9 levels: 3 easy, 3 medium, 3 hard
+    const sizes = [
+      // Easy levels (1-3): Very simple, small maps
+      { w: 8, h: 5 },    // Level 1 - Very easy
+      { w: 9, h: 5 },    // Level 2 - Easy
+      { w: 9, h: 6 },    // Level 3 - Easy+
+      
+      // Medium levels (4-6): Reuse old level 1-2 designs
+      { w: 10, h: 6 },   // Level 4 - Medium (old level 1)
+      { w: 11, h: 6 },   // Level 5 - Medium+ (old level 2)
+      { w: 11, h: 7 },   // Level 6 - Medium++
+      
+      // Hard levels (7-9): Larger, more complex
+      { w: 12, h: 7 },   // Level 7 - Hard (old level 3)
+      { w: 13, h: 7 },   // Level 8 - Hard+ (old level 4)
+      { w: 13, h: 7 }    // Level 9 - Hardest
+    ];
+    
+    const size = sizes[level - 1] || sizes[0];
+    this.width = size.w;
+    this.height = size.h;
+    
+    // Initialize empty grid
+    this.tiles = [];
+    for (let y = 0; y < this.height; y++) {
+      this.tiles[y] = [];
+      for (let x = 0; x < this.width; x++) {
+        this.tiles[y][x] = {
+          type: TILE_TYPES.EMPTY,
+          visited: false,
+          interacted: false
+        };
+      }
+    }
+    
+    // Add walls around the perimeter
+    for (let x = 0; x < this.width; x++) {
+      this.tiles[0][x].type = TILE_TYPES.WALL;
+      this.tiles[this.height - 1][x].type = TILE_TYPES.WALL;
+    }
+    for (let y = 0; y < this.height; y++) {
+      this.tiles[y][0].type = TILE_TYPES.WALL;
+      this.tiles[y][this.width - 1].type = TILE_TYPES.WALL;
+    }
+    
+    // Set start position (top-left area)
+    this.startX = 1;
+    this.startY = 1;
+    
+    // Set exit position (bottom-right area)
+    this.exitX = this.width - 2;
+    this.exitY = this.height - 2;
+    this.tiles[this.exitY][this.exitX].type = TILE_TYPES.EXIT;
+    
+    // Add internal obstacles and events based on level
+    this.addLevelFeatures(level);
+  }
+
+  addLevelFeatures(level) {
+    // Event distribution for 9 levels
+    const eventConfigs = [
+      // Easy levels (1-3): Minimal obstacles and enemies
+      { walls: 2, events: 3, movingEnemies: 1, weapons: 0, traps: 0 },   // Level 1 - Very easy
+      { walls: 3, events: 4, movingEnemies: 1, weapons: 1, traps: 0 },   // Level 2 - Easy
+      { walls: 3, events: 5, movingEnemies: 2, weapons: 1, traps: 1 },   // Level 3 - Easy+
+      
+      // Medium levels (4-6): Reuse old level 1-2 complexity
+      { walls: 3, events: 5, movingEnemies: 2, weapons: 1, traps: 1 },   // Level 4 - Medium (old level 1)
+      { walls: 5, events: 7, movingEnemies: 3, weapons: 1, traps: 2 },   // Level 5 - Medium+ (old level 2)
+      { walls: 6, events: 8, movingEnemies: 3, weapons: 2, traps: 2 },   // Level 6 - Medium++
+      
+      // Hard levels (7-9): More enemies and obstacles
+      { walls: 7, events: 9, movingEnemies: 4, weapons: 2, traps: 2 },   // Level 7 - Hard (old level 3)
+      { walls: 9, events: 11, movingEnemies: 5, weapons: 2, traps: 3 },  // Level 8 - Hard+ (old level 4)
+      { walls: 10, events: 13, movingEnemies: 6, weapons: 3, traps: 3 }  // Level 9 - Hardest
+    ];
+    
+    const config = eventConfigs[level - 1] || eventConfigs[0];
+    
+    // Create maze-like structure with walls
+    this.addMazeWalls(config.walls);
+    
+    // Ensure path exists from start to exit
+    this.ensurePathExists();
+    
+    // Add enemy spawn positions for moving enemies
+    this.addEnemySpawns(config.movingEnemies);
+    
+    // Add weapons
+    this.addGuaranteedEvents(TILE_TYPES.WEAPON, config.weapons);
+    
+    // Add specific trap count
+    this.addGuaranteedEvents(TILE_TYPES.EVENT_TRAP, config.traps);
+    
+    // Fill remaining event slots with treasure, NPCs, and mystery
+    const remainingEvents = config.events - config.traps;
+    for (let i = 0; i < remainingEvents; i++) {
+      const rand = Math.random();
+      let eventType;
+      if (rand < 0.5) {
+        eventType = TILE_TYPES.EVENT_TREASURE; // 50% treasure
+      } else if (rand < 0.75) {
+        eventType = TILE_TYPES.EVENT_NPC; // 25% NPC
+      } else {
+        eventType = TILE_TYPES.EVENT_MYSTERY; // 25% mystery
+      }
+      this.addGuaranteedEvents(eventType, 1);
+    }
+  }
+
+  addEnemySpawns(count) {
+    // Collect all available empty tiles away from start and exit
+    const validTiles = [];
+    for (let y = 1; y < this.height - 1; y++) {
+      for (let x = 1; x < this.width - 1; x++) {
+        // Don't spawn near start or exit
+        const distFromStart = Math.abs(x - this.startX) + Math.abs(y - this.startY);
+        const distFromExit = Math.abs(x - this.exitX) + Math.abs(y - this.exitY);
+        
+        if (this.tiles[y][x].type === TILE_TYPES.EMPTY &&
+            distFromStart > 2 && distFromExit > 2) {
+          validTiles.push({x, y});
+        }
+      }
+    }
+    
+    // Shuffle and select spawn positions
+    for (let i = validTiles.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [validTiles[i], validTiles[j]] = [validTiles[j], validTiles[i]];
+    }
+    
+    const spawnCount = Math.min(count, validTiles.length);
+    this.enemySpawns = validTiles.slice(0, spawnCount);
+  }
+
+  addMazeWalls(wallCount) {
+    let wallsAdded = 0;
+    let attempts = 0;
+    
+    while (wallsAdded < wallCount && attempts < 150) {
+      const x = Math.floor(Math.random() * (this.width - 2)) + 1;
+      const y = Math.floor(Math.random() * (this.height - 2)) + 1;
+      
+      // Don't block start or exit
+      if ((x === this.startX && y === this.startY) || 
+          (x === this.exitX && y === this.exitY)) {
+        attempts++;
+        continue;
+      }
+      
+      // Don't block immediate neighbors of start or exit
+      if (Math.abs(x - this.startX) <= 1 && Math.abs(y - this.startY) <= 1) {
+        attempts++;
+        continue;
+      }
+      if (Math.abs(x - this.exitX) <= 1 && Math.abs(y - this.exitY) <= 1) {
+        attempts++;
+        continue;
+      }
+      
+      if (this.tiles[y][x].type === TILE_TYPES.EMPTY) {
+        this.tiles[y][x].type = TILE_TYPES.WALL;
+        wallsAdded++;
+      }
+      attempts++;
+    }
+  }
+
+  addGuaranteedEvents(eventType, count) {
+    // First, collect all available empty tiles
+    const emptyTiles = [];
+    for (let y = 1; y < this.height - 1; y++) {
+      for (let x = 1; x < this.width - 1; x++) {
+        if (this.tiles[y][x].type === TILE_TYPES.EMPTY &&
+            !(x === this.startX && y === this.startY) &&
+            !(x === this.exitX && y === this.exitY)) {
+          emptyTiles.push({x, y});
+        }
+      }
+    }
+    
+    // Shuffle the empty tiles
+    for (let i = emptyTiles.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [emptyTiles[i], emptyTiles[j]] = [emptyTiles[j], emptyTiles[i]];
+    }
+    
+    // Place events on the first N empty tiles
+    const placedCount = Math.min(count, emptyTiles.length);
+    for (let i = 0; i < placedCount; i++) {
+      const tile = emptyTiles[i];
+      this.tiles[tile.y][tile.x].type = eventType;
+    }
+  }
+
+  ensurePathExists() {
+    // Simple flood fill to ensure path exists
+    const visited = Array(this.height).fill(null).map(() => Array(this.width).fill(false));
+    const queue = [{x: this.startX, y: this.startY}];
+    visited[this.startY][this.startX] = true;
+    
+    while (queue.length > 0) {
+      const current = queue.shift();
+      
+      if (current.x === this.exitX && current.y === this.exitY) {
+        return; // Path exists
+      }
+      
+      const neighbors = [
+        {x: current.x - 1, y: current.y},
+        {x: current.x + 1, y: current.y},
+        {x: current.x, y: current.y - 1},
+        {x: current.x, y: current.y + 1}
+      ];
+      
+      for (const n of neighbors) {
+        if (n.x > 0 && n.x < this.width - 1 && n.y > 0 && n.y < this.height - 1) {
+          if (!visited[n.y][n.x] && this.tiles[n.y][n.x].type !== TILE_TYPES.WALL) {
+            visited[n.y][n.x] = true;
+            queue.push(n);
+          }
+        }
+      }
+    }
+    
+    // If no path exists, clear a simple path
+    this.clearPathToExit();
+  }
+
+  clearPathToExit() {
+    let x = this.startX;
+    let y = this.startY;
+    
+    while (x !== this.exitX || y !== this.exitY) {
+      if (this.tiles[y][x].type === TILE_TYPES.WALL) {
+        this.tiles[y][x].type = TILE_TYPES.EMPTY;
+      }
+      
+      if (x < this.exitX) x++;
+      else if (x > this.exitX) x--;
+      else if (y < this.exitY) y++;
+      else if (y > this.exitY) y--;
+    }
+  }
+
+  getTileAt(x, y) {
+    if (x < 0 || x >= this.width || y < 0 || y >= this.height) {
+      return null;
+    }
+    return this.tiles[y][x];
+  }
+
+  isEventTile(type) {
+    return type === TILE_TYPES.EVENT_TREASURE ||
+           type === TILE_TYPES.EVENT_TRAP ||
+           type === TILE_TYPES.EVENT_ENEMY ||
+           type === TILE_TYPES.EVENT_NPC ||
+           type === TILE_TYPES.EVENT_MYSTERY;
+  }
+}
+</file>
+
+<file name="input.js">
+// input.js - Input handling
+
+import { gameState, GAME_PHASE, WEAPONS } from './globals.js';
+import { triggerEvent } from './events.js';
+import { GameMap } from './map.js';
+import { Player, Projectile } from './player.js';
+import { createRandomEnemy } from './enemy.js';
+
+export function handleKeyPressed(p) {
+  // Log input
+  p.logs.inputs.push({
+    input_type: 'keyPressed',
+    data: { key: p.key, keyCode: p.keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+
+  // Global controls
+  if (p.keyCode === 13) { // ENTER
+    if (gameState.gamePhase === GAME_PHASE.START) {
+      startGame(p);
+    }
+  } else if (p.keyCode === 27) { // ESC
+    if (gameState.gamePhase === GAME_PHASE.PLAYING) {
+      gameState.gamePhase = GAME_PHASE.PAUSED;
+      logGameInfo(p, 'Paused');
+    } else if (gameState.gamePhase === GAME_PHASE.PAUSED) {
+      gameState.gamePhase = GAME_PHASE.PLAYING;
+      logGameInfo(p, 'Resumed');
+    }
+  } else if (p.keyCode === 82) { // R
+    if (gameState.gamePhase === GAME_PHASE.GAME_OVER_WIN || 
+        gameState.gamePhase === GAME_PHASE.GAME_OVER_LOSE) {
+      resetToStart(p);
+    }
+  }
+
+  // Playing controls
+  if (gameState.gamePhase === GAME_PHASE.PLAYING) {
+    handlePlayingInput(p);
+  }
+}
+
+function handlePlayingInput(p) {
+  const player = gameState.player;
+  const map = gameState.currentMap;
+  
+  if (!player || !map) return;
+  
+  // Toggle shop with S key
+  if (p.keyCode === 83) { // S
+    gameState.shopOpen = !gameState.shopOpen;
+    return;
+  }
+  
+  // Handle shop interactions
+  if (gameState.shopOpen) {
+    handleShopInput(p);
+    return;
+  }
+  
+  // Heal with gold (H key)
+  if (p.keyCode === 72) { // H
+    const healCost = 100;
+    const healAmount = 25;
+    if (gameState.score >= healCost && player.hp < player.maxHP) {
+      gameState.score -= healCost;
+      player.heal(healAmount);
+      gameState.eventMessage = `Healed ${healAmount} HP for ${healCost} gold!`;
+      gameState.eventMessageTimer = gameState.eventMessageDuration;
+    } else if (gameState.score < healCost) {
+      gameState.eventMessage = `Not enough gold! Need ${healCost} gold to heal.`;
+      gameState.eventMessageTimer = 60;
+    } else if (player.hp >= player.maxHP) {
+      gameState.eventMessage = `Already at full health!`;
+      gameState.eventMessageTimer = 60;
+    }
+  }
+  
+  // Shoot with SPACE
+  if (p.keyCode === 32) { // SPACE
+    player.shoot(gameState.projectiles);
+  }
+  
+  // Movement (no longer triggers enemy turns - enemies move continuously now)
+  let moved = false;
+  let newX = player.gridX;
+  let newY = player.gridY;
+  
+  // Arrow keys or WASD
+  if (p.keyCode === 37 || p.keyCode === 65) { // LEFT or A
+    newX--;
+    moved = true;
+  } else if (p.keyCode === 39 || p.keyCode === 68) { // RIGHT or D
+    newX++;
+    moved = true;
+  } else if (p.keyCode === 38 || p.keyCode === 87) { // UP or W
+    newY--;
+    moved = true;
+  } else if (p.keyCode === 40 || p.keyCode === 83) { // DOWN or S
+    newY++;
+    moved = true;
+  }
+  
+  if (moved && player.canMoveTo(newX, newY, map)) {
+    player.moveTo(newX, newY, map);
+    logPlayerInfo(p);
+    checkTileInteraction(p);
+  }
+  
+  // Interaction with E key
+  if (p.keyCode === 69) { // E
+    const tile = map.getTileAt(player.gridX, player.gridY);
+    if (tile && (map.isEventTile(tile.type) || tile.type === 'EXIT')) {
+      // Check if trying to exit with enemies alive
+      if (tile.type === 'EXIT') {
+        const activeEnemies = gameState.enemies.filter(e => e.active).length;
+        if (activeEnemies > 0) {
+          gameState.eventMessage = `Cannot exit! ${activeEnemies} enemies remaining!`;
+          gameState.eventMessageTimer = gameState.eventMessageDuration;
+          return;
+        }
+      }
+      
+      if (!tile.interacted || tile.type === 'EXIT') {
+        const message = triggerEvent(tile, gameState.currentLevel, p);
+        gameState.eventMessage = message;
+        gameState.eventMessageTimer = gameState.eventMessageDuration;
+        gameState.needsInteraction = false;
+        
+        // Check if exit was triggered
+        if (tile.type === 'EXIT') {
+          handleLevelComplete(p);
+        }
+      }
+    }
+  }
+}
+
+function handleShopInput(p) {
+  // Number keys 1-5 to buy weapons
+  const weaponKeys = {
+    49: "PISTOL",   // 1
+    50: "SWORD",    // 2
+    51: "SHOTGUN",  // 3
+    52: "RIFLE",    // 4
+    53: "LASER"     // 5
+  };
+  
+  const weaponKey = weaponKeys[p.keyCode];
+  if (weaponKey) {
+    const weapon = WEAPONS[weaponKey];
+    
+    // Check if already owned
+    if (gameState.ownedWeapons.includes(weaponKey)) {
+      // Select this weapon
+      gameState.currentWeapon = weaponKey;
+      gameState.eventMessage = `Equipped ${weapon.name}!`;
+      gameState.eventMessageTimer = 60;
+    } else {
+      // Try to buy
+      if (gameState.score >= weapon.cost) {
+        gameState.score -= weapon.cost;
+        gameState.ownedWeapons.push(weaponKey);
+        gameState.currentWeapon = weaponKey;
+        gameState.eventMessage = `Purchased ${weapon.name}!`;
+        gameState.eventMessageTimer = 90;
+      } else {
+        gameState.eventMessage = `Not enough gold! Need ${weapon.cost} gold.`;
+        gameState.eventMessageTimer = 60;
+      }
+    }
+  }
+}
+
+function checkTileInteraction(p) {
+  const player = gameState.player;
+  const map = gameState.currentMap;
+  const tile = map.getTileAt(player.gridX, player.gridY);
+  
+  if (tile && (map.isEventTile(tile.type) || tile.type === 'EXIT')) {
+    if (!tile.interacted || tile.type === 'EXIT') {
+      gameState.needsInteraction = true;
+    } else {
+      gameState.needsInteraction = false;
+    }
+  } else {
+    gameState.needsInteraction = false;
+  }
+}
+
+function handleLevelComplete(p) {
+  if (gameState.currentLevel >= gameState.maxLevel) {
+    // Win!
+    updateHighScore();
+    gameState.gamePhase = GAME_PHASE.GAME_OVER_WIN;
+    logGameInfo(p, 'Win');
+  } else {
+    // Next level
+    gameState.currentLevel++;
+    gameState.gamePhase = GAME_PHASE.LEVEL_TRANSITION;
+    gameState.levelTransitionTimer = gameState.levelTransitionDuration;
+    logGameInfo(p, `Level ${gameState.currentLevel - 1} Complete`);
+  }
+}
+
+function startGame(p) {
+  gameState.score = 0;
+  gameState.currentLevel = 1;
+  gameState.luck = 50;
+  gameState.eventMessage = "";
+  gameState.eventMessageTimer = 0;
+  gameState.needsInteraction = false;
+  gameState.weaponPower = 1;
+  gameState.projectiles = [];
+  gameState.currentWeapon = "PISTOL";
+  gameState.ownedWeapons = ["PISTOL"];
+  gameState.shopOpen = false;
+  
+  // Create map
+  gameState.currentMap = new GameMap(1);
+  
+  // Create player
+  const startHP = 100;
+  gameState.player = new Player(
+    gameState.currentMap.startX,
+    gameState.currentMap.startY,
+    startHP
+  );
+  
+  // Create enemies with variety
+  gameState.enemies = [];
+  if (gameState.currentMap.enemySpawns) {
+    gameState.currentMap.enemySpawns.forEach(spawn => {
+      gameState.enemies.push(createRandomEnemy(spawn.x, spawn.y, 1));
+    });
+  }
+  
+  gameState.entities = [gameState.player];
+  
+  // Update phase BEFORE logging
+  gameState.gamePhase = GAME_PHASE.PLAYING;
+  
+  logGameInfo(p, 'Game Started');
+  logPlayerInfo(p);
+}
+
+function resetToStart(p) {
+  gameState.gamePhase = GAME_PHASE.START;
+  gameState.player = null;
+  gameState.currentMap = null;
+  gameState.entities = [];
+  gameState.enemies = [];
+  gameState.projectiles = [];
+  gameState.shopOpen = false;
+  logGameInfo(p, 'Reset to Start');
+}
+
+function updateHighScore() {
+  if (gameState.score > gameState.highScore) {
+    gameState.highScore = gameState.score;
+    try {
+      localStorage.setItem('adventureStarHighScore', gameState.highScore.toString());
+    } catch (e) {
+      console.log('Could not save high score');
+    }
+  }
+}
+
+function logGameInfo(p, data) {
+  p.logs.game_info.push({
+    data: data,
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function logPlayerInfo(p) {
+  if (gameState.player) {
+    p.logs.player_info.push({
+      screen_x: gameState.player.getScreenX(),
+      screen_y: gameState.player.getScreenY(),
+      game_x: gameState.player.gridX,
+      game_y: gameState.player.gridY,
+      framecount: p.frameCount
+    });
+  }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

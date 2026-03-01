@@ -1,0 +1,1408 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+there should be more block numbers, the number on the snake should be larger, the score should be tied to how far I get, there shouldn't be a lot of empty space, make sure there are a lot of number blocks, and I should visibly see the length of the snake so the circles should be a bit farther apart
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Neon Snake Breaker</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #111; color: #eee; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 2px solid #333; box-shadow: 0 0 20px rgba(0,0,0,0.5); width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 20px; cursor: pointer; background: #333; color: #fff; border: 1px solid #555; border-radius: 4px; transition: background 0.2s; font-size: 14px; }
+      .control-button:hover { background: #444; }
+      .control-button.active { background: #007bff; border-color: #0056b3; }
+      h1 { margin-bottom: 10px; text-transform: uppercase; letter-spacing: 2px; font-size: 24px; color: #ffdc32; }
+      p { max-width: 600px; text-align: center; margin: 5px 0; color: #aaa; font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle">Neon Snake Breaker</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="updateMode('HUMAN', this)">Human Mode</button>
+        <button id="test1ModeBtn" class="control-button" onclick="updateMode('TEST_1', this)">TEST: Survival AI</button>
+        <button id="test2ModeBtn" class="control-button" onclick="updateMode('TEST_2', this)">TEST: Suicide AI</button>
+        <button id="test3ModeBtn" class="control-button" onclick="updateMode('TEST_3', this)">TEST: Fever AI</button>
+      </div>
+      <p id="gameDescription">Swipe your finger (use Arrow Keys) to guide a snake of balls and break the bricks. Try to break as many bricks as possible.</p>
+      <p id="gameControls">Controls: Left/Right to Move | Shift to Dash | Z for Fever | ESC Pause | R Restart</p>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+    
+    <script>
+        function updateMode(mode, btn) {
+            if (window.setControlMode) {
+                window.setControlMode(mode);
+                // Update UI
+                document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                // Force focus back to body so keys work immediately
+                document.body.focus();
+            }
+        }
+    </script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+/**
+ * automated_testing_controller.js
+ * Logic for AI agents used in testing modes.
+ */
+
+import { CANVAS_WIDTH, CONFIG } from './globals.js';
+import { KEYS } from './input.js';
+
+/**
+ * Returns a key action based on game state and current testing mode
+ */
+export function get_automated_testing_action(gameState) {
+    if (!gameState.player) return null;
+
+    switch (gameState.controlMode) {
+        case "TEST_1": // Smart Survival
+            return getSurvivalAction(gameState);
+        case "TEST_2": // Suicide (Hit big blocks)
+            return getSuicideAction(gameState);
+        case "TEST_3": // Fever Test
+            return getFeverTestAction(gameState);
+        default:
+            return null;
+    }
+}
+
+function getSurvivalAction(state) {
+    const player = state.player;
+    // Look ahead window
+    const lookAheadY = player.y - 250; // Blocks are above player
+    
+    // Find relevant entities
+    // We want food, avoid blocks unless unavoidable
+    let bestX = player.x;
+    let maxScore = -9999;
+    
+    // Sample a few target X positions (lanes)
+    const laneWidth = CONFIG.BLOCK_SIZE;
+    const numLanes = Math.floor(CANVAS_WIDTH / laneWidth);
+    
+    for (let i = 0; i < numLanes; i++) {
+        let laneX = i * laneWidth + laneWidth/2;
+        let laneScore = 0;
+        
+        // Check objects in this lane
+        // Food
+        state.foods.forEach(f => {
+            if (Math.abs(f.x - laneX) < laneWidth/2 && f.y < player.y && f.y > lookAheadY) {
+                laneScore += f.value * 10;
+            }
+        });
+        
+        // Blocks
+        state.blocks.forEach(b => {
+            if (Math.abs((b.x + b.size/2) - laneX) < laneWidth/2 && b.y < player.y && b.y > lookAheadY) {
+                // If block value is high, bad. If low, acceptable if no other path.
+                // We strongly prefer avoiding any block if possible, but if we must, choose smallest.
+                laneScore -= b.value * 5; 
+            }
+        });
+        
+        // Bias towards center slightly to stay safe
+        laneScore -= Math.abs(laneX - CANVAS_WIDTH/2) * 0.01;
+        
+        // Bias towards current position to avoid jitter
+        laneScore -= Math.abs(laneX - player.x) * 0.1;
+        
+        if (laneScore > maxScore) {
+            maxScore = laneScore;
+            bestX = laneX;
+        }
+    }
+    
+    // Steering
+    if (Math.abs(player.x - bestX) > 5) {
+        return player.x < bestX ? { keyCode: KEYS.RIGHT } : { keyCode: KEYS.LEFT };
+    }
+    
+    return null;
+}
+
+function getSuicideAction(state) {
+    const player = state.player;
+    // Target the BIGGEST block
+    let target = null;
+    let maxVal = -1;
+    
+    state.blocks.forEach(b => {
+        if (b.y < player.y && b.value > maxVal) {
+            maxVal = b.value;
+            target = b;
+        }
+    });
+    
+    if (target) {
+        let targetX = target.x + target.size/2;
+        if (Math.abs(player.x - targetX) > 5) {
+             return player.x < targetX ? { keyCode: KEYS.RIGHT } : { keyCode: KEYS.LEFT };
+        }
+    }
+    return null;
+}
+
+function getFeverTestAction(state) {
+    // Play normally but hit Z when ready
+    if (state.feverValue >= CONFIG.FEVER_MAX) {
+        return { keyCode: KEYS.Z };
+    }
+    return getSurvivalAction(state); // Fallback to survival behavior
+}
+
+// Expose to window for testing hooks
+window.get_automated_testing_action = get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+/**
+ * globals.js
+ * Contains global constants, configuration, and the shared game state object.
+ */
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+
+// Game tuning constants
+export const CONFIG = {
+    PLAYER_BASE_Y: 300,        // Y position of the snake head
+    PLAYER_RADIUS: 8,          // Radius of snake balls
+    INITIAL_SNAKE_LENGTH: 5,   // Starting length
+    BASE_SCROLL_SPEED: 3,      // World scroll speed
+    MAX_SCROLL_SPEED: 8,       // Cap for speed increase
+    SPEED_INCREMENT: 0.001,    // Acceleration per frame
+    LATERAL_SPEED: 6,          // Horizontal movement speed
+    LATERAL_SPEED_FAST: 10,    // Shift key speed
+    BLOCK_SIZE: 60,            // Dimension of obstacle blocks
+    LANE_COUNT: 5,             // Number of vertical lanes (derived from width/block_size effectively)
+    FEVER_MAX: 100,            // Points needed for fever
+    FEVER_DURATION: 180,       // Frames (3 seconds)
+    DAMAGE_TICK_RATE: 5,       // Frames between taking damage from a block
+    WALL_WIDTH: 4,             // Width of vertical walls
+    SPAWN_INTERVAL_MIN: 40,    // Min frames between spawns
+    SPAWN_INTERVAL_MAX: 100    // Max frames between spawns
+};
+
+// Color palette
+export const COLORS = {
+    BACKGROUND: [20, 20, 25],
+    PLAYER: [255, 220, 50],
+    PLAYER_TRAIL: [255, 200, 0, 150],
+    FOOD: [50, 255, 100],
+    WALL: [200, 200, 210],
+    TEXT: [255, 255, 255],
+    UI_OVERLAY: [0, 0, 0, 180],
+    FEVER: [255, 50, 150],
+    // Block heat map colors (Low -> High value)
+    BLOCK_LOW: [100, 200, 255],
+    BLOCK_MED: [100, 100, 255],
+    BLOCK_HIGH: [255, 50, 50]
+};
+
+// Central Game State
+export const gameState = {
+    // Phase management
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2, etc.
+    frameCount: 0,
+    deltaTime: 0,
+    lastFrameTime: 0,
+
+    // Player State
+    player: null, // Reference to the Snake instance
+    score: 0,
+    feverValue: 0,
+    isFeverActive: false,
+    feverTimer: 0,
+
+    // World State
+    entities: [],     // All game objects (Snake, Blocks, Foods, Walls, Particles)
+    scrollSpeed: CONFIG.BASE_SCROLL_SPEED,
+    isFrozen: false,  // True when hitting a block
+    distanceTraveled: 0,
+    
+    // Entity Lists for easy access
+    blocks: [],
+    foods: [],
+    walls: [],
+    particles: [],
+
+    // Camera/Shake
+    screenShake: 0,
+    
+    // Methods
+    reset: function() {
+        this.score = 0;
+        this.feverValue = 0;
+        this.isFeverActive = false;
+        this.feverTimer = 0;
+        this.scrollSpeed = CONFIG.BASE_SCROLL_SPEED;
+        this.isFrozen = false;
+        this.distanceTraveled = 0;
+        this.entities = [];
+        this.blocks = [];
+        this.foods = [];
+        this.walls = [];
+        this.particles = [];
+        this.player = null; // Re-initialized in setup
+    }
+};
+
+/**
+ * Initialize Logging System
+ * @param {object} p - p5 instance
+ */
+export function initLogs(p) {
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+}
+
+// Expose gameState globally
+window.getGameState = () => gameState;
+</file>
+
+<file name="game.js">
+/**
+ * game.js
+ * Main entry point and game loop.
+ */
+
+import { gameState, initLogs, CONFIG, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './globals.js';
+import { handleKeyPress, handleKeyRelease, processInput } from './input.js';
+import { Snake, Block, Food, Wall } from './entities.js';
+import { resolveCollisions } from './physics.js';
+import { renderStartScreen, renderHUD, renderPausedOverlay, renderGameOver } from './ui.js';
+import { updateParticles, renderParticles } from './particles.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    // Spawning logic variables
+    let spawnTimer = 0;
+    let nextSpawnTime = 50;
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        initLogs(p);
+        
+        // Initialize gameState defaults
+        gameState.gamePhase = "START";
+        
+        // Expose setupGame for resets
+        p.setupGame = setupGame;
+
+        // Initialize game state and create player on first load
+        setupGame(); 
+    };
+
+    // Initialize/Reset game entities
+    function setupGame() {
+        gameState.reset();
+        
+        // Create Player
+        gameState.player = new Snake(CANVAS_WIDTH / 2, CONFIG.PLAYER_BASE_Y);
+        gameState.entities.push(gameState.player);
+        
+        spawnTimer = 0;
+    }
+
+    p.draw = function() {
+        // Timekeeping
+        const now = p.millis();
+        gameState.deltaTime = (now - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = now;
+        gameState.frameCount = p.frameCount;
+
+        // Background
+        p.background(...COLORS.BACKGROUND);
+        
+        // Handle Phases
+        switch (gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                break;
+                
+            case "PLAYING":
+                updateGame(p);
+                renderGame(p);
+                renderHUD(p);
+                break;
+                
+            case "PAUSED":
+                renderGame(p);
+                renderPausedOverlay(p);
+                renderHUD(p);
+                break;
+                
+            case "GAME_OVER_LOSE":
+                renderGame(p); // Render last frame in background
+                renderGameOver(p);
+                break;
+        }
+    };
+
+    function updateGame(p) {
+        // Process Inputs
+        processInput(p);
+        
+        // Update Player
+        if (gameState.player) {
+            gameState.player.update(p);
+        }
+
+        // Spawn Entities
+        handleSpawning(p);
+
+        // Update Entities (move them down)
+        // If hitting a block (isFrozen), entities don't scroll (handled inside entity.update via globals)
+        for (let i = gameState.entities.length - 1; i >= 0; i--) {
+            const ent = gameState.entities[i];
+            
+            // Skip player in generic update loop if needed, but here player.update is separate
+            if (ent === gameState.player) continue;
+            
+            ent.update(p);
+            
+            if (ent.toRemove) {
+                gameState.entities.splice(i, 1);
+                // Also remove from specific lists
+                removeFromLists(ent);
+            }
+        }
+
+        // Physics
+        if (gameState.player) {
+            resolveCollisions(p, gameState.player);
+        }
+
+        // Update Particles
+        updateParticles(p);
+        
+        // Difficulty scaling
+        if (!gameState.isFrozen && gameState.scrollSpeed < CONFIG.MAX_SCROLL_SPEED) {
+            gameState.scrollSpeed += CONFIG.SPEED_INCREMENT;
+        }
+        
+        // Screen Shake decay
+        if (gameState.screenShake > 0) {
+            p.translate(p.random(-gameState.screenShake, gameState.screenShake), p.random(-gameState.screenShake, gameState.screenShake));
+            gameState.screenShake *= 0.9;
+        }
+    }
+
+    function renderGame(p) {
+        p.push();
+        // Screen shake transform applied in update affecting draw matrix? 
+        // p5 transforms reset every draw. We need to apply it here.
+        if (gameState.screenShake > 0) {
+            p.translate(p.random(-gameState.screenShake, gameState.screenShake), p.random(-gameState.screenShake, gameState.screenShake));
+        }
+
+        // Render Walls first (behind)
+        gameState.walls.forEach(w => w.render(p));
+        
+        // Blocks
+        gameState.blocks.forEach(b => b.render(p));
+        
+        // Food
+        gameState.foods.forEach(f => f.render(p));
+        
+        // Player
+        if (gameState.player) gameState.player.render(p);
+        
+        // Particles (on top)
+        renderParticles(p);
+        
+        p.pop();
+    }
+
+    function handleSpawning(p) {
+        // Only spawn if world is moving
+        if (gameState.isFrozen) return;
+
+        spawnTimer++;
+        if (spawnTimer > nextSpawnTime) {
+            spawnRow(p);
+            spawnTimer = 0;
+            nextSpawnTime = p.random(CONFIG.SPAWN_INTERVAL_MIN, CONFIG.SPAWN_INTERVAL_MAX);
+        }
+    }
+
+    function spawnRow(p) {
+        const pattern = Math.floor(p.random(4));
+        const laneWidth = CANVAS_WIDTH / CONFIG.LANE_COUNT;
+        
+        // Always spawn vertical walls between lanes occasionally
+        if (p.random() < 0.3) {
+            const wallX = Math.floor(p.random(1, CONFIG.LANE_COUNT)) * laneWidth;
+            const wall = new Wall(wallX, -300, 300); // Start offscreen
+            gameState.walls.push(wall);
+            gameState.entities.push(wall);
+        }
+
+        // Patterns:
+        // 0: Full row of blocks (player must break one)
+        // 1: Scattered blocks and food
+        // 2: Food bonanza
+        // 3: Pyramid
+        
+        const startY = -100;
+
+        if (pattern === 0) {
+            // Full row
+            for (let i = 0; i < CONFIG.LANE_COUNT; i++) {
+                // Ensure at least one block is "weak" enough to survive if length > 5
+                // Actually, random values.
+                let val = Math.floor(p.random(1, 15 + gameState.score/10));
+                // One low value
+                if (i === 2) val = Math.floor(p.random(1, 5));
+                
+                const block = new Block(i * laneWidth + (laneWidth - CONFIG.BLOCK_SIZE)/2, startY, val);
+                gameState.blocks.push(block);
+                gameState.entities.push(block);
+            }
+        } else if (pattern === 1) {
+            // Random blocks and food
+            for (let i = 0; i < CONFIG.LANE_COUNT; i++) {
+                if (p.random() < 0.5) {
+                    const val = Math.floor(p.random(1, 10));
+                    const block = new Block(i * laneWidth + (laneWidth - CONFIG.BLOCK_SIZE)/2, startY, val);
+                    gameState.blocks.push(block);
+                    gameState.entities.push(block);
+                } else if (p.random() < 0.3) {
+                    const val = Math.floor(p.random(1, 5));
+                    const food = new Food(i * laneWidth + laneWidth/2, startY, val);
+                    gameState.foods.push(food);
+                    gameState.entities.push(food);
+                }
+            }
+        } else {
+            // Food mostly
+            for (let i = 0; i < CONFIG.LANE_COUNT; i++) {
+                if (p.random() < 0.7) {
+                    const val = Math.floor(p.random(1, 4));
+                    const food = new Food(i * laneWidth + laneWidth/2, startY, val);
+                    gameState.foods.push(food);
+                    gameState.entities.push(food);
+                }
+            }
+        }
+    }
+
+    function removeFromLists(ent) {
+        let idx = gameState.blocks.indexOf(ent);
+        if (idx > -1) gameState.blocks.splice(idx, 1);
+        
+        idx = gameState.foods.indexOf(ent);
+        if (idx > -1) gameState.foods.splice(idx, 1);
+        
+        idx = gameState.walls.indexOf(ent);
+        if (idx > -1) gameState.walls.splice(idx, 1);
+    }
+
+    p.keyPressed = function() {
+        handleKeyPress(p);
+    };
+
+    p.keyReleased = function() {
+        handleKeyRelease(p);
+    };
+});
+
+window.gameInstance = gameInstance;
+window.setControlMode = (mode) => {
+    gameState.controlMode = mode;
+    console.log(`Control Mode set to: ${mode}`);
+};
+</file>
+
+<file name="ui.js">
+/**
+ * ui.js
+ * Renders User Interface overlays (Start, HUD, Pause, GameOver).
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, CONFIG, COLORS } from './globals.js';
+
+export function renderStartScreen(p) {
+    p.background(...COLORS.BACKGROUND);
+    
+    p.push();
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    // Title
+    p.fill(...COLORS.PLAYER);
+    p.textSize(48);
+    p.textStyle(p.BOLD);
+    p.text("NEON SNAKE", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 3);
+    
+    p.fill(255);
+    p.textSize(32);
+    p.text("BREAKER", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 3 + 40);
+    
+    // Prompt
+    p.textSize(18);
+    const blink = p.frameCount % 60 < 30 ? 255 : 150;
+    p.fill(blink);
+    p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.6);
+    
+    // Info
+    p.fill(200);
+    p.textSize(14);
+    p.text("Arrows to Move  |  Shift to Dash  |  Z for Fever", CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.8);
+    
+    p.pop();
+}
+
+export function renderHUD(p) {
+    p.push();
+    
+    // Score
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(20);
+    p.fill(255);
+    p.text(`Score: ${gameState.score}`, 10, 10);
+    
+    // Fever Meter
+    const barW = 150;
+    const barH = 15;
+    const barX = CANVAS_WIDTH - barW - 10;
+    const barY = 10;
+    
+    p.stroke(255);
+    p.strokeWeight(1);
+    p.noFill();
+    p.rect(barX, barY, barW, barH);
+    
+    const ratio = gameState.feverValue / CONFIG.FEVER_MAX;
+    if (gameState.isFeverActive) {
+        // Use random flicker for effect, but ensure it's visible color
+        p.fill(p.random(200, 255), p.random(50, 100), p.random(150, 255));
+        p.rect(barX, barY, barW * (gameState.feverTimer / CONFIG.FEVER_DURATION), barH);
+        p.textAlign(p.CENTER);
+        p.fill(255);
+        p.textSize(12);
+        p.text("FEVER!", barX + barW/2, barY + 12);
+    } else {
+        p.fill(...COLORS.FEVER);
+        p.rect(barX, barY, barW * ratio, barH);
+        if (ratio >= 1) {
+             p.textAlign(p.CENTER);
+             p.fill(255);
+             p.textSize(10);
+             p.text("PRESS Z", barX + barW/2, barY + 11);
+        }
+    }
+    
+    p.pop();
+}
+
+export function renderPausedOverlay(p) {
+    p.push();
+    p.fill(...COLORS.UI_OVERLAY);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.text("PAUSED", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+    p.textSize(16);
+    p.text("Press ESC to Resume", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 40);
+    p.pop();
+}
+
+export function renderGameOver(p) {
+    p.push();
+    p.fill(...COLORS.UI_OVERLAY);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(255, 50, 50);
+    p.textSize(48);
+    p.text("GAME OVER", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 40);
+    
+    p.fill(255);
+    p.textSize(24);
+    p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 10);
+    
+    p.textSize(18);
+    p.fill(200);
+    p.text("Press R to Restart", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 60);
+    p.pop();
+}
+</file>
+
+<file name="entities.js">
+/**
+ * entities.js
+ * Game entity classes.
+ */
+
+import { gameState, CONFIG, COLORS, CANVAS_HEIGHT, CANVAS_WIDTH } from './globals.js';
+import { createTextPopup } from './particles.js';
+
+export class Entity {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.toRemove = false;
+    }
+    
+    update(p) {
+        // Base update logic (e.g., scrolling)
+        if (!gameState.isFrozen) {
+            this.y += gameState.scrollSpeed;
+        }
+        
+        // Remove if off screen bottom
+        if (this.y > CANVAS_HEIGHT + 100) {
+            this.toRemove = true;
+        }
+    }
+
+    render(p) {}
+}
+
+/**
+ * The Snake (Player)
+ */
+export class Snake {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y; // Typically fixed, but can wobble
+        this.radius = CONFIG.PLAYER_RADIUS;
+        this.length = CONFIG.INITIAL_SNAKE_LENGTH;
+        this.trail = []; // Stores previous positions for the body
+        this.vx = 0;
+        this.maxTrailLength = 500; // Cap to prevent memory issues
+    }
+
+    handleInput(action) {
+        const speed = action.speedMod ? CONFIG.LATERAL_SPEED_FAST : CONFIG.LATERAL_SPEED;
+        this.vx = 0;
+        if (action.left) this.vx = -speed;
+        if (action.right) this.vx = speed;
+        
+        if (action.activateFever) {
+            this.tryActivateFever();
+        }
+    }
+
+    tryActivateFever() {
+        if (gameState.feverValue >= CONFIG.FEVER_MAX && !gameState.isFeverActive) {
+            gameState.isFeverActive = true;
+            gameState.feverTimer = CONFIG.FEVER_DURATION;
+            gameState.feverValue = 0;
+        }
+    }
+
+    update(p) {
+        // Update physics
+        this.x += this.vx;
+
+        // Constrain to screen
+        this.x = p.constrain(this.x, this.radius, CANVAS_WIDTH - this.radius);
+
+        // Move trail points down to simulate forward movement (vertical snake)
+        if (!gameState.isFrozen) {
+            for (let point of this.trail) {
+                point.y += gameState.scrollSpeed;
+            }
+        }
+
+        // Update trail for body rendering
+        // We push the current head position to the front
+        this.trail.unshift({x: this.x, y: this.y});
+        
+        // We only keep as many trail points as we need for visual length
+        if (this.trail.length > this.length * 4 + 20) {
+            this.trail.pop();
+        }
+
+        // Fever Logic
+        if (gameState.isFeverActive) {
+            gameState.feverTimer--;
+            // Auto-move forward fast (simulated by faster scroll speed in game.js)
+            if (gameState.feverTimer <= 0) {
+                gameState.isFeverActive = false;
+            }
+        }
+        
+        // Log player info periodically
+        if (p.frameCount % 10 === 0) {
+            p.logs.player_info.push({
+                x: this.x,
+                y: this.y,
+                length: this.length,
+                score: gameState.score,
+                timestamp: Date.now()
+            });
+        }
+    }
+
+    render(p) {
+        // Draw body
+        p.noStroke();
+        const bodySpacing = 2; // Reduced from 3 to prevent gaps at high speed
+        
+        for (let i = 1; i < this.length; i++) {
+            let idx = i * bodySpacing;
+            if (idx >= this.trail.length) break;
+            
+            let pos = this.trail[idx];
+            // Visual size slightly decreases towards tail
+            let size = (this.radius * 2) * (1 - (i / (this.length + 10)) * 0.3);
+            
+            if (gameState.isFeverActive) {
+                p.fill(p.random(200, 255), p.random(50, 150), p.random(100, 255));
+            } else {
+                p.fill(...COLORS.PLAYER);
+            }
+            p.circle(pos.x, pos.y, size);
+        }
+
+        // Draw Head
+        if (gameState.isFeverActive) {
+            p.fill(255, 255, 255);
+            p.drawingContext.shadowBlur = 20;
+            p.drawingContext.shadowColor = p.color(...COLORS.FEVER);
+        } else {
+            p.fill(...COLORS.PLAYER);
+            p.drawingContext.shadowBlur = 0;
+        }
+        
+        p.circle(this.x, this.y, this.radius * 2);
+        p.drawingContext.shadowBlur = 0; // Reset
+
+        // Draw Length Text
+        p.fill(0);
+        p.textSize(10);
+        p.textAlign(p.CENTER, p.CENTER);
+        p.text(this.length, this.x, this.y - 15);
+    }
+}
+
+/**
+ * Block Obstacle
+ */
+export class Block extends Entity {
+    constructor(x, y, value) {
+        super(x, y);
+        this.size = CONFIG.BLOCK_SIZE;
+        this.value = value;
+        this.maxValue = value; // Store original for color mapping
+        this.color = this.getColor();
+    }
+
+    getColor() {
+        // Map value to color gradient
+        // Simple thresholding for now
+        if (this.value <= 5) return COLORS.BLOCK_LOW;
+        if (this.value <= 20) return COLORS.BLOCK_MED;
+        return COLORS.BLOCK_HIGH;
+    }
+
+    render(p) {
+        // Update color based on current value (damage feedback)
+        this.color = this.getColor();
+        
+        p.push();
+        p.translate(this.x, this.y);
+        
+        p.fill(...this.color);
+        p.stroke(255, 50);
+        p.strokeWeight(2);
+        
+        // Rounded rect
+        p.rect(0, 0, this.size, this.size, 5);
+        
+        // Text
+        p.textAlign(p.CENTER, p.CENTER);
+        p.fill(255);
+        p.stroke(0);
+        p.strokeWeight(3);
+        p.textSize(28);
+        p.textStyle(p.BOLD);
+        p.text(this.value, this.size/2, this.size/2);
+        
+        p.pop();
+    }
+}
+
+/**
+ * Food (Ball)
+ */
+export class Food extends Entity {
+    constructor(x, y, value) {
+        super(x, y);
+        this.radius = 12; // Slightly larger for better visibility
+        this.value = value;
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        
+        p.fill(...COLORS.FOOD);
+        p.noStroke();
+        p.circle(0, 0, this.radius * 2);
+        
+        // Pulse animation
+        const pulse = 1 + p.sin(p.frameCount * 0.1) * 0.1;
+        p.stroke(...COLORS.FOOD);
+        p.noFill();
+        p.circle(0, 0, this.radius * 2 * pulse);
+
+        // Text
+        p.textAlign(p.CENTER, p.CENTER);
+        p.fill(0);
+        p.noStroke();
+        p.textSize(14);
+        p.textStyle(p.BOLD);
+        p.text(this.value, 0, 0);
+        
+        p.pop();
+    }
+}
+
+/**
+ * Vertical Wall
+ */
+export class Wall extends Entity {
+    constructor(x, y, height) {
+        super(x, y);
+        this.height = height;
+        this.width = CONFIG.WALL_WIDTH;
+    }
+
+    render(p) {
+        p.push();
+        p.stroke(...COLORS.WALL);
+        p.strokeWeight(this.width);
+        p.line(this.x, this.y, this.x, this.y + this.height);
+        p.pop();
+    }
+}
+</file>
+
+<file name="physics.js">
+/**
+ * physics.js
+ * Collision detection and spatial logic.
+ */
+
+import { gameState, CONFIG, COLORS } from './globals.js';
+import { createExplosion, createTextPopup, createCollectEffect } from './particles.js';
+
+// Import p5.collide2D from global scope (loaded via script tag in HTML)
+// Since we are in instance mode, we can use p5 methods passed or the global library functions if available.
+// p5.collide2D attaches to p5.prototype. 
+
+/**
+ * Check collision between Circle (Snake Head) and Rectangle (Block)
+ */
+export function checkCircleRect(circleX, circleY, radius, rectX, rectY, rectW, rectH) {
+    // Closest point on rect to circle center
+    let testX = circleX;
+    let testY = circleY;
+
+    if (circleX < rectX) testX = rectX;
+    else if (circleX > rectX + rectW) testX = rectX + rectW;
+
+    if (circleY < rectY) testY = rectY;
+    else if (circleY > rectY + rectH) testY = rectY + rectH;
+
+    let distX = circleX - testX;
+    let distY = circleY - testY;
+    let distance = Math.sqrt((distX * distX) + (distY * distY));
+
+    return distance <= radius;
+}
+
+/**
+ * Check collision between Circle and Circle
+ */
+export function checkCircleCircle(c1x, c1y, c1r, c2x, c2y, c2r) {
+    let dx = c1x - c2x;
+    let dy = c1y - c2y;
+    let distance = Math.sqrt(dx*dx + dy*dy);
+    return distance <= c1r + c2r;
+}
+
+/**
+ * Resolve collisions for the player
+ * @param {object} p - p5 instance
+ * @param {object} player - Snake entity
+ */
+export function resolveCollisions(p, player) {
+    // Reset frozen state, we will re-determine it
+    let currentlyHittingBlock = false;
+
+    // 1. Check Blocks
+    for (let i = gameState.blocks.length - 1; i >= 0; i--) {
+        const block = gameState.blocks[i];
+        
+        // Simple AABB broadphase optimization
+        if (player.y - player.radius > block.y + block.size + 10 || 
+            player.y + player.radius < block.y - 10) continue;
+
+        if (checkCircleRect(player.x, player.y, player.radius, block.x, block.y, block.size, block.size)) {
+            handleBlockCollision(p, player, block);
+            // If we hit a block frontally, we might freeze
+            // Determine if it's a frontal hit (Head is below block)
+            // In this game, player is at bottom, blocks come from top.
+            // So frontal hit is: Player Y > Block Y.
+            if (player.y >= block.y && Math.abs(player.x - (block.x + block.size/2)) < block.size/2 + player.radius) {
+                currentlyHittingBlock = true;
+            }
+        }
+    }
+
+    gameState.isFrozen = currentlyHittingBlock;
+
+    // 2. Check Food
+    for (let i = gameState.foods.length - 1; i >= 0; i--) {
+        const food = gameState.foods[i];
+        if (checkCircleCircle(player.x, player.y, player.radius + 5, food.x, food.y, food.radius)) {
+            handleFoodCollision(p, player, food, i);
+        }
+    }
+
+    // 3. Check Walls
+    // Walls are thin vertical lines.
+    for (const wall of gameState.walls) {
+        // Broadphase Y
+        if (player.y < wall.y || player.y > wall.y + wall.height) continue;
+        
+        // Check X distance
+        // Treat wall as a thin rect
+        if (Math.abs(player.x - wall.x) < player.radius + CONFIG.WALL_WIDTH/2) {
+            handleWallCollision(player, wall);
+        }
+    }
+}
+
+function handleBlockCollision(p, player, block) {
+    // If in Fever mode, destroy instantly
+    if (gameState.isFeverActive) {
+        block.value = 0;
+        player.score += block.maxValue; // Bonus score
+        gameState.score += block.maxValue;
+        createExplosion(p, block.x + block.size/2, block.y + block.size/2, COLORS.FEVER, 20);
+        
+        // Remove block
+        const index = gameState.blocks.indexOf(block);
+        if (index > -1) {
+            gameState.blocks.splice(index, 1);
+            const entIdx = gameState.entities.indexOf(block);
+            if (entIdx > -1) gameState.entities.splice(entIdx, 1);
+        }
+        gameState.screenShake = 5;
+        return;
+    }
+
+    // Normal collision
+    // "Snap" player to the bottom of the block to prevent clipping through
+    if (player.y > block.y + block.size) {
+        // Hitting from bottom
+        player.y = block.y + block.size + player.radius;
+    }
+
+    // Apply damage tick
+    if (p.frameCount % CONFIG.DAMAGE_TICK_RATE === 0) {
+        player.length--;
+        block.value--;
+        gameState.score++;
+        gameState.feverValue = Math.min(gameState.feverValue + 2, CONFIG.FEVER_MAX);
+        
+        // Visuals
+        createExplosion(p, player.x, player.y - player.radius, COLORS.PLAYER, 3);
+        gameState.screenShake = 2;
+
+        if (player.length <= 0) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+            createExplosion(p, player.x, player.y, COLORS.PLAYER, 50);
+        }
+
+        if (block.value <= 0) {
+            // Destroy block
+            const index = gameState.blocks.indexOf(block);
+            if (index > -1) {
+                gameState.blocks.splice(index, 1);
+                const entIdx = gameState.entities.indexOf(block);
+                if (entIdx > -1) gameState.entities.splice(entIdx, 1);
+            }
+            createExplosion(p, block.x + block.size/2, block.y + block.size/2, COLORS.BLOCK_LOW, 15);
+            gameState.screenShake = 4;
+        }
+    }
+}
+
+function handleFoodCollision(p, player, food, index) {
+    player.length += food.value;
+    createTextPopup(p, food.x, food.y, `+${food.value}`, COLORS.FOOD);
+    createCollectEffect(p, food.x, food.y, COLORS.FOOD);
+    
+    // Remove food
+    gameState.foods.splice(index, 1);
+    const entIdx = gameState.entities.indexOf(food);
+    if (entIdx > -1) gameState.entities.splice(entIdx, 1);
+}
+
+function handleWallCollision(player, wall) {
+    // Push player out of wall
+    if (player.x < wall.x) {
+        player.x = wall.x - CONFIG.WALL_WIDTH/2 - player.radius;
+    } else {
+        player.x = wall.x + CONFIG.WALL_WIDTH/2 + player.radius;
+    }
+}
+</file>
+
+<file name="particles.js">
+/**
+ * particles.js
+ * Particle system for visual effects.
+ */
+
+import { gameState } from './globals.js';
+
+class Particle {
+    constructor(x, y, color, size, speed) {
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        this.size = size;
+        const angle = Math.random() * Math.PI * 2;
+        this.vx = Math.cos(angle) * speed;
+        this.vy = Math.sin(angle) * speed;
+        this.life = 1.0;
+        this.decay = 0.05 + Math.random() * 0.05;
+    }
+
+    update() {
+        if (!gameState.isFrozen) {
+            this.y += gameState.scrollSpeed;
+        }
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life -= this.decay;
+        this.size *= 0.95;
+    }
+
+    render(p) {
+        p.push();
+        // Handle color array or string
+        if (Array.isArray(this.color)) {
+            p.fill(this.color[0], this.color[1], this.color[2], this.life * 255);
+        } else {
+            let c = p.color(this.color);
+            c.setAlpha(this.life * 255);
+            p.fill(c);
+        }
+        p.noStroke();
+        p.circle(this.x, this.y, this.size);
+        p.pop();
+    }
+}
+
+class RingParticle {
+    constructor(x, y, color) {
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        this.size = 10;
+        this.life = 1.0;
+    }
+
+    update() {
+        if (!gameState.isFrozen) {
+            this.y += gameState.scrollSpeed;
+        }
+        this.size += 3;
+        this.life -= 0.04;
+    }
+
+    render(p) {
+        p.push();
+        p.noFill();
+        p.strokeWeight(3);
+        if (Array.isArray(this.color)) {
+             p.stroke(this.color[0], this.color[1], this.color[2], this.life * 255);
+        } else {
+             let c = p.color(this.color);
+             c.setAlpha(this.life * 255);
+             p.stroke(c);
+        }
+        p.circle(this.x, this.y, this.size);
+        p.pop();
+    }
+}
+
+class TextParticle {
+    constructor(x, y, text, color) {
+        this.x = x;
+        this.y = y;
+        this.text = text;
+        this.color = color;
+        this.life = 1.0;
+        this.vy = -1;
+    }
+
+    update() {
+        this.y += this.vy;
+        this.life -= 0.02;
+    }
+
+    render(p) {
+        p.push();
+        p.fill(this.color[0], this.color[1], this.color[2], this.life * 255);
+        p.textSize(16);
+        p.textStyle(p.BOLD);
+        p.text(this.text, this.x, this.y);
+        p.pop();
+    }
+}
+
+export function createExplosion(p, x, y, color, count = 10) {
+    for (let i = 0; i < count; i++) {
+        gameState.particles.push(new Particle(x, y, color, p.random(3, 8), p.random(2, 5)));
+    }
+}
+
+export function createCollectEffect(p, x, y, color) {
+    gameState.particles.push(new RingParticle(x, y, color));
+    // Also add a few small particles
+    for (let i = 0; i < 5; i++) {
+        gameState.particles.push(new Particle(x, y, color, p.random(2, 4), p.random(1, 3)));
+    }
+}
+
+export function createTextPopup(p, x, y, text, color) {
+    gameState.particles.push(new TextParticle(x, y, text, color));
+}
+
+export function updateParticles(p) {
+    for (let i = gameState.particles.length - 1; i >= 0; i--) {
+        const part = gameState.particles[i];
+        part.update();
+        if (part.life <= 0) {
+            gameState.particles.splice(i, 1);
+        }
+    }
+}
+
+export function renderParticles(p) {
+    gameState.particles.forEach(part => part.render(p));
+}
+</file>
+
+<file name="input.js">
+/**
+ * input.js
+ * Handles keyboard input, state transitions, and key tracking.
+ */
+
+import { gameState } from './globals.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+// Key codes
+export const KEYS = {
+    ENTER: 13,
+    ESC: 27,
+    SPACE: 32,
+    LEFT: 37,
+    UP: 38,
+    RIGHT: 39,
+    DOWN: 40,
+    SHIFT: 16,
+    R: 82,
+    Z: 90
+};
+
+// Active key state map
+const keyState = {};
+
+/**
+ * Handle Key Press Event
+ * @param {object} p - p5 instance
+ */
+export function handleKeyPress(p) {
+    const code = p.keyCode;
+    keyState[code] = true;
+
+    // Log input
+    p.logs.inputs.push({
+        input_type: 'keyPressed',
+        data: { key: p.key, keyCode: code },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+    });
+
+    // Global State Transitions
+    switch (gameState.gamePhase) {
+        case "START":
+            if (code === KEYS.ENTER) {
+                transitionToPlaying(p);
+            }
+            break;
+        
+        case "PLAYING":
+            if (code === KEYS.ESC) {
+                gameState.gamePhase = "PAUSED";
+            }
+            if (code === KEYS.Z) {
+                // Activate Fever manually if full (handled in player logic usually, but trigger here)
+                if (gameState.player) gameState.player.tryActivateFever();
+            }
+            break;
+            
+        case "PAUSED":
+            if (code === KEYS.ESC) {
+                gameState.gamePhase = "PLAYING";
+            }
+            break;
+            
+        case "GAME_OVER_LOSE":
+            if (code === KEYS.R) {
+                transitionToStart(p);
+            }
+            break;
+    }
+}
+
+/**
+ * Handle Key Release Event
+ * @param {object} p - p5 instance
+ */
+export function handleKeyRelease(p) {
+    const code = p.keyCode;
+    keyState[code] = false;
+
+    p.logs.inputs.push({
+        input_type: 'keyReleased',
+        data: { key: p.key, keyCode: code },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+    });
+}
+
+/**
+ * Check if a specific key is currently held down
+ * @param {number} keyCode 
+ * @returns {boolean}
+ */
+export function isKeyDown(keyCode) {
+    return !!keyState[keyCode];
+}
+
+/**
+ * Process Input for the current frame
+ * Handles both Human and AI input
+ * @param {object} p - p5 instance
+ */
+export function processInput(p) {
+    // Reset transient input flags on player if needed
+    if (!gameState.player) return;
+
+    let action = {
+        left: false,
+        right: false,
+        speedMod: false,
+        activateFever: false
+    };
+
+    if (gameState.controlMode === "HUMAN") {
+        action.left = isKeyDown(KEYS.LEFT);
+        action.right = isKeyDown(KEYS.RIGHT);
+        action.speedMod = isKeyDown(KEYS.SHIFT);
+        action.activateFever = isKeyDown(KEYS.Z);
+    } else {
+        // Automated Test Input
+        const aiAction = get_automated_testing_action(gameState);
+        if (aiAction) {
+            if (aiAction.keyCode === KEYS.LEFT) action.left = true;
+            if (aiAction.keyCode === KEYS.RIGHT) action.right = true;
+            if (aiAction.keyCode === KEYS.SHIFT) action.speedMod = true;
+            if (aiAction.keyCode === KEYS.Z) action.activateFever = true;
+        }
+    }
+
+    // Apply to player
+    gameState.player.handleInput(action);
+}
+
+// Helpers for transitions
+function transitionToPlaying(p) {
+    gameState.gamePhase = "PLAYING";
+    p.logs.game_info.push({
+        data: { gamePhase: "PLAYING" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+    });
+}
+
+function transitionToStart(p) {
+    gameState.reset();
+    // We need to re-initialize the game setup here or in the draw loop
+    // But since reset() clears entities, the setup function in game.js needs to create the player again
+    // We'll handle full re-initialization in the main game update loop when entering START
+    gameState.gamePhase = "START";
+    if (window.gameInstance && window.gameInstance.setupGame) {
+         window.gameInstance.setupGame(); // Call the setup function attached to instance
+    }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

@@ -1,0 +1,642 @@
+<analysis>
+- Issue identified:
+    1.  **Car Spawn**: The car spawns at `(0, 2, 0)` which is inside the Central Depot building (centered at 0,0).
+    2.  **Terrain/Road Glitching**: The ground generation adds random noise everywhere, causing z-fighting with the road (which is very low at y=0.05). Also, the "mountains" start at radius 70, but houses are placed at radius 75, causing houses to clip into the slopes.
+    3.  **Camera**: The camera has no collision logic, clipping through trees and buildings. The user requested it to avoid these obstacles.
+    4.  **UI**: The score is tracked but not displayed in the HUD.
+- Files affected: `game.js`, `world.js`, `ui.js`
+- Changes needed:
+    1.  **game.js**: Move car spawn to `(0, 2, 20)` to be clear of the depot. Implement raycast-based occlusion in `updateCamera` to pull the camera in when blocked by buildings/trees.
+    2.  **world.js**: In `createGround`, push the mountain start radius from 70 to 90 (clearing the houses at 75). Remove the random height noise in the central town area to prevent road clipping. In `createRoads`, raise the road slightly (y=0.1) to ensure it sits above the grass.
+    3.  **ui.js**: Add a "Score" text line to `renderHUD`.
+</analysis>
+
+<code filename="game.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, TARGET_FPS, MYSTERY_THRESHOLD_1, MYSTERY_THRESHOLD_2 } from './globals.js';
+import { setupWorld } from './world.js';
+import { Car } from './entities.js';
+import { setupInputs, inputs, logInputs } from './input.js';
+import { checkCollisions } from './physics.js';
+import { setupUI, renderUI } from './ui.js';
+import { randomChoice, lerp } from './utils.js';
+
+// Init
+function init() {
+    // Setup Container
+    const container = document.createElement('div');
+    container.id = 'game-container';
+    container.style.position = 'relative';
+    container.style.width = `${CANVAS_WIDTH}px`;
+    container.style.height = `${CANVAS_HEIGHT}px`;
+    container.style.overflow = 'hidden';
+    document.body.appendChild(container);
+    gameState.gameContainer = container;
+
+    // Renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+    renderer.shadowMap.enabled = true;
+    container.appendChild(renderer.domElement);
+    gameState.renderer = renderer;
+
+    // Scene
+    const scene = new THREE.Scene();
+    gameState.scene = scene;
+
+    // Camera
+    const camera = new THREE.PerspectiveCamera(60, CANVAS_WIDTH / CANVAS_HEIGHT, 0.1, 500);
+    gameState.camera = camera;
+
+    // Setup Game World
+    setupWorld();
+
+    // Create Player
+    // Fix: Spawn car away from the central building (Depot is at 0,0)
+    const player = new Car(0, 2, 20); 
+    gameState.player = player;
+
+    // UI
+    setupUI();
+    
+    // Inputs
+    setupInputs();
+
+    // Setup Test Modes
+    if (window.controlMode === "TEST_1" || window.controlMode === "TEST_2") {
+        gameState.controlMode = window.controlMode;
+        gameState.gamePhase = "PLAYING";
+    }
+
+    // Start Loop
+    requestAnimationFrame(gameLoop);
+}
+
+// Main Loop
+let lastTime = 0;
+function gameLoop(time) {
+    requestAnimationFrame(gameLoop);
+    
+    const dt = (time - lastTime) / 1000;
+    lastTime = time;
+    gameState.deltaTime = dt;
+    gameState.frameCount++;
+
+    update(dt);
+    render();
+}
+
+function update(dt) {
+    if (gameState.gamePhase !== "PLAYING") {
+        // Simple idle rotation for start screen
+        if (gameState.gamePhase === "START") {
+            gameState.camera.position.x = Math.sin(Date.now() * 0.0005) * 50;
+            gameState.camera.position.z = Math.cos(Date.now() * 0.0005) * 50;
+            gameState.camera.position.y = 30;
+            gameState.camera.lookAt(0, 0, 0);
+        }
+        return;
+    }
+
+    // Handle automated testing inputs
+    let activeInputs = inputs;
+    if (gameState.controlMode.startsWith("TEST")) {
+        activeInputs = handleTestInputs(gameState.controlMode);
+    } else {
+        logInputs();
+    }
+
+    // Update Player
+    gameState.player.update(dt, activeInputs);
+
+    // Camera Follow Logic
+    updateCamera();
+
+    // Collisions
+    // Collect all collidables
+    const obstacles = [...gameState.buildings, ...gameState.trees];
+    checkCollisions(gameState.player, obstacles);
+
+    // Interaction Logic
+    handleInteractions(activeInputs);
+
+    // Mystery Logic
+    updateMysterySystem(dt);
+    
+    // Interactables animations
+    gameState.interactables.forEach(z => z.update(dt));
+    
+    // Fuel Check
+    if (gameState.fuel <= 0) {
+        gameState.gamePhase = "GAME_OVER_LOSE";
+    }
+}
+
+function updateCamera() {
+    const playerPos = gameState.player.mesh.position;
+    const playerRot = gameState.player.mesh.rotation.y;
+    
+    let targetPos = new THREE.Vector3();
+    let lookAtPos = playerPos.clone();
+
+    if (gameState.cameraMode === "FOLLOW") {
+        // Behind the car
+        const offset = new THREE.Vector3(0, 6, 12); // Slightly higher and further back
+        offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), playerRot);
+        targetPos.copy(playerPos).add(offset);
+        lookAtPos.y += 1.5;
+
+        // Smart Camera: Avoid clipping through buildings/trees
+        // Cast ray from car to camera
+        const rayOrigin = lookAtPos.clone();
+        const direction = new THREE.Vector3().subVectors(targetPos, rayOrigin);
+        const dist = direction.length();
+        direction.normalize();
+
+        const raycaster = new THREE.Raycaster(rayOrigin, direction, 0, dist);
+        
+        // Collect obstacles for camera occlusion
+        const obstacles = [
+            ...gameState.buildings.map(b => b.mesh), 
+            ...gameState.trees
+        ];
+
+        const intersects = raycaster.intersectObjects(obstacles);
+        if (intersects.length > 0) {
+            // If blocked, move camera to the hit point (plus a small buffer towards the car)
+            const hit = intersects[0];
+            targetPos.copy(hit.point).add(direction.multiplyScalar(-0.5));
+            // Also lift slightly to maintain view
+            targetPos.y += 1.0;
+        }
+
+    } else if (gameState.cameraMode === "COCKPIT") {
+        // Inside car
+        const offset = new THREE.Vector3(0, 1.8, -0.5);
+        offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), playerRot);
+        targetPos.copy(playerPos).add(offset);
+        lookAtPos.add(new THREE.Vector3(Math.sin(playerRot)*10, 0, Math.cos(playerRot)*10)); // Look forward
+    } else if (gameState.cameraMode === "TOP") {
+        targetPos.set(playerPos.x, 50, playerPos.z);
+    }
+
+    // Smooth lerp
+    gameState.camera.position.lerp(targetPos, 0.15);
+    gameState.camera.lookAt(lookAtPos);
+}
+
+function handleInteractions(currInputs) {
+    if (currInputs.space && !currInputs.prevSpace) {
+        // Debounce handling inside input logic ideally, but check here
+        
+        let zoneFound = null;
+        for (const zone of gameState.interactables) {
+            if (zone.checkInteraction(gameState.player.mesh)) {
+                zoneFound = zone;
+                break;
+            }
+        }
+        
+        if (zoneFound) {
+            if (zoneFound.type === 'PICKUP' && !gameState.hasPackage) {
+                // Pick up
+                gameState.hasPackage = true;
+                // Assign random delivery destination
+                const destinations = gameState.interactables.filter(z => z.type === 'DELIVER');
+                const dest = randomChoice(destinations);
+                gameState.currentObjective = dest;
+                playSoundFeedback('pickup');
+            } else if (zoneFound.type === 'DELIVER' && gameState.hasPackage && gameState.currentObjective === zoneFound) {
+                // Deliver
+                gameState.hasPackage = false;
+                gameState.currentObjective = null;
+                gameState.deliveriesCompleted++;
+                gameState.money += 15.50; // Low wage lol
+                gameState.score += 100;
+                playSoundFeedback('deliver');
+            }
+        }
+        
+        currInputs.prevSpace = true;
+    }
+    
+    if (!currInputs.space) currInputs.prevSpace = false;
+}
+
+function updateMysterySystem(dt) {
+    // Progressive strangeness
+    const completed = gameState.deliveriesCompleted;
+    
+    if (completed >= MYSTERY_THRESHOLD_1) {
+        // Fog gets thicker
+        const targetDensity = 0.02 + (completed * 0.005);
+        gameState.scene.fog.density = lerp(gameState.scene.fog.density, targetDensity, dt * 0.1);
+        
+        // Sky darkens
+        const hex = gameState.scene.background.getHex();
+        if (hex > 0x111111) {
+            gameState.scene.background.lerp(new THREE.Color(0x111111), dt * 0.05);
+        }
+        
+        // Show watchers occasionally
+        if (Math.random() < 0.01) {
+            const watcher = randomChoice(gameState.mysteryEntities);
+            watcher.mesh.visible = !watcher.mesh.visible;
+        }
+    }
+    
+    if (completed >= MYSTERY_THRESHOLD_2) {
+        gameState.worldState.glitchIntensity = 0.02;
+    }
+}
+
+// Simple test input automation
+function handleTestInputs(mode) {
+    const testInputs = { ...inputs };
+    
+    if (mode === "TEST_1") {
+        // Just drive forward
+        testInputs.up = true;
+        if (gameState.frameCount % 100 > 50) testInputs.left = true;
+    }
+    
+    return testInputs;
+}
+
+// Placeholder sound visual feedback (since no audio allowed)
+function playSoundFeedback(type) {
+    // Log for debug
+    console.log(`[Sound Effect]: ${type}`);
+    // Flash UI
+    // ui logic handles visual feedback
+}
+
+function render() {
+    gameState.renderer.render(gameState.scene, gameState.camera);
+    renderUI();
+}
+
+// Init when module loads
+window.onload = init;
+</code>
+
+<code filename="world.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, TOWN_SIZE } from './globals.js';
+import { Building, InteractableZone, Watcher } from './entities.js';
+import { createRoadTexture, randomRange } from './utils.js';
+
+export function setupWorld() {
+    createGround();
+    createRoads();
+    createProps();
+    setupLightingAndFog();
+    
+    // Create initial zones
+    createZones();
+}
+
+function createGround() {
+    // Basic ground plane
+    const geometry = new THREE.PlaneGeometry(TOWN_SIZE * 2, TOWN_SIZE * 2, 64, 64);
+    
+    // Add some height variation for "mountains" on the edges
+    const posAttribute = geometry.attributes.position;
+    for (let i = 0; i < posAttribute.count; i++) {
+        const x = posAttribute.getX(i);
+        const y = posAttribute.getY(i); // This is Z in 3D space before rotation
+        const z = posAttribute.getZ(i); // This is Y (height)
+        
+        const dist = Math.sqrt(x*x + y*y);
+        let height = 0;
+        
+        // Mountain ring
+        // Fix: Push mountains further back (90) so houses at 75 don't clip
+        if (dist > 90) {
+            height = (dist - 90) * 0.5 + Math.random() * 2;
+            // Only add noise in the mountains
+            height += Math.random() * 0.5;
+        } else {
+            // Keep central town area perfectly flat to prevent road z-fighting
+            height = 0;
+        }
+        
+        posAttribute.setZ(i, height); // Set height (Z of plane is Y of world)
+    }
+    geometry.computeVertexNormals();
+
+    const material = new THREE.MeshStandardMaterial({ 
+        color: 0x2e4033, // Dark green grass
+        roughness: 1.0,
+        flatShading: true
+    });
+    
+    const plane = new THREE.Mesh(geometry, material);
+    plane.rotation.x = -Math.PI / 2;
+    plane.receiveShadow = true;
+    gameState.scene.add(plane);
+}
+
+function createRoads() {
+    // Simple Loop Road geometry
+    // We'll create a ring of meshes
+    const roadWidth = 8;
+    const radius = 60;
+    
+    const roadTex = createRoadTexture();
+    
+    const geometry = new THREE.RingGeometry(radius, radius + roadWidth, 64);
+    const material = new THREE.MeshStandardMaterial({ 
+        map: roadTex,
+        roughness: 0.9
+    });
+    
+    // Remap UVs for ring to make texture flow along road
+    const uvAttribute = geometry.attributes.uv;
+    const posAttribute = geometry.attributes.position;
+    
+    // This is a simplified UV mapping for ring, might be distorted but fits "retro" vibe
+    for (let i = 0; i < uvAttribute.count; i++) {
+        const x = posAttribute.getX(i);
+        const y = posAttribute.getY(i);
+        // Calculate angle
+        const angle = Math.atan2(y, x);
+        const u = (angle + Math.PI) / (2 * Math.PI) * 20; // Repeat 20 times around ring
+        // Determine if inner or outer
+        const dist = Math.sqrt(x*x + y*y);
+        const v = (dist - radius) / roadWidth;
+        
+        uvAttribute.setXY(i, u, v);
+    }
+    
+    const road = new THREE.Mesh(geometry, material);
+    road.rotation.x = -Math.PI / 2;
+    // Fix: Raise road slightly above ground to prevent z-fighting with flat grass
+    road.position.y = 0.1; 
+    road.receiveShadow = true;
+    gameState.scene.add(road);
+    
+    // Cross road
+    const crossGeo = new THREE.PlaneGeometry(roadWidth, radius * 2);
+    const crossMat = new THREE.MeshStandardMaterial({ map: roadTex });
+    const crossRoad = new THREE.Mesh(crossGeo, crossMat);
+    crossRoad.rotation.x = -Math.PI / 2;
+    crossRoad.rotation.z = Math.PI / 4; // Diagonal
+    crossRoad.position.y = 0.11; // Slightly higher to prevent z-fighting at overlap
+    gameState.scene.add(crossRoad);
+}
+
+function createProps() {
+    // Buildings
+    // Central Depot
+    const depot = new Building(0, 0, 10, 10, 5, "depot");
+    gameState.buildings.push(depot);
+    
+    // Scattered houses around the ring road
+    const radius = 75; // Outside the road
+    for (let i = 0; i < 12; i++) {
+        const angle = (i / 12) * Math.PI * 2;
+        const x = Math.cos(angle) * radius;
+        const z = Math.sin(angle) * radius;
+        
+        // Skip area near cross road exits to avoid blocking
+        
+        const w = randomRange(5, 8);
+        const d = randomRange(5, 8);
+        const h = randomRange(3, 6);
+        const type = Math.random() > 0.8 ? "store" : "house";
+        
+        const b = new Building(x, z, w, d, h, type);
+        gameState.buildings.push(b);
+    }
+    
+    // Trees
+    const treeGeo = new THREE.ConeGeometry(2, 6, 8);
+    const treeMat = new THREE.MeshStandardMaterial({ color: 0x1b3b25, flatShading: true });
+    
+    for (let i = 0; i < 150; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = randomRange(20, 95);
+        
+        // Don't place on road (approximate)
+        if (dist > 55 && dist < 70) continue; // Ring road
+        if (Math.abs(dist * Math.cos(angle - Math.PI/4)) < 4) continue; // Cross road (rough check)
+        
+        const x = Math.cos(angle) * dist;
+        const z = Math.sin(angle) * dist;
+        
+        const tree = new THREE.Mesh(treeGeo, treeMat);
+        tree.position.set(x, 3, z);
+        tree.castShadow = true;
+        gameState.scene.add(tree);
+        gameState.trees.push(tree);
+    }
+}
+
+function setupLightingAndFog() {
+    // Ambient
+    const ambient = new THREE.AmbientLight(0x404040, 0.5); // Soft white
+    gameState.scene.add(ambient);
+    gameState.ambientLight = ambient;
+    
+    // Sun
+    const sun = new THREE.DirectionalLight(0xffdfba, 1.0);
+    sun.position.set(50, 100, 50);
+    sun.castShadow = true;
+    sun.shadow.camera.left = -100;
+    sun.shadow.camera.right = 100;
+    sun.shadow.camera.top = 100;
+    sun.shadow.camera.bottom = -100;
+    sun.shadow.mapSize.width = 2048;
+    sun.shadow.mapSize.height = 2048;
+    gameState.scene.add(sun);
+    gameState.directionalLight = sun;
+    
+    // Fog
+    const fogColor = 0xcccccc;
+    gameState.scene.fog = new THREE.FogExp2(fogColor, 0.02);
+    gameState.scene.background = new THREE.Color(fogColor);
+}
+
+function createZones() {
+    // Pickup at Depot
+    const depotPickup = new InteractableZone(0, 8, 'PICKUP', 'Depot');
+    gameState.interactables.push(depotPickup);
+    
+    // Generate Delivery Points at buildings
+    gameState.buildings.forEach((b, idx) => {
+        if (b.name === "Central Depot") return;
+        
+        // Place zone in front of building
+        const zone = new InteractableZone(b.mesh.position.x, b.mesh.position.z + 6, 'DELIVER', `House #${idx}`);
+        gameState.interactables.push(zone);
+    });
+    
+    // Create watchers (hidden initially)
+    for(let i=0; i<5; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 90;
+        const w = new Watcher(Math.cos(angle)*dist, Math.sin(angle)*dist);
+        gameState.mysteryEntities.push(w);
+    }
+}
+</code>
+
+<code filename="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+let uiContext = null;
+
+export function setupUI() {
+    const uiCanvas = document.createElement('canvas');
+    uiCanvas.width = CANVAS_WIDTH;
+    uiCanvas.height = CANVAS_HEIGHT;
+    uiCanvas.style.position = 'absolute';
+    uiCanvas.style.top = '0';
+    uiCanvas.style.left = '0';
+    uiCanvas.style.pointerEvents = 'none';
+    uiCanvas.style.zIndex = '100';
+    
+    gameState.gameContainer.appendChild(uiCanvas);
+    uiContext = uiCanvas.getContext('2d');
+}
+
+export function renderUI() {
+    if (!uiContext) return;
+    
+    // Clear
+    uiContext.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    const phase = gameState.gamePhase;
+    
+    if (phase === "START") {
+        renderStartScreen();
+    } else if (phase === "PLAYING") {
+        renderHUD();
+        renderObjective();
+        renderMysteryEffects();
+    } else if (phase === "PAUSED") {
+        renderHUD();
+        renderPauseScreen();
+    } else if (phase.startsWith("GAME_OVER")) {
+        renderGameOver();
+    }
+}
+
+function renderStartScreen() {
+    drawOverlay('rgba(0,0,0,0.8)');
+    
+    uiContext.textAlign = 'center';
+    uiContext.fillStyle = '#ffcc00';
+    uiContext.font = 'bold 40px Courier New';
+    uiContext.fillText("EASY DELIVERY CO.", CANVAS_WIDTH/2, 120);
+    
+    uiContext.fillStyle = '#fff';
+    uiContext.font = '16px monospace';
+    uiContext.fillText("Deliver packages. Ask no questions.", CANVAS_WIDTH/2, 160);
+    
+    uiContext.font = '20px monospace';
+    uiContext.fillStyle = '#aaa';
+    uiContext.fillText("PRESS ENTER TO START", CANVAS_WIDTH/2, 300);
+    
+    uiContext.font = '12px monospace';
+    uiContext.fillText("Arrows to Drive | Space to Interact", CANVAS_WIDTH/2, 330);
+}
+
+function renderHUD() {
+    // Money/Score Top Left
+    uiContext.textAlign = 'left';
+    uiContext.font = 'bold 20px monospace';
+    uiContext.fillStyle = '#00ff00';
+    uiContext.fillText(`$${gameState.money.toFixed(2)}`, 20, 30);
+    
+    // Deliveries
+    uiContext.fillStyle = '#fff';
+    uiContext.font = '16px monospace';
+    uiContext.fillText(`Deliveries: ${gameState.deliveriesCompleted}`, 20, 55);
+    
+    // Score Component
+    uiContext.fillStyle = '#ffcc00';
+    uiContext.fillText(`Score: ${gameState.score}`, 20, 80);
+    
+    // Fuel Bar Bottom Right
+    const barW = 100;
+    const barH = 10;
+    uiContext.fillStyle = '#333';
+    uiContext.fillRect(CANVAS_WIDTH - 120, CANVAS_HEIGHT - 30, barW, barH);
+    
+    uiContext.fillStyle = gameState.fuel > 20 ? '#ff9900' : '#ff0000';
+    uiContext.fillRect(CANVAS_WIDTH - 120, CANVAS_HEIGHT - 30, barW * (gameState.fuel/100), barH);
+    uiContext.fillText("FUEL", CANVAS_WIDTH - 120, CANVAS_HEIGHT - 35);
+}
+
+function renderObjective() {
+    uiContext.textAlign = 'center';
+    uiContext.font = '18px monospace';
+    
+    let text = "";
+    if (gameState.hasPackage) {
+        uiContext.fillStyle = '#00aaff';
+        text = `DELIVER TO: ${gameState.currentObjective ? gameState.currentObjective.name : 'Unknown'}`;
+    } else {
+        uiContext.fillStyle = '#ffff00';
+        text = "RETURN TO DEPOT FOR PICKUP";
+    }
+    
+    uiContext.fillText(text, CANVAS_WIDTH/2, 40);
+}
+
+function renderPauseScreen() {
+    drawOverlay('rgba(0,0,0,0.5)');
+    uiContext.textAlign = 'center';
+    uiContext.fillStyle = '#fff';
+    uiContext.font = 'bold 30px monospace';
+    uiContext.fillText("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+}
+
+function renderGameOver() {
+    drawOverlay('rgba(0,0,0,0.9)');
+    uiContext.textAlign = 'center';
+    
+    if (gameState.gamePhase === "GAME_OVER_WIN") {
+        uiContext.fillStyle = '#00ff00';
+        uiContext.fillText("SHIFT COMPLETE", CANVAS_WIDTH/2, 150);
+    } else {
+        uiContext.fillStyle = '#ff0000';
+        uiContext.fillText("OUT OF GAS", CANVAS_WIDTH/2, 150);
+    }
+    
+    uiContext.fillStyle = '#fff';
+    uiContext.font = '20px monospace';
+    uiContext.fillText(`Total Earnings: $${gameState.money.toFixed(2)}`, CANVAS_WIDTH/2, 200);
+    uiContext.fillText("PRESS R TO RESTART", CANVAS_WIDTH/2, 250);
+}
+
+function renderMysteryEffects() {
+    // Glitch effect based on intensity
+    if (gameState.worldState.glitchIntensity > 0) {
+        if (Math.random() < gameState.worldState.glitchIntensity) {
+            const h = Math.random() * 50;
+            const y = Math.random() * CANVAS_HEIGHT;
+            const offset = (Math.random() - 0.5) * 20;
+            
+            // Simple canvas copy/paste for glitch slice
+            // Since we can't easily read back the 3D canvas efficiently here without composite,
+            // we will just draw digital noise bars.
+            uiContext.fillStyle = `rgba(${Math.random()*255}, 0, 0, 0.3)`;
+            uiContext.fillRect(0, y, CANVAS_WIDTH, h);
+            
+            // Random text
+            if (Math.random() < 0.1) {
+                uiContext.fillStyle = '#000';
+                uiContext.fillText("WAKE UP", Math.random()*CANVAS_WIDTH, Math.random()*CANVAS_HEIGHT);
+            }
+        }
+    }
+}
+
+function drawOverlay(color) {
+    uiContext.fillStyle = color;
+    uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+}
+</code>

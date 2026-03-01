@@ -1,0 +1,137 @@
+import { gameState, GAME_PHASES, CONTROL_MODES, CANVAS_WIDTH, CANVAS_HEIGHT, getGameState } from './globals.js';
+import { Player } from './player.js';
+import { handleKeyPressed, getKeys } from './input.js';
+import { updatePhysics, updateParticles } from './physics.js';
+import { drawGame, drawStartScreen, drawGameOver } from './rendering.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Game state is imported from globals
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Initialize logs
+    p.logs = {
+      game_info: [],
+      inputs: [],
+      player_info: []
+    };
+
+    // Initialize game state
+    gameState.player = new Player(100, 100);
+    gameState.entities = [gameState.player];
+    gameState.unlockedWeapons = ['BUSTER'];
+    gameState.currentWeapon = 0;
+    
+    p.logs.game_info.push({
+      data: { phase: GAME_PHASES.START, message: "Game initialized" },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+
+  p.draw = function() {
+    // Single background call
+    p.background(20, 20, 40);
+
+    if (gameState.gamePhase === GAME_PHASES.START) {
+      drawStartScreen(p);
+    } else if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      updateGame(p);
+      drawGame(p);
+    } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+      drawGame(p);
+    } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN) {
+      drawGameOver(p, true);
+    } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+      drawGameOver(p, false);
+    }
+  };
+
+  function updateGame(p) {
+    if (!gameState.currentStage) return;
+
+    const keys = getKeys(p);
+
+    // Update player
+    if (gameState.player) {
+      gameState.player.update(p, keys);
+      
+      // Log player info periodically
+      if (p.frameCount % 30 === 0) {
+        p.logs.player_info.push({
+          screen_x: gameState.player.x - gameState.camera.x,
+          screen_y: gameState.player.y - gameState.camera.y,
+          game_x: gameState.player.x,
+          game_y: gameState.player.y,
+          framecount: p.frameCount
+        });
+      }
+
+      // Update camera
+      const targetCameraX = gameState.player.x - CANVAS_WIDTH / 2;
+      gameState.camera.x = p.constrain(targetCameraX, 0, 
+        Math.max(0, gameState.currentStage.width - CANVAS_WIDTH));
+    }
+
+    // Update entities
+    for (let entity of gameState.entities) {
+      if (entity !== gameState.player) {
+        entity.update(p);
+      }
+    }
+
+    // Update stage
+    gameState.currentStage.update(p);
+
+    // Update physics
+    updatePhysics(p);
+    updateParticles(p);
+  }
+
+  p.keyPressed = function() {
+    handleKeyPressed(p);
+  };
+}, document.body);
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Control mode setter
+window.setControlMode = function(mode) {
+  if (CONTROL_MODES[mode]) {
+    gameState.controlMode = mode;
+    
+    // Update button styles
+    const buttons = document.querySelectorAll('.control-button');
+    buttons.forEach(btn => btn.classList.remove('active'));
+    
+    if (mode === 'HUMAN') {
+      document.getElementById('humanModeBtn').classList.add('active');
+    } else if (mode === 'TEST_1') {
+      document.getElementById('test_1_ModeBtn').classList.add('active');
+    } else if (mode === 'TEST_2') {
+      document.getElementById('test_2_ModeBtn').classList.add('active');
+    }
+  }
+};

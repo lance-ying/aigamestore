@@ -1,0 +1,345 @@
+<analysis>
+- Issue identified: The camera was positioned at Z=12, which is outside the shaft geometry (a box of width/depth 20, extending from -10 to +10). The shaft walls use `BackSide` rendering with inverted normals, which makes the exterior of the walls opaque/black from the outside, occluding the entire game scene. Additionally, the shaft mesh was not being tracked or cleared on game reset, leading to potential duplicate geometry.
+- Files affected: `game.js`, `level.js`
+- Changes needed:
+  1. In `game.js`: Move camera Z position from 12 to 9 to be inside the shaft bounds. Update `reset()` to properly remove wall meshes from the scene.
+  2. In `level.js`: Add the generated shaft mesh to `gameState.walls` so it can be tracked and removed during reset.
+</analysis>
+
+<code filename="game.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, logGameInfo } from './globals.js';
+import { InputManager } from './input.js';
+import { UIManager } from './ui.js';
+import { Player, updateParticles } from './entities.js';
+import { LevelGenerator } from './level.js';
+import { PhysicsSystem } from './physics.js';
+import { randomRange } from './utils.js';
+
+class Game {
+    constructor() {
+        this.initThree();
+        this.input = new InputManager();
+        this.ui = new UIManager();
+        this.levelGenerator = new LevelGenerator();
+        this.lastTime = 0;
+        
+        // Expose instance
+        window.gameInstance = this;
+        
+        // Initial setup
+        this.reset();
+        gameState.gamePhase = "START";
+        
+        // Start loop
+        requestAnimationFrame(this.animate.bind(this));
+    }
+    
+    initThree() {
+        // Container
+        const container = document.getElementById('game-container') || document.body;
+        // Ensure container is styled if it's not the pre-made one (fallback)
+        if (container === document.body) {
+             // Create one if it doesn't exist to be safe
+             const div = document.createElement('div');
+             div.id = 'game-container';
+             div.style.position = 'relative';
+             div.style.width = `${CANVAS_WIDTH}px`;
+             div.style.height = `${CANVAS_HEIGHT}px`;
+             div.style.overflow = 'hidden';
+             document.body.appendChild(div);
+             gameState.gameContainer = div;
+        } else {
+             gameState.gameContainer = container;
+        }
+
+        // Renderer
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+        renderer.shadowMap.enabled = true;
+        gameState.gameContainer.appendChild(renderer.domElement);
+        gameState.renderer = renderer;
+        
+        // Scene
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x111111);
+        scene.fog = new THREE.Fog(0x111111, 10, 50);
+        gameState.scene = scene;
+        
+        // Camera
+        const camera = new THREE.PerspectiveCamera(60, CANVAS_WIDTH/CANVAS_HEIGHT, 0.1, 100);
+        // Position camera inside the shaft (shaft is -10 to 10 in Z)
+        camera.position.set(0, 5, 9);
+        camera.lookAt(0, 0, 0);
+        gameState.camera = camera;
+        
+        // Lights
+        const ambientLight = new THREE.AmbientLight(0x404040);
+        scene.add(ambientLight);
+        
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        dirLight.position.set(10, 20, 10);
+        dirLight.castShadow = true;
+        dirLight.shadow.camera.top = 20;
+        dirLight.shadow.camera.bottom = -20;
+        dirLight.shadow.camera.left = -20;
+        dirLight.shadow.camera.right = 20;
+        scene.add(dirLight);
+        
+        // Point light attached to player (added in update)
+        this.playerLight = new THREE.PointLight(0xffffff, 1, 20);
+        scene.add(this.playerLight);
+    }
+    
+    reset() {
+        // Clear entities
+        if (gameState.entities) {
+            // Need to manually remove meshes from scene
+            if (gameState.player) gameState.scene.remove(gameState.player.mesh);
+            gameState.enemies.forEach(e => gameState.scene.remove(e.mesh));
+            gameState.platforms.forEach(p => gameState.scene.remove(p.mesh));
+            gameState.collectibles.forEach(c => gameState.scene.remove(c.mesh));
+            gameState.projectiles.forEach(p => gameState.scene.remove(p.mesh));
+            gameState.particles.forEach(p => gameState.scene.remove(p.mesh));
+            // Clear walls (shaft)
+            if (gameState.walls) {
+                gameState.walls.forEach(w => gameState.scene.remove(w));
+            }
+        }
+        
+        gameState.player = null;
+        gameState.enemies = [];
+        gameState.platforms = [];
+        gameState.collectibles = [];
+        gameState.projectiles = [];
+        gameState.particles = [];
+        gameState.walls = [];
+        gameState.score = 0;
+        gameState.frameCount = 0;
+        
+        // Reset RNG
+        Math.seedrandom('42');
+        
+        // Generate Level
+        this.levelGenerator.init();
+        
+        // Spawn Player
+        gameState.player = new Player(0, 5, 0);
+        
+        logGameInfo({ action: "reset" });
+    }
+    
+    start() {
+        gameState.gamePhase = "PLAYING";
+        logGameInfo({ action: "start" });
+    }
+    
+    animate(time) {
+        requestAnimationFrame(this.animate.bind(this));
+        
+        const deltaTime = Math.min((time - this.lastTime) / 1000, 0.1); // Cap dt
+        this.lastTime = time;
+        gameState.deltaTime = deltaTime;
+        
+        if (gameState.gamePhase === "PLAYING") {
+            gameState.frameCount++;
+            this.update(deltaTime);
+        }
+        
+        this.handleTestModes(deltaTime);
+        
+        // Render
+        gameState.renderer.render(gameState.scene, gameState.camera);
+        this.ui.render();
+    }
+    
+    update(deltaTime) {
+        // Update Player
+        if (gameState.player) {
+            gameState.player.update(deltaTime, this.input);
+            
+            // Camera Follow
+            const targetY = gameState.player.mesh.position.y + 2;
+            // Smooth lerp
+            gameState.camera.position.y += (targetY - gameState.camera.position.y) * 0.1;
+            gameState.camera.lookAt(0, gameState.camera.position.y - 4, 0); // Look down slightly
+            
+            // Update light position
+            this.playerLight.position.copy(gameState.player.mesh.position);
+        }
+        
+        // Update Enemies
+        // Reverse loop for removal
+        for (let i = gameState.enemies.length - 1; i >= 0; i--) {
+            const enemy = gameState.enemies[i];
+            enemy.update(deltaTime);
+            if (enemy.markedForDeletion) {
+                gameState.enemies.splice(i, 1);
+            }
+        }
+        
+        // Update Projectiles
+        for (let i = gameState.projectiles.length - 1; i >= 0; i--) {
+            const proj = gameState.projectiles[i];
+            proj.update(deltaTime);
+            if (proj.markedForDeletion) {
+                gameState.projectiles.splice(i, 1);
+            }
+        }
+        
+        // Update Collectibles
+        for (let i = gameState.collectibles.length - 1; i >= 0; i--) {
+            const c = gameState.collectibles[i];
+            c.update(deltaTime);
+            if (c.markedForDeletion) {
+                gameState.collectibles.splice(i, 1);
+            }
+        }
+        
+        // Update Particles
+        updateParticles();
+    }
+    
+    handleTestModes(deltaTime) {
+        // Handle control modes for automated testing
+        if (window.setControlMode) {
+            // Check if mode changed
+        }
+        
+        const player = gameState.player;
+        if (!player) return;
+
+        if (gameState.controlMode === 'TEST_1') {
+            // Test movement
+            if (gameState.gamePhase === 'START') this.start();
+            // Simulate pressing Right
+            player.velocity.x += 0.01; 
+        } else if (gameState.controlMode === 'TEST_2') {
+            // Test shooting/hover
+            if (gameState.gamePhase === 'START') this.start();
+            // Force player to be in air
+            if (player.onGround) player.mesh.position.y += 1;
+            // Shoot
+            player.shoot();
+        } else if (gameState.controlMode === 'TEST_3') {
+             // Win test
+             if (gameState.gamePhase === 'START') this.start();
+             player.mesh.position.y = -gameState.maxDepth - 10;
+        }
+    }
+}
+
+// Global control mode setter for HTML buttons
+window.setControlMode = (mode) => {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+    // Visual update of buttons would happen in HTML script or here if access to DOM
+    document.querySelectorAll('.control-button').forEach(btn => {
+        btn.classList.remove('active');
+        if (btn.id.includes(mode)) btn.classList.add('active');
+    });
+    
+    // Reset game for clean test state
+    if (window.gameInstance) {
+        window.gameInstance.reset();
+        gameState.gamePhase = "START";
+    }
+};
+
+// Start the game
+new Game();
+</code>
+
+<code filename="level.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, COLORS } from './globals.js';
+import { Platform, Enemy, Collectible } from './entities.js';
+import { randomRange, randomInt } from './utils.js';
+
+export class LevelGenerator {
+    constructor() {
+        this.chunkHeight = 20;
+        this.wellWidth = 18; // -9 to 9
+        this.wellDepth = 18; // -9 to 9
+        this.currentDepth = -10; // Start generating below start area
+    }
+    
+    init() {
+        // Build initial shaft walls for visual context
+        this.buildShaftMesh();
+        
+        // Starting platform
+        new Platform(0, -2, 0, 4, 1, 4);
+        
+        // Pre-generate deep level
+        this.generateChunk(-gameState.maxDepth);
+    }
+    
+    buildShaftMesh() {
+        // A long tube
+        const depth = gameState.maxDepth + 100;
+        const geometry = new THREE.BoxGeometry(20, depth, 20);
+        
+        // Invert normals to see inside
+        geometry.scale(-1, 1, 1);
+        
+        const material = new THREE.MeshStandardMaterial({ 
+            color: COLORS.WALL,
+            side: THREE.BackSide,
+            roughness: 0.9
+        });
+        
+        const shaft = new THREE.Mesh(geometry, material);
+        shaft.position.y = -depth / 2 + 10;
+        shaft.receiveShadow = true;
+        gameState.scene.add(shaft);
+        
+        // Track wall for cleanup
+        if (gameState.walls) {
+            gameState.walls.push(shaft);
+        }
+    }
+    
+    generateChunk(targetDepth) {
+        // Generate platforms until we reach target depth
+        while (this.currentDepth > targetDepth) {
+            const y = this.currentDepth;
+            
+            // Random pattern
+            const pattern = randomInt(0, 3);
+            
+            if (pattern === 0) {
+                // Two side platforms
+                new Platform(-5, y, 0, 4, 1, 4);
+                new Platform(5, y, 0, 4, 1, 4);
+                this.spawnEnemy(0, y + 1, 0, 'floater');
+            } else if (pattern === 1) {
+                // Center platform
+                new Platform(0, y, 0, 6, 1, 6);
+                if (Math.random() > 0.3) {
+                    this.spawnEnemy(0, y + 1, 0, 'crawler');
+                } else {
+                    new Collectible(0, y + 1.5, 0);
+                }
+            } else if (pattern === 2) {
+                // Scattered small platforms
+                const x = randomRange(-6, 6);
+                const z = randomRange(-6, 6);
+                new Platform(x, y, z, 3, 1, 3);
+                if (Math.random() > 0.5) new Collectible(x, y + 1.5, z);
+            }
+            
+            // Move down
+            this.currentDepth -= randomRange(6, 10); // Gap between platforms
+        }
+        
+        // Add floor at max depth
+        new Platform(0, targetDepth - 5, 0, 20, 2, 20, 0xFFFFFF);
+    }
+    
+    spawnEnemy(x, y, z, type) {
+        const enemy = new Enemy(x, y, z, type);
+        gameState.enemies.push(enemy);
+    }
+}
+</code>

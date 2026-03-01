@@ -1,0 +1,1382 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+can you make this game fit in 600 x 400, just add borders, I want to retain the way the game looks but I just want to add borders to make it fit a 600x400 aspect ratio
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Game</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 4px solid #444; width: 400px !important; height: 600px !important; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; font-family: sans-serif; font-weight: bold; transition: background 0.2s; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #E67E22; color: white; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <!-- Removed h1 game title as per feedback -->
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">
+        Climb the daily tower! Wall jump, dodge spikes, and collect fruit to reach the top.
+      </p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">
+        Arrow Left / Right: Move | Space / Up / Z: Jump (Double Jump) | Enter: Start | Esc: Pause/Unpause | R: Restart
+      </p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+/**
+ * Global constants and state management
+ */
+
+export const CANVAS_WIDTH = 400;
+export const CANVAS_HEIGHT = 600;
+
+export const GRAVITY = 0.5;
+export const FRICTION = 0.85;
+export const AIR_RESISTANCE = 0.98;
+export const JUMP_FORCE = -10; // Lowered from -11
+export const MOVE_SPEED = 5;
+export const WALL_SLIDE_SPEED = 2;
+export const WALL_JUMP_FORCE = { x: 8, y: -11 }; // Lowered y from -12
+export const MAX_FALL_SPEED = 15;
+
+export const COLORS = {
+    background: '#2C3E50',
+    player: '#F1C40F',
+    playerOutline: '#F39C12',
+    wall: '#7F8C8D',
+    wallTop: '#27AE60',
+    spike: '#C0392B',
+    enemy: '#8E44AD',
+    fruit: '#E67E22',
+    checkpoint: '#2980B9',
+    checkpointActive: '#3498DB',
+    trophy: '#F1C40F',
+    text: '#ECF0F1',
+    sword: '#BDC3C7',
+    shield: '#3498DB'
+};
+
+export const gameState = {
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN
+    
+    player: null,
+    entities: [], // All updateable/renderable entities
+    
+    // Level objects (for efficient collision)
+    walls: [],
+    platforms: [],
+    hazards: [],
+    collectibles: [],
+    checkpoints: [],
+    enemies: [],
+    particles: [],
+    
+    // Camera
+    cameraY: 0,
+    cameraTargetY: 0,
+    worldHeight: 3200, // Total height of the level
+    
+    // Game stats
+    score: 0, // Total score (fruit + altitude)
+    fruitCollectedScore: 0, // Score from collected fruit
+    maxAltitudeReached: 0, // Highest altitude reached in pixels
+    lives: 3,
+    maxLives: 3,
+    currentCheckpoint: null, // {x, y}
+    
+    // Time
+    frameCount: 0,
+    deltaTime: 0,
+    lastFrameTime: 0,
+
+    // Auto-restart state
+    autoRestartScheduled: false,
+    autoRestartTimeoutId: null
+};
+
+// Expose gameState globally
+window.getGameState = () => gameState;
+
+// Logging utility
+export function logGameInfo(p, info) {
+    if (p.logs && p.logs.game_info) {
+        p.logs.game_info.push({
+            data: info,
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+</file>
+
+<file name="game.js">
+/**
+ * Main Game Entry Point
+ */
+import { 
+    CANVAS_WIDTH, CANVAS_HEIGHT, gameState, COLORS 
+} from './globals.js';
+import { Player } from './entities.js';
+import { generateLevel } from './level.js';
+import { handleInput, handleKeyPress } from './input.js';
+import { renderUI, renderStartScreen, renderPausedScreen, renderGameOver } from './ui.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42); // Daily seed
+        
+        resetGameLogic(p);
+        
+        p.logs.game_info.push({
+            data: { gamePhase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    };
+
+    p.draw = function() {
+        // Update Time
+        const currentTime = p.millis();
+        gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = currentTime;
+        gameState.frameCount = p.frameCount;
+
+        p.background(COLORS.background);
+
+        switch (gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                break;
+            case "PLAYING":
+                updateGame(p);
+                renderGame(p);
+                renderUI(p);
+                break;
+            case "PAUSED":
+                renderGame(p);
+                renderUI(p);
+                renderPausedScreen(p);
+                break;
+            case "GAME_OVER_WIN":
+                renderGame(p);
+                renderGameOver(p, true);
+                // Auto-restart logic
+                if (!gameState.autoRestartScheduled) {
+                    gameState.autoRestartScheduled = true;
+                    gameState.autoRestartTimeoutId = setTimeout(() => {
+                        window.resetGame(p); // Call the exposed reset function
+                        gameState.autoRestartScheduled = false; // Reset flag after restart
+                        gameState.autoRestartTimeoutId = null;
+                    }, 1000); // 1 second
+                }
+                break;
+            case "GAME_OVER_LOSE":
+                renderGame(p);
+                renderGameOver(p, false);
+                // Auto-restart logic
+                if (!gameState.autoRestartScheduled) {
+                    gameState.autoRestartScheduled = true;
+                    gameState.autoRestartTimeoutId = setTimeout(() => {
+                        window.resetGame(p); // Call the exposed reset function
+                        gameState.autoRestartScheduled = false; // Reset flag after restart
+                        gameState.autoRestartTimeoutId = null;
+                    }, 1000); // 1 second
+                }
+                break;
+        }
+    };
+
+    p.keyPressed = function() {
+        handleKeyPress(p, p.keyCode);
+    };
+});
+
+// Helper to reset game state
+function resetGameLogic(p) {
+    // When resetting, always go directly to PLAYING.
+    // The "START" phase is for initial load only.
+    gameState.gamePhase = "PLAYING"; 
+    gameState.score = 0;
+    gameState.fruitCollectedScore = 0; // Reset fruit score
+    gameState.maxAltitudeReached = 0; // Reset max altitude
+    gameState.lives = gameState.maxLives;
+    gameState.currentCheckpoint = null;
+    gameState.particles = [];
+    
+    // Clear any pending auto-restart
+    if (gameState.autoRestartTimeoutId) {
+        clearTimeout(gameState.autoRestartTimeoutId);
+        gameState.autoRestartTimeoutId = null;
+    }
+    gameState.autoRestartScheduled = false; // Always reset this flag
+    
+    // Generate Level
+    generateLevel(p);
+    
+    // Spawn Player
+    gameState.player = new Player(CANVAS_WIDTH/2 - 12, gameState.worldHeight - 100);
+    gameState.entities.push(gameState.player);
+    
+    // Reset Camera
+    gameState.cameraY = gameState.worldHeight - CANVAS_HEIGHT;
+}
+
+// Expose reset to window for Input handling
+window.resetGame = function(p) {
+    resetGameLogic(p);
+};
+
+// Expose control mode setter for buttons
+window.setControlMode = function(mode) {
+    // In the final game, only "HUMAN" mode exists.
+    // This function is kept to maintain consistency with the button's onclick handler
+    // and to visually activate the "Human Mode" button.
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+    
+    // Update button visual state - only the Human Mode button should be active
+    document.querySelectorAll('.control-button').forEach(btn => {
+        btn.classList.remove('active');
+        if(mode === 'HUMAN' && btn.id === 'humanModeBtn') {
+            btn.classList.add('active');
+        }
+    });
+};
+
+function updateGame(p) {
+    handleInput(p);
+
+    // Update Player
+    if (gameState.player) gameState.player.update(p);
+
+    // Update Entities
+    gameState.entities.forEach(e => {
+        if (e !== gameState.player) e.update(p);
+    });
+
+    // Update Particles
+    for (let i = gameState.particles.length - 1; i >= 0; i--) {
+        let pt = gameState.particles[i];
+        pt.update();
+        if (pt.isDead()) gameState.particles.splice(i, 1);
+    }
+
+    // Update Camera
+    updateCamera(p);
+}
+
+function updateCamera(p) {
+    if (!gameState.player) return;
+    
+    // Target Y is player Y minus some offset to keep player lower-middle
+    const targetY = gameState.player.y - CANVAS_HEIGHT * 0.6;
+    
+    // Smooth lerp
+    gameState.cameraY = p.lerp(gameState.cameraY, targetY, 0.1);
+    
+    // Clamp camera
+    gameState.cameraY = p.constrain(gameState.cameraY, 0, gameState.worldHeight - CANVAS_HEIGHT);
+}
+
+function renderGame(p) {
+    p.push();
+    p.translate(0, -gameState.cameraY);
+    
+    // Render Walls
+    gameState.walls.forEach(w => w.render(p));
+    
+    // Render Hazards
+    gameState.hazards.forEach(h => h.render(p));
+    
+    // Render Checkpoints
+    gameState.checkpoints.forEach(cp => cp.render(p));
+    
+    // Render Collectibles
+    gameState.collectibles.forEach(c => c.render(p));
+    
+    // Render Enemies
+    gameState.enemies.forEach(e => e.render(p));
+    
+    // Render Player
+    if (gameState.player) gameState.player.render(p);
+    
+    // Render Particles
+    gameState.particles.forEach(pt => pt.render(p));
+    
+    p.pop();
+}
+
+window.gameInstance = gameInstance;
+</file>
+
+<file name="ui.js">
+/**
+ * User Interface Rendering
+ */
+import { CANVAS_WIDTH, CANVAS_HEIGHT, gameState, COLORS } from './globals.js';
+
+export function renderUI(p) {
+    // Top HUD Background
+    p.push();
+    p.fill(0, 0, 0, 100);
+    p.noStroke();
+    p.rect(0, 0, CANVAS_WIDTH, 60);
+    
+    // Score
+    p.fill(COLORS.fruit);
+    p.textAlign(p.LEFT, p.CENTER);
+    p.textSize(18);
+    p.text(`SCORE: ${gameState.score}`, 10, 15);
+    
+    // Lives
+    p.textAlign(p.RIGHT, p.CENTER);
+    p.fill(COLORS.player);
+    p.text(`LIVES: ${gameState.lives}`, CANVAS_WIDTH - 10, 15);
+    
+    // Shields
+    if (gameState.player && gameState.player.shieldCount > 0) {
+        p.textAlign(p.LEFT, p.CENTER);
+        p.fill(COLORS.shield);
+        p.text(`SHIELDS: ${gameState.player.shieldCount}`, 10, 40);
+    }
+    
+    // Height / Progress
+    if (gameState.player) {
+        const progress = Math.floor(p.map(gameState.player.y, gameState.worldHeight, 0, 0, 100));
+        p.textAlign(p.CENTER, p.CENTER);
+        p.fill(255);
+        p.textSize(14);
+        p.text(`ALTITUDE: ${Math.max(0, progress)}%`, CANVAS_WIDTH / 2, 40);
+    }
+    p.pop();
+}
+
+export function renderStartScreen(p) {
+    p.background(COLORS.background);
+    
+    p.push();
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    // Main message: "press enter to begin"
+    p.fill(COLORS.player); // Use a prominent color
+    p.textSize(40); // Make it stand out
+    p.stroke(0);
+    p.strokeWeight(3);
+    p.text("press enter to begin", CANVAS_WIDTH/2, CANVAS_HEIGHT/3); // Place it where the title was
+    
+    // Preserved control instructions (canvas-rendered)
+    p.textSize(16);
+    p.fill(200);
+    p.text("Controls: Arrow Keys to Move, Space to Jump", CANVAS_WIDTH/2, CANVAS_HEIGHT - 60);
+    p.text("Collect shields to protect yourself from demons!", CANVAS_WIDTH/2, CANVAS_HEIGHT - 40);
+    p.pop();
+}
+
+export function renderPausedScreen(p) {
+    p.push();
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.fill(255);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    p.textSize(20);
+    p.text("Press ESC to Resume", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+    p.pop();
+}
+
+export function renderGameOver(p, won) {
+    p.push();
+    p.fill(0, 0, 0, 200);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(50);
+    
+    if (won) {
+        p.fill(COLORS.trophy);
+        p.text("LEVEL CLEARED!", CANVAS_WIDTH/2, CANVAS_HEIGHT/3);
+    } else {
+        p.fill(COLORS.spike);
+        p.text("GAME OVER", CANVAS_WIDTH/2, CANVAS_HEIGHT/3);
+    }
+    
+    p.fill(255);
+    p.textSize(30);
+    p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    
+    p.textSize(20);
+    p.fill(200);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60);
+    p.pop();
+}
+</file>
+
+<file name="entities.js">
+/**
+ * Game entities: Player, Enemies, Items, Terrain
+ */
+import { 
+    gameState, CANVAS_WIDTH, CANVAS_HEIGHT, 
+    GRAVITY, FRICTION, AIR_RESISTANCE, JUMP_FORCE, MOVE_SPEED, WALL_SLIDE_SPEED, WALL_JUMP_FORCE, MAX_FALL_SPEED,
+    COLORS
+} from './globals.js';
+import { resolveMapCollision, checkAABB } from './physics.js';
+import { spawnJumpDust, spawnCollectEffect } from './particles.js';
+
+// Base Entity
+class Entity {
+    constructor(x, y, w, h) {
+        this.x = x;
+        this.y = y;
+        this.width = w;
+        this.height = h;
+        this.vx = 0;
+        this.vy = 0;
+        this.active = true;
+    }
+    
+    update(p) {}
+    render(p) {}
+}
+
+// Player Character
+export class Player extends Entity {
+    constructor(x, y) {
+        super(x, y, 24, 24);
+        this.color = COLORS.player;
+        this.onGround = false;
+        this.onWall = false;
+        this.wallSide = 0; // -1 left, 1 right
+        this.jumpsLeft = 2;
+        this.facing = 1;
+        this.invincible = 0;
+        this.flashTimer = 0;
+        this.shieldCount = 0;
+    }
+
+    update(p) {
+        if (this.invincible > 0) this.invincible--;
+
+        // Reset collision flags for current frame
+        this.onGround = false;
+        this.onWall = false;
+        this.wallSide = 0;
+
+        // Apply Physics (Gravity)
+        this.vy += GRAVITY;
+        this.vy = Math.min(this.vy, MAX_FALL_SPEED); // Cap falling speed
+
+        // Apply Velocity (tentative movement)
+        this.x += this.vx;
+        this.y += this.vy;
+
+        // World Bounds (Horizontal)
+        if (this.x < 0) { this.x = 0; this.vx = 0; }
+        if (this.x + this.width > CANVAS_WIDTH) { this.x = CANVAS_WIDTH - this.width; this.vx = 0; }
+        
+        // Resolve Collision with Level (this updates onGround, onWall, wallSide, and adjusts x/y/vy)
+        resolveMapCollision(this, gameState.walls);
+
+        // Apply Wall sliding AFTER collision resolution has updated onWall status
+        if (this.onWall && this.vy > 0) {
+            this.vy = Math.min(this.vy, WALL_SLIDE_SPEED);
+            this.jumpsLeft = 2; // Reset jumps on wall
+        }
+
+        // Apply friction/air resistance based on new onGround state
+        this.vx *= this.onGround ? FRICTION : AIR_RESISTANCE;
+
+        // Reset jumps on ground (if not already reset by wall slide)
+        if (this.onGround) {
+            this.jumpsLeft = 2;
+        }
+        
+        // Death at bottom of world (fallback)
+        if (this.y > gameState.worldHeight + 100) {
+            this.die();
+        }
+
+        // Check Interactions
+        this.checkHazards();
+        this.checkCollectibles();
+        this.checkCheckpoints();
+
+        // Update altitude score
+        const currentAltitude = Math.max(0, Math.floor(gameState.worldHeight - this.y));
+        gameState.maxAltitudeReached = Math.max(gameState.maxAltitudeReached, currentAltitude);
+        
+        // Update total score (fruit + altitude, scaled)
+        // Divide altitude by 10 to make it contribute less aggressively than fruit
+        gameState.score = gameState.fruitCollectedScore + Math.floor(gameState.maxAltitudeReached / 10);
+        
+        // Update Log
+        if (p.frameCount % 60 === 0) {
+            p.logs.player_info.push({
+                x: this.x, y: this.y, 
+                vx: this.vx, vy: this.vy, 
+                jumps: this.jumpsLeft,
+                lives: gameState.lives,
+                score: gameState.score // Log combined score
+            });
+        }
+    }
+    
+    move(dir) {
+        this.vx += dir * 1.5; // Acceleration
+        const maxSpeed = MOVE_SPEED;
+        this.vx = Math.max(Math.min(this.vx, maxSpeed), -maxSpeed);
+        if (dir !== 0) this.facing = dir;
+    }
+
+    jump() {
+        if (this.onWall && !this.onGround) {
+            // Wall Jump
+            this.vy = WALL_JUMP_FORCE.y;
+            this.vx = this.wallSide === 1 ? -WALL_JUMP_FORCE.x : WALL_JUMP_FORCE.x;
+            this.jumpsLeft = 1; // Consume one jump
+            spawnJumpDust(this.x + this.width/2, this.y + this.height);
+        } else if (this.jumpsLeft > 0) {
+            // Normal / Double Jump
+            this.vy = JUMP_FORCE;
+            this.jumpsLeft--;
+            spawnJumpDust(this.x + this.width/2, this.y + this.height);
+        }
+    }
+    
+    checkHazards() {
+        if (this.invincible > 0) return;
+
+        // Spikes
+        for (let spike of gameState.hazards) {
+            if (checkAABB(this, spike)) {
+                this.die();
+                return;
+            }
+        }
+        
+        // Enemies
+        for (let enemy of gameState.enemies) {
+            if (!enemy.active) continue; // Skip dead enemies
+
+            if (checkAABB(this, enemy)) {
+                // Shield blocks enemy damage
+                if (this.shieldCount > 0) {
+                    // Use shield to defend
+                    this.shieldCount--;
+                    this.vy = -8; // Bounce back up
+                    this.vx = (this.x < enemy.x) ? -6 : 6; // Push away from enemy
+                    this.invincible = 30; // Brief invincibility after shield use
+                    spawnCollectEffect(this.x + this.width/2, this.y + this.height/2);
+                    // Enemy survives
+                } else {
+                    // No defense - die
+                    this.die();
+                    return;
+                }
+            }
+        }
+    }
+    
+    checkCollectibles() {
+        for (let i = gameState.collectibles.length - 1; i >= 0; i--) {
+            let item = gameState.collectibles[i];
+            if (item.active && checkAABB(this, item)) {
+                item.collect();
+            }
+        }
+    }
+
+    checkCheckpoints() {
+        for (let cp of gameState.checkpoints) {
+            if (!cp.triggered && checkAABB(this, cp)) {
+                cp.trigger();
+            }
+        }
+    }
+
+    die() {
+        gameState.lives--;
+        spawnCollectEffect(this.x, this.y); // Death poof
+        
+        if (gameState.lives <= 0) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+        } else {
+            this.respawn();
+        }
+    }
+
+    respawn() {
+        this.vx = 0;
+        this.vy = 0;
+        this.invincible = 60; // 1 second invulnerability
+        
+        if (gameState.currentCheckpoint) {
+            this.x = gameState.currentCheckpoint.x;
+            this.y = gameState.currentCheckpoint.y;
+        } else {
+            // Default start
+            this.x = CANVAS_WIDTH / 2 - 12;
+            this.y = gameState.worldHeight - 100;
+        }
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x + this.width/2, this.y + this.height/2);
+        
+        // Squash and stretch
+        let stretchX = 1;
+        let stretchY = 1;
+        if (Math.abs(this.vy) > 1) { stretchX = 0.8; stretchY = 1.2; }
+        if (Math.abs(this.vx) > 1) { stretchX = 1.1; stretchY = 0.9; }
+        
+        p.scale(stretchX * this.facing, stretchY);
+        
+        // Flash if invincible
+        if (this.invincible > 0 && Math.floor(p.frameCount / 4) % 2 === 0) {
+            p.fill(255);
+        } else {
+            p.fill(this.color);
+        }
+        
+        p.stroke(COLORS.playerOutline);
+        p.strokeWeight(2);
+        
+        // Body
+        p.rectMode(p.CENTER);
+        p.rect(0, 0, this.width, this.height, 5);
+        
+        // Eyes
+        p.fill(255);
+        p.noStroke();
+        p.circle(4, -4, 6);
+        p.circle(4, -4, 6); 
+        p.circle(-2, -4, 6); 
+        
+        p.fill(0);
+        p.circle(5, -4, 2);
+        p.circle(-1, -4, 2);
+
+        // Render Shield indicator if has shields
+        if (this.shieldCount > 0) {
+            p.push();
+            p.translate(-10, 0); // Position on left side
+            
+            p.fill(COLORS.shield);
+            p.stroke(0);
+            p.strokeWeight(1);
+            
+            // Shield shape
+            p.beginShape();
+            p.vertex(0, -8);
+            p.vertex(6, -6);
+            p.vertex(6, 6);
+            p.vertex(0, 8);
+            p.vertex(-6, 6);
+            p.vertex(-6, -6);
+            p.endShape(p.CLOSE);
+            
+            p.pop();
+        }
+        
+        p.pop();
+    }
+}
+
+// Static Wall/Block
+export class Wall extends Entity {
+    constructor(x, y, w, h) {
+        super(x, y, w, h);
+    }
+
+    render(p) {
+        // Only render if on screen
+        if (this.y > gameState.cameraY + CANVAS_HEIGHT || this.y + this.height < gameState.cameraY) return;
+
+        p.push();
+        p.fill(COLORS.wall);
+        p.stroke(40);
+        p.strokeWeight(1);
+        p.rect(this.x, this.y, this.width, this.height);
+        
+        // Grass top
+        p.fill(COLORS.wallTop);
+        p.noStroke();
+        p.rect(this.x, this.y, this.width, 6);
+        p.pop();
+    }
+}
+
+// Deadly Spike
+export class Spike extends Entity {
+    constructor(x, y, w) {
+        super(x, y, w, w); // Square area but triangular visual
+        this.realH = w;
+    }
+
+    render(p) {
+        if (this.y > gameState.cameraY + CANVAS_HEIGHT || this.y + this.height < gameState.cameraY) return;
+
+        p.push();
+        p.fill(COLORS.spike);
+        p.noStroke();
+        
+        // Draw multiple triangles if wide
+        const spikes = Math.floor(this.width / 20);
+        const w = this.width / spikes;
+        
+        for (let i = 0; i < spikes; i++) {
+            const bx = this.x + i * w;
+            const by = this.y + this.height;
+            p.triangle(bx, by, bx + w/2, by - this.height, bx + w, by);
+        }
+        p.pop();
+    }
+}
+
+// Moving Enemy
+export class Enemy extends Entity {
+    constructor(x, y, patrolWidth) {
+        super(x, y, 30, 30);
+        this.startX = x;
+        this.patrolWidth = patrolWidth;
+        this.vx = 2;
+        this.speed = 2;
+    }
+
+    update() {
+        if (!this.active) return;
+
+        this.x += this.vx;
+        
+        if (this.x > this.startX + this.patrolWidth || this.x < this.startX) {
+            this.vx *= -1;
+        }
+    }
+
+    die() {
+        this.active = false;
+    }
+
+    render(p) {
+        if (!this.active) return;
+        if (this.y > gameState.cameraY + CANVAS_HEIGHT || this.y + this.height < gameState.cameraY) return;
+
+        p.push();
+        p.translate(this.x + this.width/2, this.y + this.height/2);
+        p.fill(COLORS.enemy);
+        p.noStroke();
+        
+        // Pulsing
+        const scale = 1 + Math.sin(gameState.frameCount * 0.1) * 0.1;
+        p.scale(scale);
+        
+        p.rectMode(p.CENTER);
+        p.rect(0, 0, this.width, this.height, 5);
+        
+        // Eyes
+        p.fill(255);
+        p.rect(-6, -4, 6, 6);
+        p.rect(6, -4, 6, 6);
+        p.fill(0);
+        p.rect(-6, -4, 2, 2);
+        p.rect(6, -4, 2, 2);
+        
+        // Mouth
+        p.fill(0);
+        p.rect(0, 6, 16, 4);
+        
+        p.pop();
+    }
+}
+
+// Collectible Fruit
+export class Fruit extends Entity {
+    constructor(x, y) {
+        super(x, y, 20, 20);
+        this.baseY = y;
+        this.oscillation = Math.random() * Math.PI * 2;
+    }
+
+    update() {
+        if (!this.active) return;
+        this.oscillation += 0.05;
+        this.y = this.baseY + Math.sin(this.oscillation) * 5;
+    }
+
+    collect() {
+        this.active = false;
+        gameState.fruitCollectedScore += 50; // Update fruit-specific score
+        spawnCollectEffect(this.x + 10, this.y + 10);
+    }
+
+    render(p) {
+        if (!this.active) return;
+        if (this.y > gameState.cameraY + CANVAS_HEIGHT || this.y + this.height < gameState.cameraY) return;
+
+        p.push();
+        p.translate(this.x + 10, this.y + 10);
+        p.fill(COLORS.fruit);
+        p.noStroke();
+        p.circle(0, 0, 16);
+        // Leaf
+        p.fill(COLORS.wallTop);
+        p.ellipse(0, -10, 8, 4);
+        p.pop();
+    }
+}
+
+// Collectible Shield
+export class ShieldItem extends Entity {
+    constructor(x, y) {
+        super(x, y, 20, 20);
+        this.baseY = y;
+        this.oscillation = Math.random() * Math.PI * 2;
+    }
+
+    update() {
+        if (!this.active) return;
+        this.oscillation += 0.05;
+        this.y = this.baseY + Math.sin(this.oscillation) * 5;
+    }
+
+    collect() {
+        this.active = false;
+        gameState.player.shieldCount++;
+        spawnCollectEffect(this.x + 10, this.y + 10);
+    }
+
+    render(p) {
+        if (!this.active) return;
+        if (this.y > gameState.cameraY + CANVAS_HEIGHT || this.y + this.height < gameState.cameraY) return;
+
+        p.push();
+        p.translate(this.x + 10, this.y + 10);
+        
+        // Glow
+        p.noStroke();
+        p.fill(52, 152, 219, 100);
+        p.circle(0, 0, 30);
+
+        // Shield Icon
+        p.fill(COLORS.shield);
+        p.stroke(0);
+        p.strokeWeight(1);
+        
+        p.rectMode(p.CENTER);
+        // Shield shape
+        p.beginShape();
+        p.vertex(0, -10);
+        p.vertex(8, -8);
+        p.vertex(8, 8);
+        p.vertex(0, 10);
+        p.vertex(-8, 8);
+        p.vertex(-8, -8);
+        p.endShape(p.CLOSE);
+        
+        // Cross emblem
+        p.stroke(255);
+        p.strokeWeight(2);
+        p.line(-4, 0, 4, 0);
+        p.line(0, -4, 0, 4);
+        
+        p.pop();
+    }
+}
+
+// Checkpoint Flag
+export class Checkpoint extends Entity {
+    constructor(x, y) {
+        super(x, y, 40, 40);
+        this.triggered = false;
+    }
+
+    trigger() {
+        this.triggered = true;
+        gameState.currentCheckpoint = { x: this.x + 10, y: this.y };
+        spawnCollectEffect(this.x + 20, this.y);
+    }
+
+    render(p) {
+        if (this.y > gameState.cameraY + CANVAS_HEIGHT || this.y + this.height < gameState.cameraY) return;
+
+        p.push();
+        p.translate(this.x, this.y);
+        
+        // Pole
+        p.stroke(100);
+        p.strokeWeight(4);
+        p.line(10, 0, 10, 40);
+        
+        // Flag
+        p.noStroke();
+        p.fill(this.triggered ? COLORS.checkpointActive : COLORS.checkpoint);
+        
+        // Wave animation
+        p.beginShape();
+        p.vertex(10, 5);
+        for(let i=0; i<=20; i+=5) {
+            p.vertex(10 + i, 5 + Math.sin(gameState.frameCount * 0.1 + i*0.2) * 2);
+        }
+        p.vertex(30, 25);
+        p.vertex(10, 25);
+        p.endShape(p.CLOSE);
+        
+        p.pop();
+    }
+}
+
+// Win Trophy
+export class Trophy extends Entity {
+    constructor(x, y) {
+        super(x, y, 40, 40);
+    }
+    
+    update(p) {
+        if (checkAABB(gameState.player, this)) {
+            gameState.gamePhase = "GAME_OVER_WIN";
+        }
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x + 20, this.y + 20);
+        p.fill(COLORS.trophy);
+        p.stroke(255);
+        p.strokeWeight(2);
+        
+        // Cup
+        p.arc(0, 0, 30, 30, 0, Math.PI, p.OPEN);
+        p.rectMode(p.CENTER);
+        p.rect(0, 20, 10, 10);
+        p.rect(0, 28, 20, 6);
+        
+        // Sparkle
+        if (p.frameCount % 20 < 10) {
+            p.stroke(255);
+            p.line(-10, -10, -15, -15);
+            p.line(10, -10, 15, -15);
+        }
+        p.pop();
+    }
+}
+</file>
+
+<file name="physics.js">
+/**
+ * Physics and collision detection system
+ */
+// Removed: import { collideRectRect } from 'https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js';
+import { CANVAS_WIDTH, CANVAS_HEIGHT, gameState } from './globals.js';
+
+export function checkAABB(rect1, rect2) {
+    // Access collideRectRect from the global p5 prototype
+    return window.p5.prototype.collideRectRect(
+        rect1.x, rect1.y, rect1.width, rect1.height,
+        rect2.x, rect2.y, rect2.width, rect2.height
+    );
+}
+
+// Simple bounding box class
+export class AABB {
+    constructor(x, y, w, h) {
+        this.x = x;
+        this.y = y;
+        this.width = w;
+        this.height = h;
+    }
+}
+
+/**
+ * Resolves collision between a dynamic entity and static map geometry
+ */
+export function resolveMapCollision(entity, walls) {
+    // onGround, onWall, wallSide are reset at the beginning of Player.update
+    // and set here if a collision occurs.
+
+    for (let wall of walls) {
+        // Optimization: Check if close enough to matter using broadphase AABB
+        // Previous check was flawed for wide walls: Math.abs(entity.x - wall.x) > entity.width + 10
+        if (entity.x + entity.width + 20 < wall.x || 
+            entity.x > wall.x + wall.width + 20 ||
+            entity.y + entity.height + 20 < wall.y ||
+            entity.y > wall.y + wall.height + 20) {
+            continue;
+        }
+
+        // Check intersection
+        if (checkAABB(entity, wall)) {
+            // Determine penetration depth
+            const overlapX = (entity.width + wall.width) / 2 - Math.abs((entity.x + entity.width / 2) - (wall.x + wall.width / 2));
+            const overlapY = (entity.height + wall.height) / 2 - Math.abs((entity.y + entity.height / 2) - (wall.y + wall.height / 2));
+
+            // Resolve along shallowest axis
+            if (overlapX < overlapY) {
+                // Horizontal collision
+                if (entity.x < wall.x) { // Entity hit wall from left
+                    entity.x = wall.x - entity.width;
+                    entity.wallSide = 1; // Wall is on right relative to player
+                } else { // Entity hit wall from right
+                    entity.x = wall.x + wall.width;
+                    entity.wallSide = -1; // Wall is on left relative to player
+                }
+                entity.vx = 0;
+                entity.onWall = true;
+            } else {
+                // Vertical collision
+                if (entity.y < wall.y) { // Entity hit wall from top (landing on it)
+                    entity.y = wall.y - entity.height;
+                    entity.vy = 0;
+                    entity.onGround = true;
+                } else { // Entity hit wall from bottom (jumping into it)
+                    entity.y = wall.y + wall.height;
+                    entity.vy = 0;
+                }
+            }
+        }
+    }
+}
+</file>
+
+<file name="particles.js">
+/**
+ * Particle system for visual effects
+ */
+import { gameState } from './globals.js';
+
+export class Particle {
+    constructor(x, y, color, speed, size, life) {
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        this.size = size;
+        this.life = life;
+        this.maxLife = life;
+        this.vx = (Math.random() - 0.5) * speed;
+        this.vy = (Math.random() - 0.5) * speed;
+        this.gravity = 0.1;
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.vy += this.gravity;
+        this.life--;
+    }
+
+    isDead() {
+        return this.life <= 0;
+    }
+
+    render(p) {
+        const alpha = p.map(this.life, 0, this.maxLife, 0, 255);
+        p.noStroke();
+        
+        // Handle hex colors or p5 color objects
+        if (typeof this.color === 'string') {
+            const c = p.color(this.color);
+            c.setAlpha(alpha);
+            p.fill(c);
+        } else {
+            p.fill(this.color[0], this.color[1], this.color[2], alpha);
+        }
+        
+        p.circle(this.x, this.y, this.size);
+    }
+}
+
+export function spawnParticles(x, y, count, color) {
+    for (let i = 0; i < count; i++) {
+        gameState.particles.push(new Particle(
+            x, y, 
+            color, 
+            5, // Speed
+            Math.random() * 4 + 2, // Size
+            30 + Math.random() * 20 // Life
+        ));
+    }
+}
+
+export function spawnJumpDust(x, y) {
+    spawnParticles(x, y, 5, '#ECF0F1');
+}
+
+export function spawnCollectEffect(x, y) {
+    spawnParticles(x, y, 10, '#E67E22');
+}
+</file>
+
+<file name="input.js">
+/**
+ * Input handling
+ */
+import { gameState } from './globals.js';
+
+export function handleInput(p) {
+    const player = gameState.player;
+    if (!player) return;
+
+    let inputLeft = false;
+    let inputRight = false;
+
+    // 1. Get Control Inputs (only HUMAN mode remains)
+    if (p.keyIsDown(p.LEFT_ARROW)) inputLeft = true;
+    if (p.keyIsDown(p.RIGHT_ARROW)) inputRight = true;
+    // Jumping is handled in keyPressed event for single actuation
+
+    // 2. Apply Movement
+    if (inputLeft) player.move(-1);
+    else if (inputRight) player.move(1);
+    else player.move(0);
+
+    // Automated jumping logic has been removed.
+    
+    // Log inputs
+    if (inputLeft || inputRight) {
+         p.logs.inputs.push({
+            left: inputLeft,
+            right: inputRight,
+            jump: false, // Automated jump removed, so always false here
+            framecount: p.frameCount
+         });
+    }
+}
+
+// Automated testing controller functions have been removed.
+
+// Global key handlers
+export function handleKeyPress(p, keyCode) {
+    // Game Flow Controls
+    if (keyCode === 13) { // ENTER
+        if (gameState.gamePhase === "START") {
+            gameState.gamePhase = "PLAYING";
+            p.logs.game_info.push({ phase: "PLAYING", time: Date.now() });
+        }
+    }
+    if (keyCode === 27) { // ESC
+        if (gameState.gamePhase === "PLAYING") gameState.gamePhase = "PAUSED";
+        else if (gameState.gamePhase === "PAUSED") gameState.gamePhase = "PLAYING";
+    }
+    if (keyCode === 82) { // R
+        if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+            window.resetGame(p);
+        }
+    }
+
+    // Player Actions (Human)
+    if (gameState.gamePhase === "PLAYING" && gameState.controlMode === "HUMAN") {
+        if (keyCode === 32 || keyCode === 38 || keyCode === 90) { // Space, Up, Z
+            if (gameState.player) gameState.player.jump();
+        }
+    }
+}
+</file>
+
+<file name="level.js">
+/**
+ * Procedural Level Generation
+ */
+import { 
+    CANVAS_WIDTH, CANVAS_HEIGHT, gameState
+} from './globals.js';
+import { Wall, Spike, Enemy, Fruit, Checkpoint, Trophy, ShieldItem } from './entities.js';
+
+export function generateLevel(p) {
+    // Clear existing
+    gameState.walls = [];
+    gameState.hazards = [];
+    gameState.collectibles = [];
+    gameState.checkpoints = [];
+    gameState.enemies = [];
+    gameState.entities = [];
+    
+    const floorHeight = 120; // Lowered from 150
+    const levelHeight = gameState.worldHeight;
+    const numFloors = Math.floor(levelHeight / floorHeight);
+    
+    // Create Border Walls
+    // Left Wall
+    const leftWall = new Wall(0, 0, 20, levelHeight + 200);
+    gameState.walls.push(leftWall);
+    gameState.entities.push(leftWall);
+    
+    // Right Wall
+    const rightWall = new Wall(CANVAS_WIDTH - 20, 0, 20, levelHeight + 200);
+    gameState.walls.push(rightWall);
+    gameState.entities.push(rightWall);
+    
+    // Starting Floor
+    const startFloor = new Wall(0, levelHeight - 40, CANVAS_WIDTH, 40);
+    gameState.walls.push(startFloor);
+    gameState.entities.push(startFloor);
+    
+    // Procedural Floors
+    let currentY = levelHeight - 200;
+    
+    // We use seeded random via p.random() which is seeded in setup
+    for (let i = 0; i < numFloors; i++) {
+        const floorType = Math.floor(p.random(4));
+        
+        // Generate a floor pattern
+        switch(floorType) {
+            case 0: // Platforms Left and Right
+                createPlatform(p, 20, currentY, 150);
+                createPlatform(p, CANVAS_WIDTH - 170, currentY - 50, 150);
+                if (p.random() > 0.5) createEnemy(p, 20, currentY - 30, 120);
+                break;
+                
+            case 1: // Center Platform with Spikes
+                createPlatform(p, CANVAS_WIDTH/2 - 100, currentY, 200);
+                if (p.random() > 0.3) createSpike(p, CANVAS_WIDTH/2 - 20, currentY - 20);
+                createFruit(p, 40, currentY);
+                createFruit(p, CANVAS_WIDTH - 60, currentY);
+                break;
+                
+            case 2: // Zig Zag Walls
+                createPlatform(p, 20, currentY, 250);
+                createPlatform(p, CANVAS_WIDTH - 270, currentY - 80, 250);
+                createFruit(p, CANVAS_WIDTH/2, currentY - 40);
+                break;
+                
+            case 3: // Steps - adjusted for narrower width (400px)
+                createPlatform(p, 50, currentY, 100);
+                createPlatform(p, 150, currentY - 40, 100);
+                createPlatform(p, 250, currentY - 80, 100);
+                if (p.random() > 0.6) createEnemy(p, 150, currentY - 70, 70);
+                break;
+        }
+
+        // Spawn items strategically
+        if (i === 2) {
+            // Early shield
+            createShield(p, CANVAS_WIDTH/2 + 40, currentY - 60);
+        } else if (i % 4 === 0 && i > 0) {
+            // Shield every 4 floors
+            createShield(p, p.random(60, CANVAS_WIDTH - 80), currentY - 60);
+        }
+        
+        // Add checkpoint every 5 floors
+        if (i > 0 && i % 5 === 0) {
+            createCheckpoint(p, CANVAS_WIDTH/2 - 20, currentY - 40);
+        } else {
+            // Chance for random fruit
+            if (p.random() > 0.5) {
+                // Constrain fruit x to be within walls
+                createFruit(p, p.random(40, CANVAS_WIDTH - 60), currentY - 100);
+            }
+        }
+        
+        currentY -= floorHeight;
+    }
+    
+    // Goal
+    const goalPlatform = new Wall(CANVAS_WIDTH/2 - 50, 100, 100, 20);
+    gameState.walls.push(goalPlatform);
+    gameState.entities.push(goalPlatform);
+    
+    const trophy = new Trophy(CANVAS_WIDTH/2 - 20, 60);
+    gameState.entities.push(trophy);
+    // Note: trophy checks its own collision logic
+}
+
+function createPlatform(p, x, y, w) {
+    const wall = new Wall(x, y, w, 20);
+    gameState.walls.push(wall);
+    gameState.entities.push(wall);
+}
+
+function createSpike(p, x, y) {
+    const spike = new Spike(x, y, 20);
+    gameState.hazards.push(spike);
+    gameState.entities.push(spike);
+}
+
+function createEnemy(p, x, y, range) {
+    const enemy = new Enemy(x, y, range);
+    gameState.enemies.push(enemy);
+    gameState.entities.push(enemy);
+}
+
+function createFruit(p, x, y) {
+    const fruit = new Fruit(x, y);
+    gameState.collectibles.push(fruit);
+    gameState.entities.push(fruit);
+}
+
+function createShield(p, x, y) {
+    const shield = new ShieldItem(x, y);
+    gameState.collectibles.push(shield);
+    gameState.entities.push(shield);
+}
+
+function createCheckpoint(p, x, y) {
+    const cp = new Checkpoint(x, y);
+    gameState.checkpoints.push(cp);
+    gameState.entities.push(cp);
+    
+    // Ensure there is a platform under the checkpoint
+    const wall = new Wall(x - 20, y + 40, 80, 20);
+    gameState.walls.push(wall);
+    gameState.entities.push(wall);
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

@@ -1,0 +1,1222 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+when the game is paused, I don't want to see the game be grayed out or see any paused press esc to resume 
+
+but I also don't want the hud/cursor/controls text to disappear when the game is paused
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Game</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #111; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; color: #eee; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+      canvas { border: 2px solid #333; box-shadow: 0 0 20px rgba(0,0,0,0.5); width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; font-weight: bold; transition: background 0.2s; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #d32f2f; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setControlMode('HUMAN')">Human Mode</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4; font-size: 14px;">
+        Trapped in an endless, shifting dungeon, escape the closing 'Wall of Doom'. Navigate the grid, avoid traps, and collect gold for points.
+      </p>
+      <p id="gameControls" style="color: #888; max-width: 600px; margin: 0 auto 10px auto; font-size: 12px;">
+        Controls: Arrows to Move, Space to Wait, R to Restart
+      </p>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    
+    <script>
+      window.setControlMode = function(mode) {
+        const gameState = window.getGameState();
+        if (gameState) {
+            gameState.controlMode = mode;
+            // Update UI buttons
+            document.querySelectorAll('.control-button').forEach(btn => btn.classList.remove('active'));
+            if(mode === 'HUMAN') document.getElementById('humanModeBtn').classList.add('active');
+            
+            // Restart is not directly handled here, as only one mode remains.
+            // Game restart is handled by 'R' key.
+        }
+      };
+    </script>
+    
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TILE_SIZE = 40;
+export const FRAME_RATE = 60;
+
+// Game phases
+export const PHASE_START = "START";
+export const PHASE_PLAYING = "PLAYING";
+export const PHASE_PAUSED = "PAUSED";
+export const PHASE_GAME_OVER_WIN = "GAME_OVER_WIN"; // Technically endless, but maybe reach a target
+export const PHASE_GAME_OVER_LOSE = "GAME_OVER_LOSE";
+
+export const gameState = {
+    gamePhase: PHASE_START,
+    controlMode: "HUMAN",
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Game Entities & World
+    player: null,
+    entities: [],       // Traps, enemies, collectibles
+    particles: [],
+    
+    // World Data
+    grid: new Map(),    // Stores static tiles: key "x,y" -> { type: 'floor'|'wall'|'hole' }
+    minGenY: 0,         // The furthest north (negative Y) we have generated
+    maxGenY: 5,         // The furthest south we keep in memory
+    
+    // Camera
+    cameraX: 0,
+    cameraY: 0,
+    cameraShake: 0,
+    
+    // Mechanics
+    score: 0,
+    coins: 0,
+    maxDist: 0,         // Max distance traveled (for score calculation)
+    doomY: 200,         // The Y position of the chasing wall (starts below player)
+    doomSpeed: 0.6,     // Pixels per frame
+    initialPlayerGy: 0, // Track player's initial grid Y for score calculation
+    
+    // Input
+    inputQueue: [],     // Queue for grid movement to allow buffering
+    
+    gameSeed: 42
+};
+
+// Helper to access state globally
+export function getGameState() {
+    return gameState;
+}
+
+// Expose gameState and getGameState on the window object for external access (e.g., recorder scripts)
+window.gameState = gameState;
+window.getGameState = getGameState;
+
+// Reset function
+export function resetGame(p) {
+    p.randomSeed(42);
+    gameState.gamePhase = PHASE_START;
+    gameState.frameCount = 0;
+    gameState.entities = [];
+    gameState.particles = [];
+    gameState.grid.clear();
+    gameState.minGenY = 0;
+    gameState.maxGenY = 5;
+    gameState.score = 0;
+    gameState.coins = 0;
+    gameState.maxDist = 0;
+    gameState.doomY = 300; // Start comfortably behind
+    gameState.doomSpeed = 0.6;
+    gameState.inputQueue = [];
+    gameState.cameraShake = 0;
+    gameState.cameraX = 0;
+    gameState.cameraY = 0;
+    gameState.initialPlayerGy = 0; // Reset initial player Y
+    
+    // Player will be re-initialized in the setup of the specific run
+}
+</file>
+
+<file name="game.js">
+import { 
+    CANVAS_WIDTH, CANVAS_HEIGHT, TILE_SIZE, gameState, 
+    PHASE_START, PHASE_PLAYING, PHASE_PAUSED, PHASE_GAME_OVER_LOSE, PHASE_GAME_OVER_WIN 
+} from './globals.js';
+import { handleInput } from './input.js';
+import { renderUI, renderStartScreen, renderGameOver } from './ui.js';
+import { updateLevelGen } from './level_gen.js';
+import { updateParticles } from './particles.js';
+import { getGridKey, gridToWorld } from './utils.js';
+
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+    
+    // Custom key tracking
+    p.keysDown = {};
+    p.keysPrev = {};
+    
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        gameState.lastFrameTime = p.millis();
+        
+        // Log initial
+        p.logs.game_info.push({ data: { gamePhase: gameState.gamePhase }, framecount: p.frameCount, timestamp: Date.now() });
+    };
+
+    p.draw = function() {
+        // Time management
+        const currentTime = p.millis();
+        gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = currentTime;
+        
+        // Handle Global Inputs (Pause, etc)
+        // Input handling must happen BEFORE updating keysPrev to detect "just pressed" events
+        handleInput(p);
+
+        p.background(20, 20, 30);
+
+        if (gameState.gamePhase === PHASE_START) {
+            renderStartScreen(p);
+        } else if (gameState.gamePhase === PHASE_PLAYING) {
+            updateGame(p);
+            renderGame(p);
+            renderUI(p);
+        } else if (gameState.gamePhase === PHASE_PAUSED) {
+            renderGame(p);
+            // renderPaused(p) removed to eliminate visual overlay and text
+        } else if (gameState.gamePhase === PHASE_GAME_OVER_LOSE || gameState.gamePhase === PHASE_GAME_OVER_WIN) {
+            renderGame(p);
+            renderGameOver(p);
+        }
+        
+        // Update input state (wasPressed logic)
+        // This ensures p.keysPrev is updated for p.keyWasDown for the NEXT frame
+        for (let k in p.keysDown) {
+            p.keysPrev[k] = p.keysDown[k];
+        }
+    };
+    
+    p.keyPressed = function() {
+        p.keysDown[p.keyCode] = true;
+    };
+    
+    p.keyReleased = function() {
+        p.keysDown[p.keyCode] = false;
+    };
+    
+    // Extensions
+    p.keyWasDown = function(code) {
+        return p.keysPrev[code] === true;
+    };
+});
+
+function updateGame(p) {
+    // 1. Level Generation
+    updateLevelGen(p);
+    
+    // 2. Entities
+    if (gameState.player) gameState.player.update(p);
+    
+    gameState.entities.forEach(e => {
+        if (e !== gameState.player) e.update(p);
+    });
+    
+    // Clean up dead entities
+    gameState.entities = gameState.entities.filter(e => {
+        if (e.collected) return false; // coins
+        // keep others unless specific destroy logic exists
+        return true;
+    });
+
+    // 3. Doom Wall
+    // Progressive speed increase based on depth (maxDist)
+    // Base speed 0.6, increases by 0.002 per unit of distance
+    const speedIncrease = Math.max(0, gameState.maxDist) * 0.002;
+    gameState.doomSpeed = 0.6 + speedIncrease;
+    
+    gameState.doomY -= gameState.doomSpeed;
+    
+    // 4. Camera
+    if (gameState.player) {
+        // Camera follows player smoothly, but biased upwards
+        const targetCamY = gameState.player.y - CANVAS_HEIGHT * 0.7;
+        gameState.cameraY = p.lerp(gameState.cameraY, targetCamY, 0.1);
+        
+        // Camera X centers on track (track is ~11 tiles wide = 440px)
+        const trackCenter = (11 * TILE_SIZE) / 2;
+        const targetCamX = trackCenter - CANVAS_WIDTH / 2;
+        gameState.cameraX = p.lerp(gameState.cameraX, targetCamX, 0.05);
+    }
+}
+
+function renderGame(p) {
+    p.push();
+    
+    // Camera shake
+    if (gameState.cameraShake > 0) {
+        p.translate(p.random(-gameState.cameraShake, gameState.cameraShake), p.random(-gameState.cameraShake, gameState.cameraShake));
+        gameState.cameraShake *= 0.9;
+    }
+    
+    p.translate(-gameState.cameraX, -gameState.cameraY);
+    
+    // Render visible grid
+    // Calculate visible range based on camera
+    const startRow = Math.floor(gameState.cameraY / TILE_SIZE);
+    const endRow = startRow + Math.ceil(CANVAS_HEIGHT / TILE_SIZE) + 1;
+    const startCol = Math.floor(gameState.cameraX / TILE_SIZE);
+    const endCol = startCol + Math.ceil(CANVAS_WIDTH / TILE_SIZE) + 1;
+    
+    // Draw Floor & Walls
+    for (let y = startRow - 2; y <= endRow; y++) {
+        for (let x = startCol - 2; x <= endCol; x++) {
+            const key = getGridKey(x, y);
+            const tile = gameState.grid.get(key);
+            
+            if (tile) {
+                const px = x * TILE_SIZE;
+                const py = y * TILE_SIZE;
+                
+                if (tile.type === 'floor') {
+                    // Checkerboard tint
+                    if ((x + y) % 2 === 0) p.fill(40, 40, 50);
+                    else p.fill(45, 45, 55);
+                    p.noStroke();
+                    p.rect(px, py, TILE_SIZE, TILE_SIZE);
+                } else if (tile.type === 'wall') {
+                    // 3D effect wall
+                    p.fill(80, 80, 90);
+                    p.rect(px, py, TILE_SIZE, TILE_SIZE);
+                    // Top highlight
+                    p.fill(120, 120, 130);
+                    p.rect(px, py, TILE_SIZE, 5);
+                    // Shadow
+                    p.fill(50, 50, 60);
+                    p.rect(px, py + TILE_SIZE - 10, TILE_SIZE, 10);
+                } else if (tile.type === 'hole') {
+                    p.fill(10, 10, 15);
+                    p.rect(px, py, TILE_SIZE, TILE_SIZE);
+                }
+            } else {
+                // Void
+                p.fill(5, 5, 10);
+                p.rect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+            }
+        }
+    }
+    
+    // Draw Doom Wall (below everything logic-wise, but rendered on top of floor)
+    // Actually doom wall obscures previous tiles
+    p.fill(255, 0, 0, 100);
+    p.noStroke();
+    p.rect(gameState.cameraX, gameState.doomY, CANVAS_WIDTH * 2, CANVAS_HEIGHT * 2);
+    // Doom edge
+    p.fill(200, 0, 0);
+    for (let i = 0; i < CANVAS_WIDTH * 2; i += 20) {
+        const h = p.noise(i * 0.05, p.frameCount * 0.1) * 40;
+        p.rect(gameState.cameraX + i - CANVAS_WIDTH/2, gameState.doomY - h, 20, h + 20);
+    }
+    
+    // Render Entities
+    gameState.entities.forEach(e => {
+        // Simple culling
+        if (e.y > gameState.cameraY - 50 && e.y < gameState.cameraY + CANVAS_HEIGHT + 50) {
+            e.render(p);
+        }
+    });
+    
+    // Render Particles
+    updateParticles(p);
+    
+    p.pop();
+}
+
+window.gameInstance = gameInstance;
+</file>
+
+<file name="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderUI(p) {
+    // HUD
+    p.push();
+    p.resetMatrix(); // Ensure UI is drawn over everything fixed to screen
+    
+    // Score
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(24);
+    p.fill(255);
+    p.stroke(0);
+    p.strokeWeight(4);
+    p.text(`Score: ${Math.floor(gameState.score)}`, 20, 20);
+    
+    p.fill(255, 215, 0);
+    p.text(`Coins: ${gameState.coins}`, 20, 50);
+    
+    p.pop();
+}
+
+export function renderStartScreen(p) {
+    p.background(10, 10, 20);
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    // Replaced main title with "press enter to begin" (blinking)
+    p.fill(255, 255, 0); // Yellow color for prompt
+    p.textSize(36); // Make it more prominent
+    if (p.frameCount % 60 < 30) {
+        p.text("press enter to begin", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 60);
+    }
+    
+    // Preserved subtitle
+    p.fill(200);
+    p.textSize(20);
+    p.text("Escape the Doom Wall!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    
+    // Preserved controls on canvas
+    p.text("Arrow Keys to Move, Space to Wait", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 30);
+    
+}
+
+export function renderGameOver(p) {
+    // Overlay
+    p.push();
+    p.resetMatrix();
+    p.fill(0, 0, 0, 200);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(255, 50, 50);
+    p.textSize(50);
+    p.text("YOU DIED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 50);
+    
+    p.fill(255);
+    p.textSize(30);
+    p.text(`Final Score: ${Math.floor(gameState.score)}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 10);
+    
+    p.textSize(20);
+    p.fill(200);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60);
+    p.pop();
+}
+</file>
+
+<file name="entities.js">
+import { TILE_SIZE, gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { getGridKey, worldToGrid, gridToWorld, lerp, easeOutCubic } from './utils.js';
+import { createParticleExplosion, createCoinSparkle } from './particles.js';
+
+export class Entity {
+    constructor(gx, gy) {
+        this.gx = gx; // Grid X
+        this.gy = gy; // Grid Y
+        const pos = gridToWorld(gx, gy);
+        this.x = pos.x;
+        this.y = pos.y;
+        this.dead = false;
+    }
+
+    update(p) {}
+    render(p) {}
+}
+
+export class Player extends Entity {
+    constructor(gx, gy) {
+        super(gx, gy);
+        this.moveState = "IDLE"; // IDLE, MOVING
+        this.moveProgress = 0;
+        this.startX = this.x;
+        this.startY = this.y;
+        this.targetX = this.x;
+        this.targetY = this.y;
+        this.targetGx = gx;
+        this.targetGy = gy;
+        this.moveSpeed = 0.15; // 15% per frame
+        
+        // Visuals
+        this.facing = 1; // 1 Right, -1 Left
+        this.bobOffset = 0;
+    }
+
+    update(p) {
+        // Handle Movement State
+        if (this.moveState === "MOVING") {
+            this.moveProgress += this.moveSpeed;
+            
+            // Check for instant hole death during movement
+            if (this.moveProgress > 0.3 && !this.dead) {
+                const key = getGridKey(this.targetGx, this.targetGy);
+                const tile = gameState.grid.get(key);
+                if (tile && tile.type === 'hole') {
+                    this.die(p, "Fell into a hole!");
+                }
+            }
+
+            if (this.moveProgress >= 1) {
+                this.moveProgress = 1;
+                this.x = this.targetX;
+                this.y = this.targetY;
+                
+                // Action complete
+                this.moveState = "IDLE";
+                
+                // Check what we landed on (Collision with static traps like holes)
+                this.checkLand(p);
+            } else {
+                // Interpolate
+                const t = easeOutCubic(this.moveProgress);
+                this.x = lerp(this.startX, this.targetX, t);
+                this.y = lerp(this.startY, this.targetY, t);
+            }
+        } 
+        
+        // Process Input Queue if Idle
+        if (this.moveState === "IDLE") {
+            // Snap to grid exact
+            const gridPos = worldToGrid(this.x, this.y);
+            this.gx = gridPos.gx;
+            this.gy = gridPos.gy;
+            this.x = this.gx * TILE_SIZE;
+            this.y = this.gy * TILE_SIZE;
+
+            if (gameState.inputQueue.length > 0) {
+                const action = gameState.inputQueue.shift();
+                this.tryMove(action.dx, action.dy);
+            }
+        }
+        
+        // Check dynamic collisions (Enemies, Projectiles)
+        this.checkDynamicCollisions(p);
+
+        // Update visual bob
+        this.bobOffset = Math.sin(p.frameCount * 0.2) * 2;
+        
+        // Check Doom Wall
+        if (this.y + TILE_SIZE > gameState.doomY) {
+            this.die(p, "Consumed by the Doom Wall!");
+        }
+        
+        // Update Distance and Score
+        const currentDist = gameState.initialPlayerGy - this.gy;
+        if (currentDist > gameState.maxDist) {
+            gameState.maxDist = currentDist;
+        }
+        // Score = 10 pts per tile + 50 pts per coin
+        gameState.score = (gameState.maxDist * 10) + (gameState.coins * 50);
+    }
+
+    tryMove(dx, dy) {
+        const targetGx = this.gx + dx;
+        const targetGy = this.gy + dy;
+        const key = getGridKey(targetGx, targetGy);
+        const tile = gameState.grid.get(key);
+
+        // Wall Collision
+        if (!tile || tile.type === 'wall') {
+            // Blocked animation?
+            return;
+        }
+        
+        // Initiate Move
+        this.moveState = "MOVING";
+        this.moveProgress = 0;
+        this.startX = this.x;
+        this.startY = this.y;
+        
+        this.targetGx = targetGx;
+        this.targetGy = targetGy;
+        
+        const targetPos = gridToWorld(targetGx, targetGy);
+        this.targetX = targetPos.x;
+        this.targetY = targetPos.y;
+        
+        // Update facing
+        if (dx !== 0) this.facing = dx;
+        
+        // Wait action is just a move with 0 distance, which is valid to pass time
+    }
+
+    checkLand(p) {
+        // We use target coordinates here because gx/gy might not be updated until next frame IDLE state
+        // However, this logic is called when moveProgress >= 1, so we are logically at target.
+        const key = getGridKey(this.targetGx, this.targetGy);
+        const tile = gameState.grid.get(key);
+        
+        if (tile && tile.type === 'hole') {
+            this.die(p, "Fell into a hole!");
+        }
+    }
+    
+    checkDynamicCollisions(p) {
+        // Player hitbox (slightly smaller than tile)
+        const hitbox = {
+            x: this.x + 10,
+            y: this.y + 10,
+            w: 20,
+            h: 20
+        };
+
+        for (let e of gameState.entities) {
+            if (e === this) continue;
+            
+            // Collectible
+            if (e instanceof Coin && !e.collected) {
+                const coinBox = { x: e.x + 10, y: e.y + 10, w: 20, h: 20 };
+                if (checkRectCollision(hitbox, coinBox)) {
+                    e.collect(p);
+                }
+            }
+            
+            // Enemies / Traps
+            if (e.isDangerous && e.isActive()) {
+                const enemyBox = e.getHitbox();
+                if (checkRectCollision(hitbox, enemyBox)) {
+                    this.die(p, "Hit a trap!");
+                }
+            }
+        }
+    }
+    
+    die(p, reason) {
+        if (this.dead) return;
+        this.dead = true;
+        gameState.gamePhase = "GAME_OVER_LOSE";
+        p.logs.player_info.push({
+            event: "DEATH",
+            reason: reason,
+            score: gameState.score,
+            framecount: p.frameCount
+        });
+        createParticleExplosion(p, this.x + TILE_SIZE/2, this.y + TILE_SIZE/2, [200, 200, 200]);
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.x + TILE_SIZE/2, this.y + TILE_SIZE/2 + this.bobOffset);
+        
+        // Shadow
+        p.fill(0, 100);
+        p.noStroke();
+        p.ellipse(0, 15, 20, 10);
+        
+        // Body
+        p.scale(this.facing, 1);
+        p.fill(200); // Silver armor
+        p.stroke(50);
+        p.strokeWeight(2);
+        p.rect(-10, -15, 20, 25, 3);
+        
+        // Helmet
+        p.fill(220);
+        p.rect(-10, -22, 20, 15, 4);
+        
+        // Visor
+        p.fill(0); // Dark visor
+        p.rect(-5, -18, 14, 6);
+        
+        // Plume
+        p.fill(255, 50, 50);
+        p.noStroke();
+        p.triangle(-2, -22, -8, -30, 4, -22);
+        
+        p.pop();
+    }
+}
+
+// Check intersection helper
+function checkRectCollision(r1, r2) {
+    return (r1.x < r2.x + r2.w && r1.x + r1.w > r2.x && r1.y < r2.y + r2.h && r1.y + r1.h > r2.y);
+}
+
+export class Coin extends Entity {
+    constructor(gx, gy) {
+        super(gx, gy);
+        this.collected = false;
+        this.rot = 0;
+    }
+    
+    update(p) {
+        this.rot += 0.05;
+    }
+    
+    collect(p) {
+        if (this.collected) return;
+        this.collected = true;
+        gameState.coins += 1;
+        // Score updated in Player loop based on coin count
+        createCoinSparkle(p, this.x + TILE_SIZE/2, this.y + TILE_SIZE/2);
+    }
+    
+    render(p) {
+        if (this.collected) return;
+        p.push();
+        p.translate(this.x + TILE_SIZE/2, this.y + TILE_SIZE/2);
+        p.rotate(Math.sin(p.frameCount * 0.05) * 0.2);
+        p.fill(255, 215, 0);
+        p.stroke(184, 134, 11);
+        p.strokeWeight(2);
+        p.circle(0, 0, 12);
+        p.fill(255, 255, 200);
+        p.noStroke();
+        p.circle(-3, -3, 3);
+        p.pop();
+    }
+}
+
+export class SpikeTrap extends Entity {
+    constructor(gx, gy, offset = 0) {
+        super(gx, gy);
+        this.isDangerous = true;
+        this.offset = offset; // Phase offset
+        this.state = 0; // 0: Hidden, 1: Warning, 2: Spiked, 3: Retracting
+        this.timer = 0;
+        this.cycleLength = 180; // frames
+    }
+    
+    update(p) {
+        const t = (p.frameCount + this.offset) % this.cycleLength;
+        
+        if (t < 60) this.state = 0; // Safe
+        else if (t < 90) this.state = 1; // Warning (Rumble)
+        else if (t < 150) this.state = 2; // ACTIVE SPIKES
+        else this.state = 3; // Retracting
+    }
+    
+    isActive() {
+        return this.state === 2;
+    }
+    
+    getHitbox() {
+        return { x: this.x + 5, y: this.y + 5, w: 30, h: 30 };
+    }
+    
+    render(p) {
+        p.push();
+        p.translate(this.x + TILE_SIZE/2, this.y + TILE_SIZE/2);
+        
+        if (this.state === 0) {
+            // Nothing, just holes in floor
+            p.fill(30);
+            p.circle(-10, -10, 4);
+            p.circle(10, 10, 4);
+            p.circle(10, -10, 4);
+            p.circle(-10, 10, 4);
+        } else if (this.state === 1) {
+            // Warning
+            p.fill(100, 50, 50);
+            p.circle(0, 0, 10);
+        } else if (this.state === 2) {
+            // Spikes UP
+            p.fill(200);
+            p.stroke(100);
+            // Draw 4 spikes
+            [-10, 10].forEach(lx => {
+                [-10, 10].forEach(ly => {
+                    p.beginShape();
+                    p.vertex(lx - 5, ly + 5);
+                    p.vertex(lx, ly - 15);
+                    p.vertex(lx + 5, ly + 5);
+                    p.endShape(p.CLOSE);
+                });
+            });
+        } else {
+            // Retracting
+            p.fill(150);
+             p.circle(0, 0, 5);
+        }
+        
+        p.pop();
+    }
+}
+
+export class Slime extends Entity {
+    constructor(gx, gy, range, axis) { // axis: 'x' or 'y'
+        super(gx, gy);
+        this.isDangerous = true;
+        this.range = range;
+        this.axis = axis;
+        this.originGx = gx;
+        this.originGy = gy;
+        this.dir = 1;
+        this.moveSpeed = 0.05; // Slower than player
+        this.lerpVal = 0;
+    }
+    
+    update(p) {
+        this.lerpVal += this.moveSpeed * this.dir;
+        
+        if (Math.abs(this.lerpVal) >= this.range) {
+            this.dir *= -1;
+        }
+        
+        if (this.axis === 'x') {
+            this.x = (this.originGx + this.lerpVal) * TILE_SIZE;
+            this.y = this.originGy * TILE_SIZE;
+        } else {
+            this.x = this.originGx * TILE_SIZE;
+            this.y = (this.originGy + this.lerpVal) * TILE_SIZE;
+        }
+    }
+    
+    isActive() { return true; }
+    
+    getHitbox() {
+        return { x: this.x + 8, y: this.y + 12, w: 24, h: 20 };
+    }
+    
+    render(p) {
+        p.push();
+        p.translate(this.x + TILE_SIZE/2, this.y + TILE_SIZE/2);
+        
+        // Slime body
+        p.fill(50, 200, 50, 200);
+        p.stroke(30, 150, 30);
+        
+        // Wobble
+        const h = 20 + Math.sin(p.frameCount * 0.1) * 2;
+        const w = 24 - Math.sin(p.frameCount * 0.1) * 2;
+        
+        p.beginShape();
+        p.vertex(-w/2, h/2); // Bottom left
+        p.bezierVertex(-w/2, -h/2, w/2, -h/2, w/2, h/2); // Curve top
+        p.vertex(-w/2, h/2); // Close
+        p.endShape();
+        
+        // Eyes
+        p.fill(255);
+        p.noStroke();
+        p.circle(-5, -5, 6);
+        p.circle(5, -5, 6);
+        p.fill(0);
+        p.circle(-5, -5, 2);
+        p.circle(5, -5, 2);
+        
+        p.pop();
+    }
+}
+</file>
+
+<file name="utils.js">
+import { TILE_SIZE } from './globals.js';
+
+export function getGridKey(gx, gy) {
+    return `${gx},${gy}`;
+}
+
+export function gridToWorld(gx, gy) {
+    return {
+        x: gx * TILE_SIZE,
+        y: gy * TILE_SIZE
+    };
+}
+
+export function worldToGrid(wx, wy) {
+    return {
+        gx: Math.round(wx / TILE_SIZE),
+        gy: Math.round(wy / TILE_SIZE)
+    };
+}
+
+export function checkRectCollision(r1, r2) {
+    return (
+        r1.x < r2.x + r2.w &&
+        r1.x + r1.w > r2.x &&
+        r1.y < r2.y + r2.h &&
+        r1.y + r1.h > r2.y
+    );
+}
+
+// Linear Interpolation
+export function lerp(start, end, amt) {
+    return (1 - amt) * start + amt * end;
+}
+
+// Ease Out Cubic
+export function easeOutCubic(x) {
+    return 1 - Math.pow(1 - x, 3);
+}
+</file>
+
+<file name="automated_test.js">
+import { getGameState, TILE_SIZE, PHASE_PLAYING } from './globals.js';
+import { getGridKey } from './utils.js';
+
+// Controller for automated testing
+window.get_automated_testing_action = function(gameState) {
+    if (gameState.gamePhase !== PHASE_PLAYING) return null;
+
+    if (gameState.controlMode === 'TEST_1') {
+        return getTest1Action(gameState);
+    }
+    if (gameState.controlMode === 'TEST_2') {
+        return getTest2Action(gameState);
+    }
+    return null;
+};
+
+let lastActionTime = 0;
+const ACTION_DELAY = 150; // ms
+
+function getTest1Action(gameState) {
+    const now = Date.now();
+    if (now - lastActionTime < ACTION_DELAY) return null;
+    
+    const p = gameState.player;
+    if (!p || p.moveState !== "IDLE") return null;
+    
+    // Strategy: Move UP (dy = -1) if possible. If blocked, try LEFT/RIGHT.
+    // Avoid Traps.
+    
+    const possibleMoves = [
+        { dx: 0, dy: -1, code: 38, pref: 3 }, // Up (Best)
+        { dx: 1, dy: 0, code: 39, pref: 2 },  // Right
+        { dx: -1, dy: 0, code: 37, pref: 2 }, // Left
+        { dx: 0, dy: 0, code: 32, pref: 0 }   // Wait
+    ];
+    
+    let bestMove = null;
+    let maxScore = -999;
+    
+    for (let move of possibleMoves) {
+        const tx = p.gx + move.dx;
+        const ty = p.gy + move.dy;
+        const key = getGridKey(tx, ty);
+        const tile = gameState.grid.get(key);
+        
+        let score = move.pref;
+        
+        // 1. Wall/Bounds Check
+        if (!tile || tile.type === 'wall') {
+            score = -100;
+        } else if (tile.type === 'hole') {
+            score = -50;
+        }
+        
+        // 2. Entity/Trap Check
+        if (score > -10) {
+            const tWx = tx * TILE_SIZE;
+            const tWy = ty * TILE_SIZE;
+            
+            // Check entities at this location
+            for (let e of gameState.entities) {
+                if (e === p) continue;
+                if (e.isDangerous && e.isActive()) {
+                    // Simple distance check
+                    const dx = Math.abs(e.x - tWx);
+                    const dy = Math.abs(e.y - tWy);
+                    if (dx < 20 && dy < 20) {
+                        score = -80; // Trap here
+                    }
+                }
+            }
+        }
+        
+        if (score > maxScore) {
+            maxScore = score;
+            bestMove = move;
+        }
+    }
+    
+    if (bestMove) {
+        lastActionTime = now;
+        return { keyCode: bestMove.code };
+    }
+    return null;
+}
+
+function getTest2Action(gameState) {
+    // Chaos mode
+    const now = Date.now();
+    // Faster inputs
+    if (now - lastActionTime < 50) return null;
+    
+    const keys = [37, 38, 39, 40, 32];
+    const randKey = keys[Math.floor(Math.random() * keys.length)];
+    lastActionTime = now;
+    return { keyCode: randKey };
+}
+</file>
+
+<file name="particles.js">
+import { gameState } from './globals.js';
+
+export class Particle {
+    constructor(x, y, color) {
+        this.x = x;
+        this.y = y;
+        this.vx = (Math.random() - 0.5) * 5;
+        this.vy = (Math.random() - 0.5) * 5;
+        this.color = color;
+        this.alpha = 255;
+        this.life = 1.0;
+        this.decay = 0.02 + Math.random() * 0.03;
+        this.size = 2 + Math.random() * 4;
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life -= this.decay;
+        this.alpha = this.life * 255;
+    }
+
+    render(p) {
+        p.noStroke();
+        p.fill(this.color[0], this.color[1], this.color[2], this.alpha);
+        p.circle(this.x, this.y, this.size);
+    }
+}
+
+export function createParticleExplosion(p, x, y, color) {
+    for (let i = 0; i < 20; i++) {
+        gameState.particles.push(new Particle(x, y, color));
+    }
+}
+
+export function createCoinSparkle(p, x, y) {
+    for (let i = 0; i < 10; i++) {
+        gameState.particles.push(new Particle(x, y, [255, 255, 100]));
+    }
+}
+
+export function updateParticles(p) {
+    for (let i = gameState.particles.length - 1; i >= 0; i--) {
+        const part = gameState.particles[i];
+        part.update();
+        if (part.life <= 0) {
+            gameState.particles.splice(i, 1);
+        } else {
+            part.render(p);
+        }
+    }
+}
+</file>
+
+<file name="level_gen.js">
+import { gameState, TILE_SIZE } from './globals.js';
+import { Player, SpikeTrap, Slime, Coin } from './entities.js';
+import { getGridKey } from './utils.js';
+
+const WIDTH_TILES = 11; // Odd number allows for centered path
+const BUFFER_ROWS = 20; // How many rows ahead to generate
+
+export function setupLevel(p) {
+    // Generate initial safe zone
+    for (let y = 5; y >= -10; y--) {
+        generateRow(y, p);
+    }
+    
+    gameState.minGenY = -10;
+    
+    // Spawn Player at 0, 3 (middle bottom)
+    gameState.player = new Player(Math.floor(WIDTH_TILES / 2), 3);
+    gameState.entities.push(gameState.player);
+
+    // Set initial player Y for score calculation
+    gameState.initialPlayerGy = gameState.player.gy;
+}
+
+export function updateLevelGen(p) {
+    if (!gameState.player) return;
+    
+    const playerGy = gameState.player.gy;
+    
+    // Generate new rows ahead
+    while (gameState.minGenY > playerGy - BUFFER_ROWS) {
+        gameState.minGenY--;
+        generateRow(gameState.minGenY, p);
+    }
+    
+    // Cull old rows (behind doom wall or far behind player)
+    // For simplicity in this demo, we keep map small in memory, but Map can handle many keys.
+    // If performance issues arise, we would delete keys > playerGy + 10
+}
+
+function generateRow(y, p) {
+    // Determine row characteristics based on randomness
+    const rand = p.random();
+    
+    // Always ensure walls on edges
+    for (let x = 0; x < WIDTH_TILES; x++) {
+        const key = getGridKey(x, y);
+        
+        // Edges are walls
+        if (x === 0 || x === WIDTH_TILES - 1) {
+            gameState.grid.set(key, { type: 'wall', x, y });
+            continue;
+        }
+        
+        // Start area is safe floor
+        if (y > -5) {
+            gameState.grid.set(key, { type: 'floor', x, y });
+            continue;
+        }
+
+        // Procedural Generation Logic
+        let type = 'floor';
+        
+        // Random holes
+        if (p.random() < 0.1) {
+            type = 'hole';
+        }
+        
+        // Random inner walls (obstacles)
+        if (type !== 'hole' && p.random() < 0.15) {
+            type = 'wall';
+        }
+        
+        // Ensure path exists? 
+        // A simple robust PCG would use pathfinders. 
+        // Here we rely on randomness and the fact that 15% wall density usually leaves paths.
+        // We can force a clear center path every few rows to prevent blocking.
+        if (x === Math.floor(WIDTH_TILES/2) && y % 3 === 0) {
+            type = 'floor';
+        }
+        
+        gameState.grid.set(key, { type, x, y });
+        
+        // Add Entities on Floor
+        if (type === 'floor') {
+            // Difficulty scaling based on depth (y is negative)
+            // Increase spawn rates as we go deeper
+            const depth = Math.abs(y);
+            const difficultyFactor = depth * 0.001; 
+
+            // Spikes
+            if (p.random() < 0.05 + difficultyFactor) {
+                const trap = new SpikeTrap(x, y, p.random(100));
+                gameState.entities.push(trap);
+            }
+            // Slimes (rarer)
+            else if (p.random() < 0.02 + difficultyFactor) {
+                const slime = new Slime(x, y, 2, p.random() > 0.5 ? 'x' : 'y');
+                gameState.entities.push(slime);
+            }
+            // Coins
+            else if (p.random() < 0.05) {
+                const coin = new Coin(x, y);
+                gameState.entities.push(coin);
+            }
+        }
+    }
+}
+</file>
+
+<file name="input.js">
+import { gameState, PHASE_PLAYING, PHASE_START, PHASE_PAUSED, PHASE_GAME_OVER_WIN, PHASE_GAME_OVER_LOSE, resetGame } from './globals.js';
+import { setupLevel } from './level_gen.js';
+
+export function handleInput(p) {
+    // Phase control inputs
+    if (p.keyIsDown(13) && !p.keyWasDown(13)) { // ENTER
+        if (gameState.gamePhase === PHASE_START) {
+            setupLevel(p);
+            gameState.gamePhase = PHASE_PLAYING;
+            logGameInfo(p, "Game Started");
+        } else if (gameState.gamePhase === PHASE_GAME_OVER_LOSE || gameState.gamePhase === PHASE_GAME_OVER_WIN) {
+            resetGame(p);
+            setupLevel(p); // Re-initialize level and player after reset
+            gameState.gamePhase = PHASE_PLAYING;
+            logGameInfo(p, "Game Restarted via Enter");
+        }
+    }
+
+    if (p.keyIsDown(27) && !p.keyWasDown(27)) { // ESC
+        if (gameState.gamePhase === PHASE_PLAYING) {
+            gameState.gamePhase = PHASE_PAUSED;
+            logGameInfo(p, "Game Paused");
+        } else if (gameState.gamePhase === PHASE_PAUSED) {
+            gameState.gamePhase = PHASE_PLAYING;
+            logGameInfo(p, "Game Resumed");
+        }
+    }
+
+    if (p.keyIsDown(82) && !p.keyWasDown(82)) { // R
+        if (gameState.gamePhase === PHASE_GAME_OVER_LOSE || gameState.gamePhase === PHASE_GAME_OVER_WIN) {
+            resetGame(p);
+            logGameInfo(p, "Game Reset to Start");
+        }
+    }
+
+    // Gameplay inputs (buffered)
+    if (gameState.gamePhase === PHASE_PLAYING) {
+        // Human Input
+        const relevantKeys = [37, 38, 39, 40, 32]; // Left, Up, Right, Down, Space
+        relevantKeys.forEach(code => {
+            if (p.keyIsDown(code) && !p.keyWasDown(code)) {
+                processGameplayKey(code, p);
+            }
+        });
+    }
+}
+
+function processGameplayKey(keyCode, p) {
+    // Only buffer up to 2 moves to prevent laggy feel
+    if (gameState.inputQueue.length < 2) {
+        if (keyCode === 37) gameState.inputQueue.push({ dx: -1, dy: 0, name: "LEFT" });
+        if (keyCode === 38) gameState.inputQueue.push({ dx: 0, dy: -1, name: "UP" });
+        if (keyCode === 39) gameState.inputQueue.push({ dx: 1, dy: 0, name: "RIGHT" });
+        if (keyCode === 40) gameState.inputQueue.push({ dx: 0, dy: 1, name: "DOWN" });
+        if (keyCode === 32) gameState.inputQueue.push({ dx: 0, dy: 0, name: "WAIT" });
+        
+        // Log input
+        p.logs.inputs.push({
+            input_type: 'gameplay_action',
+            data: { keyCode: keyCode, queueLen: gameState.inputQueue.length },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+
+function logGameInfo(p, msg) {
+    p.logs.game_info.push({
+        event: msg,
+        framecount: p.frameCount,
+        timestamp: Date.now()
+    });
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

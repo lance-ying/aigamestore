@@ -1,0 +1,759 @@
+<analysis>
+- Issue identified: The game currently lacks multiple levels, intuitive controls (mouse support), and a scoring system.
+- Files affected: `globals.js`, `game.js`, `input.js`, `ui.js`.
+- Changes needed:
+  1.  `globals.js`: Add `LEVELS` configuration array, and add `score` and `levelIndex` to `gameState`.
+  2.  `game.js`: Add p5.js mouse event hooks (`mouseMoved`, `mousePressed`) and implement score calculation when a level is won.
+  3.  `input.js`: Implement mouse control logic (snapping, building, deleting), refactor `resetLevel` to load level configuration dynamically, and implement `nextLevel` logic.
+  4.  `ui.js`: Update the HUD to display Score and Level, and update Game Over screens to show scores and prompts for the next level or retry.
+</analysis>
+
+<code filename="globals.js">
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const LEVELS = [
+    {
+        groundLevel: 300,
+        gapStart: 100,
+        gapEnd: 500,
+        budget: 12000,
+        anchorPoints: [
+            {x: 100, y: 300}, {x: 100, y: 200},
+            {x: 500, y: 300}, {x: 500, y: 200}
+        ],
+        winX: 550
+    },
+    {
+        groundLevel: 300,
+        gapStart: 50,
+        gapEnd: 550,
+        budget: 18000,
+        anchorPoints: [
+            {x: 50, y: 300}, {x: 50, y: 150},
+            {x: 550, y: 300}, {x: 550, y: 150}
+        ],
+        winX: 580
+    },
+    {
+        groundLevel: 300,
+        gapStart: 150,
+        gapEnd: 450,
+        budget: 7000,
+        anchorPoints: [
+            {x: 150, y: 300}, {x: 100, y: 250},
+            {x: 450, y: 300}, {x: 500, y: 250}
+        ],
+        winX: 500
+    }
+];
+
+export const LEVEL_CONFIG = { ...LEVELS[0] };
+
+export const gameState = {
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    subPhase: "BUILD",  // BUILD, SIMULATE
+    controlMode: "HUMAN",
+    
+    // Level State
+    levelIndex: 0,
+    score: 0,
+    levelComplete: false,
+    
+    // Level Data
+    budget: 12000,
+    currentCost: 0,
+    
+    // Entities
+    entities: [],
+    nodes: [],
+    constraints: [],
+    cars: [],
+    
+    // Editor State
+    cursorX: 100,
+    cursorY: 300,
+    cursorSnap: 20,
+    selectedNode: null,
+    hoveredNode: null,
+    selectedMaterial: "ROAD", // ROAD, WOOD, STEEL, SPRING
+    
+    // Physics State
+    gravity: 0.2,
+    friction: 0.98,
+    groundFriction: 0.8,
+    simFrame: 0,
+    
+    // Performance
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Logs
+    logs: null
+};
+
+export const MATERIALS = {
+    ROAD: { cost: 200, strength: 100, weight: 1.0, color: [50, 50, 50], maxLen: 200 },
+    WOOD: { cost: 100, strength: 60, weight: 0.5, color: [160, 82, 45], maxLen: 120 },
+    STEEL: { cost: 400, strength: 200, weight: 2.0, color: [192, 192, 192], maxLen: 180 },
+    SPRING: { cost: 300, strength: 80, weight: 0.5, color: [255, 100, 100], maxLen: 100, stiffness: 0.05 }
+};
+
+export function getGameState() {
+    return gameState;
+}
+
+// Expose globally
+window.getGameState = getGameState;
+</code>
+
+<code filename="game.js">
+import { CANVAS_WIDTH, CANVAS_HEIGHT, gameState, LEVEL_CONFIG, getGameState } from './globals.js';
+import { handleInput, handleKeyPress, handleMouseMoved, handleMousePressed, resetLevel } from './input.js';
+import { updatePhysics, checkBreakage } from './physics.js';
+import { renderGame, renderUI, renderStartScreen, renderGameOver, renderPausedOverlay } from './ui.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        gameState.gamePhase = "START";
+        
+        // Initial Log
+        p.logs.game_info.push({
+            event: "initialized",
+            timestamp: Date.now()
+        });
+        
+        // Automated Testing Hook
+        window.get_automated_testing_action = get_automated_testing_action;
+    };
+
+    p.draw = function() {
+        // Time management
+        const now = p.millis();
+        gameState.deltaTime = (now - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = now;
+        gameState.frameCount = p.frameCount;
+        
+        // State Machine
+        switch(gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                break;
+            case "PLAYING":
+                if (gameState.gamePhase !== "PAUSED") {
+                    updateGameLogic(p);
+                }
+                renderGame(p);
+                renderUI(p);
+                break;
+            case "PAUSED":
+                renderGame(p);
+                renderPausedOverlay(p);
+                break;
+            case "GAME_OVER_WIN":
+            case "GAME_OVER_LOSE":
+                renderGame(p);
+                renderGameOver(p);
+                break;
+        }
+        
+        // Handle Automated Testing Inputs
+        if (gameState.controlMode.startsWith("TEST")) {
+            const action = window.get_automated_testing_action(gameState);
+            if (action) {
+                // Mock key press
+                p.keyCode = action.keyCode;
+                p.key = action.key || '';
+                handleKeyPress(p);
+            }
+        }
+    };
+
+    p.keyPressed = function() {
+        if (gameState.controlMode === "HUMAN") {
+            handleKeyPress(p);
+        }
+    };
+    
+    p.mouseMoved = function() {
+        if (gameState.controlMode === "HUMAN") {
+            handleMouseMoved(p);
+        }
+    };
+    
+    p.mousePressed = function() {
+        if (gameState.controlMode === "HUMAN") {
+            handleMousePressed(p);
+        }
+    };
+});
+
+function updateGameLogic(p) {
+    if (gameState.subPhase === "SIMULATE") {
+        updatePhysics(p);
+        
+        // Update Cars
+        gameState.cars.forEach(car => car.update());
+        
+        // Check Win/Lose
+        // 1. Breakage
+        if (checkBreakage()) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+        }
+        
+        // 2. Car Success
+        let allCarsFinished = true;
+        let anyCarDied = false;
+        
+        gameState.cars.forEach(car => {
+            if (car.x > LEVEL_CONFIG.winX) {
+                // Success
+            } else {
+                allCarsFinished = false;
+            }
+            
+            if (car.y > CANVAS_HEIGHT) {
+                anyCarDied = true;
+            }
+        });
+        
+        if (anyCarDied) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+        } else if (allCarsFinished) {
+            gameState.gamePhase = "GAME_OVER_WIN";
+            
+            // Calculate Score Once
+            if (!gameState.levelComplete) {
+                gameState.levelComplete = true;
+                const levelBonus = (gameState.levelIndex + 1) * 1000;
+                const budgetBonus = Math.max(0, gameState.budget - gameState.currentCost);
+                gameState.score += levelBonus + budgetBonus;
+            }
+        }
+    }
+}
+
+// Automated Testing Logic
+let testStep = 0;
+let testTimer = 0;
+
+function get_automated_testing_action(gs) {
+    if (gs.gamePhase === "START") return { keyCode: 13 }; // Enter
+    if (gs.gamePhase !== "PLAYING") return null;
+    
+    testTimer++;
+    if (testTimer < 10) return null; // Delay
+    testTimer = 0;
+    
+    if (gs.controlMode === "TEST_1") {
+        // Build a bridge
+        // Strategy: 
+        // 1. Start at 100, 300 (Left Anchor)
+        // 2. Build Road to 500, 300 (Right Anchor) in steps
+        // 3. Start Sim
+        
+        const actions = [
+            // Ensure ROAD material (Default is ROAD)
+            
+            // Move to anchor 1 (100, 300) is start pos
+            { keyCode: 32 }, // Select Anchor 1
+            
+            // Move Right 4 times (80px), Place
+            { keyCode: 39 }, { keyCode: 39 }, { keyCode: 39 }, { keyCode: 39 }, 
+            { keyCode: 32 },
+            
+            // Move Right 4 times, Place
+            { keyCode: 39 }, { keyCode: 39 }, { keyCode: 39 }, { keyCode: 39 }, 
+            { keyCode: 32 },
+            
+            // Move Right 4 times, Place
+            { keyCode: 39 }, { keyCode: 39 }, { keyCode: 39 }, { keyCode: 39 }, 
+            { keyCode: 32 },
+            
+             // Move Right 4 times, Place
+            { keyCode: 39 }, { keyCode: 39 }, { keyCode: 39 }, { keyCode: 39 }, 
+            { keyCode: 32 },
+            
+            // Move Right 4 times (Reach 500, 300), Connect
+            { keyCode: 39 }, { keyCode: 39 }, { keyCode: 39 }, { keyCode: 39 }, 
+            { keyCode: 32 },
+            
+            // Deselect
+            { keyCode: 32 }, 
+            
+            // Start Sim
+            { keyCode: 13 }
+        ];
+        
+        if (testStep < actions.length) {
+            return actions[testStep++];
+        }
+    }
+    
+    if (gs.controlMode === "TEST_2") {
+        // Random Chaos
+        const keys = [37, 38, 39, 40, 32, 16, 90];
+        return { keyCode: keys[Math.floor(Math.random() * keys.length)] };
+    }
+    
+    return null;
+}
+</code>
+
+<code filename="input.js">
+import { gameState, MATERIALS, LEVEL_CONFIG, LEVELS, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Node, Constraint, Car } from './entities.js';
+
+export function handleInput(p) {
+    // Legacy hook
+}
+
+export function handleMouseMoved(p) {
+    if (gameState.gamePhase === "PLAYING" && gameState.subPhase === "BUILD") {
+        const snap = gameState.cursorSnap;
+        // Snap to grid
+        gameState.cursorX = Math.round(p.mouseX / snap) * snap;
+        gameState.cursorY = Math.round(p.mouseY / snap) * snap;
+        
+        // Clamp to canvas
+        gameState.cursorX = Math.max(0, Math.min(CANVAS_WIDTH, gameState.cursorX));
+        gameState.cursorY = Math.max(0, Math.min(CANVAS_HEIGHT, gameState.cursorY));
+    }
+}
+
+export function handleMousePressed(p) {
+    if (gameState.gamePhase === "PLAYING" && gameState.subPhase === "BUILD") {
+        // Left Click: Build/Select
+        if (p.mouseButton === p.LEFT) {
+            // Check if user clicked UI (simple check for top right material box)
+            if (p.mouseX > CANVAS_WIDTH - 100 && p.mouseY < 50) {
+                // Cycle material
+                cycleMaterial();
+            } else {
+                performBuildSpaceAction();
+            }
+        }
+        // Right Click: Delete
+        if (p.mouseButton === p.RIGHT) {
+            performDeleteAction();
+        }
+    }
+}
+
+export function handleKeyPress(p) {
+    // Phase Transitions
+    if (p.keyCode === 13) { // ENTER
+        if (gameState.gamePhase === "START") {
+            gameState.gamePhase = "PLAYING";
+            gameState.subPhase = "BUILD";
+            resetLevel();
+            return;
+        }
+        if (gameState.gamePhase === "PLAYING") {
+            if (gameState.subPhase === "BUILD") {
+                startSimulation();
+            } else {
+                // In Sim, Enter goes back to Build
+                gameState.subPhase = "BUILD";
+                resetSimulation();
+            }
+        }
+        if (gameState.gamePhase === "GAME_OVER_WIN") {
+            // Next Level
+            nextLevel();
+        }
+        if (gameState.gamePhase === "GAME_OVER_LOSE") {
+            // Restart Level
+            resetLevel();
+            gameState.gamePhase = "PLAYING";
+        }
+    }
+    
+    if (p.keyCode === 27) { // ESC
+        if (gameState.gamePhase === "PLAYING") {
+            gameState.gamePhase = "PAUSED";
+        } else if (gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = "PLAYING";
+        }
+    }
+
+    if (p.keyCode === 82) { // R
+        if (gameState.gamePhase !== "START") {
+            // Restart current level
+            resetLevel();
+            gameState.gamePhase = "PLAYING";
+        }
+    }
+
+    // Gameplay Controls
+    if (gameState.gamePhase === "PLAYING" && gameState.subPhase === "BUILD") {
+        handleBuildControls(p);
+    }
+    
+    // Log
+    p.logs.inputs.push({
+        key: p.key,
+        keyCode: p.keyCode,
+        frame: p.frameCount
+    });
+}
+
+function handleBuildControls(p) {
+    const MOVE_AMT = gameState.cursorSnap;
+    
+    // Arrow Keys: Move Cursor
+    if (p.keyCode === p.LEFT_ARROW) gameState.cursorX = Math.max(0, gameState.cursorX - MOVE_AMT);
+    if (p.keyCode === p.RIGHT_ARROW) gameState.cursorX = Math.min(CANVAS_WIDTH, gameState.cursorX + MOVE_AMT);
+    if (p.keyCode === p.UP_ARROW) gameState.cursorY = Math.max(0, gameState.cursorY - MOVE_AMT);
+    if (p.keyCode === p.DOWN_ARROW) gameState.cursorY = Math.min(CANVAS_HEIGHT, gameState.cursorY + MOVE_AMT);
+    
+    // Shift: Cycle Material
+    if (p.keyCode === 16) { // Shift
+        cycleMaterial();
+    }
+    
+    // Space: Action
+    if (p.keyCode === 32) {
+        performBuildSpaceAction();
+    }
+    
+    // Z: Delete / Undo
+    if (p.keyCode === 90) {
+        performDeleteAction();
+    }
+}
+
+function cycleMaterial() {
+    const mats = Object.keys(MATERIALS);
+    let idx = mats.indexOf(gameState.selectedMaterial);
+    idx = (idx + 1) % mats.length;
+    gameState.selectedMaterial = mats[idx];
+}
+
+function performBuildSpaceAction() {
+    // 1. Check if cursor is on an existing node
+    const hover = findNodeAt(gameState.cursorX, gameState.cursorY);
+    
+    if (gameState.selectedNode) {
+        // We are dragging a line from selectedNode
+        
+        let targetNode = hover;
+        
+        // If no node exists at cursor, try to create one
+        if (!targetNode) {
+            // Check max length
+            const dist = Math.hypot(gameState.cursorX - gameState.selectedNode.x, gameState.cursorY - gameState.selectedNode.y);
+            const matProp = MATERIALS[gameState.selectedMaterial];
+            
+            if (dist <= matProp.maxLen) {
+                // Check budget
+                // Node cost (if new) + Edge cost
+                const edgeCost = Math.ceil(dist * 0.1 * (matProp.cost / 10)); // approximate cost calc
+                if (gameState.currentCost + edgeCost <= gameState.budget) {
+                    targetNode = new Node(gameState.cursorX, gameState.cursorY);
+                    gameState.nodes.push(targetNode);
+                } else {
+                    // Budget exceeded
+                    return;
+                }
+            } else {
+                // Too long
+                return;
+            }
+        }
+        
+        // Try to connect selectedNode to targetNode
+        if (targetNode && targetNode !== gameState.selectedNode) {
+            // Check if connection already exists
+            const exists = gameState.constraints.some(c => 
+                (c.nodeA === gameState.selectedNode && c.nodeB === targetNode) ||
+                (c.nodeB === gameState.selectedNode && c.nodeA === targetNode)
+            );
+            
+            if (!exists) {
+                const dist = Math.hypot(targetNode.x - gameState.selectedNode.x, targetNode.y - gameState.selectedNode.y);
+                const matProp = MATERIALS[gameState.selectedMaterial];
+                if (dist <= matProp.maxLen) {
+                    const edgeCost = Math.ceil(dist * 0.1 * (matProp.cost / 10)); // Simplified cost logic
+                    if (gameState.currentCost + edgeCost <= gameState.budget) {
+                        gameState.constraints.push(new Constraint(gameState.selectedNode, targetNode, gameState.selectedMaterial));
+                        gameState.currentCost += edgeCost;
+                        
+                        // Move selection to new node for chain building
+                        gameState.selectedNode = targetNode;
+                    }
+                }
+            } else {
+                // If exists, just move selection
+                gameState.selectedNode = targetNode;
+            }
+        } else if (targetNode === gameState.selectedNode) {
+            // Deselect
+            gameState.selectedNode = null;
+        }
+        
+    } else {
+        // No node selected
+        if (hover) {
+            // Select it
+            gameState.selectedNode = hover;
+        }
+    }
+}
+
+function performDeleteAction() {
+    // 1. If dragging (selectedNode), cancel drag
+    if (gameState.selectedNode) {
+        gameState.selectedNode = null;
+        return;
+    }
+    
+    // 2. Delete item under cursor
+    const hoverNode = findNodeAt(gameState.cursorX, gameState.cursorY);
+    if (hoverNode && !hoverNode.fixed) {
+        // Find constraints
+        const attached = gameState.constraints.filter(c => c.nodeA === hoverNode || c.nodeB === hoverNode);
+        
+        // Refund logic (simplified)
+        attached.forEach(c => {
+             const dist = Math.hypot(c.nodeA.x - c.nodeB.x, c.nodeA.y - c.nodeB.y);
+             const matProp = MATERIALS[c.material];
+             const edgeCost = Math.ceil(dist * 0.1 * (matProp.cost / 10));
+             gameState.currentCost -= edgeCost;
+        });
+        
+        gameState.constraints = gameState.constraints.filter(c => c.nodeA !== hoverNode && c.nodeB !== hoverNode);
+        gameState.nodes = gameState.nodes.filter(n => n !== hoverNode);
+    }
+}
+
+function findNodeAt(x, y) {
+    return gameState.nodes.find(n => Math.hypot(n.x - x, n.y - y) < 10);
+}
+
+export function nextLevel() {
+    gameState.levelIndex++;
+    if (gameState.levelIndex >= LEVELS.length) {
+        gameState.levelIndex = 0; // Loop back to start
+        gameState.score = 0;      // Reset score on loop
+    }
+    resetLevel();
+    gameState.gamePhase = "PLAYING";
+}
+
+export function resetLevel() {
+    // Load Level Config
+    const config = LEVELS[gameState.levelIndex];
+    Object.assign(LEVEL_CONFIG, config);
+    
+    gameState.budget = config.budget;
+    gameState.nodes = [];
+    gameState.constraints = [];
+    gameState.cars = [];
+    gameState.currentCost = 0;
+    gameState.levelComplete = false;
+    gameState.subPhase = "BUILD";
+    gameState.selectedNode = null;
+    
+    // Add Anchors
+    LEVEL_CONFIG.anchorPoints.forEach(pt => {
+        gameState.nodes.push(new Node(pt.x, pt.y, true));
+    });
+}
+
+export function startSimulation() {
+    gameState.subPhase = "SIMULATE";
+    gameState.simFrame = 0;
+    
+    // Save backup of positions to restore later
+    gameState.nodes.forEach(n => {
+        n.savedX = n.x;
+        n.savedY = n.y;
+        n.oldX = n.x;
+        n.oldY = n.y;
+    });
+    
+    // Spawn Car
+    gameState.cars = [new Car(LEVEL_CONFIG.anchorPoints[0].x, LEVEL_CONFIG.anchorPoints[0].y - 30)];
+}
+
+export function resetSimulation() {
+    gameState.subPhase = "BUILD";
+    gameState.cars = [];
+    gameState.nodes.forEach(n => {
+        n.x = n.savedX;
+        n.y = n.savedY;
+        n.oldX = n.savedX;
+        n.oldY = n.savedY;
+    });
+    // Reset stress colors
+    gameState.constraints.forEach(c => c.currentStress = 0);
+}
+</code>
+
+<code filename="ui.js">
+import { gameState, MATERIALS, LEVEL_CONFIG, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderUI(p) {
+    // HUD
+    p.push();
+    p.fill(255);
+    p.noStroke();
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(16);
+    
+    // Budget & Score
+    p.text(`Level: ${gameState.levelIndex + 1}`, 10, 10);
+    p.text(`Score: ${gameState.score}`, 10, 30);
+    p.text(`Budget: $${gameState.budget - gameState.currentCost}`, 10, 60);
+    p.text(`Used: $${gameState.currentCost}`, 10, 80);
+    
+    // Material
+    p.textAlign(p.RIGHT, p.TOP);
+    const matName = gameState.selectedMaterial;
+    const matColor = MATERIALS[matName].color;
+    
+    p.fill(matColor);
+    p.rect(CANVAS_WIDTH - 100, 10, 90, 30);
+    p.fill(255); // Text color
+    if (matName === "STEEL") p.fill(0); 
+    p.textAlign(p.CENTER, p.CENTER);
+    p.text(matName, CANVAS_WIDTH - 55, 25);
+    
+    p.textAlign(p.RIGHT, p.TOP);
+    p.fill(255);
+    p.textSize(12);
+    p.text("[Shift] or Click to change", CANVAS_WIDTH - 10, 45);
+    
+    // Controls Hint
+    p.textAlign(p.CENTER, p.BOTTOM);
+    p.text(gameState.subPhase === "BUILD" ? "Mouse: Build/Select | Right Click: Delete | [Enter] Sim" : "[Enter] Stop Sim", CANVAS_WIDTH/2, CANVAS_HEIGHT - 10);
+    
+    p.pop();
+}
+
+export function renderGame(p) {
+    // Background
+    p.background(135, 206, 235); // Sky blue
+    
+    // Draw Terrain
+    p.fill(34, 139, 34); // Forest Green
+    p.noStroke();
+    
+    // Use LEVEL_CONFIG for terrain rendering
+    const gapStart = LEVEL_CONFIG.gapStart;
+    const gapEnd = LEVEL_CONFIG.gapEnd;
+    const groundLevel = LEVEL_CONFIG.groundLevel;
+    const winX = LEVEL_CONFIG.winX;
+    
+    p.rect(0, groundLevel, gapStart, CANVAS_HEIGHT - groundLevel); 
+    p.rect(gapEnd, groundLevel, CANVAS_WIDTH - gapEnd, CANVAS_HEIGHT - groundLevel);
+    
+    // Draw Water
+    p.fill(0, 105, 148);
+    p.rect(gapStart, groundLevel + 80, gapEnd - gapStart, 20);
+    
+    // Draw Goal Flag
+    p.fill(255, 215, 0);
+    p.triangle(winX, groundLevel, winX, groundLevel - 30, winX + 20, groundLevel - 15);
+    p.stroke(0);
+    p.line(winX, groundLevel, winX, groundLevel - 30);
+    
+    // Draw Constraints (Back)
+    gameState.constraints.forEach(c => c.render(p));
+    
+    // Draw Nodes
+    gameState.nodes.forEach(n => n.render(p));
+    
+    // Draw Cars
+    gameState.cars.forEach(car => car.render(p));
+    
+    // Draw Editor Cursor (if Build mode)
+    if (gameState.subPhase === "BUILD") {
+        p.push();
+        p.stroke(255, 255, 0);
+        p.strokeWeight(2);
+        p.noFill();
+        p.circle(gameState.cursorX, gameState.cursorY, 15);
+        p.line(gameState.cursorX - 10, gameState.cursorY, gameState.cursorX + 10, gameState.cursorY);
+        p.line(gameState.cursorX, gameState.cursorY - 10, gameState.cursorX, gameState.cursorY + 10);
+        
+        // Draw drag line if selecting
+        if (gameState.selectedNode) {
+            p.stroke(255, 255, 255, 150);
+            p.strokeWeight(1);
+            p.line(gameState.selectedNode.x, gameState.selectedNode.y, gameState.cursorX, gameState.cursorY);
+            
+            // Draw Distance/Cost tooltip
+            const dist = Math.hypot(gameState.cursorX - gameState.selectedNode.x, gameState.cursorY - gameState.selectedNode.y);
+            const matProp = MATERIALS[gameState.selectedMaterial];
+            const validLen = dist <= matProp.maxLen;
+            
+            p.fill(validLen ? 255 : 255, 0, 0);
+            p.noStroke();
+            p.textAlign(p.CENTER, p.BOTTOM);
+            p.text(`${Math.round(dist)}px`, gameState.cursorX, gameState.cursorY - 20);
+        }
+        p.pop();
+    }
+}
+
+export function renderStartScreen(p) {
+    p.background(30);
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.text("POLY BRIDGE: ENGINEER", CANVAS_WIDTH/2, CANVAS_HEIGHT/3);
+    p.textSize(18);
+    p.text("Build a bridge to get the car across!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    p.text("Controls: Mouse to Build/Select, Right Click Delete", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 30);
+    p.text("Press ENTER to Start Level 1", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 70);
+}
+
+export function renderGameOver(p) {
+    p.push();
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    const win = gameState.gamePhase === "GAME_OVER_WIN";
+    p.fill(win ? 0 : 255, win ? 255 : 0, 0);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(50);
+    p.text(win ? "LEVEL COMPLETE!" : "BRIDGE COLLAPSED!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+    
+    p.fill(255);
+    p.textSize(20);
+    if (win) {
+        p.text(`Total Score: ${gameState.score}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 10);
+        p.text("Press ENTER for Next Level", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 50);
+    } else {
+        p.text("Press ENTER to Retry", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+    }
+    p.pop();
+}
+
+export function renderPausedOverlay(p) {
+    p.push();
+    p.fill(0, 0, 0, 100);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    p.pop();
+}
+</code>

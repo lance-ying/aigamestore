@@ -1,0 +1,214 @@
+import { gameState, COLORS, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+class UIManager {
+    constructor() {
+        this.canvas = document.createElement('canvas');
+        this.canvas.width = CANVAS_WIDTH;
+        this.canvas.height = CANVAS_HEIGHT;
+        this.canvas.style.position = 'absolute';
+        this.canvas.style.top = '0';
+        this.canvas.style.left = '0';
+        this.canvas.style.pointerEvents = 'none'; // Click through
+        this.ctx = this.canvas.getContext('2d');
+    }
+
+    init() {
+        if (gameState.gameContainer) {
+            gameState.gameContainer.appendChild(this.canvas);
+        }
+    }
+
+    render() {
+        this.ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+        if (gameState.gamePhase === "START") {
+            this.renderStartScreen();
+        } else if (gameState.gamePhase === "PLAYING") {
+            this.renderHUD();
+            this.renderFishingUI();
+        } else if (gameState.gamePhase === "PAUSED") {
+            this.renderPaused();
+        } else if (gameState.gamePhase.startsWith("GAME_OVER")) {
+            this.renderGameOver();
+        }
+    }
+
+    renderStartScreen() {
+        this.ctx.fillStyle = 'rgba(0,0,0,0.8)';
+        this.ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        
+        this.ctx.fillStyle = 'white';
+        this.ctx.font = 'bold 30px monospace';
+        this.ctx.textAlign = 'center';
+        this.ctx.fillText("WEBFISHING SIM", CANVAS_WIDTH/2, 100);
+        
+        this.ctx.font = '16px monospace';
+        this.ctx.fillText("Relax, Chat, Fish.", CANVAS_WIDTH/2, 140);
+        
+        this.ctx.fillStyle = '#AAAAAA';
+        this.ctx.font = '14px monospace';
+        this.ctx.fillText("Arrows/WASD to Move | Z to Fish | SPACE to Jump", CANVAS_WIDTH/2, 250);
+        
+        this.ctx.fillStyle = COLORS.GRASS;
+        this.ctx.font = 'bold 20px monospace';
+        this.ctx.fillText("PRESS ENTER TO START", CANVAS_WIDTH/2, 300);
+    }
+
+    renderHUD() {
+        // Top Left: Money & Journal
+        this.ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        this.ctx.roundRect ? this.ctx.roundRect(10, 10, 150, 80, 5) : this.ctx.fillRect(10, 10, 150, 80);
+        this.ctx.fill();
+        
+        this.ctx.fillStyle = 'gold';
+        this.ctx.font = '16px monospace';
+        this.ctx.textAlign = 'left';
+        this.ctx.fillText(`$ ${gameState.money}`, 20, 35);
+        
+        this.ctx.fillStyle = 'white';
+        this.ctx.fillText(`Fish: ${gameState.inventory.length}/${gameState.goalFishCount}`, 20, 55);
+        
+        this.ctx.fillStyle = 'lightgreen';
+        this.ctx.fillText(`Score: ${gameState.score}`, 20, 75);
+
+        // Bottom Left: Chat Log
+        this.renderChat();
+    }
+
+    renderChat() {
+        const x = 10;
+        const y = CANVAS_HEIGHT - 120;
+        const w = 250;
+        const h = 110;
+        
+        this.ctx.fillStyle = 'rgba(0,0,0,0.3)';
+        this.ctx.fillRect(x, y, w, h);
+        
+        this.ctx.font = '12px monospace';
+        this.ctx.textAlign = 'left';
+        
+        // Show last 5 messages
+        const messages = gameState.chatLog.slice(-5);
+        messages.forEach((msg, index) => {
+            this.ctx.fillStyle = msg.color || 'white';
+            this.ctx.fillText(`${msg.sender}: ${msg.message}`, x + 5, y + 20 + (index * 18));
+        });
+    }
+
+    renderFishingUI() {
+        if (!gameState.fishingSystem || !gameState.fishingSystem.isActive) return;
+
+        const fs = gameState.fishingSystem;
+        const cx = CANVAS_WIDTH / 2;
+        const cy = CANVAS_HEIGHT / 2;
+
+        // Visual for Casting Power
+        if (fs.state === 'CASTING') {
+            this.ctx.fillStyle = 'white';
+            this.ctx.font = '16px monospace';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText("HOLD Z TO CHARGE", cx, cy - 50);
+            
+            // Power Bar
+            this.ctx.fillStyle = 'black';
+            this.ctx.fillRect(cx - 50, cy - 30, 100, 10);
+            this.ctx.fillStyle = 'lime';
+            this.ctx.fillRect(cx - 50, cy - 30, 100 * fs.castPower, 10);
+        }
+
+        // Waiting
+        if (fs.state === 'WAITING') {
+             this.ctx.fillStyle = 'white';
+             this.ctx.font = 'italic 14px monospace';
+             this.ctx.textAlign = 'center';
+             this.ctx.fillText("Waiting for bite...", cx, cy - 50);
+        }
+
+        // Biting Alert
+        if (fs.state === 'BITING') {
+            this.ctx.fillStyle = 'red';
+            this.ctx.font = 'bold 32px monospace';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText("!!!", cx, cy - 80);
+            this.ctx.font = '16px monospace';
+            this.ctx.fillText("PRESS Z!", cx, cy - 50);
+        }
+
+        // Reeling Mini-game
+        if (fs.state === 'REELING') {
+            // Draw background bar (vertical)
+            const bh = 150;
+            const bw = 20;
+            const bx = cx + 60;
+            const by = cy - bh/2;
+            
+            this.ctx.fillStyle = 'rgba(0,0,0,0.8)';
+            this.ctx.fillRect(bx, by, bw, bh);
+            
+            // Target Zone (The fish's comfort zone) - Moves
+            const th = 40;
+            const ty = by + bh - (fs.targetPos * (bh - th)) - th;
+            this.ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+            this.ctx.fillRect(bx, ty, bw, th);
+            
+            // Player Bar (Controlled by Z)
+            const ph = 10;
+            const py = by + bh - (fs.playerBarPos * (bh - ph)) - ph;
+            this.ctx.fillStyle = 'white';
+            this.ctx.fillRect(bx - 2, py, bw + 4, ph);
+            
+            // Progress Bar (Horizontal)
+            this.ctx.fillStyle = 'black';
+            this.ctx.fillRect(cx - 50, cy + 60, 100, 10);
+            this.ctx.fillStyle = 'orange';
+            this.ctx.fillRect(cx - 50, cy + 60, 100 * fs.progress, 10);
+            
+            this.ctx.fillStyle = 'white';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText("KEEP THE BAR ON THE GREEN!", cx, cy + 80);
+        }
+        
+        // Caught Message
+        if (fs.state === 'CAUGHT_ANIM') {
+            this.ctx.fillStyle = 'yellow';
+            this.ctx.font = 'bold 24px monospace';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText(`CAUGHT ${fs.lastCaughtFish.name.toUpperCase()}!`, cx, cy - 50);
+            this.ctx.font = '16px monospace';
+            this.ctx.fillText(`+ $${fs.lastCaughtFish.value}`, cx, cy - 30);
+        }
+    }
+    
+    renderPaused() {
+        this.ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        this.ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        this.ctx.fillStyle = 'white';
+        this.ctx.font = 'bold 30px monospace';
+        this.ctx.textAlign = 'center';
+        this.ctx.fillText("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    }
+    
+    renderGameOver() {
+        this.ctx.fillStyle = 'rgba(0,0,0,0.9)';
+        this.ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        
+        const isWin = gameState.gamePhase === "GAME_OVER_WIN";
+        
+        this.ctx.fillStyle = isWin ? 'lime' : 'red';
+        this.ctx.font = 'bold 36px monospace';
+        this.ctx.textAlign = 'center';
+        this.ctx.fillText(isWin ? "JOURNAL COMPLETE!" : "GAME OVER", CANVAS_WIDTH/2, 150);
+        
+        this.ctx.fillStyle = 'white';
+        this.ctx.font = '20px monospace';
+        this.ctx.fillText(`Total Money Earned: $${gameState.money}`, CANVAS_WIDTH/2, 200);
+        this.ctx.fillText(`Fish Caught: ${gameState.inventory.length}`, CANVAS_WIDTH/2, 230);
+        this.ctx.fillText(`Final Score: ${gameState.score}`, CANVAS_WIDTH/2, 260);
+        
+        this.ctx.fillStyle = '#AAAAAA';
+        this.ctx.font = '16px monospace';
+        this.ctx.fillText("Press R to Play Again", CANVAS_WIDTH/2, 320);
+    }
+}
+
+export const ui = new UIManager();

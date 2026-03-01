@@ -1,0 +1,468 @@
+<analysis>
+- Issue identified: The pause state currently displays a "PAUSED" text overlay and a semi-transparent gray background. The user wants the game to simply "freeze" (stop physics and logic updates) without any visual indicators or overlays.
+- Files affected: `game.js`, `rendering.js`
+- Changes needed:
+  1. In `game.js`, the physics update logic (substeps, engine update, boundary enforcement, and velocity clamping) and continuous input handling were running every frame regardless of the game phase. I will move these into the `PLAYING` case of the `p.draw` switch so they stop executing during `PAUSED`.
+  2. In `game.js`, remove the call to `renderPausedOverlay(p)` within the `PAUSED` case of the switch.
+  3. In `game.js`, update the imports from `rendering.js` to remove the unused `renderPausedOverlay`.
+  4. In `rendering.js`, remove the `renderPausedOverlay` function to clean up dead code.
+</analysis>
+
+<code filename="game.js">
+// game.js - Main game file
+const p5 = window.p5;
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Engine, World, Body } = Matter;
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { initializeGame, updateGame, executeShot, resetGame } from './gameLogic.js';
+import { setupPhysics, enforceBoundaries } from './physics.js';
+import { renderStartScreen, renderGame, renderGameOver } from './rendering.js';
+
+let gameInstance = new p5(p => {
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Create Matter.js engine and world
+    const engine = Engine.create();
+    const world = engine.world;
+    world.gravity.y = 0; // No gravity for pool table
+    
+    gameState.engine = engine;
+    gameState.world = world;
+    
+    // Setup physics
+    setupPhysics(p);
+    
+    // Initialize p5.logs
+    p.logs = {
+      game_info: [],
+      player_info: [],
+      inputs: []
+    };
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: { gamePhase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    
+    // Initialize game
+    initializeGame(p);
+  };
+  
+  p.draw = function() {
+    // Update and render based on game phase
+    switch (gameState.gamePhase) {
+      case "START":
+        renderStartScreen(p);
+        break;
+      case "PLAYING":
+        // Enforce boundaries BEFORE physics update to prevent tunneling
+        enforceBoundaries();
+        
+        // Update Matter.js physics with substeps for better collision detection
+        const substeps = 10; // Increased to 10 for maximum accuracy
+        const timestep = (1000 / 60) / substeps;
+        
+        for (let i = 0; i < substeps; i++) {
+          // Clamp velocities BEFORE each substep
+          clampBallVelocities();
+          
+          // Run physics
+          Engine.update(gameState.engine, timestep);
+          
+          // Enforce boundaries AFTER each substep
+          enforceBoundaries();
+        }
+        
+        // Final velocity clamp after all substeps
+        clampBallVelocities();
+        
+        // Handle continuous input for aiming and power
+        handleContinuousInput(p);
+        
+        updateGame(p);
+        renderGame(p);
+        break;
+      case "PAUSED":
+        // In PAUSED mode, we just render the last state without updating physics or input
+        renderGame(p);
+        break;
+      case "GAME_OVER_WIN":
+      case "GAME_OVER_LOSE":
+        renderGameOver(p);
+        break;
+    }
+  };
+  
+  function clampBallVelocities() {
+    // Prevent excessive velocities that can cause tunneling
+    const maxVelocity = 20; // Maximum velocity cap
+    
+    gameState.ballsOnTable.forEach(ball => {
+      if (ball.pocketed) return;
+      
+      const vel = ball.body.velocity;
+      const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
+      
+      if (speed > maxVelocity) {
+        const scale = maxVelocity / speed;
+        Body.setVelocity(ball.body, {
+          x: vel.x * scale,
+          y: vel.y * scale
+        });
+      }
+      
+      // Also clamp angular velocity to prevent spin issues
+      if (Math.abs(ball.body.angularVelocity) > 0.5) {
+        Body.setAngularVelocity(ball.body, 
+          ball.body.angularVelocity > 0 ? 0.5 : -0.5);
+      }
+    });
+  }
+  
+  function handleContinuousInput(p) {
+    // Only handle continuous input during player's aiming phase
+    if (gameState.gamePhase !== "PLAYING" || 
+        gameState.playingPhase !== "AIMING" || 
+        gameState.controlMode !== "HUMAN") {
+      return;
+    }
+    
+    // Continuous aim adjustment
+    if (p.keyIsDown(37)) { // Arrow Left
+      if (!p.keyIsDown(16)) { // Not holding Shift
+        gameState.aimAngle -= 0.02;
+      }
+    }
+    
+    if (p.keyIsDown(39)) { // Arrow Right
+      if (!p.keyIsDown(16)) { // Not holding Shift
+        gameState.aimAngle += 0.02;
+      }
+    }
+    
+    // Continuous power adjustment
+    if (p.keyIsDown(38)) { // Arrow Up
+      if (!p.keyIsDown(16)) { // Not holding Shift
+        gameState.shotPower = Math.min(gameState.maxShotPower, gameState.shotPower + 1);
+      }
+    }
+    
+    if (p.keyIsDown(40)) { // Arrow Down
+      if (!p.keyIsDown(16)) { // Not holding Shift
+        gameState.shotPower = Math.max(0, gameState.shotPower - 1);
+      }
+    }
+  }
+  
+  p.keyPressed = function() {
+    // Log input
+    p.logs.inputs.push({
+      input_type: "keyPressed",
+      data: { key: p.key, keyCode: p.keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    
+    // Phase control keys
+    if (p.keyCode === 13 && gameState.gamePhase === "START") { // ENTER
+      gameState.gamePhase = "PLAYING";
+      p.logs.game_info.push({
+        data: { gamePhase: "PLAYING" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+    
+    if (p.keyCode === 27) { // ESC - Pause/Unpause
+      if (gameState.gamePhase === "PLAYING") {
+        gameState.gamePhase = "PAUSED";
+        p.logs.game_info.push({
+          data: { gamePhase: "PAUSED" },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      } else if (gameState.gamePhase === "PAUSED") {
+        gameState.gamePhase = "PLAYING";
+        p.logs.game_info.push({
+          data: { gamePhase: "PLAYING" },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+    
+    if (p.keyCode === 82) { // R - Restart
+      if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE" || gameState.gamePhase === "PAUSED") {
+        gameState.level = 1;
+        gameState.score = 0;
+        resetGame(p);
+        gameState.gamePhase = "START";
+        p.logs.game_info.push({
+          data: { gamePhase: "START" },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+    
+    // Gameplay controls (only during PLAYING phase)
+    if (gameState.gamePhase === "PLAYING" && gameState.playingPhase === "AIMING" && gameState.controlMode === "HUMAN") {
+      // Spin controls (discrete)
+      if (p.keyCode === 37 && p.keyIsDown(16)) { // Shift + Left = Left spin
+        gameState.spinEffect.x = Math.max(-1, gameState.spinEffect.x - 0.2);
+      }
+      
+      if (p.keyCode === 39 && p.keyIsDown(16)) { // Shift + Right = Right spin
+        gameState.spinEffect.x = Math.min(1, gameState.spinEffect.x + 0.2);
+      }
+      
+      if (p.keyCode === 38 && p.keyIsDown(16)) { // Shift + Up = Top spin
+        gameState.spinEffect.y = Math.max(-1, gameState.spinEffect.y - 0.2);
+      }
+      
+      if (p.keyCode === 40 && p.keyIsDown(16)) { // Shift + Down = Back spin
+        gameState.spinEffect.y = Math.min(1, gameState.spinEffect.y + 0.2);
+      }
+      
+      // Execute shot
+      if (p.keyCode === 32) { // Space
+        if (gameState.shotPower > 0) {
+          executeShot(p);
+        }
+      }
+      
+      // Ball placement confirmation
+      if (p.keyCode === 90 && gameState.ballInHand) { // Z
+        gameState.ballInHand = false;
+      }
+    }
+    
+    // Next level
+    if (p.keyCode === 13 && gameState.gamePhase === "GAME_OVER_WIN") { // ENTER
+      if (gameState.level < 9) {
+        gameState.level++;
+        resetGame(p);
+        gameState.gamePhase = "PLAYING";
+        p.logs.game_info.push({
+          data: { gamePhase: "PLAYING", level: gameState.level },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+    
+    return false; // Prevent default
+  };
+});
+
+// Expose globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  document.querySelectorAll('.control-button').forEach(btn => {
+    btn.classList.remove('active');
+  });
+  
+  if (mode === "HUMAN") {
+    document.getElementById('humanModeBtn').classList.add('active');
+  }
+};
+</code>
+
+<code filename="rendering.js">
+// rendering.js - Rendering functions
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderStartScreen(p) {
+  p.background(20, 50, 30);
+  
+  // Replaced title with "press enter to begin" centered vertically
+  p.fill(255, 255, 0); // Yellow color for the prompt
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(32); // Slightly larger for prominence
+  if (Math.floor(p.frameCount / 30) % 2 === 0) {
+    p.text("press enter to begin", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2); // Centered vertically
+  }
+  
+  // Preserved Instructions, adjusted vertical position
+  p.textSize(12);
+  p.fill(200, 200, 200);
+  p.textAlign(p.LEFT);
+  p.text("Arrow Keys: Aim & Adjust Power", 100, CANVAS_HEIGHT / 2 + 70); // Adjusted Y position
+  p.text("Shift + Arrows: Apply Spin", 100, CANVAS_HEIGHT / 2 + 90); // Adjusted Y position
+  p.text("Space: Execute Shot", 100, CANVAS_HEIGHT / 2 + 110); // Adjusted Y position
+  p.text("ESC: Pause    R: Restart", 100, CANVAS_HEIGHT / 2 + 130); // Adjusted Y position
+}
+
+export function renderGame(p) {
+  p.background(50, 30, 20);
+  
+  // Render table
+  if (gameState.table) {
+    gameState.table.render();
+  }
+  
+  // Render balls
+  gameState.ballsOnTable.forEach(ball => ball.render());
+  
+  // Render cue stick (only during aiming)
+  if (gameState.playingPhase === "AIMING" && gameState.cueStick && gameState.cueBall && !gameState.cueBall.pocketed) {
+    gameState.cueStick.render(gameState.cueBall, gameState.aimAngle, gameState.shotPower);
+    
+    // Render aim guide
+    renderAimGuide(p);
+  }
+  
+  // Render UI
+  renderUI(p);
+  
+  // Render foul message
+  if (gameState.foulStatus || gameState.playingPhase === "FOUL") {
+    p.fill(255, 0, 0);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(32);
+    p.text(gameState.foulMessage || "FOUL!", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  }
+}
+
+function renderAimGuide(p) {
+  if (!gameState.cueBall || gameState.cueBall.pocketed) return;
+  
+  const cueBallPos = gameState.cueBall.body.position;
+  const guideLength = 100;
+  
+  p.stroke(255, 255, 255, 100);
+  p.strokeWeight(2);
+  p.line(
+    cueBallPos.x,
+    cueBallPos.y,
+    cueBallPos.x + Math.cos(gameState.aimAngle) * guideLength,
+    cueBallPos.y + Math.sin(gameState.aimAngle) * guideLength
+  );
+}
+
+function renderUI(p) {
+  // Score (top-right)
+  p.fill(255);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(16);
+  p.text(`SCORE: ${String(gameState.score).padStart(5, '0')}`, CANVAS_WIDTH - 10, 10);
+  
+  // Level and difficulty (top-left)
+  p.textAlign(p.LEFT, p.TOP);
+  let difficulty = "EASY";
+  if (gameState.level >= 7) difficulty = "HARD";
+  else if (gameState.level >= 4) difficulty = "MEDIUM";
+  
+  p.text(`LEVEL: ${gameState.level}/9`, 10, 10);
+  p.textSize(12);
+  p.fill(difficulty === "EASY" ? [0, 255, 0] : difficulty === "MEDIUM" ? [255, 200, 0] : [255, 50, 50]);
+  p.text(`[${difficulty}]`, 10, 28);
+  
+  // Balls remaining (top-center)
+  const ballsRemaining = gameState.ballsOnTable.filter(b => !b.pocketed && b.number !== 0).length;
+  p.textAlign(p.CENTER, p.TOP);
+  p.fill(255, 215, 0);
+  p.textSize(16);
+  p.text(`BALLS LEFT: ${ballsRemaining}`, CANVAS_WIDTH / 2, 10);
+  
+  // Power meter (bottom-left)
+  if (gameState.playingPhase === "AIMING") {
+    const meterWidth = 100;
+    const meterHeight = 10;
+    const meterX = 10;
+    const meterY = CANVAS_HEIGHT - 30;
+    
+    p.fill(50);
+    p.noStroke();
+    p.rect(meterX, meterY, meterWidth, meterHeight);
+    
+    const powerRatio = gameState.shotPower / gameState.maxShotPower;
+    const powerColor = p.lerpColor(p.color(0, 255, 0), p.color(255, 0, 0), powerRatio);
+    p.fill(powerColor);
+    p.rect(meterX, meterY, meterWidth * powerRatio, meterHeight);
+    
+    p.fill(255);
+    p.textAlign(p.LEFT, p.BOTTOM);
+    p.textSize(10);
+    p.text("POWER", meterX, meterY - 2);
+  }
+  
+  // Spin indicator (bottom-right)
+  if (gameState.playingPhase === "AIMING" && (gameState.spinEffect.x !== 0 || gameState.spinEffect.y !== 0)) {
+    const spinX = CANVAS_WIDTH - 40;
+    const spinY = CANVAS_HEIGHT - 40;
+    
+    p.fill(100);
+    p.noStroke();
+    p.circle(spinX, spinY, 30);
+    
+    p.fill(255, 255, 0);
+    p.circle(spinX + gameState.spinEffect.x * 10, spinY + gameState.spinEffect.y * 10, 8);
+    
+    p.fill(255);
+    p.textAlign(p.RIGHT, p.BOTTOM);
+    p.textSize(10);
+    p.text("SPIN", spinX + 15, spinY - 20);
+  }
+}
+
+export function renderGameOver(p) {
+  p.background(20, 20, 20);
+  
+  const isWin = gameState.gamePhase === "GAME_OVER_WIN";
+  
+  // Message
+  p.fill(isWin ? [0, 255, 0] : [255, 0, 0]);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text(isWin ? "LEVEL COMPLETE!" : "GAME OVER", CANVAS_WIDTH / 2, 120);
+  
+  // Score
+  p.fill(255);
+  p.textSize(24);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 180);
+  p.text(`Level: ${gameState.level}/9`, CANVAS_WIDTH / 2, 210);
+  
+  // Next level or restart
+  p.textSize(16);
+  if (isWin && gameState.level < 9) {
+    p.text("Press ENTER for Next Level", CANVAS_WIDTH / 2, 280);
+  } else if (isWin && gameState.level === 9) {
+    p.text("ALL 9 LEVELS COMPLETE!", CANVAS_WIDTH / 2, 250);
+    p.fill(255, 215, 0);
+    p.textSize(20);
+    p.text("You are the Pool Master!", CANVAS_WIDTH / 2, 280);
+  }
+  
+  p.fill(255);
+  p.textSize(16);
+  p.text("Press R to Restart", CANVAS_WIDTH / 2, 320);
+}
+</code>

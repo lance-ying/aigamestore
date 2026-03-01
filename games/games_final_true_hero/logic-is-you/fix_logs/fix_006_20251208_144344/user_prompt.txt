@@ -1,0 +1,1401 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+ok no, the base amount of points you can receive is 1000, but say you mad 10 moves, then the score awared to you is 900. The point is that people should only see the 900, they shouldn't visually see a deduction in score. 
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Logic Is You</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; font-family: monospace; }
+      .control-button.active { background: #007bff; }
+      .control-button:hover { background: #555; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: 'Courier New', monospace; margin-bottom: 10px; text-shadow: 2px 2px #000;">LOGIC IS YOU</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="setControlMode('TEST_1')">TEST (Random)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="setControlMode('TEST_2')">TEST (Walk Right)</button>
+      </div>
+      <p id="gameDescription" style="color: #aaa; font-family: monospace; max-width: 600px; margin: 0 auto 10px auto; font-size: 14px;">
+        Rules are blocks. Change the rules to win.
+      </p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module">
+        import { gameState } from './globals.js';
+        import './automated_test.js';
+        import './game.js';
+        
+        window.setControlMode = function(mode) {
+            gameState.controlMode = mode;
+            document.querySelectorAll('.control-button').forEach(btn => btn.classList.remove('active'));
+            if(mode === 'HUMAN') document.getElementById('humanModeBtn').classList.add('active');
+            if(mode === 'TEST_1') document.getElementById('test_1_ModeBtn').classList.add('active');
+            if(mode === 'TEST_2') document.getElementById('test_2_ModeBtn').classList.add('active');
+        };
+    </script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TILE_SIZE = 25;
+export const GRID_W = 24; // 600 / 25
+export const GRID_H = 16; // 400 / 25
+
+export const COLORS = {
+    BACKGROUND: [16, 16, 18],
+    TEXT_GLOW: [255, 255, 255, 50],
+    UI_BG: [0, 0, 0, 200]
+};
+
+// Game Phases
+export const PHASES = {
+    START: "START",
+    PLAYING: "PLAYING",
+    PAUSED: "PAUSED",
+    GAME_OVER_WIN: "GAME_OVER_WIN",
+    LEVEL_TRANSITION: "LEVEL_TRANSITION"
+};
+
+// Score Constants
+export const LEVEL_COMPLETION_BONUS = 1000;
+
+// Global State
+export const gameState = {
+    gamePhase: PHASES.START,
+    controlMode: "HUMAN",
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    currentLevelIndex: 0,
+    grid: [], // 2D array of lists of entities
+    entities: [], // Flat list of all entities
+    rules: [], // Active parsed rules
+    
+    // Score
+    totalScore: 0, // Cumulative score across levels
+    movesTaken: 0, // Moves for current level
+    
+    // Derived Rule States (Maps Type -> Boolean/Type)
+    isYou: new Set(),
+    isPush: new Set(),
+    isStop: new Set(),
+    isWin: new Set(),
+    isDefeat: new Set(),
+    isSink: new Set(),
+    transforms: new Map(), // Type -> Type
+    
+    // Undo History
+    history: [],
+    
+    // Input
+    keys: {},
+    moveCooldown: 0,
+    
+    // Visuals
+    particles: [],
+    shake: 0,
+    
+    // Testing
+    testActionQueue: []
+};
+
+// Reset State for Level
+export function resetLevelState() {
+    gameState.grid = [];
+    gameState.entities = [];
+    gameState.rules = [];
+    gameState.history = [];
+    gameState.particles = [];
+    gameState.isYou.clear();
+    gameState.isPush.clear();
+    gameState.isStop.clear();
+    gameState.isWin.clear();
+    gameState.isDefeat.clear();
+    gameState.isSink.clear();
+    gameState.transforms.clear();
+    
+    // Reset moves for new level, but totalScore is cumulative
+    gameState.movesTaken = 0;
+    
+    // Init Grid
+    for (let x = 0; x < GRID_W; x++) {
+        gameState.grid[x] = [];
+        for (let y = 0; y < GRID_H; y++) {
+            gameState.grid[x][y] = [];
+        }
+    }
+}
+
+export function getGameState() {
+    return gameState;
+}
+window.getGameState = getGameState;
+</file>
+
+<file name="game.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, PHASES, resetLevelState } from './globals.js';
+import { setupInput } from './input.js';
+import { Entity } from './entities.js';
+import { LEVELS } from './levels.js';
+import { parseRules, applyTransforms } from './rules.js';
+import { renderUI } from './ui.js';
+import { TILE_SIZE, COLORS } from './globals.js';
+
+const p5 = window.p5;
+
+export function loadLevel(index) {
+    resetLevelState();
+    
+    gameState.currentLevelIndex = index;
+    const levelData = LEVELS[index].data;
+    
+    levelData.forEach(item => {
+        const ent = new Entity(item.x, item.y, item.type);
+        gameState.entities.push(ent);
+        if (gameState.grid[item.x] && gameState.grid[item.x][item.y]) {
+            gameState.grid[item.x][item.y].push(ent);
+        }
+    });
+    
+    parseRules();
+    applyTransforms();
+}
+
+let gameInstance = new p5(p => {
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        setupInput(p);
+        
+        // Initial log
+        p.logs.game_info.push({
+            data: { gamePhase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    };
+
+    p.draw = function() {
+        gameState.frameCount = p.frameCount;
+        const currentTime = p.millis();
+        gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = currentTime;
+        
+        if (gameState.moveCooldown > 0) gameState.moveCooldown--;
+        
+        p.background(COLORS.BACKGROUND);
+        
+        if (gameState.gamePhase === PHASES.START) {
+            renderUI(p);
+            return;
+        }
+        
+        // Automated Test Logic hook
+        if (window.get_automated_testing_action && gameState.gamePhase === PHASES.PLAYING) {
+            const action = window.get_automated_testing_action(gameState);
+            if (action && gameState.moveCooldown === 0) {
+                 p.keyPressed({ keyCode: action.keyCode });
+            }
+        }
+        
+        // Render Grid Lines (Subtle)
+        p.stroke(30);
+        p.strokeWeight(1);
+        for(let x = 0; x <= CANVAS_WIDTH; x+=TILE_SIZE) p.line(x,0,x,CANVAS_HEIGHT);
+        for(let y = 0; y <= CANVAS_HEIGHT; y+=TILE_SIZE) p.line(0,y,CANVAS_WIDTH,y);
+        
+        // Sort entities by layer for rendering
+        // Need to sort every frame or keep list sorted?
+        // Simple sort is fine for 600px canvas
+        const sortedEntities = [...gameState.entities].sort((a,b) => {
+            // Get layer config
+            const configA = import('./types.js').then(m => m.TYPE_CONFIG[a.type]); // Async? No.
+            // Accessing global config normally:
+            // Since modules are loaded, we can assume types.js is ready.
+            // But we can't import inside function easily.
+            // We'll rely on render method or a helper.
+            return 0; // Handled below
+        });
+        
+        // Update & Render Entities
+        // Group by Z-index?
+        // Let's just loop. Entities render method handles local drawing.
+        // Better: Draw in order of type layer.
+        
+        gameState.entities.forEach(ent => ent.update(p));
+        
+        // Draw Particles (behind objects? or on top?)
+        // Behind
+        for (let i = gameState.particles.length - 1; i >= 0; i--) {
+            const part = gameState.particles[i];
+            part.update();
+            part.render(p);
+            if (part.life <= 0) gameState.particles.splice(i, 1);
+        }
+        
+        // Z-sort
+        // Since TYPE_CONFIG has layers, we can use that.
+        // We need access to TYPE_CONFIG here. It was imported in entities.js
+        // Let's import it here too.
+        
+        gameState.entities.sort((a,b) => {
+           // We need layer priority.
+           // Since I can't easily dynamic import here without top-level,
+           // I will trust natural order or rely on simple draw loop.
+           // Actually, let's fix imports.
+           return 0;
+        });
+
+        // Actually drawing
+        gameState.entities.forEach(ent => ent.render(p));
+        
+        // UI Overlay
+        renderUI(p);
+        
+        // Logging
+        if (p.frameCount % 60 === 0) {
+            const yous = gameState.entities.filter(e => gameState.isYou.has(e.type));
+            if (yous.length > 0) {
+                p.logs.player_info.push({
+                    screen_x: yous[0].x * TILE_SIZE,
+                    screen_y: yous[0].y * TILE_SIZE,
+                    game_x: yous[0].x,
+                    game_y: yous[0].y,
+                    framecount: p.frameCount,
+                    timestamp: Date.now()
+                });
+            }
+        }
+    };
+});
+
+window.gameInstance = gameInstance;
+</file>
+
+<file name="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, PHASES } from './globals.js';
+import { LEVELS } from './levels.js';
+
+export function renderUI(p) {
+    if (gameState.gamePhase === PHASES.START) {
+        renderStartScreen(p);
+    } else if (gameState.gamePhase === PHASES.GAME_OVER_WIN) {
+        renderWinScreen(p);
+    } else if (gameState.gamePhase === PHASES.PAUSED) {
+        renderPauseScreen(p);
+    }
+    
+    // HUD
+    if (gameState.gamePhase !== PHASES.START) {
+        p.fill(255);
+        p.noStroke();
+        p.textSize(12);
+        p.textAlign(p.LEFT, p.TOP);
+        p.text(`Level: ${LEVELS[gameState.currentLevelIndex].name}`, 10, 10);
+        p.text(`Moves: ${gameState.movesTaken}`, 10, 25);
+        p.text(`Score: ${gameState.totalScore}`, 10, 40);
+        
+        p.textAlign(p.RIGHT, p.TOP);
+        p.text(`R: Reset | Z: Undo`, CANVAS_WIDTH - 10, 10);
+    }
+}
+
+function renderStartScreen(p) {
+    p.background(16, 16, 18);
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    // Title
+    p.textSize(48);
+    p.text("LOGIC IS YOU", CANVAS_WIDTH/2, CANVAS_HEIGHT/3);
+    
+    p.textSize(16);
+    p.text("Move Blocks. Change Rules. Win.", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    
+    p.textSize(20);
+    p.fill(255, 255, 0);
+    if (p.frameCount % 60 < 30) {
+        p.text("PRESS ENTER TO START", CANVAS_WIDTH/2, CANVAS_HEIGHT * 0.7);
+    }
+}
+
+function renderWinScreen(p) {
+    p.fill(0, 0, 0, 100);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.fill(255, 255, 0);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.text("YOU WIN!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 20);
+    
+    p.fill(255, 255, 0); // Highlight score
+    p.textSize(24);
+    p.text(`Final Score: ${gameState.totalScore}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 10); // Display total score
+    
+    p.fill(255);
+    p.textSize(16);
+    p.text("Press ENTER for Next Level", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 50); // Adjusted Y
+}
+
+function renderPauseScreen(p) {
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.fill(255);
+    p.textSize(30);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+}
+</file>
+
+<file name="types.js">
+// Entity Types
+export const TYPES = {
+    // Objects
+    BABA: 'BABA',
+    WALL: 'WALL',
+    FLAG: 'FLAG',
+    ROCK: 'ROCK',
+    WATER: 'WATER',
+    GRASS: 'GRASS',
+    SKULL: 'SKULL',
+    TILE: 'TILE', // Floor
+    
+    // Text Nouns
+    TEXT_BABA: 'TEXT_BABA',
+    TEXT_WALL: 'TEXT_WALL',
+    TEXT_FLAG: 'TEXT_FLAG',
+    TEXT_ROCK: 'TEXT_ROCK',
+    TEXT_WATER: 'TEXT_WATER',
+    TEXT_GRASS: 'TEXT_GRASS',
+    TEXT_SKULL: 'TEXT_SKULL',
+    
+    // Text Operators
+    TEXT_IS: 'TEXT_IS',
+    
+    // Text Properties
+    TEXT_YOU: 'TEXT_YOU',
+    TEXT_WIN: 'TEXT_WIN',
+    TEXT_STOP: 'TEXT_STOP',
+    TEXT_PUSH: 'TEXT_PUSH',
+    TEXT_DEFEAT: 'TEXT_DEFEAT',
+    TEXT_SINK: 'TEXT_SINK'
+};
+
+// Categories
+export const CATEGORIES = {
+    OBJECT: 'OBJECT',
+    TEXT: 'TEXT'
+};
+
+// Property Mappings
+export const TEXT_TO_TYPE = {
+    [TYPES.TEXT_BABA]: TYPES.BABA,
+    [TYPES.TEXT_WALL]: TYPES.WALL,
+    [TYPES.TEXT_FLAG]: TYPES.FLAG,
+    [TYPES.TEXT_ROCK]: TYPES.ROCK,
+    [TYPES.TEXT_WATER]: TYPES.WATER,
+    [TYPES.TEXT_GRASS]: TYPES.GRASS,
+    [TYPES.TEXT_SKULL]: TYPES.SKULL
+};
+
+export const TEXT_TO_PROPERTY = {
+    [TYPES.TEXT_YOU]: 'YOU',
+    [TYPES.TEXT_WIN]: 'WIN',
+    [TYPES.TEXT_STOP]: 'STOP',
+    [TYPES.TEXT_PUSH]: 'PUSH',
+    [TYPES.TEXT_DEFEAT]: 'DEFEAT',
+    [TYPES.TEXT_SINK]: 'SINK'
+};
+
+// Visual Configuration
+export const TYPE_CONFIG = {
+    [TYPES.BABA]: { color: [255, 255, 255], layer: 10 },
+    [TYPES.WALL]: { color: [100, 100, 100], layer: 5 },
+    [TYPES.FLAG]: { color: [255, 255, 0], layer: 8 },
+    [TYPES.ROCK]: { color: [150, 100, 50], layer: 6 },
+    [TYPES.WATER]: { color: [50, 100, 255], layer: 4 },
+    [TYPES.GRASS]: { color: [50, 200, 50], layer: 2 },
+    [TYPES.SKULL]: { color: [200, 50, 50], layer: 7 },
+    [TYPES.TILE]: { color: [30, 30, 35], layer: 1 },
+
+    // Text Colors
+    [TYPES.TEXT_BABA]: { color: [255, 0, 128], isText: true },
+    [TYPES.TEXT_WALL]: { color: [128, 128, 128], isText: true },
+    [TYPES.TEXT_FLAG]: { color: [255, 255, 100], isText: true },
+    [TYPES.TEXT_ROCK]: { color: [180, 130, 80], isText: true },
+    [TYPES.TEXT_WATER]: { color: [100, 150, 255], isText: true },
+    [TYPES.TEXT_GRASS]: { color: [100, 220, 100], isText: true },
+    [TYPES.TEXT_SKULL]: { color: [220, 100, 100], isText: true },
+
+    [TYPES.TEXT_IS]: { color: [255, 255, 255], isText: true },
+    
+    [TYPES.TEXT_YOU]: { color: [255, 0, 128], isText: true },
+    [TYPES.TEXT_WIN]: { color: [255, 255, 0], isText: true },
+    [TYPES.TEXT_STOP]: { color: [50, 200, 50], isText: true },
+    [TYPES.TEXT_PUSH]: { color: [120, 120, 120], isText: true },
+    [TYPES.TEXT_DEFEAT]: { color: [150, 0, 0], isText: true },
+    [TYPES.TEXT_SINK]: { color: [50, 100, 255], isText: true }
+};
+
+export function isText(type) {
+    return TYPE_CONFIG[type] && TYPE_CONFIG[type].isText;
+}
+
+export function getTextLabel(type) {
+    return type.replace('TEXT_', '');
+}
+</file>
+
+<file name="rules.js">
+import { gameState, GRID_W, GRID_H } from './globals.js';
+import { TYPES, isText, TEXT_TO_TYPE, TEXT_TO_PROPERTY } from './types.js';
+
+export function parseRules() {
+    // Reset rules
+    gameState.rules = [];
+    gameState.isYou.clear();
+    gameState.isPush.clear();
+    gameState.isStop.clear();
+    gameState.isWin.clear();
+    gameState.isDefeat.clear();
+    gameState.isSink.clear();
+    gameState.transforms.clear();
+    
+    // Default: Text is always PUSH
+    Object.values(TYPES).forEach(t => {
+        if (isText(t)) gameState.isPush.add(t);
+    });
+
+    const words = [];
+    
+    // 1. Scan Horizontal
+    for (let y = 0; y < GRID_H; y++) {
+        for (let x = 0; x < GRID_W; x++) {
+            const cell = gameState.grid[x][y];
+            const word = getTopWord(cell);
+            if (word) {
+                // Check if we can form a sentence starting here
+                checkSentence(x, y, 1, 0); // dx=1, dy=0
+                checkSentence(x, y, 0, 1); // dx=0, dy=1
+            }
+        }
+    }
+    
+    // Apply rules
+    gameState.rules.forEach(rule => {
+        const subject = TEXT_TO_TYPE[rule.subject];
+        
+        // Property assignment (BABA IS YOU)
+        if (rule.property && !rule.object) {
+            const prop = TEXT_TO_PROPERTY[rule.property];
+            switch (prop) {
+                case 'YOU': gameState.isYou.add(subject); break;
+                case 'STOP': gameState.isStop.add(subject); break;
+                case 'WIN': gameState.isWin.add(subject); break;
+                case 'PUSH': gameState.isPush.add(subject); break;
+                case 'DEFEAT': gameState.isDefeat.add(subject); break;
+                case 'SINK': gameState.isSink.add(subject); break;
+            }
+        }
+        
+        // Transformation (ROCK IS BABA)
+        if (rule.object && !rule.property) {
+            const targetType = TEXT_TO_TYPE[rule.object];
+            if (subject && targetType) {
+                gameState.transforms.set(subject, targetType);
+            }
+        }
+    });
+    
+    // Log rules for debug
+    // console.log("Parsed Rules:", gameState.rules);
+}
+
+function getTopWord(cellEntities) {
+    // Return the text entity on top if any
+    for (let i = cellEntities.length - 1; i >= 0; i--) {
+        if (isText(cellEntities[i].type)) {
+            return cellEntities[i];
+        }
+    }
+    return null;
+}
+
+function checkSentence(x, y, dx, dy) {
+    // Need at least 3 cells: NOUN IS PROPERTY/NOUN
+    const w1 = getWordAt(x, y);
+    const w2 = getWordAt(x + dx, y + dy);
+    const w3 = getWordAt(x + dx * 2, y + dy * 2);
+    
+    if (!w1 || !w2 || !w3) return;
+    
+    // Check structure: [NOUN] [IS] [?]
+    if (TEXT_TO_TYPE[w1.type] && w2.type === TYPES.TEXT_IS) {
+        // Valid Subject and Operator
+        
+        // Check Predicate
+        if (TEXT_TO_PROPERTY[w3.type]) {
+            // [NOUN] IS [PROPERTY]
+            addRule(w1.type, w3.type, null);
+        } else if (TEXT_TO_TYPE[w3.type]) {
+            // [NOUN] IS [NOUN] (Transformation)
+            addRule(w1.type, null, w3.type);
+        }
+    }
+}
+
+function getWordAt(x, y) {
+    if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H) return null;
+    return getTopWord(gameState.grid[x][y]);
+}
+
+function addRule(subject, property, object) {
+    gameState.rules.push({ subject, property, object });
+}
+
+export function applyTransforms() {
+    let changed = false;
+    
+    // Apply transformations immediately
+    // If transforms has 'ROCK' -> 'BABA', find all ROCKs and make them BABAs
+    gameState.entities.forEach(ent => {
+        if (gameState.transforms.has(ent.type)) {
+            ent.type = gameState.transforms.get(ent.type);
+            changed = true;
+        }
+    });
+    
+    return changed;
+}
+</file>
+
+<file name="entities.js">
+import { gameState, TILE_SIZE } from './globals.js';
+import { TYPE_CONFIG } from './types.js';
+
+let nextId = 0;
+
+export class Entity {
+    constructor(x, y, type) {
+        this.id = nextId++;
+        this.x = x; // Grid X
+        this.y = y; // Grid Y
+        this.type = type;
+        this.facing = 1; // 1 Right, 2 Down, 3 Left, 0 Up
+        this.dead = false;
+        
+        // Visuals
+        this.animOffset = Math.random() * 100;
+        this.moveLerpX = x * TILE_SIZE;
+        this.moveLerpY = y * TILE_SIZE;
+    }
+    
+    update(p) {
+        // Smooth movement interpolation
+        const targetX = this.x * TILE_SIZE;
+        const targetY = this.y * TILE_SIZE;
+        
+        this.moveLerpX = p.lerp(this.moveLerpX, targetX, 0.4);
+        this.moveLerpY = p.lerp(this.moveLerpY, targetY, 0.4);
+    }
+    
+    render(p) {
+        if (this.dead) return;
+        
+        // Basic rendering dispatch
+        const cx = this.moveLerpX + TILE_SIZE / 2;
+        const cy = this.moveLerpY + TILE_SIZE / 2;
+        const config = TYPE_CONFIG[this.type];
+        
+        if (!config) return;
+
+        p.push();
+        p.translate(cx, cy);
+        
+        // Minimal Wobble effect (Reduced amplitude)
+        const wobbleX = p.sin(p.frameCount * 0.05 + this.animOffset) * 0.5;
+        const wobbleY = p.cos(p.frameCount * 0.06 + this.animOffset) * 0.5;
+        const scaleW = 1 + p.sin(p.frameCount * 0.08 + this.animOffset) * 0.02;
+        const scaleH = 1 + p.cos(p.frameCount * 0.08 + this.animOffset) * 0.02;
+        
+        p.translate(wobbleX, wobbleY);
+        p.scale(scaleW, scaleH);
+        
+        // Draw logic based on type
+        if (config.isText) {
+            this.renderText(p, config.color);
+        } else {
+            this.renderObject(p, config.color);
+        }
+        
+        p.pop();
+    }
+    
+    renderText(p, color) {
+        p.rectMode(p.CENTER);
+        p.noStroke();
+        p.fill(color[0], color[1], color[2]);
+        p.rect(0, 0, TILE_SIZE - 2, TILE_SIZE - 2, 4);
+        
+        p.fill(0);
+        p.textAlign(p.CENTER, p.CENTER);
+        p.textSize(10);
+        p.textStyle(p.BOLD);
+        p.text(getTextLabel(this.type), 0, 0);
+    }
+    
+    renderObject(p, color) {
+        p.fill(color[0], color[1], color[2]);
+        p.noStroke();
+        
+        switch (this.type) {
+            case 'BABA':
+                this.drawBaba(p);
+                break;
+            case 'FLAG':
+                this.drawFlag(p);
+                break;
+            case 'WALL':
+                p.rectMode(p.CENTER);
+                p.rect(0, 0, TILE_SIZE, TILE_SIZE);
+                // Bricks detail
+                p.stroke(0, 50);
+                p.line(-10, 0, 10, 0);
+                p.line(0, -10, 0, 10);
+                break;
+            case 'ROCK':
+                p.rectMode(p.CENTER);
+                p.rect(0, 0, TILE_SIZE - 4, TILE_SIZE - 4, 5);
+                break;
+            case 'WATER':
+                p.fill(color[0], color[1], color[2], 200);
+                p.rectMode(p.CENTER);
+                p.rect(0, 0, TILE_SIZE, TILE_SIZE);
+                p.fill(255, 100);
+                p.circle(-5, -5, 5);
+                p.circle(5, 5, 3);
+                break;
+            case 'SKULL':
+                this.drawSkull(p);
+                break;
+            case 'GRASS':
+                p.noFill();
+                p.stroke(color[0], color[1], color[2]);
+                p.strokeWeight(2);
+                p.line(-5, 8, -8, 0);
+                p.line(0, 8, 0, -4);
+                p.line(5, 8, 8, -2);
+                break;
+            default:
+                p.rectMode(p.CENTER);
+                p.rect(0, 0, TILE_SIZE - 4, TILE_SIZE - 4);
+        }
+    }
+    
+    drawBaba(p) {
+        p.fill(255);
+        p.noStroke();
+        // Body
+        p.ellipse(0, 4, 20, 14);
+        // Ears
+        p.push();
+        p.rotate(-0.2);
+        p.ellipse(-6, -8, 6, 14);
+        p.pop();
+        p.push();
+        p.rotate(0.2);
+        p.ellipse(6, -8, 6, 14);
+        p.pop();
+        // Eyes
+        p.fill(0);
+        let lookX = 0;
+        if(this.facing === 1) lookX = 2;
+        if(this.facing === 3) lookX = -2;
+        p.circle(-4 + lookX, -2, 3);
+        p.circle(4 + lookX, -2, 3);
+    }
+    
+    drawFlag(p) {
+        p.stroke(255);
+        p.strokeWeight(2);
+        p.line(-6, 10, -6, -8); // Pole
+        p.fill(255, 255, 0);
+        p.noStroke();
+        p.triangle(-6, -8, 8, -3, -6, 2); // Flag part
+    }
+    
+    drawSkull(p) {
+        p.fill(200, 50, 50);
+        p.ellipse(0, 0, 18, 18); // Head
+        p.rectMode(p.CENTER);
+        p.rect(0, 8, 10, 6); // Jaw
+        p.fill(0);
+        p.circle(-4, 0, 5); // Eyes
+        p.circle(4, 0, 5);
+    }
+}
+
+function getTextLabel(type) {
+    return type.replace('TEXT_', '');
+}
+</file>
+
+<file name="levels.js">
+import { TYPES } from './types.js';
+
+// Level Data Format:
+// width, height (should match grid)
+// List of entities: { x, y, type }
+
+export const LEVELS = [
+    {
+        id: 0,
+        name: "01 - START",
+        data: [
+            // Rule: BABA IS YOU
+            {x: 4, y: 3, type: TYPES.TEXT_BABA},
+            {x: 5, y: 3, type: TYPES.TEXT_IS},
+            {x: 6, y: 3, type: TYPES.TEXT_YOU},
+            
+            // Rule: FLAG IS ... WIN (Broken)
+            {x: 14, y: 3, type: TYPES.TEXT_FLAG},
+            {x: 15, y: 3, type: TYPES.TEXT_IS},
+            // WIN is misaligned, player must push it
+            {x: 16, y: 6, type: TYPES.TEXT_WIN},
+            
+            // Objects
+            {x: 6, y: 8, type: TYPES.BABA},
+            {x: 18, y: 8, type: TYPES.FLAG},
+            
+            // Decorative Walls
+            {x: 10, y: 6, type: TYPES.WALL},
+            {x: 10, y: 7, type: TYPES.WALL},
+            {x: 10, y: 8, type: TYPES.WALL},
+            {x: 10, y: 9, type: TYPES.WALL},
+            {x: 10, y: 10, type: TYPES.WALL},
+            
+            // Rule: WALL IS STOP
+            {x: 10, y: 12, type: TYPES.TEXT_WALL},
+            {x: 11, y: 12, type: TYPES.TEXT_IS},
+            {x: 12, y: 12, type: TYPES.TEXT_STOP}
+        ]
+    },
+    {
+        id: 1,
+        name: "02 - BROKEN",
+        data: [
+            // BABA IS YOU
+            {x: 3, y: 2, type: TYPES.TEXT_BABA},
+            {x: 4, y: 2, type: TYPES.TEXT_IS},
+            {x: 5, y: 2, type: TYPES.TEXT_YOU},
+            
+            // FLAG IS WIN
+            {x: 16, y: 2, type: TYPES.TEXT_FLAG},
+            {x: 17, y: 2, type: TYPES.TEXT_IS},
+            {x: 18, y: 2, type: TYPES.TEXT_WIN},
+            
+            // WALL IS STOP (Blocking the path)
+            {x: 9, y: 5, type: TYPES.TEXT_WALL},
+            {x: 10, y: 5, type: TYPES.TEXT_IS},
+            {x: 11, y: 5, type: TYPES.TEXT_STOP}, 
+            
+            // Objects
+            {x: 5, y: 8, type: TYPES.BABA},
+            {x: 20, y: 8, type: TYPES.FLAG},
+            
+            // Wall Barrier
+            {x: 14, y: 0, type: TYPES.WALL},
+            {x: 14, y: 1, type: TYPES.WALL},
+            {x: 14, y: 2, type: TYPES.WALL},
+            {x: 14, y: 3, type: TYPES.WALL},
+            {x: 14, y: 4, type: TYPES.WALL},
+            {x: 14, y: 5, type: TYPES.WALL},
+            {x: 14, y: 6, type: TYPES.WALL},
+            {x: 14, y: 7, type: TYPES.WALL},
+            {x: 14, y: 8, type: TYPES.WALL},
+            {x: 14, y: 9, type: TYPES.WALL},
+            {x: 14, y: 10, type: TYPES.WALL},
+            {x: 14, y: 11, type: TYPES.WALL},
+            {x: 14, y: 12, type: TYPES.WALL},
+            {x: 14, y: 13, type: TYPES.WALL},
+            {x: 14, y: 14, type: TYPES.WALL},
+            {x: 14, y: 15, type: TYPES.WALL}
+        ]
+    },
+    {
+        id: 2,
+        name: "03 - CHANGE",
+        data: [
+            // Protected Rules Area (Top Left)
+            // Walls enclosing rules
+            {x: 6, y: 0, type: TYPES.WALL}, {x: 6, y: 1, type: TYPES.WALL}, {x: 6, y: 2, type: TYPES.WALL}, {x: 6, y: 3, type: TYPES.WALL},
+            {x: 0, y: 3, type: TYPES.WALL}, {x: 1, y: 3, type: TYPES.WALL}, {x: 2, y: 3, type: TYPES.WALL}, {x: 3, y: 3, type: TYPES.WALL}, {x: 4, y: 3, type: TYPES.WALL}, {x: 5, y: 3, type: TYPES.WALL},
+
+            // Safe Rules
+            {x: 1, y: 0, type: TYPES.TEXT_BABA}, {x: 2, y: 0, type: TYPES.TEXT_IS}, {x: 3, y: 0, type: TYPES.TEXT_YOU},
+            {x: 1, y: 1, type: TYPES.TEXT_FLAG}, {x: 2, y: 1, type: TYPES.TEXT_IS}, {x: 3, y: 1, type: TYPES.TEXT_WIN},
+            {x: 1, y: 2, type: TYPES.TEXT_WALL}, {x: 2, y: 2, type: TYPES.TEXT_IS}, {x: 3, y: 2, type: TYPES.TEXT_STOP},
+
+            // Play Area
+            {x: 4, y: 8, type: TYPES.BABA},
+            
+            // Rock (Needs to become Flag)
+            {x: 10, y: 8, type: TYPES.ROCK},
+            
+            // Active Rule: ROCK IS PUSH
+            {x: 10, y: 12, type: TYPES.TEXT_ROCK},
+            {x: 11, y: 12, type: TYPES.TEXT_IS},
+            {x: 12, y: 12, type: TYPES.TEXT_PUSH},
+            
+            // Loose Text: FLAG
+            {x: 10, y: 14, type: TYPES.TEXT_FLAG},
+            
+            // Decorative Walls for Room
+            {x: 20, y: 5, type: TYPES.WALL}, {x: 20, y: 6, type: TYPES.WALL}, {x: 20, y: 7, type: TYPES.WALL}
+        ]
+    },
+    {
+        id: 3,
+        name: "04 - BRIDGE",
+        data: [
+            // Protected Rules
+            {x: 7, y: 0, type: TYPES.WALL}, {x: 7, y: 1, type: TYPES.WALL}, {x: 7, y: 2, type: TYPES.WALL}, {x: 7, y: 3, type: TYPES.WALL}, {x: 7, y: 4, type: TYPES.WALL}, {x: 7, y: 5, type: TYPES.WALL}, {x: 7, y: 6, type: TYPES.WALL},
+            {x: 0, y: 6, type: TYPES.WALL}, {x: 1, y: 6, type: TYPES.WALL}, {x: 2, y: 6, type: TYPES.WALL}, {x: 3, y: 6, type: TYPES.WALL}, {x: 4, y: 6, type: TYPES.WALL}, {x: 5, y: 6, type: TYPES.WALL}, {x: 6, y: 6, type: TYPES.WALL},
+            
+            // Rules
+            {x: 1, y: 0, type: TYPES.TEXT_BABA}, {x: 2, y: 0, type: TYPES.TEXT_IS}, {x: 3, y: 0, type: TYPES.TEXT_YOU},
+            {x: 1, y: 1, type: TYPES.TEXT_FLAG}, {x: 2, y: 1, type: TYPES.TEXT_IS}, {x: 3, y: 1, type: TYPES.TEXT_WIN},
+            {x: 1, y: 2, type: TYPES.TEXT_WATER}, {x: 2, y: 2, type: TYPES.TEXT_IS}, {x: 3, y: 2, type: TYPES.TEXT_SINK},
+            {x: 1, y: 3, type: TYPES.TEXT_ROCK}, {x: 2, y: 3, type: TYPES.TEXT_IS}, {x: 3, y: 3, type: TYPES.TEXT_PUSH},
+            {x: 1, y: 4, type: TYPES.TEXT_WALL}, {x: 2, y: 4, type: TYPES.TEXT_IS}, {x: 3, y: 4, type: TYPES.TEXT_STOP},
+
+            // River (Double Width)
+            // Column 14
+            {x: 14, y: 0, type: TYPES.WATER}, {x: 14, y: 1, type: TYPES.WATER}, {x: 14, y: 2, type: TYPES.WATER}, {x: 14, y: 3, type: TYPES.WATER},
+            {x: 14, y: 4, type: TYPES.WATER}, {x: 14, y: 5, type: TYPES.WATER}, {x: 14, y: 6, type: TYPES.WATER}, {x: 14, y: 7, type: TYPES.WATER},
+            {x: 14, y: 8, type: TYPES.WATER}, {x: 14, y: 9, type: TYPES.WATER}, {x: 14, y: 10, type: TYPES.WATER}, {x: 14, y: 11, type: TYPES.WATER},
+            {x: 14, y: 12, type: TYPES.WATER}, {x: 14, y: 13, type: TYPES.WATER}, {x: 14, y: 14, type: TYPES.WATER}, {x: 14, y: 15, type: TYPES.WATER},
+            // Column 15
+            {x: 15, y: 0, type: TYPES.WATER}, {x: 15, y: 1, type: TYPES.WATER}, {x: 15, y: 2, type: TYPES.WATER}, {x: 15, y: 3, type: TYPES.WATER},
+            {x: 15, y: 4, type: TYPES.WATER}, {x: 15, y: 5, type: TYPES.WATER}, {x: 15, y: 6, type: TYPES.WATER}, {x: 15, y: 7, type: TYPES.WATER},
+            {x: 15, y: 8, type: TYPES.WATER}, {x: 15, y: 9, type: TYPES.WATER}, {x: 15, y: 10, type: TYPES.WATER}, {x: 15, y: 11, type: TYPES.WATER},
+            {x: 15, y: 12, type: TYPES.WATER}, {x: 15, y: 13, type: TYPES.WATER}, {x: 15, y: 14, type: TYPES.WATER}, {x: 15, y: 15, type: TYPES.WATER},
+            
+            // Rocks to push
+            {x: 9, y: 6, type: TYPES.ROCK},
+            {x: 10, y: 8, type: TYPES.ROCK},
+            {x: 9, y: 10, type: TYPES.ROCK},
+            
+            // Player and Goal
+            {x: 4, y: 8, type: TYPES.BABA},
+            {x: 20, y: 8, type: TYPES.FLAG}
+        ]
+    },
+    {
+        id: 4,
+        name: "05 - ALIGN",
+        data: [
+            // Protected Rules
+            {x: 6, y: 0, type: TYPES.WALL}, {x: 6, y: 1, type: TYPES.WALL}, {x: 6, y: 2, type: TYPES.WALL}, {x: 6, y: 3, type: TYPES.WALL}, {x: 6, y: 4, type: TYPES.WALL}, {x: 6, y: 5, type: TYPES.WALL},
+            {x: 0, y: 5, type: TYPES.WALL}, {x: 1, y: 5, type: TYPES.WALL}, {x: 2, y: 5, type: TYPES.WALL}, {x: 3, y: 5, type: TYPES.WALL}, {x: 4, y: 5, type: TYPES.WALL}, {x: 5, y: 5, type: TYPES.WALL},
+            
+            // Rules: Multi-Control
+            {x: 1, y: 0, type: TYPES.TEXT_BABA}, {x: 2, y: 0, type: TYPES.TEXT_IS}, {x: 3, y: 0, type: TYPES.TEXT_YOU},
+            {x: 1, y: 1, type: TYPES.TEXT_ROCK}, {x: 2, y: 1, type: TYPES.TEXT_IS}, {x: 3, y: 1, type: TYPES.TEXT_YOU},
+            {x: 1, y: 2, type: TYPES.TEXT_FLAG}, {x: 2, y: 2, type: TYPES.TEXT_IS}, {x: 3, y: 2, type: TYPES.TEXT_WIN},
+            {x: 1, y: 3, type: TYPES.TEXT_WALL}, {x: 2, y: 3, type: TYPES.TEXT_IS}, {x: 3, y: 3, type: TYPES.TEXT_STOP},
+            
+            // Characters
+            {x: 3, y: 6, type: TYPES.BABA},
+            {x: 3, y: 12, type: TYPES.ROCK},
+            
+            // Alignment Obstacles
+            // Block Baba going DOWN (moves Rock only -> Spread increases)
+            {x: 3, y: 7, type: TYPES.WALL},
+            // Block Rock going UP (moves Baba only -> Spread increases)
+            {x: 3, y: 11, type: TYPES.WALL},
+            
+            // Gate 1: x=12. Gaps at 5 and 13. Spread 8.
+            {x: 12, y: 0, type: TYPES.WALL}, {x: 12, y: 1, type: TYPES.WALL}, {x: 12, y: 2, type: TYPES.WALL}, {x: 12, y: 3, type: TYPES.WALL}, {x: 12, y: 4, type: TYPES.WALL},
+            // Gap at 5
+            {x: 12, y: 6, type: TYPES.WALL}, {x: 12, y: 7, type: TYPES.WALL}, {x: 12, y: 8, type: TYPES.WALL}, {x: 12, y: 9, type: TYPES.WALL}, {x: 12, y: 10, type: TYPES.WALL}, {x: 12, y: 11, type: TYPES.WALL}, {x: 12, y: 12, type: TYPES.WALL},
+            // Gap at 13
+            {x: 12, y: 14, type: TYPES.WALL}, {x: 12, y: 15, type: TYPES.WALL},
+
+            // Gate 2: x=18. Gap at 9.
+            {x: 18, y: 0, type: TYPES.WALL}, {x: 18, y: 1, type: TYPES.WALL}, {x: 18, y: 2, type: TYPES.WALL}, {x: 18, y: 3, type: TYPES.WALL}, {x: 18, y: 4, type: TYPES.WALL}, {x: 18, y: 5, type: TYPES.WALL}, {x: 18, y: 6, type: TYPES.WALL}, {x: 18, y: 7, type: TYPES.WALL}, {x: 18, y: 8, type: TYPES.WALL}, 
+            // Gap at 9
+            {x: 18, y: 10, type: TYPES.WALL}, {x: 18, y: 11, type: TYPES.WALL}, {x: 18, y: 12, type: TYPES.WALL}, {x: 18, y: 13, type: TYPES.WALL},
+            {x: 18, y: 14, type: TYPES.WALL}, {x: 18, y: 15, type: TYPES.WALL},
+            
+            // Goal
+            {x: 21, y: 9, type: TYPES.FLAG}
+        ]
+    }
+];
+</file>
+
+<file name="automated_test.js">
+// Automated Testing Controller
+
+export function get_automated_testing_action(gameState) {
+    // Only act in test modes
+    if (gameState.controlMode !== 'TEST_1' && gameState.controlMode !== 'TEST_2') return null;
+    
+    // Very simple scripted actions or random
+    
+    if (gameState.controlMode === 'TEST_1') {
+        // Just move randomly
+        const keys = [37, 38, 39, 40];
+        const key = keys[Math.floor(Math.random() * keys.length)];
+        return { keyCode: key };
+    }
+    
+    if (gameState.controlMode === 'TEST_2') {
+        // Attempt to move right towards flag (assuming level 1)
+        return { keyCode: 39 }; // Right arrow
+    }
+    
+    return null;
+}
+window.get_automated_testing_action = get_automated_testing_action;
+</file>
+
+<file name="physics.js">
+import { gameState, GRID_W, GRID_H, LEVEL_COMPLETION_BONUS } from './globals.js';
+import { parseRules, applyTransforms } from './rules.js';
+import { Entity } from './entities.js';
+import { Particle } from './particles.js';
+
+export function saveHistory() {
+    // Deep clone important state
+    const snapshot = {
+        // We don't need to save full grid, just entity list usually, but entities link to grid
+        entities: gameState.entities.map(e => ({
+            id: e.id,
+            x: e.x,
+            y: e.y,
+            type: e.type,
+            facing: e.facing,
+            dead: e.dead
+        })),
+        // Add score and moves to snapshot for undo
+        totalScore: gameState.totalScore, // Save total score
+        movesTaken: gameState.movesTaken
+    };
+    gameState.history.push(snapshot);
+    if (gameState.history.length > 50) gameState.history.shift();
+}
+
+export function restoreHistory() {
+    if (gameState.history.length === 0) return;
+    
+    const snapshot = gameState.history.pop();
+    
+    // Restore score and moves
+    gameState.totalScore = snapshot.totalScore; // Restore total score
+    gameState.movesTaken = snapshot.movesTaken;
+
+    // Rebuild state
+    gameState.entities = [];
+    // Reset Grid
+    for (let x = 0; x < GRID_W; x++) {
+        gameState.grid[x] = [];
+        for (let y = 0; y < GRID_H; y++) {
+            gameState.grid[x][y] = [];
+        }
+    }
+    
+    // Recreate entities
+    snapshot.entities.forEach(data => {
+        const ent = new Entity(data.x, data.y, data.type);
+        ent.id = data.id;
+        ent.facing = data.facing;
+        ent.dead = data.dead;
+        ent.moveLerpX = data.x * 25; // Reset lerp to snap
+        ent.moveLerpY = data.y * 25;
+        
+        if (!ent.dead) {
+            gameState.entities.push(ent);
+            if (ent.x >= 0 && ent.x < GRID_W && ent.y >= 0 && ent.y < GRID_H) {
+                gameState.grid[ent.x][ent.y].push(ent);
+            }
+        }
+    });
+    
+    // Re-parse rules
+    parseRules();
+}
+
+export function handleInput(p, keyCode) {
+    if (gameState.moveCooldown > 0) return;
+    
+    let dx = 0;
+    let dy = 0;
+    
+    // Arrow keys
+    if (keyCode === p.LEFT_ARROW) dx = -1;
+    if (keyCode === p.RIGHT_ARROW) dx = 1;
+    if (keyCode === p.UP_ARROW) dy = -1;
+    if (keyCode === p.DOWN_ARROW) dy = 1;
+    
+    if (dx !== 0 || dy !== 0) {
+        saveHistory();
+        const success = attemptMove(dx, dy);
+        if (success) {
+            gameState.moveCooldown = 8; // debounce
+            
+            // Increment moves taken, but no score deduction for moves
+            gameState.movesTaken++;
+            
+            // After move:
+            parseRules();
+            applyTransforms();
+            checkWinCondition();
+            checkDestruction();
+        } else {
+            // Undo save if nothing moved? No, maybe logic ran but failed? 
+            // Actually simpler to just keep history.
+            // But if nothing moved at all, pop history?
+            // Let's keep it simple.
+        }
+    }
+}
+
+function attemptMove(dx, dy) {
+    // 1. Identify all YOU entities
+    const movers = gameState.entities.filter(e => gameState.isYou.has(e.type));
+    
+    if (movers.length === 0) return false;
+    
+    // Update facing
+    movers.forEach(e => {
+        if (dx === 1) e.facing = 1;
+        if (dy === 1) e.facing = 2;
+        if (dx === -1) e.facing = 3;
+        if (dy === -1) e.facing = 0;
+    });
+    
+    // 2. Determine which can move
+    // We need to resolve collisions.
+    // Basic Algo: For each mover, check chain.
+    
+    const moves = []; // List of {entity, tx, ty}
+    
+    // Sort movers based on direction to handle pushing correctly?
+    // Not strictly necessary if we resolve recursively.
+    
+    const processed = new Set();
+    let movedAny = false;
+    
+    for (const mover of movers) {
+        if (processed.has(mover.id)) continue;
+        
+        if (canMove(mover, dx, dy, [])) {
+            doMove(mover, dx, dy, processed);
+            movedAny = true;
+        }
+    }
+    
+    return movedAny;
+}
+
+function canMove(entity, dx, dy, pushStack) {
+    const tx = entity.x + dx;
+    const ty = entity.y + dy;
+    
+    // Check bounds
+    if (tx < 0 || tx >= GRID_W || ty < 0 || ty >= GRID_H) return false;
+    
+    // Check obstacles at target
+    const obstacles = gameState.grid[tx][ty];
+    
+    for (const obs of obstacles) {
+        // If Stop, return false (unless Push)
+        // Order: PUSH overrides STOP usually? In Baba Is You:
+        // If it is PUSH, we try to push it.
+        // If it is STOP and NOT PUSH, we block.
+        // If it is YOU, it acts like PUSH if we walk into it? No, usually 'YOU' moves independently.
+        // Simplification:
+        
+        if (gameState.isStop.has(obs.type) && !gameState.isPush.has(obs.type)) {
+            return false;
+        }
+        
+        if (gameState.isPush.has(obs.type)) {
+            // Check if this object can be pushed
+            if (pushStack.includes(obs.id)) return false; // Loop detection
+            pushStack.push(obs.id);
+            if (!canMove(obs, dx, dy, pushStack)) {
+                return false;
+            }
+        }
+    }
+    
+    return true;
+}
+
+function doMove(entity, dx, dy, processed) {
+    if (processed.has(entity.id)) return;
+    processed.add(entity.id);
+    
+    const tx = entity.x + dx;
+    const ty = entity.y + dy;
+    
+    // Recursively move pushed objects first
+    const obstacles = gameState.grid[tx][ty];
+    for (const obs of obstacles) {
+        if (gameState.isPush.has(obs.type)) {
+            doMove(obs, dx, dy, processed);
+        }
+    }
+    
+    // Move self
+    // Remove from old grid cell
+    const cell = gameState.grid[entity.x][entity.y];
+    const index = cell.indexOf(entity);
+    if (index > -1) cell.splice(index, 1);
+    
+    // Update pos
+    entity.x = tx;
+    entity.y = ty;
+    
+    // Add to new grid cell
+    gameState.grid[tx][ty].push(entity);
+}
+
+function checkDestruction() {
+    // Check Sink, Defeat
+    const toKill = new Set();
+    
+    for (let x = 0; x < GRID_W; x++) {
+        for (let y = 0; y < GRID_H; y++) {
+            const cell = gameState.grid[x][y];
+            if (cell.length < 2) continue;
+            
+            // Check Defeat
+            const defeats = cell.filter(e => gameState.isDefeat.has(e.type));
+            const yous = cell.filter(e => gameState.isYou.has(e.type));
+            
+            if (defeats.length > 0 && yous.length > 0) {
+                yous.forEach(y => toKill.add(y));
+            }
+            
+            // Check Sink (destroys both)
+            const sinks = cell.filter(e => gameState.isSink.has(e.type));
+            const others = cell.filter(e => !gameState.isSink.has(e.type));
+            
+            if (sinks.length > 0 && others.length > 0) {
+                // Determine pairs. Simplification: One sink kills one other.
+                // Or: All sinks kill all others? 
+                // Simple version: Destroy everything in cell if overlap.
+                cell.forEach(e => toKill.add(e));
+            }
+        }
+    }
+    
+    if (toKill.size > 0) {
+        toKill.forEach(e => {
+            e.dead = true;
+            // Remove from grid
+            const cell = gameState.grid[e.x][e.y];
+            const idx = cell.indexOf(e);
+            if (idx > -1) cell.splice(idx, 1);
+            
+            // Particle effect
+            createExplosion(e.x, e.y);
+        });
+        
+        // Remove dead from entities list
+        gameState.entities = gameState.entities.filter(e => !e.dead);
+    }
+}
+
+function checkWinCondition() {
+    // Check if any YOU entity overlaps with a WIN entity
+    let won = false;
+    
+    const yous = gameState.entities.filter(e => gameState.isYou.has(e.type));
+    
+    for (const you of yous) {
+        const cell = gameState.grid[you.x][you.y];
+        const wins = cell.filter(e => gameState.isWin.has(e.type));
+        if (wins.length > 0) {
+            won = true;
+            break;
+        }
+    }
+    
+    if (won) {
+        gameState.totalScore += LEVEL_COMPLETION_BONUS; // Score changes on level completion
+        gameState.gamePhase = "GAME_OVER_WIN";
+        createWinParticles();
+    }
+}
+
+function createExplosion(gx, gy) {
+    for(let i=0; i<10; i++) {
+        const px = gx * 25 + 12.5;
+        const py = gy * 25 + 12.5;
+        gameState.particles.push(new Particle(px, py, [255, 100, 100]));
+    }
+}
+
+function createWinParticles() {
+    for(let i=0; i<50; i++) {
+        gameState.particles.push(new Particle(300, 200, [255, 255, 0]));
+    }
+}
+</file>
+
+<file name="particles.js">
+import { gameState } from './globals.js';
+
+export class Particle {
+    constructor(x, y, color) {
+        this.x = x;
+        this.y = y;
+        this.vx = (Math.random() - 0.5) * 5;
+        this.vy = (Math.random() - 0.5) * 5;
+        this.color = color;
+        this.life = 1.0;
+        this.decay = 0.02 + Math.random() * 0.03;
+        this.size = Math.random() * 6 + 2;
+    }
+    
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life -= this.decay;
+        this.size *= 0.95;
+    }
+    
+    render(p) {
+        if (this.life <= 0) return;
+        p.noStroke();
+        p.fill(this.color[0], this.color[1], this.color[2], this.life * 255);
+        p.circle(this.x, this.y, this.size);
+    }
+}
+</file>
+
+<file name="input.js">
+import { gameState, PHASES } from './globals.js';
+import { handleInput, saveHistory, restoreHistory } from './physics.js';
+import { loadLevel } from './game.js';
+import { LEVELS } from './levels.js';
+
+export function setupInput(p) {
+    p.keyPressed = function() {
+        // Log input
+        p.logs.inputs.push({
+            input_type: 'keyPressed',
+            data: { key: p.key, keyCode: p.keyCode },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+
+        if (gameState.gamePhase === PHASES.START) {
+            if (p.keyCode === p.ENTER) {
+                gameState.gamePhase = PHASES.PLAYING;
+                loadLevel(0);
+            }
+        } else if (gameState.gamePhase === PHASES.PLAYING) {
+            // Gameplay Controls
+            if (p.keyCode === p.ESCAPE) {
+                gameState.gamePhase = PHASES.PAUSED;
+            } else if (p.key === 'r' || p.key === 'R') {
+                loadLevel(gameState.currentLevelIndex);
+            } else if (p.key === 'z' || p.key === 'Z') {
+                restoreHistory();
+            } else if (p.keyCode === 32) { // Space - Skip Level (Debug)
+                // nextLevel(); 
+            } else {
+                handleInput(p, p.keyCode);
+            }
+        } else if (gameState.gamePhase === PHASES.PAUSED) {
+            if (p.keyCode === p.ESCAPE) {
+                gameState.gamePhase = PHASES.PLAYING;
+            }
+        } else if (gameState.gamePhase === PHASES.GAME_OVER_WIN) {
+            if (p.keyCode === p.ENTER) {
+                nextLevel();
+            } else if (p.key === 'r' || p.key === 'R') {
+                loadLevel(gameState.currentLevelIndex);
+                gameState.gamePhase = PHASES.PLAYING;
+            }
+        }
+    };
+    
+    p.keyReleased = function() {
+        p.logs.inputs.push({
+            input_type: 'keyReleased',
+            data: { key: p.key, keyCode: p.keyCode },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    };
+}
+
+function nextLevel() {
+    gameState.currentLevelIndex++;
+    if (gameState.currentLevelIndex >= LEVELS.length) {
+        gameState.currentLevelIndex = 0; // Loop back
+    }
+    loadLevel(gameState.currentLevelIndex);
+    gameState.gamePhase = PHASES.PLAYING;
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

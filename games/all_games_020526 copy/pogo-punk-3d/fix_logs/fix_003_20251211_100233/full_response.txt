@@ -1,0 +1,755 @@
+1.  **Analysis**:
+    *   **Issue identified**:
+        1.  **Physics Instability**: When the player jumps to the right, the horizontal velocity is added (`+=`) to the existing velocity without sufficient damping or clamping. This causes the acceleration to accumulate indefinitely, making the player uncontrollable.
+        2.  **Jump Height**: The base jump height is too high (`BOUNCE_FORCE` is 0.28).
+        3.  **Level Progression**: The user requested "more levels", but the current implementation ends the game after reaching the goal.
+    *   **Files affected**: `globals.js`, `entities.js`, `input.js`, `ui.js`, `world.js`.
+    *   **Changes needed**:
+        *   **globals.js**: Lower `BOUNCE_FORCE` to 0.22. Add `MAX_HORIZONTAL_SPEED` to cap movement speed.
+        *   **entities.js**: In `Player.handleBounce`, change the velocity calculation to blend/dampen previous velocity instead of purely adding to it. In `Player.handlePhysics`, clamp the horizontal velocity to `MAX_HORIZONTAL_SPEED`. Update `Platform` to trigger a `LEVEL_COMPLETE` state instead of `GAME_OVER_WIN`.
+        *   **input.js**: Add logic to handle `LEVEL_COMPLETE` (press Enter to go to next level). Update `startGame` to use `gameState.currentLevel`. Update `resetGame` to restart the current level on death.
+        *   **ui.js**: Add a UI overlay for the "LEVEL COMPLETE" state.
+        *   **world.js**: Update `setupLevel` to scale difficulty (gap size, hazards, length) slightly based on the level index.
+
+2.  **Updated Files**:
+
+<code filename="globals.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// Game Constants
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const GRAVITY = -0.009;
+export const TERMINAL_VELOCITY = -0.5;
+export const FRICTION = 0.98;
+export const AIR_RESISTANCE = 0.995;
+export const BOUNCE_FORCE = 0.22; // Reduced from 0.28 (originally 0.45)
+export const MAX_CHARGE_FORCE = 0.45; 
+export const ROTATION_SPEED = 0.006; 
+export const MAX_ROTATION_SPEED = 0.1;
+export const CRASH_ANGLE_THRESHOLD = Math.PI / 2.2; 
+export const MAX_HORIZONTAL_SPEED = 0.4; // Cap for horizontal movement
+
+// Colors
+export const COLORS = {
+    SKY: 0x202030,
+    GROUND: 0x1a1a25,
+    PLAYER_BODY: 0xff3366,
+    PLAYER_HEAD: 0xffccaa,
+    POGO_STICK: 0x888888,
+    POGO_SPRING: 0xcccccc,
+    PLATFORM: 0x444455,
+    PLATFORM_TOP: 0x555566,
+    OBSTACLE: 0xff4444,
+    COLLECTIBLE: 0xffdd00,
+    GOAL: 0x00ff88,
+    PARTICLE: 0xffffff
+};
+
+// Global Game State
+export const gameState = {
+    // Core state
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE, LEVEL_COMPLETE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2, TEST_3
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Entities and Scene
+    scene: null,
+    camera: null,
+    renderer: null,
+    gameContainer: null,
+    
+    // Game Objects
+    player: null,
+    entities: [], // Generic list for updates
+    platforms: [],
+    enemies: [],
+    collectibles: [],
+    particles: [],
+    
+    // Level State
+    score: 0,
+    currentLevel: 1,
+    levelLength: 0,
+    cameraTargetX: 0,
+    
+    // Testing state
+    testState: {
+        timer: 0,
+        stage: 0
+    }
+};
+
+// Logging System
+export const logs = {
+    game_info: [],
+    player_info: [],
+    inputs: []
+};
+
+// Expose logs and gameState globally
+window.logs = logs;
+
+export function getGameState() {
+    return gameState;
+}
+window.getGameState = getGameState;
+
+export function logGameInfo(info) {
+    logs.game_info.push({
+        ...info,
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+}
+
+export function logInput(type, key, keyCode) {
+    logs.inputs.push({
+        input_type: type,
+        data: { key, keyCode },
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+}
+</code>
+
+<code filename="entities.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, COLORS, BOUNCE_FORCE, MAX_CHARGE_FORCE, ROTATION_SPEED, MAX_ROTATION_SPEED, CRASH_ANGLE_THRESHOLD, CANVAS_WIDTH, CANVAS_HEIGHT, MAX_HORIZONTAL_SPEED } from './globals.js';
+import { checkPlatformCollisions, updatePhysics } from './physics.js';
+import { isKeyDown } from './input.js';
+import { createExplosion } from './particles.js';
+
+export class Entity {
+    constructor(x, y, z) {
+        this.position = new THREE.Vector3(x, y, z);
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        this.rotation = 0;
+        this.angularVelocity = 0;
+        this.mesh = new THREE.Group();
+        this.mesh.position.copy(this.position);
+    }
+    
+    update(deltaTime) {
+        // Base update
+    }
+}
+
+export class Player extends Entity {
+    constructor(x, y, z) {
+        super(x, y, z);
+        this.initMesh();
+        
+        this.charge = 0;
+        this.isCharging = false;
+        this.isGrounded = false;
+        this.score = 0;
+        this.health = 1; // 1 hit kill mechanic mostly, but extensible
+        
+        // Pogo specific
+        this.pogoLength = 1.5;
+        this.springCompression = 0;
+    }
+    
+    initMesh() {
+        // Create Character Group
+        
+        // Body (Cube)
+        const bodyGeo = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+        const bodyMat = new THREE.MeshStandardMaterial({ color: COLORS.PLAYER_BODY });
+        this.bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
+        this.bodyMesh.position.y = 0.5;
+        this.bodyMesh.castShadow = true;
+        this.mesh.add(this.bodyMesh);
+        
+        // Head (Sphere-ish)
+        const headGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+        const headMat = new THREE.MeshStandardMaterial({ color: COLORS.PLAYER_HEAD });
+        this.headMesh = new THREE.Mesh(headGeo, headMat);
+        this.headMesh.position.y = 1.1;
+        this.headMesh.castShadow = true;
+        this.mesh.add(this.headMesh);
+        
+        // Face features
+        const eyeGeo = new THREE.BoxGeometry(0.1, 0.1, 0.1);
+        const eyeMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+        const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+        eyeL.position.set(0.15, 1.15, 0.25);
+        const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
+        eyeR.position.set(-0.15, 1.15, 0.25);
+        this.mesh.add(eyeL);
+        this.mesh.add(eyeR);
+        
+        // Pogo Stick (Cylinder)
+        const stickGeo = new THREE.CylinderGeometry(0.05, 0.05, 1.5, 8);
+        const stickMat = new THREE.MeshStandardMaterial({ color: COLORS.POGO_STICK });
+        this.stickMesh = new THREE.Mesh(stickGeo, stickMat);
+        this.stickMesh.position.y = -0.5; // Extends down from body center
+        this.mesh.add(this.stickMesh);
+        
+        // Pogo Foot/Spring
+        const footGeo = new THREE.CylinderGeometry(0.1, 0.1, 0.3, 8);
+        const footMat = new THREE.MeshStandardMaterial({ color: COLORS.POGO_SPRING });
+        this.footMesh = new THREE.Mesh(footGeo, footMat);
+        this.footMesh.position.y = -1.25;
+        this.mesh.add(this.footMesh);
+        
+        gameState.scene.add(this.mesh);
+    }
+    
+    update(deltaTime) {
+        this.handleInput(deltaTime);
+        this.handlePhysics(deltaTime);
+        this.logData();
+        
+        // Visual updates
+        // Compress pogo stick visual if charging
+        if (this.isCharging) {
+            this.footMesh.position.y = THREE.MathUtils.lerp(this.footMesh.position.y, -0.8, 0.1);
+        } else {
+            this.footMesh.position.y = THREE.MathUtils.lerp(this.footMesh.position.y, -1.25, 0.2);
+        }
+    }
+    
+    handleInput(deltaTime) {
+        if (gameState.controlMode !== "HUMAN") {
+            this.handleAutoInput(deltaTime);
+            return;
+        }
+
+        // Rotation
+        if (isKeyDown([37, 65])) { // Left / A
+            this.angularVelocity += ROTATION_SPEED * deltaTime * 60;
+        }
+        if (isKeyDown([39, 68])) { // Right / D
+            this.angularVelocity -= ROTATION_SPEED * deltaTime * 60;
+        }
+        
+        // Charging
+        if (isKeyDown(32)) { // Space
+            this.isCharging = true;
+            this.charge = Math.min(this.charge + 0.02, 1.0);
+        } else {
+            this.isCharging = false;
+        }
+    }
+
+    handleAutoInput(deltaTime) {
+        // Automated testing logic
+        if (gameState.controlMode === "TEST_1") {
+            // Do nothing, test passive physics
+        } else if (gameState.controlMode === "TEST_2") {
+            // Win condition test
+            // Move right aggressively
+            if (this.rotation > -0.3) {
+                this.angularVelocity -= ROTATION_SPEED * deltaTime * 60;
+            } else {
+                this.angularVelocity += ROTATION_SPEED * deltaTime * 60;
+            }
+            
+            // Teleport closer to verify win trigger if taking too long
+            if (gameState.frameCount > 100 && this.position.x < 50) {
+                 this.position.x = 90; // Near goal
+                 this.velocity.x = 0;
+            }
+        } else if (gameState.controlMode === "TEST_3") {
+            // Crash test - spin left
+            this.angularVelocity += ROTATION_SPEED * 2 * deltaTime * 60;
+        }
+    }
+    
+    handlePhysics(deltaTime) {
+        // Damping rotation
+        this.angularVelocity *= 0.95;
+        this.angularVelocity = Math.max(Math.min(this.angularVelocity, MAX_ROTATION_SPEED), -MAX_ROTATION_SPEED);
+        
+        this.rotation += this.angularVelocity;
+        
+        // Basic movement physics
+        updatePhysics(this, deltaTime);
+        
+        // Clamp horizontal velocity to prevent runaway acceleration
+        if (this.velocity.x > MAX_HORIZONTAL_SPEED) this.velocity.x = MAX_HORIZONTAL_SPEED;
+        if (this.velocity.x < -MAX_HORIZONTAL_SPEED) this.velocity.x = -MAX_HORIZONTAL_SPEED;
+        
+        // Collision Detection
+        // Calculate the tip of the pogo stick in world space
+        // Stick vector relative to player center is roughly (0, -1.25, 0) rotated by Z
+        const tipOffset = new THREE.Vector3(0, -1.3, 0);
+        tipOffset.applyAxisAngle(new THREE.Vector3(0, 0, 1), this.rotation);
+        const tipPos = this.position.clone().add(tipOffset);
+        
+        // Check collisions for the tip
+        // We create a temporary small entity for the tip to reuse AABB logic or check ground plane
+        const collision = checkPlatformCollisions(this, gameState.platforms);
+        
+        if (collision) {
+            if (collision.type === 'floor') {
+                this.handleBounce(collision);
+            } else if (collision.type.includes('wall')) {
+                // Wall bounce/stop
+                this.velocity.x *= -0.5;
+                this.angularVelocity += (collision.type === 'wall_left' ? 0.1 : -0.1);
+            }
+        }
+        
+        // Check Death (Head collision)
+        // If angle is too steep and we are low
+        const headOffset = new THREE.Vector3(0, 1.0, 0);
+        headOffset.applyAxisAngle(new THREE.Vector3(0, 0, 1), this.rotation);
+        const headPos = this.position.clone().add(headOffset);
+        
+        // Simple ground plane check for death + platform check
+        if (Math.abs(this.rotation) > CRASH_ANGLE_THRESHOLD) {
+             // Check if any body part is touching a platform
+             const bodyCollision = checkPlatformCollisions(this, gameState.platforms);
+             if (bodyCollision) {
+                 this.die();
+             }
+        }
+        
+        // Out of bounds check
+        if (this.position.y < -10) {
+            this.die();
+        }
+    }
+    
+    handleBounce(collision) {
+        // Calculate bounce vector based on rotation
+        // The stick pushes along its axis
+        const axis = new THREE.Vector3(0, 1, 0);
+        axis.applyAxisAngle(new THREE.Vector3(0, 0, 1), this.rotation);
+        
+        // Force calculation
+        let force = BOUNCE_FORCE;
+        if (this.charge > 0 && !this.isCharging) { // Release charge
+            force += this.charge * (MAX_CHARGE_FORCE - BOUNCE_FORCE);
+            this.charge = 0;
+        }
+        
+        // Apply Impulse
+        // Dampen existing velocity significantly before adding new impulse to prevent infinite acceleration
+        this.velocity.x = (this.velocity.x * 0.7) + (axis.x * force * 1.2); 
+        this.velocity.y = Math.abs(axis.y * force * 1.8); // Ensure upward momentum
+        
+        // Visual feedback
+        createExplosion(collision.platform ? this.position.clone().setY(collision.y) : this.position, 5, COLORS.PARTICLE);
+        
+        // Reset vertical position to avoid sticking
+        // this.position.y = collision.y + 1.3; 
+        // Better: push out along normal
+        const penetration = (collision.y - (this.position.y - 1.3));
+        if (penetration > 0) this.position.y += penetration;
+        
+        this.isGrounded = false;
+    }
+    
+    die() {
+        if (gameState.gamePhase !== "PLAYING") return;
+        
+        console.log("Player died!");
+        createExplosion(this.position, 20, COLORS.PLAYER_BODY);
+        gameState.gamePhase = "GAME_OVER_LOSE";
+    }
+    
+    logData() {
+        if (window.logs && window.logs.player_info) {
+            const screenPos = this.position.clone().project(gameState.camera);
+            window.logs.player_info.push({
+                screen_x: (screenPos.x + 1) * CANVAS_WIDTH / 2,
+                screen_y: (1 - screenPos.y) * CANVAS_HEIGHT / 2,
+                game_x: this.position.x,
+                game_y: this.position.y,
+                game_z: this.position.z,
+                angle: this.rotation,
+                framecount: gameState.frameCount,
+                timestamp: Date.now()
+            });
+        }
+    }
+}
+
+export class Platform extends Entity {
+    constructor(x, y, z, width, height, depth, type = 'normal') {
+        super(x, y, z);
+        this.size = new THREE.Vector3(width, height, depth);
+        
+        const geometry = new THREE.BoxGeometry(width, height, depth);
+        let color = COLORS.PLATFORM;
+        if (type === 'goal') color = COLORS.GOAL;
+        if (type === 'hazard') color = COLORS.OBSTACLE;
+        
+        const material = new THREE.MeshStandardMaterial({ 
+            color: color,
+            roughness: 0.8 
+        });
+        
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.set(x, y, z);
+        this.mesh.receiveShadow = true;
+        this.mesh.castShadow = true;
+        
+        this.type = type;
+        
+        gameState.scene.add(this.mesh);
+        gameState.platforms.push(this); // Add to global platforms list for physics
+    }
+    
+    update(deltaTime) {
+        if (this.type === 'goal') {
+            // Rotate goal or visual effect
+            this.mesh.rotation.y += deltaTime;
+            
+            // Check win
+            if (gameState.player) {
+                const dist = this.position.distanceTo(gameState.player.position);
+                if (dist < 2.0) {
+                    // Level Complete logic
+                    if (gameState.gamePhase === "PLAYING") {
+                        gameState.gamePhase = "LEVEL_COMPLETE";
+                        createExplosion(this.position, 30, COLORS.GOAL);
+                    }
+                }
+            }
+        }
+    }
+}
+
+export class Collectible extends Entity {
+    constructor(x, y, z) {
+        super(x, y, z);
+        const geometry = new THREE.OctahedronGeometry(0.3);
+        const material = new THREE.MeshStandardMaterial({ 
+            color: COLORS.COLLECTIBLE,
+            emissive: COLORS.COLLECTIBLE,
+            emissiveIntensity: 0.5
+        });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.set(x, y, z);
+        
+        this.initialY = y;
+        this.timer = Math.random() * Math.PI * 2;
+        
+        gameState.scene.add(this.mesh);
+        gameState.collectibles.push(this);
+    }
+    
+    update(deltaTime) {
+        this.mesh.rotation.y += 2 * deltaTime;
+        this.timer += deltaTime * 2;
+        this.mesh.position.y = this.initialY + Math.sin(this.timer) * 0.2;
+        
+        // Collection logic
+        if (gameState.player) {
+            const dist = this.mesh.position.distanceTo(gameState.player.position);
+            if (dist < 1.0) {
+                this.collect();
+            }
+        }
+    }
+    
+    collect() {
+        gameState.score += 100;
+        createExplosion(this.position, 5, COLORS.COLLECTIBLE);
+        this.dispose();
+    }
+    
+    dispose() {
+        gameState.scene.remove(this.mesh);
+        gameState.collectibles = gameState.collectibles.filter(c => c !== this);
+    }
+}
+</code>
+
+<code filename="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+let uiContext = null;
+
+export function setupUI() {
+    const uiCanvas = document.createElement('canvas');
+    uiCanvas.width = CANVAS_WIDTH;
+    uiCanvas.height = CANVAS_HEIGHT;
+    uiCanvas.style.position = 'absolute';
+    uiCanvas.style.top = '0';
+    uiCanvas.style.left = '0';
+    uiCanvas.style.pointerEvents = 'none';
+    uiCanvas.style.zIndex = '100';
+    
+    if (gameState.gameContainer) {
+        gameState.gameContainer.appendChild(uiCanvas);
+    }
+    
+    uiContext = uiCanvas.getContext('2d');
+}
+
+export function renderUI() {
+    if (!uiContext) return;
+    
+    // Clear
+    uiContext.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    const phase = gameState.gamePhase;
+    
+    // Common HUD
+    if (phase !== "START") {
+        uiContext.fillStyle = "white";
+        uiContext.font = "16px monospace";
+        uiContext.textAlign = "left";
+        uiContext.fillText(`SCORE: ${gameState.score}`, 20, 30);
+        uiContext.fillText(`LEVEL: ${gameState.currentLevel}`, 20, 50);
+        
+        if (gameState.player) {
+             // Charge bar
+             const charge = gameState.player.charge || 0;
+             uiContext.fillStyle = "#333";
+             uiContext.fillRect(20, 70, 100, 10);
+             uiContext.fillStyle = "#0f0";
+             uiContext.fillRect(20, 70, 100 * charge, 10);
+        }
+    }
+    
+    if (phase === "START") {
+        renderOverlay("POGO PUNK 3D", "PRESS ENTER TO START", "ARROWS to lean, SPACE to charge jump");
+    } else if (phase === "PAUSED") {
+        renderOverlay("PAUSED", "PRESS ESC TO RESUME");
+    } else if (phase === "GAME_OVER_WIN") {
+        renderOverlay("ALL CLEARED!", `FINAL SCORE: ${gameState.score}`, "PRESS R TO RESTART", "#0f0");
+    } else if (phase === "GAME_OVER_LOSE") {
+        renderOverlay("CRASHED!", "WATCH YOUR HEAD", "PRESS R TO TRY AGAIN", "#f00");
+    } else if (phase === "LEVEL_COMPLETE") {
+        renderOverlay("LEVEL COMPLETE!", `SCORE: ${gameState.score}`, "PRESS ENTER FOR NEXT LEVEL", "#0f0");
+    }
+}
+
+function renderOverlay(title, subtitle, info, titleColor = "white") {
+    uiContext.fillStyle = "rgba(0, 0, 0, 0.7)";
+    uiContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    uiContext.textAlign = "center";
+    
+    // Title
+    uiContext.fillStyle = titleColor;
+    uiContext.font = "bold 40px monospace";
+    uiContext.fillText(title, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+    
+    // Subtitle
+    uiContext.fillStyle = "white";
+    uiContext.font = "bold 20px monospace";
+    uiContext.fillText(subtitle, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 10);
+    
+    // Info
+    if (info) {
+        uiContext.font = "14px monospace";
+        uiContext.fillStyle = "#aaa";
+        uiContext.fillText(info, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 50);
+    }
+}
+</code>
+
+<code filename="input.js">
+import { gameState, logInput, logGameInfo } from './globals.js';
+
+const keys = {};
+
+export function setupInputs() {
+    document.addEventListener('keydown', (e) => {
+        if (keys[e.keyCode]) return; // Prevent repeat
+        keys[e.keyCode] = true;
+        logInput('keydown', e.key, e.keyCode);
+        handleGlobalKeys(e.keyCode);
+    });
+
+    document.addEventListener('keyup', (e) => {
+        keys[e.keyCode] = false;
+        logInput('keyup', e.key, e.keyCode);
+    });
+    
+    // Expose control mode setter for tests
+    window.setControlMode = (mode) => {
+        gameState.controlMode = mode;
+        console.log(`Control mode set to: ${mode}`);
+        logGameInfo({ action: "CONTROL_MODE_CHANGE", mode: mode });
+    };
+}
+
+function handleGlobalKeys(keyCode) {
+    // ENTER (13) - Start Game / Next Level
+    if (keyCode === 13) {
+        if (gameState.gamePhase === "START") {
+            startGame();
+        } else if (gameState.gamePhase === "LEVEL_COMPLETE") {
+            nextLevel();
+        }
+    }
+
+    // ESC (27) - Pause
+    if (keyCode === 27) {
+        if (gameState.gamePhase === "PLAYING") {
+            gameState.gamePhase = "PAUSED";
+            logGameInfo({ action: "PAUSE" });
+        } else if (gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = "PLAYING";
+            logGameInfo({ action: "RESUME" });
+        }
+    }
+
+    // R (82) - Restart
+    if (keyCode === 82) {
+        if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+            resetGame();
+        }
+    }
+}
+
+export function isKeyDown(keyCode) {
+    // Helper to check multiple keys for same action (e.g., ArrowLeft or A)
+    if (Array.isArray(keyCode)) {
+        return keyCode.some(code => keys[code]);
+    }
+    return !!keys[keyCode];
+}
+
+import { setupLevel } from './world.js';
+import { Player } from './entities.js';
+
+export function startGame() {
+    gameState.gamePhase = "PLAYING";
+    
+    // Clear old entities
+    clearEntities();
+    
+    // Setup Level
+    setupLevel(gameState.currentLevel);
+    
+    // Create Player if not exists (setupLevel handles platforms)
+    gameState.player = new Player(0, 5, 0);
+    gameState.entities.push(gameState.player);
+    
+    logGameInfo({ action: "GAME_START", level: gameState.currentLevel });
+}
+
+export function nextLevel() {
+    gameState.currentLevel++;
+    startGame();
+}
+
+export function resetGame() {
+    // If we were at "GAME_OVER_LOSE", we restart the current level
+    // If "GAME_OVER_WIN" (all levels done?), we might want to reset to level 1
+    if (gameState.gamePhase === "GAME_OVER_WIN") {
+        gameState.currentLevel = 1;
+        gameState.score = 0;
+        gameState.gamePhase = "START";
+    } else {
+        // Just restart current level
+        // Reset score for level? Or keep? Usually keep score but restart level.
+        // For simplicity, we keep score.
+    }
+    
+    // Actually, let's just go to START if it was a full game over, or restart level if died.
+    // The prompt implies "Try Again" on lose.
+    if (gameState.gamePhase === "GAME_OVER_LOSE") {
+        startGame(); // Restart current level
+    } else {
+        gameState.gamePhase = "START";
+        gameState.score = 0;
+        gameState.currentLevel = 1;
+    }
+    
+    gameState.frameCount = 0;
+    
+    // Reset camera if needed (startGame handles this implicitly by recreating player)
+    
+    logGameInfo({ action: "RESET" });
+}
+
+function clearEntities() {
+    // Remove meshes from scene
+    [...gameState.entities, ...gameState.platforms, ...gameState.enemies, ...gameState.collectibles, ...gameState.particles].forEach(e => {
+        if (e.mesh) gameState.scene.remove(e.mesh);
+        if (e.dispose) e.dispose();
+    });
+    
+    if (gameState.player && gameState.player.mesh) {
+        gameState.scene.remove(gameState.player.mesh);
+    }
+
+    gameState.entities = [];
+    gameState.platforms = [];
+    gameState.enemies = [];
+    gameState.collectibles = [];
+    gameState.particles = [];
+    gameState.player = null;
+}
+</code>
+
+<code filename="world.js">
+import { Platform, Collectible } from './entities.js';
+import { gameState, COLORS } from './globals.js';
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+export function setupLevel(levelIndex) {
+    // Basic ground
+    // Start platform
+    new Platform(0, -1, 0, 10, 2, 5);
+    
+    // Procedurally generate a track
+    let currentX = 5;
+    let currentY = -1;
+    
+    const seededRandom = new Math.seedrandom(`level_${levelIndex}`);
+    
+    // Increase length slightly with level
+    const length = 20 + Math.min(30, levelIndex * 2);
+    
+    for (let i = 0; i < length; i++) {
+        // Difficulty scaling
+        const difficulty = Math.min(1.0, levelIndex * 0.1);
+        
+        // Reduced gap size and increased platform width for better playability
+        // Scale gap with difficulty
+        const gap = (1.5 + seededRandom() * 2.0) * (1 + difficulty * 0.2); 
+        const width = Math.max(3.0, (4.5 + seededRandom() * 4.0) - difficulty);
+        const heightChange = (seededRandom() - 0.5) * (4 + difficulty * 2);
+        
+        currentX += gap + width / 2;
+        currentY += heightChange;
+        
+        // Clamp Y
+        currentY = Math.max(-5, Math.min(5, currentY));
+        
+        new Platform(currentX, currentY, 0, width, 2, 4);
+        
+        // Add collectibles
+        if (seededRandom() > 0.3) {
+            new Collectible(currentX, currentY + 2.5, 0);
+        }
+        
+        // Add hazards
+        // Increase hazard chance with difficulty
+        if (i > 5 && seededRandom() > (0.7 - difficulty * 0.2)) {
+            // Spikes or blocking block
+             new Platform(currentX, currentY + 1.5, 0, 0.5, 1, 4, 'hazard');
+        }
+        
+        currentX += width / 2;
+    }
+    
+    // Goal Platform
+    currentX += 5;
+    new Platform(currentX, currentY, 0, 6, 2, 6, 'goal');
+    
+    // Background decoration (far away static meshes)
+    for(let i=0; i<10 + levelIndex; i++) {
+        const bgGeo = new THREE.BoxGeometry(2, 10 + Math.random() * 20, 2);
+        const bgMat = new THREE.MeshStandardMaterial({ color: 0x111122 });
+        const bg = new THREE.Mesh(bgGeo, bgMat);
+        bg.position.set(i * 15 - 20, -10, -15);
+        gameState.scene.add(bg);
+        gameState.entities.push({ mesh: bg, update: () => {} }); // Passive entity
+    }
+}
+</code>

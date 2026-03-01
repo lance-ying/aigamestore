@@ -1,0 +1,1051 @@
+
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>RED HOT VENGEANCE - Web Edition</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #111; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; color: #fff; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+      
+      #main-wrapper {
+        text-align: center;
+        width: 600px;
+      }
+      
+      h1 { color: #ff3333; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 10px; font-size: 24px; text-shadow: 2px 2px 0px #000; }
+      
+      #game-container {
+        width: 600px;
+        height: 400px;
+        box-shadow: 0 0 20px rgba(255, 0, 0, 0.2);
+        border: 2px solid #333;
+        margin: 0 auto;
+        position: relative;
+        background: #000;
+      }
+      
+      .controls-info {
+        margin-top: 15px;
+        font-size: 12px;
+        color: #888;
+        background: #222;
+        padding: 10px;
+        border-radius: 4px;
+        text-align: left;
+      }
+      
+      .controls-info span { color: #ccc; font-weight: bold; }
+      
+      .btn-group { margin-bottom: 10px; }
+      button {
+        background: #333; color: #fff; border: 1px solid #555; padding: 5px 10px; cursor: pointer; font-size: 12px;
+        transition: all 0.2s;
+      }
+      button:hover { background: #555; border-color: #777; }
+      button.active { background: #ff3333; border-color: #ff0000; color: #000; font-weight: bold; }
+    </style>
+  </head>
+  <body>
+    <div id="main-wrapper">
+      <h1>Red Hot Vengeance</h1>
+      
+      <div class="btn-group">
+        <button onclick="window.setControlMode('HUMAN')" class="active">Human Mode</button>
+        <button onclick="window.setControlMode('TEST_1')">Test Physics</button>
+        <button onclick="window.setControlMode('TEST_2')">Test Win</button>
+      </div>
+
+      <!-- Game Container -->
+      <div id="game-container"></div>
+      
+      <div class="controls-info">
+        <div><span>WASD</span> Move | <span>ARROWS</span> Shoot | <span>Z</span> Switch Weapon</div>
+        <div><span>SPACE</span> Dash | <span>ESC</span> Pause | <span>R</span> Restart</div>
+        <div>Kill all enemies to progress. Watch your health.</div>
+      </div>
+    </div>
+
+    <!-- Dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/seedrandom@3.0.5/seedrandom.min.js"></script>
+    
+    <!-- Game Module -->
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</code><analysis>
+- Issue identified: The game currently has only 2 levels, fixed weapons, slow dash cooldown, and static colors. The user requested more content (levels, weapons), better dash mechanics, and visual variety.
+- Files affected: `globals.js`, `game.js`, `entities.js`, `level.js`, `index.html`.
+- Changes needed:
+    1.  `globals.js`: Reduce `PLAYER_DASH_COOLDOWN` to 0.3s.
+    2.  `entities.js`: Update `Player` to support weapon swapping (Pistol, Shotgun, Rifle) with different firing behaviors. Update `Projectile` to accept damage values. Update `Enemy` to match new Projectile signature.
+    3.  `level.js`: Implement 5 new levels (total 7) with progressive difficulty. Add logic to change scene background and floor color per level.
+    4.  `game.js`: Update the win condition to trigger after level 7 instead of level 2.
+    5.  `index.html`: Update control instructions to include 'Z' for weapon switching.
+</analysis>
+
+<code filename="globals.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+// Game Configuration
+export const CONFIG = {
+    PLAYER_SPEED: 0.15,
+    PLAYER_DASH_SPEED: 0.5, // Slightly faster dash
+    PLAYER_DASH_DURATION: 0.2, // seconds
+    PLAYER_DASH_COOLDOWN: 0.3, // Reduced from 1.0 for "dash more"
+    PLAYER_MAX_HEALTH: 100,
+    CAMERA_HEIGHT: 20,
+    CAMERA_OFFSET_Z: 10, // Slight tilt
+    GRAVITY: -0.5,
+    TILE_SIZE: 4,
+    COLORS: {
+        PLAYER: 0x00FFFF, // Cyan
+        ENEMY: 0xFF0000,  // Red
+        WALL: 0x222222,   // Dark Grey
+        FLOOR: 0x111111,  // Almost Black
+        PROJECTILE: 0xFFD700, // Gold
+        BLOOD: 0x880000,  // Dark Red
+        AMMO: 0x00FF00,   // Green
+        HEALTH: 0xFF00FF  // Magenta
+    }
+};
+
+// Global Game State
+export const gameState = {
+    // Phase
+    gamePhase: "START", // START, PLAYING, PAUSED, LEVEL_COMPLETE, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2...
+    
+    // Core Three.js
+    scene: null,
+    camera: null,
+    renderer: null,
+    gameContainer: null,
+    
+    // Systems
+    clock: new THREE.Clock(),
+    frameCount: 0,
+    deltaTime: 0,
+    timestamp: 0,
+    
+    // Level
+    currentLevel: 1,
+    score: 0,
+    
+    // Entity Lists
+    entities: [],
+    enemies: [],
+    projectiles: [],
+    particles: [],
+    pickups: [],
+    walls: [], // Static physics geometry
+    
+    // References
+    player: null,
+    cameraTarget: new THREE.Vector3(),
+    mousePos: new THREE.Vector3(), // Not used for control, but maybe for debugging
+    
+    // Lighting
+    lights: [],
+    
+    // Input State (Keyboard only)
+    input: {
+        up: false,
+        down: false,
+        left: false,
+        right: false,
+        shootUp: false,
+        shootDown: false,
+        shootLeft: false,
+        shootRight: false,
+        dash: false,
+        reload: false,
+        swap: false,
+        walk: false,
+        enter: false,
+        esc: false,
+        restart: false
+    }
+};
+
+// Expose gameState globally
+window.getGameState = () => gameState;
+
+// Logging
+export const logs = {
+    game_info: [],
+    player_info: [],
+    inputs: []
+};
+window.logs = logs;
+
+export function logGameEvent(type, data) {
+    logs.game_info.push({
+        type: type,
+        data: data,
+        frame: gameState.frameCount,
+        time: Date.now()
+    });
+}
+</code>
+
+<code filename="game.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CONFIG, CANVAS_WIDTH, CANVAS_HEIGHT, logs, logGameEvent } from './globals.js';
+import { setupInput } from './input.js';
+import { setupLighting, updateLighting } from './lighting.js';
+import { loadLevel } from './level.js';
+import { setupUI, renderUI } from './ui.js';
+import { initParticles, updateParticles } from './particles.js';
+import { setSeed } from './utils.js';
+
+function init() {
+    // 1. Setup Scene
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x050505);
+    gameState.scene = scene;
+    
+    // 2. Setup Camera
+    const camera = new THREE.PerspectiveCamera(45, CANVAS_WIDTH / CANVAS_HEIGHT, 1, 100);
+    camera.position.set(0, CONFIG.CAMERA_HEIGHT, CONFIG.CAMERA_OFFSET_Z);
+    camera.lookAt(0, 0, 0);
+    gameState.camera = camera;
+    
+    // 3. Setup Renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+    renderer.shadowMap.enabled = true;
+    gameState.renderer = renderer;
+    
+    // Container
+    const container = document.getElementById('game-container') || document.body;
+    if (container.id !== 'game-container') {
+        const newContainer = document.createElement('div');
+        newContainer.id = 'game-container';
+        newContainer.style.position = 'relative';
+        newContainer.style.width = `${CANVAS_WIDTH}px`;
+        newContainer.style.height = `${CANVAS_HEIGHT}px`;
+        newContainer.style.overflow = 'hidden';
+        document.body.appendChild(newContainer);
+        newContainer.appendChild(renderer.domElement);
+        gameState.gameContainer = newContainer;
+    } else {
+        gameState.gameContainer = container;
+        container.appendChild(renderer.domElement);
+    }
+    
+    // 4. Subsystems
+    setupInput();
+    setupLighting();
+    setupUI();
+    initParticles();
+    
+    // 5. Initial State
+    setSeed('42');
+    
+    // Start Loop
+    gameState.clock.start();
+    requestAnimationFrame(gameLoop);
+}
+
+function gameLoop() {
+    requestAnimationFrame(gameLoop);
+    
+    const dt = gameState.clock.getDelta();
+    gameState.deltaTime = dt;
+    gameState.frameCount++;
+    
+    update(dt);
+    render();
+}
+
+function update(dt) {
+    if (gameState.input.restart) {
+        restartGame();
+        gameState.input.restart = false;
+    }
+
+    if (gameState.gamePhase === "PLAYING") {
+        // --- GAMEPLAY LOGIC ---
+        
+        // Entities
+        if (gameState.player) gameState.player.update(dt);
+        gameState.enemies.forEach(e => e.update(dt));
+        gameState.projectiles.forEach(p => p.update(dt));
+        
+        // Particles
+        updateParticles(dt);
+        
+        // Lighting follows player
+        updateLighting();
+        
+        // Camera Follow
+        if (gameState.player) {
+            const targetPos = new THREE.Vector3(
+                gameState.player.mesh.position.x,
+                CONFIG.CAMERA_HEIGHT,
+                gameState.player.mesh.position.z + CONFIG.CAMERA_OFFSET_Z
+            );
+            gameState.camera.position.lerp(targetPos, 0.1); // Smooth follow
+        }
+        
+        // Win Condition - Updated for 7 levels
+        if (gameState.enemies.length === 0 && gameState.currentLevel <= 7) {
+            // Level Clear
+            logGameEvent('LEVEL_CLEAR', { level: gameState.currentLevel });
+            gameState.currentLevel++;
+            if (gameState.currentLevel > 7) {
+                gameState.gamePhase = "GAME_OVER_WIN";
+            } else {
+                loadLevel(gameState.currentLevel);
+            }
+        }
+        
+        // Testing Hooks
+        if (gameState.controlMode === 'TEST_1') {
+            // Simulate random movement
+            gameState.player.velocity.set(1, 0, 0);
+        }
+    }
+    
+    // Start game trigger from logic if needed (handled in input usually)
+    if (gameState.gamePhase === "PLAYING" && gameState.entities.length === 0) {
+        // First load
+        loadLevel(1);
+    }
+    
+    renderUI();
+}
+
+function render() {
+    gameState.renderer.render(gameState.scene, gameState.camera);
+}
+
+function restartGame() {
+    gameState.score = 0;
+    gameState.currentLevel = 1;
+    gameState.gamePhase = "PLAYING";
+    loadLevel(1);
+    logGameEvent('RESTART', {});
+}
+
+// Global hook for controls
+window.setControlMode = (mode) => {
+    gameState.controlMode = mode;
+    console.log(`Control Mode set to: ${mode}`);
+    // If TEST_2 (Win Test), kill all enemies
+    if (mode === 'TEST_2') {
+        gameState.enemies.forEach(e => e.die());
+    }
+};
+
+// Start
+init();
+</code>
+
+<code filename="entities.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CONFIG, logGameEvent } from './globals.js';
+import { getInputVector, getShootVector } from './input.js';
+import { PhysicsSystem } from './physics.js';
+import { spawnParticles } from './particles.js';
+import { raycastScene, randomRange } from './utils.js';
+
+class Entity {
+    constructor(x, y, z) {
+        this.mesh = new THREE.Group();
+        this.mesh.position.set(x, y, z);
+        this.velocity = new THREE.Vector3();
+        this.isDead = false;
+        this.radius = 0.5;
+        gameState.scene.add(this.mesh);
+    }
+    
+    update(dt) {
+        // Base physics integration
+        this.mesh.position.add(this.velocity.clone().multiplyScalar(dt));
+    }
+
+    takeDamage(amount) {
+        // Implementation in subclasses
+    }
+    
+    destroy() {
+        this.isDead = true;
+        gameState.scene.remove(this.mesh);
+    }
+}
+
+export class Player extends Entity {
+    constructor(x, z) {
+        super(x, 1, z);
+        
+        // Body
+        const geometry = new THREE.BoxGeometry(0.8, 1.8, 0.8);
+        const material = new THREE.MeshStandardMaterial({ 
+            color: CONFIG.COLORS.PLAYER, 
+            roughness: 0.2,
+            metalness: 0.5 
+        });
+        this.bodyMesh = new THREE.Mesh(geometry, material);
+        this.bodyMesh.castShadow = true;
+        this.bodyMesh.position.y = 0; // Center pivot
+        this.mesh.add(this.bodyMesh);
+        
+        // Stats
+        this.health = CONFIG.PLAYER_MAX_HEALTH;
+        this.speed = CONFIG.PLAYER_SPEED;
+        
+        // State
+        this.isDashing = false;
+        this.dashTimer = 0;
+        this.dashCooldownTimer = 0;
+        
+        // Weapons
+        this.weapons = ['PISTOL', 'SHOTGUN', 'RIFLE'];
+        this.weaponIndex = 0;
+        this.currentWeapon = this.weapons[0];
+        this.weaponCooldown = 0;
+        this.swapCooldown = 0;
+        
+        this.radius = 0.4;
+    }
+    
+    update(dt) {
+        if (this.isDead) return;
+
+        // --- DASH LOGIC ---
+        if (this.isDashing) {
+            this.dashTimer -= dt;
+            if (this.dashTimer <= 0) {
+                this.isDashing = false;
+                this.dashCooldownTimer = CONFIG.PLAYER_DASH_COOLDOWN;
+            }
+            // Continue movement at high speed
+            super.update(dt * 3); 
+            PhysicsSystem.resolveCollision(this);
+            return; // Skip normal input
+        }
+
+        if (this.dashCooldownTimer > 0) this.dashCooldownTimer -= dt;
+
+        // --- WEAPON SWAP ---
+        if (this.swapCooldown > 0) this.swapCooldown -= dt;
+        if (gameState.input.swap && this.swapCooldown <= 0) {
+            this.weaponIndex = (this.weaponIndex + 1) % this.weapons.length;
+            this.currentWeapon = this.weapons[this.weaponIndex];
+            this.swapCooldown = 0.3; // Prevent rapid cycling
+            logGameEvent('WEAPON_SWAP', { weapon: this.currentWeapon });
+        }
+
+        // --- MOVEMENT ---
+        const inputVec = getInputVector();
+        const moveDir = new THREE.Vector3(inputVec.x, 0, inputVec.z).normalize();
+        
+        let currentSpeed = this.speed;
+        if (gameState.input.walk) currentSpeed *= 0.5;
+        
+        // Dash Activation
+        if (gameState.input.dash && this.dashCooldownTimer <= 0 && moveDir.length() > 0) {
+            this.isDashing = true;
+            this.dashTimer = CONFIG.PLAYER_DASH_DURATION;
+            this.velocity.copy(moveDir).multiplyScalar(CONFIG.PLAYER_DASH_SPEED * 60); 
+        }
+
+        // Apply Movement (Acceleration/Friction model)
+        const targetVel = moveDir.multiplyScalar(10); // 10 units/sec walking speed approx
+        
+        // Instant response for tight controls
+        this.velocity.x = targetVel.x;
+        this.velocity.z = targetVel.z;
+        
+        super.update(dt);
+        PhysicsSystem.resolveCollision(this);
+        
+        // --- SHOOTING ---
+        if (this.weaponCooldown > 0) this.weaponCooldown -= dt;
+        
+        const shootVec = getShootVector();
+        const shootDir = new THREE.Vector3(shootVec.x, 0, shootVec.z);
+        
+        if (shootDir.lengthSq() > 0.1) {
+            shootDir.normalize();
+            // Face shooting direction
+            const angle = Math.atan2(shootDir.x, shootDir.z);
+            this.mesh.rotation.y = angle;
+            
+            if (this.weaponCooldown <= 0) {
+                this.fireWeapon(shootDir);
+            }
+        } else if (moveDir.lengthSq() > 0.1) {
+            // Face movement if not shooting
+            const angle = Math.atan2(moveDir.x, moveDir.z);
+            this.mesh.rotation.y = angle;
+        }
+
+        // Logging position for testing
+        if (gameState.frameCount % 60 === 0) {
+            logGameEvent('PLAYER_POS', { x: this.mesh.position.x, z: this.mesh.position.z });
+        }
+    }
+    
+    fireWeapon(direction) {
+        const pos = this.mesh.position.clone().add(direction.clone().multiplyScalar(0.6));
+        
+        if (this.currentWeapon === 'PISTOL') {
+            const p = new Projectile(pos, direction, 'PLAYER', 15);
+            gameState.projectiles.push(p);
+            this.weaponCooldown = 0.25;
+            
+        } else if (this.currentWeapon === 'SHOTGUN') {
+            // Fire 5 pellets
+            for (let i = 0; i < 5; i++) {
+                const spreadAngle = randomRange(-0.2, 0.2);
+                // Rotate direction around Y axis
+                const spreadDir = direction.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), spreadAngle);
+                const p = new Projectile(pos, spreadDir, 'PLAYER', 8);
+                p.lifeTime = 0.6; // Short range
+                gameState.projectiles.push(p);
+            }
+            this.weaponCooldown = 0.8;
+            
+        } else if (this.currentWeapon === 'RIFLE') {
+            const p = new Projectile(pos, direction, 'PLAYER', 10);
+            p.speed = 30; // Faster bullets
+            p.velocity.copy(p.direction).multiplyScalar(p.speed);
+            gameState.projectiles.push(p);
+            this.weaponCooldown = 0.1;
+        }
+    }
+
+    takeDamage(amount) {
+        if (this.isDashing || this.isDead) return;
+        
+        this.health -= amount;
+        spawnParticles(this.mesh.position, 'BLOOD', 3);
+        
+        if (this.health <= 0) {
+            this.health = 0;
+            this.die();
+        }
+    }
+    
+    die() {
+        this.isDead = true;
+        this.mesh.visible = false;
+        spawnParticles(this.mesh.position, 'BLOOD', 20);
+        logGameEvent('PLAYER_DEATH', {});
+        gameState.gamePhase = "GAME_OVER_LOSE";
+    }
+}
+
+export class Enemy extends Entity {
+    constructor(x, z, type = 'GRUNT') {
+        super(x, 1, z);
+        this.type = type; // GRUNT (Melee), SHOOTER (Ranged)
+        
+        const color = type === 'GRUNT' ? 0xCC0000 : 0xFF4400;
+        const geo = new THREE.BoxGeometry(0.8, 1.8, 0.8);
+        const mat = new THREE.MeshStandardMaterial({ color: color });
+        this.bodyMesh = new THREE.Mesh(geo, mat);
+        this.bodyMesh.castShadow = true;
+        this.mesh.add(this.bodyMesh);
+        
+        this.health = 30;
+        this.state = 'IDLE'; // IDLE, CHASE, ATTACK, SEARCH
+        this.stateTimer = 0;
+        this.attackCooldown = 0;
+        this.detectionRange = 15;
+        this.attackRange = type === 'GRUNT' ? 1.5 : 10;
+        
+        this.navDir = new THREE.Vector3();
+    }
+    
+    update(dt) {
+        if (this.isDead || !gameState.player) return;
+
+        if (this.attackCooldown > 0) this.attackCooldown -= dt;
+
+        const distToPlayer = this.mesh.position.distanceTo(gameState.player.mesh.position);
+        
+        // AI State Machine
+        switch (this.state) {
+            case 'IDLE':
+                if (distToPlayer < this.detectionRange) {
+                    // Check Line of Sight
+                    const dirToPlayer = new THREE.Vector3().subVectors(gameState.player.mesh.position, this.mesh.position).normalize();
+                    const hit = raycastScene(this.mesh.position, dirToPlayer, this.detectionRange, [this]);
+                    
+                    if (hit && hit.type === 'PLAYER') {
+                        this.state = 'CHASE';
+                        logGameEvent('ENEMY_ALERT', { id: this.mesh.id });
+                    }
+                }
+                break;
+                
+            case 'CHASE':
+                if (distToPlayer > this.detectionRange * 1.5) {
+                    this.state = 'IDLE';
+                } else if (distToPlayer <= this.attackRange) {
+                    // Check LoS again before attacking
+                    const dir = new THREE.Vector3().subVectors(gameState.player.mesh.position, this.mesh.position).normalize();
+                    const hit = raycastScene(this.mesh.position, dir, this.attackRange, [this]);
+                    if (hit && hit.type === 'PLAYER') {
+                        this.state = 'ATTACK';
+                    } else {
+                        // Move to sight
+                        this.moveToPlayer(dt);
+                    }
+                } else {
+                    this.moveToPlayer(dt);
+                }
+                break;
+                
+            case 'ATTACK':
+                if (distToPlayer > this.attackRange + 1) {
+                    this.state = 'CHASE';
+                } else {
+                    // Face player
+                    this.mesh.lookAt(gameState.player.mesh.position.x, this.mesh.position.y, gameState.player.mesh.position.z);
+                    
+                    if (this.attackCooldown <= 0) {
+                        this.performAttack();
+                        this.attackCooldown = this.type === 'GRUNT' ? 1.0 : 2.0;
+                    }
+                }
+                break;
+        }
+        
+        super.update(dt);
+        PhysicsSystem.resolveCollision(this);
+    }
+    
+    moveToPlayer(dt) {
+        const dir = new THREE.Vector3().subVectors(gameState.player.mesh.position, this.mesh.position).normalize();
+        this.mesh.lookAt(gameState.player.mesh.position.x, this.mesh.position.y, gameState.player.mesh.position.z);
+        
+        const speed = this.type === 'GRUNT' ? 6 : 4; // Units per sec
+        
+        this.velocity.copy(dir).multiplyScalar(speed);
+        
+        // Very basic avoidance (if hitting wall, stop)
+        // Handled by PhysicsSystem.resolveCollision call in update
+    }
+    
+    performAttack() {
+        if (this.type === 'GRUNT') {
+            // Melee Hit
+            if (this.mesh.position.distanceTo(gameState.player.mesh.position) < 2.0) {
+                gameState.player.takeDamage(10);
+            }
+        } else {
+            // Shoot
+            const dir = new THREE.Vector3().subVectors(gameState.player.mesh.position, this.mesh.position).normalize();
+            const p = new Projectile(
+                this.mesh.position.clone().add(dir.multiplyScalar(0.6)),
+                dir,
+                'ENEMY',
+                10 // Damage
+            );
+            gameState.projectiles.push(p);
+        }
+    }
+    
+    takeDamage(amount) {
+        if (this.isDead) return;
+        this.health -= amount;
+        this.state = 'CHASE'; // Alert on damage
+        spawnParticles(this.mesh.position, 'BLOOD', 3);
+        
+        // Knockback
+        // this.velocity.add(dir.multiplyScalar(5)); // Need source dir
+        
+        if (this.health <= 0) {
+            this.die();
+        }
+    }
+    
+    die() {
+        this.isDead = true;
+        gameState.scene.remove(this.mesh);
+        spawnParticles(this.mesh.position, 'BLOOD', 15);
+        gameState.score += 100;
+        
+        // Remove from list
+        const idx = gameState.enemies.indexOf(this);
+        if (idx > -1) gameState.enemies.splice(idx, 1);
+        
+        logGameEvent('ENEMY_KILLED', { remaining: gameState.enemies.length });
+    }
+}
+
+export class Projectile extends Entity {
+    constructor(pos, dir, ownerType, damage = 10) {
+        super(pos.x, pos.y, pos.z);
+        
+        const geo = new THREE.SphereGeometry(0.2, 8, 8);
+        const mat = new THREE.MeshBasicMaterial({ color: CONFIG.COLORS.PROJECTILE });
+        this.mesh = new THREE.Mesh(geo, mat);
+        this.mesh.position.copy(pos);
+        gameState.scene.add(this.mesh); // Re-add specific mesh
+        
+        this.direction = dir.normalize();
+        this.speed = 20; // Fast
+        this.ownerType = ownerType; // PLAYER or ENEMY
+        this.damage = damage;
+        this.lifeTime = 2.0;
+        
+        // Correct velocity setup
+        this.velocity.copy(this.direction).multiplyScalar(this.speed);
+    }
+    
+    update(dt) {
+        this.lifeTime -= dt;
+        if (this.lifeTime <= 0) {
+            this.destroy();
+            return;
+        }
+        
+        // Move manually to check collision raycast style for high speed?
+        // For now, simple movement step + collision check
+        const nextPos = this.mesh.position.clone().add(this.velocity.clone().multiplyScalar(dt));
+        
+        // Collision Detection
+        const hitData = PhysicsSystem.checkProjectileCollisions(this);
+        if (hitData.hit) {
+            this.handleHit(hitData);
+            return; // Stop moving
+        }
+        
+        this.mesh.position.copy(nextPos);
+    }
+    
+    handleHit(data) {
+        if (data.type === 'WALL') {
+            spawnParticles(this.mesh.position, 'WALL_HIT', 5);
+        } else if (data.type === 'ENTITY') {
+            data.object.takeDamage(this.damage);
+        }
+        this.destroy();
+    }
+    
+    destroy() {
+        if (this.isDead) return;
+        this.isDead = true;
+        gameState.scene.remove(this.mesh);
+        
+        const idx = gameState.projectiles.indexOf(this);
+        if (idx > -1) gameState.projectiles.splice(idx, 1);
+    }
+}
+
+export class Wall {
+    constructor(x, z, width, depth) {
+        this.width = width;
+        this.depth = depth;
+        
+        const h = 3;
+        const geo = new THREE.BoxGeometry(width, h, depth);
+        const mat = new THREE.MeshStandardMaterial({ 
+            color: CONFIG.COLORS.WALL,
+            roughness: 0.8
+        });
+        this.mesh = new THREE.Mesh(geo, mat);
+        this.mesh.position.set(x, h/2, z);
+        this.mesh.castShadow = true;
+        this.mesh.receiveShadow = true;
+        
+        gameState.scene.add(this.mesh);
+        
+        // Physics Box
+        this.boundingBox = new THREE.Box3().setFromObject(this.mesh);
+        gameState.walls.push(this);
+    }
+}
+</code>
+
+<code filename="level.js">
+import { Wall, Enemy, Player } from './entities.js';
+import { gameState, CONFIG } from './globals.js';
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// Simple Grid Based Level Generation
+// W = Wall, . = Floor, P = Player, E = Enemy(Grunt), S = Shooter
+const LEVEL_1 = [
+    "WWWWWWWWWWWWWWWW",
+    "W..............W",
+    "W.P............W",
+    "W.......W......W",
+    "W.......W...E..W",
+    "WWWW..WWWW.....W",
+    "W..............W",
+    "W.....S........W",
+    "W..............W",
+    "W.......E......W",
+    "WWWWWWWWWWWWWWWW"
+];
+
+const LEVEL_2 = [
+    "WWWWWWWWWWWWWWWWWWWW",
+    "W..................W",
+    "W.P.....WWWW.......W",
+    "W.......W..E.......W",
+    "W...E...W..........W",
+    "W.......WWWW...S...W",
+    "W..................W",
+    "W...WWWW....WWWW...W",
+    "W...W..........W...W",
+    "W...W...S..E...W...W",
+    "W...W..........W...W",
+    "W..................W",
+    "WWWWWWWWWWWWWWWWWWWW"
+];
+
+const LEVEL_3 = [
+    "WWWWWWWWWWWWWWWWWWWW",
+    "W..................W",
+    "W.P................W",
+    "W...W..W....W..W...W",
+    "W...E..........E...W",
+    "W..................W",
+    "W...W..........W...W",
+    "W...S...WWWW...S...W",
+    "W...W..........W...W",
+    "W..................W",
+    "W...E..........E...W",
+    "W..................W",
+    "WWWWWWWWWWWWWWWWWWWW"
+];
+
+const LEVEL_4 = [
+    "WWWWWWWWWWWWWWWWWWWWWWWW",
+    "W......................W",
+    "W.P..WWWWWW..WWWWWW....W",
+    "W.......W......W.......W",
+    "W.......W..E...W...E...W",
+    "W....WWWW......WWWW....W",
+    "W......................W",
+    "W....WWWW......WWWW....W",
+    "W.......W..S...W.......W",
+    "W.......W......W...S...W",
+    "W....WWWWWW..WWWWWW....W",
+    "W......................W",
+    "WWWWWWWWWWWWWWWWWWWWWWWW"
+];
+
+const LEVEL_5 = [
+    "WWWWWWWWWWWWWWWWWWWW",
+    "W..................W",
+    "W.P................W",
+    "W.......E..E.......W",
+    "W...WW........WW...W",
+    "W...W..........W...W",
+    "W...W....S.....W...W",
+    "W...W..........W...W",
+    "W...WW........WW...W",
+    "W.......E..E.......W",
+    "W..................W",
+    "W.......S..S.......W",
+    "WWWWWWWWWWWWWWWWWWWW"
+];
+
+const LEVEL_6 = [
+    "WWWWWWWWWWWWWWWWWWWWWWWWWW",
+    "W........................W",
+    "W.P..E...................W",
+    "W.......WWWWWWWWWWWW.....W",
+    "W.......W..........W.....W",
+    "W.......W...S..S...W.....W",
+    "W.......W..........W.....W",
+    "W.......W...E..E...W.....W",
+    "W.......W..........W.....W",
+    "W.......WWWWWWWWWWWW.....W",
+    "W........................W",
+    "W...S..E........E..S.....W",
+    "WWWWWWWWWWWWWWWWWWWWWWWWWW"
+];
+
+const LEVEL_7 = [
+    "WWWWWWWWWWWWWWWWWWWWWWWWWW",
+    "W........................W",
+    "W.P......................W",
+    "W......E..E..E..E........W",
+    "W........................W",
+    "W...WWWW........WWWW.....W",
+    "W...W..............W.....W",
+    "W...W...S..S..S....W.....W",
+    "W...W..............W.....W",
+    "W...WWWW........WWWW.....W",
+    "W........................W",
+    "W......E..E..E..E........W",
+    "W........................W",
+    "W.........S..S...........W",
+    "WWWWWWWWWWWWWWWWWWWWWWWWWW"
+];
+
+const LEVELS = [LEVEL_1, LEVEL_2, LEVEL_3, LEVEL_4, LEVEL_5, LEVEL_6, LEVEL_7];
+
+const LEVEL_COLORS = [
+    { bg: 0x050505, floor: 0x111111 }, // 1: Dark (Default)
+    { bg: 0x000022, floor: 0x111133 }, // 2: Midnight Blue
+    { bg: 0x001100, floor: 0x112211 }, // 3: Toxic Green
+    { bg: 0x220000, floor: 0x331111 }, // 4: Red Alert
+    { bg: 0x110022, floor: 0x221133 }, // 5: Purple Void
+    { bg: 0x222200, floor: 0x333311 }, // 6: Golden Halls
+    { bg: 0x333333, floor: 0x555555 }  // 7: White Lab
+];
+
+export function loadLevel(levelIndex) {
+    clearLevel();
+    
+    // Safety clamp
+    const idx = Math.max(1, Math.min(levelIndex, LEVELS.length)) - 1;
+    const layout = LEVELS[idx];
+    const colors = LEVEL_COLORS[idx] || LEVEL_COLORS[0];
+    
+    // Set Environment Colors
+    if (gameState.scene) {
+        gameState.scene.background = new THREE.Color(colors.bg);
+        // Also update fog if we had it, but we don't.
+    }
+
+    const scale = CONFIG.TILE_SIZE;
+    const offsetX = (layout[0].length * scale) / 2;
+    const offsetZ = (layout.length * scale) / 2;
+    
+    for (let row = 0; row < layout.length; row++) {
+        for (let col = 0; col < layout[row].length; col++) {
+            const char = layout[row][col];
+            const x = col * scale - offsetX;
+            const z = row * scale - offsetZ;
+            
+            if (char === 'W') {
+                new Wall(x, z, scale, scale);
+            } else if (char === 'P') {
+                gameState.player = new Player(x, z);
+                gameState.entities.push(gameState.player);
+            } else if (char === 'E') {
+                const e = new Enemy(x, z, 'GRUNT');
+                gameState.enemies.push(e);
+                gameState.entities.push(e);
+            } else if (char === 'S') {
+                const e = new Enemy(x, z, 'SHOOTER');
+                gameState.enemies.push(e);
+                gameState.entities.push(e);
+            }
+        }
+    }
+    
+    // Create Floor with specific color
+    createFloor(layout[0].length * scale, layout.length * scale, colors.floor);
+}
+
+function clearLevel() {
+    // Remove all entities
+    gameState.entities.forEach(e => gameState.scene.remove(e.mesh));
+    gameState.walls.forEach(w => gameState.scene.remove(w.mesh));
+    
+    gameState.entities = [];
+    gameState.enemies = [];
+    gameState.projectiles = [];
+    gameState.walls = [];
+    
+    if (gameState.floorMesh) gameState.scene.remove(gameState.floorMesh);
+}
+
+function createFloor(width, height, colorHex) {
+    const geometry = new THREE.PlaneGeometry(width + 20, height + 20); // Make it larger than level
+    const material = new THREE.MeshStandardMaterial({ 
+        color: colorHex,
+        roughness: 0.9 
+    });
+    const floor = new THREE.Mesh(geometry, material);
+    floor.rotation.x = -Math.PI / 2;
+    floor.receiveShadow = true;
+    gameState.scene.add(floor);
+    gameState.floorMesh = floor;
+}
+</code>
+
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>RED HOT VENGEANCE - Web Edition</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #111; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; color: #fff; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+      
+      #main-wrapper {
+        text-align: center;
+        width: 600px;
+      }
+      
+      h1 { color: #ff3333; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 10px; font-size: 24px; text-shadow: 2px 2px 0px #000; }
+      
+      #game-container {
+        width: 600px;
+        height: 400px;
+        box-shadow: 0 0 20px rgba(255, 0, 0, 0.2);
+        border: 2px solid #333;
+        margin: 0 auto;
+        position: relative;
+        background: #000;
+      }
+      
+      .controls-info {
+        margin-top: 15px;
+        font-size: 12px;
+        color: #888;
+        background: #222;
+        padding: 10px;
+        border-radius: 4px;
+        text-align: left;
+      }
+      
+      .controls-info span { color: #ccc; font-weight: bold; }
+      
+      .btn-group { margin-bottom: 10px; }
+      button {
+        background: #333; color: #fff; border: 1px solid #555; padding: 5px 10px; cursor: pointer; font-size: 12px;
+        transition: all 0.2s;
+      }
+      button:hover { background: #555; border-color: #777; }
+      button.active { background: #ff3333; border-color: #ff0000; color: #000; font-weight: bold; }
+    </style>
+  </head>
+  <body>
+    <div id="main-wrapper">
+      <h1>Red Hot Vengeance</h1>
+      
+      <div class="btn-group">
+        <button onclick="window.setControlMode('HUMAN')" class="active">Human Mode</button>
+        <button onclick="window.setControlMode('TEST_1')">Test Physics</button>
+        <button onclick="window.setControlMode('TEST_2')">Test Win</button>
+      </div>
+
+      <!-- Game Container -->
+      <div id="game-container"></div>
+      
+      <div class="controls-info">
+        <div><span>WASD</span> Move | <span>ARROWS</span> Shoot | <span>Z</span> Switch Weapon</div>
+        <div><span>SPACE</span> Dash | <span>ESC</span> Pause | <span>R</span> Restart</div>
+        <div>Kill all enemies to progress. Watch your health.</div>
+      </div>
+    </div>
+
+    <!-- Dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/seedrandom@3.0.5/seedrandom.min.js"></script>
+    
+    <!-- Game Module -->
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</code>

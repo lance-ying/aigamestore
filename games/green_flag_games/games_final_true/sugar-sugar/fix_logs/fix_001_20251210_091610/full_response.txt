@@ -1,0 +1,1175 @@
+<analysis>
+- Issue identified: The user requested a score component, but the existing `score` property in `gameState` was unused, not updated during gameplay, and not displayed in the UI.
+- Files affected: `globals.js`, `physics.js`, `renderer.js`, `game.js`, `input.js`.
+- Changes needed:
+    1.  `globals.js`: Added `scoreAtLevelStart` to `gameState` to allow score persistence across levels while enabling score resets when retrying a level.
+    2.  `physics.js`: Updated `checkParticleInteractions` to increment `gameState.score` by 10 points whenever a sugar particle successfully enters a cup.
+    3.  `renderer.js`: Updated `renderUI` to display the current score in the top bar, and `renderGameOver` to show the final score upon level completion.
+    4.  `game.js`: Updated the level progression logic to save the current score as `scoreAtLevelStart` when a level is won, ensuring progress is checkpointed.
+    5.  `input.js`: Updated `resetLevel` to revert `gameState.score` to `gameState.scoreAtLevelStart`, preventing players from farming score by repeatedly playing and resetting the same level.
+</analysis>
+
+<code filename="globals.js">
+// globals.js - Global constants and game state
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const CONTROL_MODES = {
+  HUMAN: "HUMAN",
+  TEST_1: "TEST_1",
+  TEST_2: "TEST_2",
+  TEST_3: "TEST_3",
+  TEST_4: "TEST_4",
+  TEST_5: "TEST_5",
+  TEST_6: "TEST_6",
+  TEST_7: "TEST_7"
+};
+
+export const DRAWING_PHASES = {
+  IDLE: "IDLE",
+  FIRST_POINT: "FIRST_POINT",
+  SECOND_POINT: "SECOND_POINT",
+  CONTROL_POINT: "CONTROL_POINT"
+};
+
+export const gameState = {
+  gamePhase: GAME_PHASES.START,
+  controlMode: CONTROL_MODES.HUMAN,
+  
+  // Matter.js references
+  engine: null,
+  world: null,
+  
+  // Game entities
+  player: null,
+  entities: [],
+  sugarParticles: [],
+  barriers: [],
+  cups: [],
+  spawners: [],
+  colorFilters: [],
+  gravitySwitches: [],
+  teleporters: [],
+  
+  // Current level data
+  currentLevel: 1,
+  maxLevel: 30,
+  levelData: null,
+  
+  // Cursor state
+  cursor: {
+    x: CANVAS_WIDTH / 2,
+    y: CANVAS_HEIGHT / 2,
+    active: false,
+    drawingMode: false
+  },
+  
+  // Drawing state - new curved line system
+  drawingPhase: DRAWING_PHASES.IDLE,
+  firstPoint: null,
+  secondPoint: null,
+  controlPoint: null,
+  
+  // Legacy drawing state (kept for backwards compatibility)
+  isDrawing: false,
+  currentDrawStart: null,
+  currentDrawEnd: null,
+  drawingPoints: [],
+  
+  // Game stats
+  score: 0,
+  scoreAtLevelStart: 0,
+  sugarSpawned: 0,
+  sugarInCups: 0,
+  
+  // Testing
+  testFrameCount: 0,
+  testAction: null,
+  testBarriersDrawn: false,
+  
+  // Timing
+  lastSpawnTime: 0,
+  gravityDirection: 1 // 1 = down, -1 = up
+};
+
+export function getGameState() {
+  return gameState;
+}
+
+// Expose globally
+if (typeof window !== 'undefined') {
+  window.getGameState = getGameState;
+}
+</code>
+
+<code filename="physics.js">
+// physics.js - Physics and collision handling
+
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Events } = Matter;
+
+import { gameState } from './globals.js';
+
+export function setupPhysics(engine) {
+  // Collision detection
+  Events.on(engine, 'collisionStart', (event) => {
+    const pairs = event.pairs;
+    
+    pairs.forEach(pair => {
+      const bodyA = pair.bodyA;
+      const bodyB = pair.bodyB;
+      
+      // Sugar particle interactions are handled in game update loop
+      // This is kept minimal for performance
+    });
+  });
+  
+  // Continuous collision checking would be too expensive
+  // Instead, we check interactions in the game loop
+}
+
+export function checkParticleInteractions() {
+  gameState.sugarParticles.forEach(particle => {
+    if (particle.markedForRemoval) return;
+    
+    const px = particle.body.position.x;
+    const py = particle.body.position.y;
+    
+    // Check cups
+    gameState.cups.forEach(cup => {
+      if (!particle.inCup && cup.containsPoint(px, py)) {
+        const velocityMag = Math.sqrt(
+          particle.body.velocity.x ** 2 + 
+          particle.body.velocity.y ** 2
+        );
+        
+        // Only count if moving slowly (settled)
+        if (velocityMag < 2.0) {
+          if (cup.addSugar(particle)) {
+            particle.inCup = true;
+            particle.markedForRemoval = true;
+            gameState.sugarInCups++;
+            gameState.score += 10;
+          }
+        }
+      }
+    });
+    
+    // Check color filters
+    gameState.colorFilters.forEach(filter => {
+      if (filter.containsPoint(px, py)) {
+        particle.changeColor(filter.color);
+      }
+    });
+    
+    // Check gravity switches
+    gameState.gravitySwitches.forEach(gswitch => {
+      if (gswitch.containsPoint(px, py)) {
+        gswitch.activate();
+      }
+    });
+    
+    // Check teleporters
+    gameState.teleporters.forEach(teleporter => {
+      if (teleporter.containsEntrance(px, py)) {
+        teleporter.teleport(particle);
+      }
+    });
+  });
+}
+</code>
+
+<code filename="renderer.js">
+// renderer.js - Rendering functions
+
+import { gameState, GAME_PHASES, DRAWING_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderStartScreen(p) {
+  p.background(40, 40, 60);
+  
+  p.fill(255, 200, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text('SUGAR, SUGAR', CANVAS_WIDTH / 2, 100);
+  
+  p.fill(200);
+  p.textSize(16);
+  p.text('Guide falling sugar particles into cups by drawing barriers!', CANVAS_WIDTH / 2, 160);
+  p.text('Use color filters, gravity switches, and teleporters strategically.', CANVAS_WIDTH / 2, 185);
+  
+  p.textSize(14);
+  p.fill(150, 200, 255);
+  p.text('CONTROLS:', CANVAS_WIDTH / 2, 220);
+  
+  p.fill(180);
+  p.textSize(12);
+  p.text('SPACE: Place drawing points (2 points, then adjust curve)', CANVAS_WIDTH / 2, 245);
+  p.text('ARROW KEYS: Move cursor or adjust curve', CANVAS_WIDTH / 2, 265);
+  p.text('R: Reset current level', CANVAS_WIDTH / 2, 285);
+  p.text('ESC: Pause/Unpause or cancel drawing', CANVAS_WIDTH / 2, 305);
+  
+  p.fill(100, 255, 100);
+  p.textSize(20);
+  const pulse = Math.sin(p.frameCount * 0.1) * 0.3 + 0.7;
+  p.fill(100 * pulse, 255 * pulse, 100 * pulse);
+  p.text('PRESS ENTER TO START', CANVAS_WIDTH / 2, 350);
+}
+
+export function renderGame(p) {
+  // Background gradient
+  for (let y = 0; y < CANVAS_HEIGHT; y++) {
+    const inter = y / CANVAS_HEIGHT;
+    const c = p.lerpColor(p.color(180, 220, 240), p.color(240, 240, 250), inter);
+    p.stroke(c);
+    p.line(0, y, CANVAS_WIDTH, y);
+  }
+  
+  // Render all entities
+  gameState.entities.forEach(entity => {
+    if (entity && entity.render) {
+      entity.render(p);
+    }
+  });
+  
+  // Render drawing in progress
+  renderDrawingPreview(p);
+  
+  // Render cursor
+  if (gameState.cursor.active) {
+    renderCursor(p);
+  }
+  
+  // UI
+  renderUI(p);
+}
+
+function renderDrawingPreview(p) {
+  if (gameState.drawingPhase === DRAWING_PHASES.IDLE) return;
+  
+  p.push();
+  
+  // Render first point
+  if (gameState.firstPoint) {
+    p.fill(100, 255, 100, 200);
+    p.noStroke();
+    p.circle(gameState.firstPoint.x, gameState.firstPoint.y, 12);
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(10);
+    p.text('1', gameState.firstPoint.x, gameState.firstPoint.y);
+  }
+  
+  // Render second point
+  if (gameState.secondPoint) {
+    p.fill(100, 100, 255, 200);
+    p.noStroke();
+    p.circle(gameState.secondPoint.x, gameState.secondPoint.y, 12);
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(10);
+    p.text('2', gameState.secondPoint.x, gameState.secondPoint.y);
+  }
+  
+  // Render curve preview
+  if (gameState.firstPoint && gameState.secondPoint && gameState.controlPoint) {
+    // Draw control point
+    p.fill(255, 200, 100, 200);
+    p.noStroke();
+    p.circle(gameState.controlPoint.x, gameState.controlPoint.y, 12);
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(10);
+    p.text('C', gameState.controlPoint.x, gameState.controlPoint.y);
+    
+    // Draw guide lines
+    p.stroke(150, 150, 150, 100);
+    p.strokeWeight(1);
+    p.line(gameState.firstPoint.x, gameState.firstPoint.y, gameState.controlPoint.x, gameState.controlPoint.y);
+    p.line(gameState.controlPoint.x, gameState.controlPoint.y, gameState.secondPoint.x, gameState.secondPoint.y);
+    
+    // Draw curve preview
+    p.stroke(255, 200, 100, 200);
+    p.strokeWeight(2);
+    p.noFill();
+    p.beginShape();
+    for (let t = 0; t <= 1; t += 0.05) {
+      const x = Math.pow(1 - t, 2) * gameState.firstPoint.x + 
+                2 * (1 - t) * t * gameState.controlPoint.x + 
+                Math.pow(t, 2) * gameState.secondPoint.x;
+      const y = Math.pow(1 - t, 2) * gameState.firstPoint.y + 
+                2 * (1 - t) * t * gameState.controlPoint.y + 
+                Math.pow(t, 2) * gameState.secondPoint.y;
+      p.vertex(x, y);
+    }
+    p.endShape();
+  }
+  
+  p.pop();
+}
+
+function renderCursor(p) {
+  p.push();
+  
+  const pulse = Math.sin(p.frameCount * 0.15) * 0.3 + 0.7;
+  
+  // Determine cursor color based on drawing phase
+  let cursorColor, modeText;
+  switch (gameState.drawingPhase) {
+    case DRAWING_PHASES.FIRST_POINT:
+      cursorColor = [100, 255, 100];
+      modeText = 'Point 1';
+      break;
+    case DRAWING_PHASES.SECOND_POINT:
+      cursorColor = [100, 100, 255];
+      modeText = 'Point 2';
+      break;
+    case DRAWING_PHASES.CONTROL_POINT:
+      cursorColor = [255, 200, 100];
+      modeText = 'Curve';
+      break;
+    default:
+      cursorColor = [100, 200, 255];
+      modeText = 'READY';
+  }
+  
+  p.stroke(cursorColor[0], cursorColor[1], cursorColor[2], 200 * pulse);
+  p.strokeWeight(3);
+  p.fill(cursorColor[0], cursorColor[1], cursorColor[2], 100 * pulse);
+  
+  const size = 15;
+  const cursorX = gameState.drawingPhase === DRAWING_PHASES.CONTROL_POINT ? 
+                  gameState.controlPoint.x : gameState.cursor.x;
+  const cursorY = gameState.drawingPhase === DRAWING_PHASES.CONTROL_POINT ? 
+                  gameState.controlPoint.y : gameState.cursor.y;
+  
+  // Crosshair lines
+  p.line(cursorX - size, cursorY, cursorX + size, cursorY);
+  p.line(cursorX, cursorY - size, cursorX, cursorY + size);
+  
+  // Center circle
+  p.circle(cursorX, cursorY, 8);
+  
+  // Outer ring
+  p.noFill();
+  p.strokeWeight(2);
+  p.circle(cursorX, cursorY, 20 + pulse * 5);
+  
+  // Mode indicator text
+  p.fill(255);
+  p.noStroke();
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(10);
+  p.text(modeText, cursorX, cursorY + 25);
+  
+  p.pop();
+}
+
+function renderUI(p) {
+  // Top bar background
+  p.fill(0, 0, 0, 150);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, 35);
+  
+  // Level and score
+  p.fill(255);
+  p.textAlign(p.LEFT, p.CENTER);
+  p.textSize(16);
+  p.text(`Level: ${gameState.currentLevel}`, 10, 18);
+  
+  p.text(`Score: ${gameState.score}`, 120, 18);
+  
+  p.textAlign(p.CENTER, p.CENTER);
+  p.text(`Spawned: ${gameState.sugarSpawned}`, CANVAS_WIDTH / 2 + 40, 18);
+  
+  p.textAlign(p.RIGHT, p.CENTER);
+  p.text(`In Cups: ${gameState.sugarInCups}`, CANVAS_WIDTH - 10, 18);
+  
+  // Barriers count and cursor status
+  const nonStaticBarriers = gameState.barriers.filter(b => !b.isStatic).length;
+  p.fill(200, 200, 100);
+  p.textAlign(p.LEFT, p.CENTER);
+  p.textSize(12);
+  p.text(`Barriers: ${nonStaticBarriers}`, 10, CANVAS_HEIGHT - 10);
+  
+  // Cursor status
+  if (gameState.cursor.active) {
+    p.textAlign(p.RIGHT, p.CENTER);
+    let statusText = 'Press SPACE to place point';
+    let statusColor = [150, 200, 255];
+    
+    switch (gameState.drawingPhase) {
+      case DRAWING_PHASES.FIRST_POINT:
+        statusText = 'Place first point with SPACE';
+        statusColor = [100, 255, 100];
+        break;
+      case DRAWING_PHASES.SECOND_POINT:
+        statusText = 'Place second point with SPACE';
+        statusColor = [100, 100, 255];
+        break;
+      case DRAWING_PHASES.CONTROL_POINT:
+        statusText = 'Adjust curve, press SPACE to finish';
+        statusColor = [255, 200, 100];
+        break;
+    }
+    
+    p.fill(statusColor[0], statusColor[1], statusColor[2]);
+    p.text(statusText, CANVAS_WIDTH - 10, CANVAS_HEIGHT - 10);
+  } else {
+    p.textAlign(p.RIGHT, p.CENTER);
+    p.fill(150);
+    p.text('Press SPACE to draw | R: Reset level', CANVAS_WIDTH - 10, CANVAS_HEIGHT - 10);
+  }
+}
+
+export function renderPausedOverlay(p) {
+  p.fill(0, 0, 0, 180);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text('PAUSED', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 30);
+  
+  p.textSize(16);
+  p.text('Press ESC to resume', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 30);
+}
+
+export function renderGameOver(p) {
+  renderGame(p);
+  
+  p.fill(0, 0, 0, 200);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN) {
+    p.fill(100, 255, 100);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(48);
+    p.text('LEVEL COMPLETE!', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 60);
+    
+    p.fill(255);
+    p.textSize(20);
+    p.text(`Sugar Collected: ${gameState.sugarInCups}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 10);
+    p.text(`Score: ${gameState.score}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+    
+    p.textSize(18);
+    p.text(`Barriers Used: ${gameState.barriers.filter(b => !b.isStatic).length}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+    
+    p.fill(150, 200, 255);
+    p.textSize(16);
+    const pulse = Math.sin(p.frameCount * 0.1) * 0.3 + 0.7;
+    p.fill(150 * pulse, 200 * pulse, 255 * pulse);
+    p.text('Press R to continue to next level', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 90);
+  } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+    p.fill(255, 100, 100);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(48);
+    p.text('CUP OVERFLOW!', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 40);
+    
+    p.fill(255);
+    p.textSize(16);
+    p.text('A cup has exceeded its maximum capacity', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 10);
+    
+    p.fill(150, 200, 255);
+    const pulse = Math.sin(p.frameCount * 0.1) * 0.3 + 0.7;
+    p.fill(150 * pulse, 200 * pulse, 255 * pulse);
+    p.text('Press R to restart level', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 60);
+  }
+}
+</code>
+
+<code filename="game.js">
+// game.js - Main game logic with p5.js and Matter.js integration
+
+const p5 = window.p5;
+import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.19.0/+esm';
+const { Engine, World, Bodies } = Matter;
+
+import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT, getGameState } from './globals.js';
+import { generateLevelData } from './levels.js';
+import { SugarParticle, Barrier, Cup, Spawner, ColorFilter, GravitySwitch, Teleporter } from './entities.js';
+import { setupPhysics, checkParticleInteractions } from './physics.js';
+import { handleKeyPressed, handleKeyReleased, handleTestMode, updateDrawing } from './input.js';
+import { renderStartScreen, renderGame, renderPausedOverlay, renderGameOver } from './renderer.js';
+
+let gameInstance = new p5(p => {
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Create Matter.js engine and world with improved collision detection
+    const engine = Engine.create();
+    const world = engine.world;
+    world.gravity.y = 0.5; // Reduced from 1 to make sugar fall slower
+    
+    // Increase collision iterations for more accurate detection
+    engine.positionIterations = 10;
+    engine.velocityIterations = 8;
+    
+    gameState.engine = engine;
+    gameState.world = world;
+    
+    // Initialize p5.logs
+    p.logs = {
+      game_info: [],
+      player_info: [],
+      inputs: []
+    };
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: { gamePhase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    
+    // Setup physics event handlers
+    setupPhysics(engine);
+  };
+  
+  p.draw = function() {
+    // Update Matter.js physics
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      Engine.update(gameState.engine, 1000 / 60);
+    }
+    
+    // Game loop based on phase
+    switch (gameState.gamePhase) {
+      case GAME_PHASES.START:
+        renderStartScreen(p);
+        break;
+        
+      case GAME_PHASES.PLAYING:
+        updateGame(p);
+        renderGame(p);
+        break;
+        
+      case GAME_PHASES.PAUSED:
+        renderGame(p);
+        renderPausedOverlay(p);
+        break;
+        
+      case GAME_PHASES.GAME_OVER_WIN:
+      case GAME_PHASES.GAME_OVER_LOSE:
+        renderGameOver(p);
+        break;
+    }
+  };
+  
+  p.keyPressed = function() {
+    handleKeyPressed(p);
+    return false;
+  };
+  
+  p.keyReleased = function() {
+    handleKeyReleased(p);
+    return false;
+  };
+});
+
+function updateGame(p) {
+  // Handle test mode automation
+  handleTestMode(p);
+  
+  // Update drawing (continuous while keys held)
+  updateDrawing(p);
+  
+  // Update spawners
+  gameState.spawners.forEach(spawner => spawner.update(p));
+  
+  // Update particles
+  gameState.sugarParticles.forEach(particle => particle.update());
+  
+  // Update special elements
+  gameState.gravitySwitches.forEach(gs => gs.update());
+  gameState.teleporters.forEach(tp => tp.update());
+  
+  // Check interactions
+  checkParticleInteractions();
+  
+  // Remove marked particles
+  gameState.sugarParticles = gameState.sugarParticles.filter(particle => {
+    if (particle.markedForRemoval) {
+      particle.remove();
+      return false;
+    }
+    return true;
+  });
+  
+  // Check win/lose conditions
+  checkGameConditions(p);
+}
+
+function checkGameConditions(p) {
+  // Check overflow (lose condition)
+  for (let cup of gameState.cups) {
+    if (cup.isOverflowing()) {
+      gameState.gamePhase = GAME_PHASES.GAME_OVER_LOSE;
+      p.logs.game_info.push({
+        data: { gamePhase: GAME_PHASES.GAME_OVER_LOSE, reason: 'overflow' },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+      return;
+    }
+  }
+  
+  // Check win condition (all cups filled)
+  let allFilled = gameState.cups.length > 0;
+  for (let cup of gameState.cups) {
+    if (!cup.isFull()) {
+      allFilled = false;
+      break;
+    }
+  }
+  
+  if (allFilled) {
+    gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
+    p.logs.game_info.push({
+      data: { gamePhase: GAME_PHASES.GAME_OVER_WIN, level: gameState.currentLevel },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    
+    // Advance to next level after a delay
+    setTimeout(() => {
+      if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN) {
+        gameState.scoreAtLevelStart = gameState.score; // Save score checkpoint
+        gameState.currentLevel++;
+        if (gameState.currentLevel > gameState.maxLevel) {
+          gameState.currentLevel = 1; // Loop back
+        }
+        startLevel(p, gameState.currentLevel);
+        gameState.gamePhase = GAME_PHASES.PLAYING;
+      }
+    }, 2000);
+  }
+}
+
+export function startLevel(p, levelNumber) {
+  // Clear existing entities
+  clearLevel();
+  
+  // Reset test state
+  gameState.testFrameCount = 0;
+  gameState.testBarriersDrawn = false;
+  
+  // Generate level
+  gameState.levelData = generateLevelData(levelNumber);
+  
+  // Reset gravity
+  gameState.gravityDirection = 1;
+  gameState.world.gravity.y = 0.5; // Reduced from 1 to make sugar fall slower
+  
+  // Create spawners
+  gameState.levelData.spawners.forEach(data => {
+    const spawner = new Spawner(data);
+    gameState.spawners.push(spawner);
+    gameState.entities.push(spawner);
+  });
+  
+  // Create cups
+  gameState.levelData.cups.forEach(data => {
+    const cup = new Cup(data);
+    gameState.cups.push(cup);
+    gameState.entities.push(cup);
+  });
+  
+  // Create color filters
+  gameState.levelData.colorFilters.forEach(data => {
+    const filter = new ColorFilter(data);
+    gameState.colorFilters.push(filter);
+    gameState.entities.push(filter);
+  });
+  
+  // Create gravity switches
+  gameState.levelData.gravitySwitches.forEach(data => {
+    const gswitch = new GravitySwitch(data);
+    gameState.gravitySwitches.push(gswitch);
+    gameState.entities.push(gswitch);
+  });
+  
+  // Create teleporters
+  gameState.levelData.teleporters.forEach(data => {
+    const teleporter = new Teleporter(data);
+    gameState.teleporters.push(teleporter);
+    gameState.entities.push(teleporter);
+  });
+  
+  // Create static barriers
+  gameState.levelData.staticBarriers.forEach(data => {
+    const barrier = new Barrier(data.x1, data.y1, data.x2, data.y2, true);
+    gameState.barriers.push(barrier);
+    gameState.entities.push(barrier);
+  });
+  
+  // Reset stats
+  gameState.sugarSpawned = 0;
+  gameState.sugarInCups = 0;
+  gameState.isDrawing = false;
+  gameState.drawingPoints = [];
+  
+  p.logs.game_info.push({
+    data: { event: 'level_start', level: levelNumber },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function clearLevel() {
+  // Remove all dynamic entities
+  gameState.sugarParticles.forEach(particle => particle.remove());
+  gameState.barriers.forEach(barrier => barrier.remove());
+  gameState.cups.forEach(cup => cup.remove());
+  
+  gameState.entities = [];
+  gameState.sugarParticles = [];
+  gameState.barriers = [];
+  gameState.cups = [];
+  gameState.spawners = [];
+  gameState.colorFilters = [];
+  gameState.gravitySwitches = [];
+  gameState.teleporters = [];
+}
+
+// Expose globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  document.querySelectorAll('.control-button').forEach(btn => {
+    btn.classList.remove('active');
+  });
+  
+  const buttonMap = {
+    'HUMAN': 'humanModeBtn',
+    'TEST_1': 'test_1_ModeBtn',
+    'TEST_2': 'test_2_ModeBtn',
+    'TEST_3': 'test_3_ModeBtn',
+    'TEST_4': 'test_4_ModeBtn',
+    'TEST_5': 'test_5_ModeBtn',
+    'TEST_6': 'test_6_ModeBtn',
+    'TEST_7': 'test_7_ModeBtn'
+  };
+  
+  const btnId = buttonMap[mode];
+  if (btnId) {
+    const btn = document.getElementById(btnId);
+    if (btn) btn.classList.add('active');
+  }
+  
+  console.log('Control mode set to:', mode);
+};
+</code>
+
+<code filename="input.js">
+// input.js - Input handling and control modes
+
+import { gameState, GAME_PHASES, CONTROL_MODES, DRAWING_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Barrier } from './entities.js';
+import { startLevel } from './game.js';
+
+export function handleKeyPressed(p) {
+  // Log input
+  p.logs.inputs.push({
+    input_type: "keyPressed",
+    data: { key: p.key, keyCode: p.keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  
+  // Phase transition controls
+  if (p.keyCode === 13 && gameState.gamePhase === GAME_PHASES.START) { // ENTER
+    gameState.gamePhase = GAME_PHASES.PLAYING;
+    p.logs.game_info.push({
+      data: { gamePhase: GAME_PHASES.PLAYING },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    startLevel(p, gameState.currentLevel);
+  }
+  
+  if (p.keyCode === 27) { // ESC - Pause/Unpause or cancel drawing
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      // If in middle of drawing, cancel it
+      if (gameState.drawingPhase !== DRAWING_PHASES.IDLE) {
+        cancelDrawing();
+      } else {
+        gameState.gamePhase = GAME_PHASES.PAUSED;
+        p.logs.game_info.push({
+          data: { gamePhase: GAME_PHASES.PAUSED },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+      gameState.gamePhase = GAME_PHASES.PLAYING;
+      p.logs.game_info.push({
+        data: { gamePhase: GAME_PHASES.PLAYING },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+  
+  if (p.keyCode === 82) { // R - Reset level
+    if (gameState.gamePhase === GAME_PHASES.PLAYING ||
+        gameState.gamePhase === GAME_PHASES.PAUSED ||
+        gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN ||
+        gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+      resetLevel(p);
+    }
+  }
+  
+  // Gameplay controls
+  if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+    handleGameplayInput(p);
+  }
+}
+
+export function handleKeyReleased(p) {
+  p.logs.inputs.push({
+    input_type: "keyReleased",
+    data: { key: p.key, keyCode: p.keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function handleGameplayInput(p) {
+  // Space - handle cursor activation and drawing phase progression
+  if (p.keyCode === 32) { // SPACE
+    if (!gameState.cursor.active) {
+      // Activate cursor and immediately enter drawing mode with first point placement
+      gameState.cursor.active = true;
+      gameState.cursor.drawingMode = true;
+      gameState.cursor.x = CANVAS_WIDTH / 2;
+      gameState.cursor.y = CANVAS_HEIGHT / 2;
+      gameState.drawingPhase = DRAWING_PHASES.FIRST_POINT;
+    } else {
+      // Progress through drawing phases
+      handleDrawingPhaseProgression(p);
+    }
+  }
+  
+  // Arrow keys - handled in updateDrawing for continuous movement
+}
+
+function handleDrawingPhaseProgression(p) {
+  switch (gameState.drawingPhase) {
+    case DRAWING_PHASES.FIRST_POINT:
+      // Place first point
+      gameState.firstPoint = { x: gameState.cursor.x, y: gameState.cursor.y };
+      gameState.drawingPhase = DRAWING_PHASES.SECOND_POINT;
+      break;
+      
+    case DRAWING_PHASES.SECOND_POINT:
+      // Place second point
+      gameState.secondPoint = { x: gameState.cursor.x, y: gameState.cursor.y };
+      // Initialize control point at midpoint
+      gameState.controlPoint = {
+        x: (gameState.firstPoint.x + gameState.secondPoint.x) / 2,
+        y: (gameState.firstPoint.y + gameState.secondPoint.y) / 2
+      };
+      gameState.drawingPhase = DRAWING_PHASES.CONTROL_POINT;
+      break;
+      
+    case DRAWING_PHASES.CONTROL_POINT:
+      // Finalize curved barrier
+      finalizeCurvedBarrier(p);
+      break;
+  }
+}
+
+function cancelDrawing() {
+  gameState.drawingPhase = DRAWING_PHASES.IDLE;
+  gameState.firstPoint = null;
+  gameState.secondPoint = null;
+  gameState.controlPoint = null;
+  gameState.cursor.drawingMode = false;
+  gameState.cursor.active = false;
+}
+
+function finalizeCurvedBarrier(p) {
+  if (!gameState.firstPoint || !gameState.secondPoint || !gameState.controlPoint) return;
+  
+  // Create curved barrier as multiple small segments
+  const segments = 20; // Number of segments to approximate the curve
+  const points = [];
+  
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const point = quadraticBezier(
+      gameState.firstPoint,
+      gameState.controlPoint,
+      gameState.secondPoint,
+      t
+    );
+    points.push(point);
+  }
+  
+  // Create barriers for each segment
+  for (let i = 0; i < points.length - 1; i++) {
+    const barrier = new Barrier(
+      points[i].x,
+      points[i].y,
+      points[i + 1].x,
+      points[i + 1].y,
+      false
+    );
+    gameState.barriers.push(barrier);
+    gameState.entities.push(barrier);
+  }
+  
+  // Reset drawing state
+  cancelDrawing();
+}
+
+function quadraticBezier(p0, p1, p2, t) {
+  // Quadratic Bezier curve formula
+  const x = Math.pow(1 - t, 2) * p0.x + 2 * (1 - t) * t * p1.x + Math.pow(t, 2) * p2.x;
+  const y = Math.pow(1 - t, 2) * p0.y + 2 * (1 - t) * t * p1.y + Math.pow(t, 2) * p2.y;
+  return { x, y };
+}
+
+export function updateDrawing(p) {
+  const speed = 5;
+  let dx = 0, dy = 0;
+  
+  if (p.keyIsDown(37)) dx = -speed; // LEFT
+  if (p.keyIsDown(39)) dx = speed;  // RIGHT
+  if (p.keyIsDown(38)) dy = -speed; // UP
+  if (p.keyIsDown(40)) dy = speed;  // DOWN
+  
+  if (dx !== 0 || dy !== 0) {
+    if (gameState.cursor.active) {
+      if (gameState.drawingPhase === DRAWING_PHASES.CONTROL_POINT) {
+        // Move control point
+        gameState.controlPoint.x = Math.max(0, Math.min(CANVAS_WIDTH, gameState.controlPoint.x + dx));
+        gameState.controlPoint.y = Math.max(0, Math.min(CANVAS_HEIGHT, gameState.controlPoint.y + dy));
+      } else {
+        // Move cursor
+        gameState.cursor.x = Math.max(0, Math.min(CANVAS_WIDTH, gameState.cursor.x + dx));
+        gameState.cursor.y = Math.max(0, Math.min(CANVAS_HEIGHT, gameState.cursor.y + dy));
+      }
+    }
+  }
+}
+
+function resetLevel(p) {
+  gameState.score = gameState.scoreAtLevelStart; // Reset score to level start
+  startLevel(p, gameState.currentLevel);
+  gameState.gamePhase = GAME_PHASES.PLAYING;
+  p.logs.game_info.push({
+    data: { event: 'level_reset', level: gameState.currentLevel },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+// Automated testing control modes
+export function handleTestMode(p) {
+  if (gameState.controlMode === CONTROL_MODES.HUMAN) return;
+  
+  gameState.testFrameCount++;
+  
+  switch (gameState.controlMode) {
+    case CONTROL_MODES.TEST_1:
+      runTest1(p);
+      break;
+    case CONTROL_MODES.TEST_2:
+      runTest2(p);
+      break;
+    case CONTROL_MODES.TEST_3:
+      runTest3(p);
+      break;
+    case CONTROL_MODES.TEST_4:
+      runTest4(p);
+      break;
+    case CONTROL_MODES.TEST_5:
+      runTest5(p);
+      break;
+    case CONTROL_MODES.TEST_6:
+      runTest6(p);
+      break;
+    case CONTROL_MODES.TEST_7:
+      runTest7(p);
+      break;
+  }
+}
+
+function runTest1(p) {
+  // Test basic physics and barrier drawing
+  if (gameState.testFrameCount === 30 && !gameState.testBarriersDrawn) {
+    // Draw some test barriers
+    const barrier1 = new Barrier(100, 200, 250, 250, false);
+    const barrier2 = new Barrier(350, 250, 500, 200, false);
+    const barrier3 = new Barrier(200, 300, 400, 320, false);
+    gameState.barriers.push(barrier1, barrier2, barrier3);
+    gameState.entities.push(barrier1, barrier2, barrier3);
+    gameState.testBarriersDrawn = true;
+  }
+  
+  // Spawn particles regularly
+  if (gameState.testFrameCount % 15 === 0) {
+    gameState.spawners.forEach(spawner => spawner.spawn());
+  }
+}
+
+function runTest2(p) {
+  // Test win condition - draw optimal barriers and spawn lots of sugar
+  if (gameState.testFrameCount === 30 && !gameState.testBarriersDrawn) {
+    // Draw funneling barriers toward cups
+    gameState.cups.forEach((cup, i) => {
+      const funnelX = cup.x;
+      const funnelTop = 150;
+      const barrier1 = new Barrier(funnelX - 100, funnelTop, funnelX - 20, cup.y - cup.height / 2, false);
+      const barrier2 = new Barrier(funnelX + 100, funnelTop, funnelX + 20, cup.y - cup.height / 2, false);
+      gameState.barriers.push(barrier1, barrier2);
+      gameState.entities.push(barrier1, barrier2);
+    });
+    gameState.testBarriersDrawn = true;
+  }
+  
+  // Spawn particles rapidly
+  if (gameState.testFrameCount % 5 === 0) {
+    gameState.spawners.forEach(spawner => {
+      for (let i = 0; i < 3; i++) {
+        spawner.spawn();
+      }
+    });
+  }
+}
+
+function runTest3(p) {
+  // Test overflow - direct all sugar to first cup
+  if (gameState.testFrameCount === 30 && !gameState.testBarriersDrawn && gameState.cups.length > 0) {
+    const targetCup = gameState.cups[0];
+    const barrier1 = new Barrier(50, 100, targetCup.x - 30, targetCup.y - 30, false);
+    const barrier2 = new Barrier(550, 100, targetCup.x + 30, targetCup.y - 30, false);
+    gameState.barriers.push(barrier1, barrier2);
+    gameState.entities.push(barrier1, barrier2);
+    gameState.testBarriersDrawn = true;
+  }
+  
+  // Spawn many particles
+  if (gameState.testFrameCount % 3 === 0) {
+    gameState.spawners.forEach(spawner => {
+      for (let i = 0; i < 5; i++) {
+        spawner.spawn();
+      }
+    });
+  }
+}
+
+function runTest4(p) {
+  // Test color filters
+  if (gameState.testFrameCount === 30 && !gameState.testBarriersDrawn && gameState.colorFilters.length > 0) {
+    // Draw barriers to guide particles through filters
+    gameState.colorFilters.forEach((filter, i) => {
+      const barrier = new Barrier(
+        filter.x - 50, 80,
+        filter.x, filter.y + filter.height / 2 + 20,
+        false
+      );
+      gameState.barriers.push(barrier);
+      gameState.entities.push(barrier);
+    });
+    gameState.testBarriersDrawn = true;
+  }
+  
+  if (gameState.testFrameCount % 10 === 0) {
+    gameState.spawners.forEach(spawner => spawner.spawn());
+  }
+}
+
+function runTest5(p) {
+  // Test gravity switches
+  if (gameState.testFrameCount === 30 && !gameState.testBarriersDrawn && gameState.gravitySwitches.length > 0) {
+    const gswitch = gameState.gravitySwitches[0];
+    const barrier = new Barrier(100, gswitch.y - 50, gswitch.x - 50, gswitch.y - 10, false);
+    gameState.barriers.push(barrier);
+    gameState.entities.push(barrier);
+    gameState.testBarriersDrawn = true;
+  }
+  
+  if (gameState.testFrameCount % 10 === 0) {
+    gameState.spawners.forEach(spawner => spawner.spawn());
+  }
+}
+
+function runTest6(p) {
+  // Test teleporters
+  if (gameState.testFrameCount === 30 && !gameState.testBarriersDrawn && gameState.teleporters.length > 0) {
+    const teleporter = gameState.teleporters[0];
+    const barrier = new Barrier(
+      50, 100,
+      teleporter.entrance.x - 10, teleporter.entrance.y - 30,
+      false
+    );
+    gameState.barriers.push(barrier);
+    gameState.entities.push(barrier);
+    gameState.testBarriersDrawn = true;
+  }
+  
+  if (gameState.testFrameCount % 10 === 0) {
+    gameState.spawners.forEach(spawner => spawner.spawn());
+  }
+}
+
+function runTest7(p) {
+  // Test level reset and progression
+  if (gameState.testFrameCount === 30 && !gameState.testBarriersDrawn) {
+    // Draw multiple barriers
+    for (let i = 0; i < 5; i++) {
+      const barrier = new Barrier(
+        100 + i * 80, 150,
+        120 + i * 80, 250,
+        false
+      );
+      gameState.barriers.push(barrier);
+      gameState.entities.push(barrier);
+    }
+    gameState.testBarriersDrawn = true;
+  }
+  
+  // Fill cups to trigger win
+  if (gameState.testFrameCount > 50 && gameState.testFrameCount % 5 === 0) {
+    gameState.spawners.forEach(spawner => {
+      for (let i = 0; i < 3; i++) {
+        spawner.spawn();
+      }
+    });
+  }
+}
+</code>

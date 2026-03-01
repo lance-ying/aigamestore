@@ -1,0 +1,224 @@
+<analysis>
+- Issue identified: The browser reports a `SyntaxError` stating that `ui.js` does not provide an export named `renderPausedOverlay`. While the provided code snippet for `ui.js` appears to contain the export, this error typically occurs when there is a discrepancy between the imported name and the exported name, or when a syntax error in the module prevents exports from being correctly parsed.
+- Files affected: `ui.js`, `input.js`, `game.js`.
+- Changes needed:
+  1.  Re-verify and provide the `ui.js` file ensuring `renderPausedOverlay` is correctly exported with the exact name used in `game.js`.
+  2.  Clean up `input.js` by moving `import` statements to the top of the file. This is best practice for ES modules and prevents potential issues with initialization order or hoisting that can sometimes lead to confusing "export not found" errors in certain environments.
+  3.  Ensure `game.js` imports match the cleaned-up exports.
+</analysis>
+
+<code filename="ui.js">
+/**
+ * UI Rendering and Screens
+ */
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS } from './globals.js';
+import { updateParticles } from './particles.js';
+
+export function renderUI(p) {
+    // HUD
+    p.push();
+    p.fill(COLORS.UI_TEXT);
+    p.textSize(20);
+    p.textAlign(p.LEFT, p.TOP);
+    p.text(`Score: ${gameState.score}`, 20, 20);
+    p.textAlign(p.RIGHT, p.TOP);
+    p.text(`High Score: ${Math.max(gameState.score, gameState.highScore)}`, CANVAS_WIDTH - 20, 20);
+    p.textAlign(p.CENTER, p.TOP);
+    p.text(`Balls: ${gameState.ballCount}`, CANVAS_WIDTH / 2, 20);
+    p.pop();
+    
+    // Particles are rendered on top of everything except Pause/Game Over screens
+    updateParticles(p);
+}
+
+export function renderStartScreen(p) {
+    p.background(COLORS.BACKGROUND);
+    p.push();
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    // Replace game title with "press enter to begin"
+    p.textSize(30); // Adjust size for the new message
+    p.fill(255); // Simple white color
+    if (p.frameCount % 60 < 30) {
+        p.text("press enter to begin", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    }
+    
+    p.pop();
+}
+
+export function renderPausedOverlay(p) {
+    p.push();
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 20);
+    
+    p.textSize(20);
+    p.text("Press ESC to Resume", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 30);
+    p.pop();
+}
+
+export function renderGameOver(p) {
+    p.push();
+    p.fill(0, 0, 0, 200);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.fill(255, 50, 50);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(50);
+    p.text("GAME OVER", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+    
+    p.fill(255);
+    p.textSize(30);
+    p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 20);
+    
+    p.textSize(20);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60);
+    p.pop();
+}
+</code>
+
+<code filename="input.js">
+/**
+ * Input handling and control logic
+ */
+import { gameState, logInput, CANVAS_WIDTH, CANVAS_HEIGHT, CONFIG } from './globals.js';
+import { Ball, Brick, Item, Launcher } from './entities.js';
+
+const KEY_LEFT = 37;
+const KEY_UP = 38;
+const KEY_RIGHT = 39;
+const KEY_DOWN = 40;
+const KEY_SPACE = 32;
+const KEY_SHIFT = 16;
+const KEY_Z = 90;
+const KEY_ENTER = 13;
+const KEY_ESC = 27;
+const KEY_R = 82;
+
+export function handleInput(p) {
+    if (gameState.gamePhase !== "PLAYING") return;
+    
+    // Z key for fast forward
+    if (p.keyIsDown(KEY_Z)) {
+        gameState.timeScale = 2.0;
+    } else {
+        gameState.timeScale = 1.0;
+    }
+
+    if (gameState.turnPhase === "AIMING") {
+        const rotationSpeed = 0.03;
+        const fineSpeed = 0.005;
+
+        if (p.keyIsDown(KEY_LEFT)) {
+            gameState.player.angle -= rotationSpeed;
+        }
+        if (p.keyIsDown(KEY_RIGHT)) {
+            gameState.player.angle += rotationSpeed;
+        }
+        // Fine tuning
+        if (p.keyIsDown(KEY_UP)) {
+            // Move angle closer to -PI/2 (center)
+            if (gameState.player.angle < -Math.PI/2) gameState.player.angle += fineSpeed;
+            else gameState.player.angle -= fineSpeed;
+        }
+
+        // Clamp angle to prevent shooting into floor
+        const minAngle = -Math.PI + 0.1;
+        const maxAngle = -0.1;
+        gameState.player.angle = Math.max(minAngle, Math.min(maxAngle, gameState.player.angle));
+    }
+}
+
+export function handleKeyPress(p) {
+    const k = p.keyCode;
+    logInput(p, 'keyPressed', { keyCode: k, key: p.key });
+
+    // Global Phase Controls
+    if (k === KEY_ENTER) {
+        if (gameState.gamePhase === "START") {
+            gameState.gamePhase = "PLAYING";
+            initGame(p);
+        }
+    } else if (k === KEY_R) {
+        if (gameState.gamePhase === "GAME_OVER_WIN" || 
+            gameState.gamePhase === "GAME_OVER_LOSE" || 
+            gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = "START";
+        }
+    } else if (k === KEY_ESC) {
+        if (gameState.gamePhase === "PLAYING") {
+            gameState.gamePhase = "PAUSED";
+        } else if (gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = "PLAYING";
+        }
+    }
+
+    // Gameplay Controls
+    if (gameState.gamePhase === "PLAYING" && gameState.turnPhase === "AIMING") {
+        if (k === KEY_SPACE) {
+            startFiring(p);
+        }
+    }
+}
+
+export function handleKeyRelease(p) {
+    logInput(p, 'keyReleased', { keyCode: p.keyCode });
+}
+
+function initGame(p) {
+    gameState.score = 0;
+    gameState.level = 1;
+    gameState.ballCount = 5; 
+    gameState.player = new Launcher(CANVAS_WIDTH / 2, CANVAS_HEIGHT - CONFIG.BOTTOM_OFFSET);
+    gameState.balls = [];
+    gameState.bricks = [];
+    gameState.items = [];
+    gameState.particles = [];
+    gameState.turnPhase = "AIMING";
+    gameState.ballsActive = 0;
+    
+    // Spawn first row
+    spawnRow();
+}
+
+export function spawnRow() {
+    // Move existing down
+    for (let brick of gameState.bricks) {
+        if (brick.moveDown()) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+        }
+    }
+    for (let item of gameState.items) {
+        item.moveDown();
+    }
+    
+    for (let c = 0; c < CONFIG.COLUMNS; c++) {
+        const rand = Math.random();
+        
+        if (rand < 0.2) { 
+            gameState.items.push(new Item(c, 0)); 
+        } else if (rand < 0.6) { 
+            const hp = gameState.level; 
+            gameState.bricks.push(new Brick(c, 0, hp));
+        }
+    }
+    gameState.level++;
+}
+
+function startFiring(p) {
+    gameState.turnPhase = "FIRING";
+    gameState.ballsReady = gameState.ballCount;
+    gameState.launchTimer = 0;
+    gameState.ballsActive = 0;
+    gameState.firstBallLanded = false;
+    
+    gameState.balls = [];
+    for(let i=0; i<gameState.ballCount; i++) {
+        gameState.balls.push(new Ball(-100, -100));
+    }
+}
+</code>

@@ -1,0 +1,1439 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+physics.js:4  GET https://cdn.jsdelivr.net/npm/p5.collide2d@1.0.0/+esm net::ERR_ABORTED 404 (Not Found)
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Velocity Rivals</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #111; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 2px solid #444; width: 600px !important; height: 400px !important; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 20px; cursor: pointer; background: #333; color: #fff; border: 1px solid #555; border-radius: 4px; transition: all 0.2s; }
+      .control-button:hover { background: #444; border-color: #888; }
+      .control-button.active { background: #e74c3c; border-color: #c0392b; font-weight: bold; }
+      h1 { color: #fff; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 2px; font-size: 24px; }
+      .desc { color: #aaa; margin-bottom: 20px; font-size: 14px; max-width: 600px; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <h1>Velocity Rivals</h1>
+    <div class="desc">Compete against 3 AI bots. Don't fall off screen. Use Grappling Hook (Shift).</div>
+    
+    <div class="control-buttons">
+      <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN', this)">Human Mode</button>
+      <button id="test1Btn" class="control-button" onclick="setMode('TEST_1', this)">Test: Move</button>
+      <button id="test2Btn" class="control-button" onclick="setMode('TEST_2', this)">Test: Win</button>
+    </div>
+    
+    <!-- Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+    
+    <script>
+      function setMode(mode, btn) {
+        if (window.setControlMode) window.setControlMode(mode);
+        
+        // UI Update
+        document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      }
+    </script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+import { gameState } from './globals.js';
+import { KEYS } from './input.js';
+
+// Controller to simulate inputs for testing modes
+export function get_automated_testing_action(gameState) {
+    // Only used if controlMode is TEST_X
+    
+    const mode = gameState.controlMode;
+    const player = gameState.player;
+    
+    if (!player) return null;
+
+    if (mode === 'TEST_1') {
+        // Basic Movement Test: Just run right and jump occasionally
+        const action = {};
+        
+        // Run right
+        action.keyCode = KEYS.RIGHT;
+        
+        // Jump every 100 frames
+        if (gameState.frameCount % 100 < 10) {
+            action.keyCode = KEYS.Z;
+        }
+        
+        return action;
+    }
+    
+    if (mode === 'TEST_2') {
+        // Win Test: Play perfectly (cheat: actually we just make the bot invulnerable and fast in the entity class if needed, but here we just give good inputs)
+        // Simple heuristic: Always right. Jump if low speed.
+        
+        // To guarantee a win in a test, we might manipulate state elsewhere, but here we provide inputs.
+        // Let's implement a smart runner.
+        
+        // If speed low, jump.
+        if (player.vx < 2) return { keyCode: KEYS.Z };
+        
+        return { keyCode: KEYS.RIGHT };
+    }
+    
+    return null;
+}
+</file>
+
+<file name="globals.js">
+/**
+ * Global constants and game state management.
+ */
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+
+// Physics Constants
+export const GRAVITY = 0.6;
+export const FRICTION = 0.85;
+export const AIR_RESISTANCE = 0.95;
+export const MAX_SPEED = 12;
+export const JUMP_FORCE = -13;
+export const WALL_JUMP_FORCE = { x: 8, y: -11 };
+export const ACCELERATION = 0.8;
+export const GRAPPLE_RANGE = 250;
+export const GRAPPLE_STRENGTH = 1.5;
+
+// Level Constants
+export const LEVEL_WIDTH = 3200; // Width of one lap
+export const TILE_SIZE = 40;
+
+// Game State Object
+export const gameState = {
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN",
+    
+    // Entities
+    player: null,
+    entities: [], // All dynamic entities (players + bots + items)
+    platforms: [], // Static geometry
+    hazards: [], // Spikes, etc.
+    particles: [],
+    projectiles: [],
+    
+    // Camera
+    cameraX: 0,
+    cameraY: 0,
+    cameraShake: 0,
+    
+    // Race State
+    laps: 3,
+    leader: null,
+    aliveCount: 4,
+    
+    // Performance
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Testing
+    debugMode: false
+};
+
+// Colors
+export const COLORS = {
+    background: [20, 24, 35],
+    platforms: [40, 45, 60],
+    highlight: [100, 200, 255],
+    player: [255, 50, 50],     // Red
+    bot1: [50, 255, 50],       // Green
+    bot2: [50, 100, 255],      // Blue
+    bot3: [255, 255, 50],      // Yellow
+    spikes: [255, 0, 0],
+    grappleLine: [200, 200, 200],
+    text: [255, 255, 255]
+};
+
+// Global Logger initialization (called in setup)
+export function initLogs(p) {
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+}
+
+// Global Accessor
+export function getGameState() {
+    return gameState;
+}
+window.getGameState = getGameState;
+</file>
+
+<file name="game.js">
+/**
+ * Main Game Entry Point.
+ */
+import { gameState, initLogs, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS, LEVEL_WIDTH } from './globals.js';
+import { handleInput, handleKeyPressed, handleKeyReleased, registerResetFunction } from './input.js';
+import { Runner, PowerUp } from './entities.js';
+import { generateLevel, renderLevel } from './level.js';
+import { renderUI } from './ui.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    // Initialize
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        initLogs(p);
+        
+        // Register reset for Input module to call
+        registerResetFunction((p) => resetGame(p));
+        
+        // Initial Game Setup
+        resetGame(p);
+        gameState.gamePhase = "START"; // Override reset setting phase to PLAYING
+    };
+
+    p.draw = function() {
+        gameState.frameCount = p.frameCount;
+        const now = Date.now();
+        gameState.deltaTime = (now - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = now;
+        
+        // Background
+        p.background(COLORS.background);
+        
+        // State Machine
+        switch(gameState.gamePhase) {
+            case "START":
+                renderUI(p);
+                break;
+            case "PLAYING":
+                updateGame(p);
+                renderGame(p);
+                renderUI(p);
+                break;
+            case "PAUSED":
+                renderGame(p);
+                renderUI(p);
+                break;
+            case "GAME_OVER_WIN":
+            case "GAME_OVER_LOSE":
+                renderGame(p);
+                renderUI(p);
+                break;
+        }
+    };
+
+    p.keyPressed = function() {
+        handleKeyPressed(p);
+    };
+
+    p.keyReleased = function() {
+        handleKeyReleased(p);
+    };
+});
+
+function resetGame(p) {
+    // Reset Game State
+    gameState.entities = [];
+    gameState.particles = [];
+    gameState.cameraX = 0;
+    gameState.cameraY = 0;
+    gameState.aliveCount = 4;
+    
+    generateLevel();
+    
+    // Create Player
+    gameState.player = new Runner(100, 300, false, 0);
+    gameState.entities.push(gameState.player);
+    
+    // Create Bots
+    gameState.entities.push(new Runner(100, 300, true, 1)); // Bot 1
+    gameState.entities.push(new Runner(100, 300, true, 2)); // Bot 2
+    gameState.entities.push(new Runner(100, 300, true, 3)); // Bot 3
+    
+    gameState.gamePhase = "START";
+    
+    // Log
+    p.logs.game_info.push({
+        data: { message: "Game Reset" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+    });
+}
+
+function updateGame(p) {
+    // Update Entities
+    gameState.entities.forEach(entity => {
+        if (entity.update) entity.update(p);
+    });
+    
+    // Update Particles
+    for (let i = gameState.particles.length - 1; i >= 0; i--) {
+        let part = gameState.particles[i];
+        part.update();
+        if (part.dead) {
+            gameState.particles.splice(i, 1);
+        }
+    }
+    
+    // Update Camera
+    updateCamera();
+    
+    // Win/Lose Logic
+    if (gameState.player.eliminated) {
+        gameState.gamePhase = "GAME_OVER_LOSE";
+    } else if (gameState.aliveCount === 1 && !gameState.player.eliminated) {
+        // Wait a moment before declaring win?
+        // Check if others are truly gone
+        const botsAlive = gameState.entities.filter(e => e.isBot && !e.eliminated).length;
+        if (botsAlive === 0) {
+            gameState.gamePhase = "GAME_OVER_WIN";
+        }
+    }
+    
+    // Log Player State
+    if (gameState.player && !gameState.player.eliminated && p.frameCount % 10 === 0) {
+        p.logs.player_info.push({
+            screen_x: gameState.player.x - gameState.cameraX,
+            screen_y: gameState.player.y - gameState.cameraY,
+            game_x: gameState.player.x,
+            game_y: gameState.player.y,
+            velocity_x: gameState.player.vx,
+            velocity_y: gameState.player.vy,
+            framecount: gameState.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+
+function updateCamera() {
+    // Strategy: Follow the leading runner, but keep them on the right side (75% of screen width)
+    
+    // Find leader (furthest X)
+    let maxX = -Infinity;
+    gameState.entities.forEach(e => {
+        if (e instanceof Runner && !e.eliminated) {
+            if (e.x > maxX) maxX = e.x;
+        }
+    });
+    
+    if (maxX === -Infinity) return; // Everyone dead
+    
+    // Desired Camera X: LeaderX - (ScreenW * 0.75)
+    // This puts Leader at 75% across the screen.
+    const targetCamX = maxX - (CANVAS_WIDTH * 0.75);
+    
+    // Smooth Lerp (or instant if we want strict enforcement)
+    // SpeedRunners is strict. If you fall behind, you die.
+    // Let's Lerp fast.
+    gameState.cameraX = lerp(gameState.cameraX, targetCamX, 0.1);
+    
+    // Camera Shake
+    if (gameState.cameraShake > 0) {
+        gameState.cameraX += (Math.random() - 0.5) * gameState.cameraShake;
+        gameState.cameraY += (Math.random() - 0.5) * gameState.cameraShake;
+        gameState.cameraShake *= 0.9;
+        if (gameState.cameraShake < 0.5) gameState.cameraShake = 0;
+    }
+    
+    // Vertical Camera
+    // Center vertically on player roughly, but clamp to level bounds
+    // Level is mostly horizontal. Center around Y=200?
+    // Let's follow player Y with loose lerp
+    if (gameState.player && !gameState.player.eliminated) {
+        const targetCamY = gameState.player.y - CANVAS_HEIGHT / 2;
+        // Clamp
+        // gameState.cameraY = lerp(gameState.cameraY, targetCamY, 0.05);
+        // Actually, fixed Y is better for this specific flat runner to avoid motion sickness
+        gameState.cameraY = 0; 
+    }
+}
+
+function renderGame(p) {
+    p.push();
+    
+    // Render Level Geometry
+    renderLevel(p);
+    
+    // Render Dynamic Entities (Powerups, etc are in entities list)
+    // Z-sort: items back, players front
+    gameState.entities.sort((a, b) => {
+        // Simple hack: if runner, high index
+        const aScore = a instanceof Runner ? 10 : 0;
+        const bScore = b instanceof Runner ? 10 : 0;
+        return aScore - bScore;
+    });
+    
+    gameState.entities.forEach(entity => {
+        entity.render(p);
+    });
+    
+    // Render Particles
+    gameState.particles.forEach(part => part.render(p));
+    
+    p.pop();
+}
+
+function lerp(start, end, amt) {
+    return (1 - amt) * start + amt * end;
+}
+
+// Attach setControlMode to window for buttons
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+    
+    // Force reset to apply clean state for testing
+    // Access reset via global if needed, or just let user press R.
+    // For automation, we often want instant reset.
+    if (gameState.gamePhase !== "START") {
+        // We can't easily access p here to reset.
+        // The buttons are just for switching input logic.
+        // User should press R or Enter.
+    }
+};
+
+window.gameInstance = gameInstance;
+</file>
+
+<file name="ui.js">
+/**
+ * User Interface rendering.
+ */
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderUI(p) {
+    if (gameState.gamePhase === 'PLAYING') {
+        renderHUD(p);
+    } else if (gameState.gamePhase === 'START') {
+        renderStartScreen(p);
+    } else if (gameState.gamePhase === 'PAUSED') {
+        renderPaused(p);
+    } else if (gameState.gamePhase.includes('GAME_OVER')) {
+        renderGameOver(p);
+    }
+}
+
+function renderHUD(p) {
+    // Leaderboard / Status
+    // Top Right
+    p.textAlign(p.RIGHT, p.TOP);
+    p.textSize(16);
+    
+    let yPos = 10;
+    
+    // Filter runners
+    const runners = gameState.entities.filter(e => e.constructor.name === "Runner");
+    // Sort by x position (descending)
+    runners.sort((a, b) => b.x - a.x);
+    
+    runners.forEach((runner, index) => {
+        p.fill(runner.eliminated ? 100 : runner.color);
+        p.text(
+            `${index + 1}. ${runner.isBot ? "CPU" : "YOU"} ${runner.eliminated ? "(OUT)" : ""}`, 
+            CANVAS_WIDTH - 10, 
+            yPos
+        );
+        yPos += 20;
+    });
+    
+    // Distance / Laps
+    p.textAlign(p.CENTER, p.TOP);
+    p.fill(255);
+    // p.text(`Distance: ${Math.floor(gameState.player.x)}`, CANVAS_WIDTH/2, 10);
+}
+
+function renderStartScreen(p) {
+    p.background(0, 0, 0, 200);
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    p.textSize(40);
+    p.textStyle(p.BOLD);
+    p.text("VELOCITY RIVALS", CANVAS_WIDTH/2, CANVAS_HEIGHT/3);
+    
+    p.textSize(18);
+    p.textStyle(p.NORMAL);
+    p.text("Run Fast. Use Hooks. Eliminate Opponents.", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    
+    p.textSize(16);
+    p.fill(200, 255, 200);
+    p.text("PRESS ENTER TO START", CANVAS_WIDTH/2, CANVAS_HEIGHT * 0.7);
+    
+    p.fill(150);
+    p.textSize(12);
+    p.text("Arrows: Move | Z: Jump | Shift: Grapple", CANVAS_WIDTH/2, CANVAS_HEIGHT * 0.85);
+}
+
+function renderPaused(p) {
+    p.fill(0, 0, 0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(30);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+}
+
+function renderGameOver(p) {
+    p.fill(0, 0, 0, 200);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(40);
+    
+    if (gameState.gamePhase === 'GAME_OVER_WIN') {
+        p.fill(0, 255, 0);
+        p.text("VICTORY!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 20);
+    } else {
+        p.fill(255, 0, 0);
+        p.text("ELIMINATED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 20);
+    }
+    
+    p.fill(255);
+    p.textSize(20);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+}
+</file>
+
+<file name="entities.js">
+/**
+ * Game entities: Player, Bot, Projectiles, Pickups.
+ */
+import { gameState, GRAVITY, FRICTION, MAX_SPEED, JUMP_FORCE, WALL_JUMP_FORCE, ACCELERATION, COLORS, CANVAS_WIDTH, CANVAS_HEIGHT, LEVEL_WIDTH, GRAPPLE_STRENGTH } from './globals.js';
+import { checkCollisions, checkHazardCollisions, findGrapplePoint, raycast } from './physics.js';
+import { KEYS, isKeyDown } from './input.js';
+import { spawnParticles } from './particles.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+class Entity {
+    constructor(x, y, width, height, color) {
+        this.x = x;
+        this.y = y;
+        this.width = width;
+        this.height = height;
+        this.color = color;
+        
+        this.vx = 0;
+        this.vy = 0;
+        this.onGround = false;
+        this.onWall = 0;
+        this.eliminated = false;
+        
+        this.facing = 1;
+    }
+    
+    render(p) {
+        // Base render (override in children)
+        p.fill(this.color);
+        p.rect(this.x, this.y, this.width, this.height);
+    }
+}
+
+export class Runner extends Entity {
+    constructor(x, y, isBot = false, id = 0) {
+        super(x, y, 20, 35, isBot ? COLORS['bot' + id] : COLORS.player);
+        this.isBot = isBot;
+        this.id = id;
+        
+        // Gameplay Stats
+        this.speedBuff = 0;
+        this.inventory = null; // 'rocket', 'bomb'
+        this.boostMeter = 100;
+        
+        // Grapple State
+        this.grappleTarget = null; // {x, y}
+        this.grappleLength = 0;
+        this.isGrappling = false;
+        
+        // Physics overrides
+        this.canDoubleJump = false;
+        
+        // Trail
+        this.history = [];
+    }
+    
+    update(p) {
+        if (this.eliminated) return;
+        
+        this.handleInput(p);
+        this.applyPhysics();
+        this.checkStatus();
+        
+        // Trail effect
+        if (p.frameCount % 3 === 0 && Math.abs(this.vx) > 8) {
+            this.history.push({x: this.x, y: this.y, alpha: 200});
+            if (this.history.length > 5) this.history.shift();
+        }
+    }
+    
+    handleInput(p) {
+        let left = false, right = false, jump = false, grapple = false, item = false;
+        let up = false, down = false;
+
+        // 1. Get Input Source
+        if (!this.isBot) {
+            // Human Controls
+            if (gameState.controlMode === "HUMAN") {
+                left = isKeyDown(KEYS.LEFT);
+                right = isKeyDown(KEYS.RIGHT);
+                jump = isKeyDown(KEYS.Z) || isKeyDown(38); // Z or Up for jump (Up also used for aim, tricky. Let's strictly use Z for jump)
+                // Wait, Up/Down for aim. Z for Jump.
+                up = isKeyDown(KEYS.UP);
+                down = isKeyDown(KEYS.DOWN);
+                jump = isKeyDown(KEYS.Z);
+                grapple = isKeyDown(KEYS.SHIFT);
+                item = isKeyDown(KEYS.SPACE);
+            } else {
+                // Testing Controls
+                const action = get_automated_testing_action(gameState);
+                if (action) {
+                    if (action.keyCode === KEYS.RIGHT) right = true;
+                    if (action.keyCode === KEYS.LEFT) left = true;
+                    if (action.keyCode === KEYS.Z) jump = true;
+                    if (action.keyCode === KEYS.SHIFT) grapple = true;
+                }
+            }
+        } else {
+            // Bot AI
+            const inputs = this.computeAI(p);
+            left = inputs.left;
+            right = inputs.right;
+            jump = inputs.jump;
+            grapple = inputs.grapple;
+            item = inputs.item;
+            up = inputs.up;
+        }
+
+        // 2. Apply Actions
+        
+        // Movement
+        const effectiveSpeed = MAX_SPEED + this.speedBuff;
+        if (right) {
+            if (this.vx < effectiveSpeed) this.vx += ACCELERATION;
+            this.facing = 1;
+        } else if (left) {
+            if (this.vx > -effectiveSpeed) this.vx -= ACCELERATION;
+            this.facing = -1;
+        } else {
+            this.vx *= FRICTION; // Ground friction
+        }
+        
+        // Air resistance
+        if (!this.onGround) {
+            this.vx *= 0.98; // Less friction in air
+        }
+
+        // Jump
+        if (jump) {
+            if (this.onGround) {
+                this.vy = JUMP_FORCE;
+                this.onGround = false;
+                spawnParticles(this.x + this.width/2, this.y + this.height, 'dust', 5);
+            } else if (this.onWall !== 0) {
+                // Wall Jump
+                this.vy = WALL_JUMP_FORCE.y;
+                this.vx = this.onWall * -1 * WALL_JUMP_FORCE.x; // Jump away from wall
+                this.onWall = 0;
+                spawnParticles(this.x + (this.onWall === 1 ? this.width : 0), this.y + this.height/2, 'spark', 5);
+            }
+        }
+
+        // Grapple Logic
+        if (grapple) {
+            if (!this.isGrappling) {
+                // Try to fire grapple
+                // Look direction
+                let dirX = this.facing;
+                let dirY = -0.5; // Default 45 deg up
+                if (up) dirY = -1;
+                
+                const target = findGrapplePoint(this, dirX, dirY);
+                if (target) {
+                    this.isGrappling = true;
+                    this.grappleTarget = target;
+                    // Calculate length
+                    this.grappleLength = Math.sqrt(Math.pow(target.x - this.x, 2) + Math.pow(target.y - this.y, 2));
+                }
+            }
+        } else {
+            this.isGrappling = false;
+            this.grappleTarget = null;
+        }
+        
+        // Use Item
+        if (item && this.inventory) {
+            this.useItem();
+        }
+    }
+    
+    applyPhysics() {
+        // Grapple Physics override
+        if (this.isGrappling && this.grappleTarget) {
+            // Simple pendulum-like force
+            // Pull towards target
+            const dx = this.grappleTarget.x - this.x;
+            const dy = this.grappleTarget.y - this.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            
+            // Normalize
+            const dirX = dx / dist;
+            const dirY = dy / dist;
+            
+            // Apply tension force
+            // We want to accelerate towards the point
+            this.vx += dirX * GRAPPLE_STRENGTH;
+            this.vy += dirY * GRAPPLE_STRENGTH;
+            
+            // Dampen swing velocity slightly to prevent infinite energy
+            this.vx *= 0.99;
+            this.vy *= 0.99;
+            
+            // Visual line
+            // (Handled in render)
+        }
+        
+        // Gravity
+        this.vy += GRAVITY;
+        
+        // Terminal Velocity
+        if (this.vy > 20) this.vy = 20;
+
+        // Collision Check (updates x, y, vx, vy, onGround, onWall)
+        checkCollisions(this);
+        
+        // Hazard Check
+        if (checkHazardCollisions(this)) {
+            // In a real game, damage or stun. Here: drastic slow down or death?
+            // SpeedRunners usually stuns/knockbacks.
+            // Let's do knockback.
+            this.vy = -10;
+            this.vx = -this.facing * 10;
+            spawnParticles(this.x, this.y, 'explosion', 10);
+            this.speedBuff = -5; // Temp slow
+        }
+        
+        // Update buffering
+        if (this.speedBuff < 0) this.speedBuff += 0.05;
+        if (this.speedBuff > 0) this.speedBuff -= 0.05;
+    }
+    
+    checkStatus() {
+        // Check if off screen relative to camera
+        const screenX = this.x - gameState.cameraX;
+        const screenY = this.y - gameState.cameraY;
+        
+        // Determine Elimination
+        // Left edge, or fallen into pit
+        if (screenX < -50 || screenY > CANVAS_HEIGHT + 100 || screenY < -500) {
+            this.die();
+        }
+    }
+    
+    die() {
+        if (this.eliminated) return;
+        this.eliminated = true;
+        gameState.aliveCount--;
+        spawnParticles(this.x, this.y, 'explosion', 30);
+        
+        // If player died
+        if (!this.isBot) {
+            // Player lost
+            if (gameState.aliveCount > 0) {
+                // Logic handled in Game.js (wait for winner)
+            }
+        }
+    }
+    
+    computeAI(p) {
+        // Simple heuristic AI
+        // 1. Move right constantly
+        let inputs = { left: false, right: true, jump: false, grapple: false, item: false, up: false };
+        
+        // 2. Obstacle Avoidance (Raycast ahead)
+        // Look ahead 2 tiles
+        const lookAheadX = this.x + (this.facing * 80);
+        
+        // Check for pit
+        let floorFound = false;
+        // Simple check: iterate platforms to see if there is one at (lookAheadX, this.y + 50)
+        for (let plat of gameState.platforms) {
+            // Check normalized map position
+            // Simplified for prototype:
+            // Just jump periodically if slow?
+            // Better: Raycast down
+        }
+        
+        // Randomized jumping for variety and obstacle clearing
+        // Jump if wall is hit
+        if (this.onWall !== 0) {
+            inputs.jump = true;
+        }
+        
+        // Jump if gap (random chance to fail/succeed makes it interesting)
+        // Jump over hazards
+        
+        // Simplest effective bot for runner:
+        // Always run right.
+        // If x velocity drops (stuck), Jump.
+        // If in air and falling, maybe Grapple.
+        
+        if (Math.abs(this.vx) < 1 && !this.isGrappling) {
+            inputs.jump = true;
+        }
+        
+        // Random Grapple
+        if (!this.onGround && this.y > 200 && Math.random() < 0.05) {
+            inputs.grapple = true;
+            inputs.up = true;
+        }
+        // Release grapple if swinging up
+        if (this.isGrappling && this.vy < -5) {
+            inputs.grapple = false;
+        }
+        
+        return inputs;
+    }
+    
+    render(p) {
+        if (this.eliminated) return;
+        
+        // Render Trail
+        this.history.forEach(pos => {
+            p.fill(this.color[0], this.color[1], this.color[2], pos.alpha);
+            pos.alpha -= 10;
+            p.rect(pos.x - gameState.cameraX, pos.y - gameState.cameraY, this.width, this.height);
+        });
+        
+        // Render Grapple
+        if (this.isGrappling && this.grappleTarget) {
+            p.stroke(COLORS.grappleLine);
+            p.strokeWeight(2);
+            p.line(
+                this.x + this.width/2 - gameState.cameraX, 
+                this.y + this.height/2 - gameState.cameraY,
+                this.grappleTarget.x - gameState.cameraX,
+                this.grappleTarget.y - gameState.cameraY
+            );
+            p.noStroke();
+        }
+        
+        // Render Body
+        const screenX = this.x - gameState.cameraX;
+        const screenY = this.y - gameState.cameraY;
+        
+        p.fill(this.color);
+        if (this.invulnerable > 0 && Math.floor(p.frameCount / 4) % 2 === 0) p.fill(255);
+        
+        p.rect(screenX, screenY, this.width, this.height);
+        
+        // Eyes (direction)
+        p.fill(255);
+        if (this.facing === 1) {
+            p.rect(screenX + 12, screenY + 5, 5, 5);
+        } else {
+            p.rect(screenX + 3, screenY + 5, 5, 5);
+        }
+        
+        // Player Marker
+        if (!this.isBot) {
+            p.fill(255, 255, 0);
+            p.triangle(
+                screenX + 10, screenY - 15,
+                screenX + 5, screenY - 25,
+                screenX + 15, screenY - 25
+            );
+        }
+        
+        // Name/ID
+        // p.fill(255);
+        // p.textSize(10);
+        // p.text(this.isBot ? `CPU ${this.id}` : "P1", screenX + 10, screenY - 5);
+    }
+    
+    useItem() {
+        // TODO: Implement item logic (Rocket spawn)
+        this.inventory = null;
+    }
+}
+
+export class PowerUp {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.width = 30;
+        this.height = 30;
+        this.collected = false;
+    }
+    
+    update() {
+        if (this.collected) return;
+        
+        // Check collision with all runners
+        gameState.entities.forEach(entity => {
+            if (entity instanceof Runner && !entity.eliminated) {
+                if (entity.x < this.x + this.width && entity.x + entity.width > this.x &&
+                    entity.y < this.y + this.height && entity.y + entity.height > this.y) {
+                    
+                    this.collected = true;
+                    entity.inventory = Math.random() > 0.5 ? 'rocket' : 'bomb';
+                    spawnParticles(this.x + 15, this.y + 15, 'spark', 10);
+                    
+                    // Respawn timer? In SpeedRunners boxes respawn.
+                    setTimeout(() => { this.collected = false; }, 5000);
+                }
+            }
+        });
+    }
+    
+    render(p) {
+        if (this.collected) return;
+        
+        const screenX = this.x - gameState.cameraX;
+        const screenY = this.y - gameState.cameraY;
+        
+        // Only render if on screen (loop handling logic needed if not spawning infinite)
+        // Assume infinite spawn or manual placement in loop
+        
+        p.fill(255, 200, 0);
+        p.rect(screenX, screenY, this.width, this.height);
+        p.fill(0);
+        p.textSize(20);
+        p.textAlign(p.CENTER, p.CENTER);
+        p.text("?", screenX + 15, screenY + 15);
+    }
+}
+</file>
+
+<file name="physics.js">
+/**
+ * Physics engine, collision detection, and spatial calculations.
+ */
+import { collideRectRect, collideLineRect } from 'https://cdn.jsdelivr.net/npm/p5.collide2d@1.0.0/+esm';
+import { gameState, LEVEL_WIDTH, TILE_SIZE, GRAVITY } from './globals.js';
+
+export function checkCollisions(entity) {
+    // Platform Collisions
+    entity.onGround = false;
+    entity.onWall = 0; // -1 left, 1 right, 0 none
+    entity.ceilingBump = false;
+
+    // We only check platforms near the entity to optimize
+    // Map repeats, so we normalize entity X to 0..LEVEL_WIDTH for checking static map data if we stored it that way.
+    // However, our platforms array will contain objects with absolute positions for the visible segments.
+    // Actually, for a looping runner, it's best to generate platforms dynamically ahead or repeat the array.
+    // Strategy: We will check against ALL platforms but offset them by map loops if needed.
+    // SIMPLIFICATION: We assume the platforms array contains all geometry for one loop.
+    // We check collision against Platform X, and Platform X + LEVEL_WIDTH, and Platform X - LEVEL_WIDTH.
+
+    const nearbyRadius = 100; // Optimization radius
+    
+    // Store original position to resolve
+    let originalX = entity.x;
+    let originalY = entity.y;
+
+    // 1. Horizontal Collision
+    entity.x += entity.vx;
+    let wallHit = false;
+
+    // Check world loop offsets (-1, 0, 1)
+    for (let loop = -1; loop <= 1; loop++) {
+        const xOffset = loop * LEVEL_WIDTH;
+        
+        for (let platform of gameState.platforms) {
+            // Optimization: Simple box check first
+            let platX = platform.x + xOffset;
+            let platY = platform.y;
+            
+            if (entity.x + entity.width > platX && entity.x < platX + platform.width &&
+                entity.y + entity.height > platY && entity.y < platY + platform.height) {
+                
+                // Collision detected on X axis
+                if (entity.vx > 0) { // Moving right
+                    entity.x = platX - entity.width;
+                    entity.onWall = 1;
+                } else if (entity.vx < 0) { // Moving left
+                    entity.x = platX + platform.width;
+                    entity.onWall = -1;
+                }
+                entity.vx = 0;
+                wallHit = true;
+            }
+        }
+    }
+
+    // 2. Vertical Collision
+    entity.y += entity.vy;
+    
+    for (let loop = -1; loop <= 1; loop++) {
+        const xOffset = loop * LEVEL_WIDTH;
+        
+        for (let platform of gameState.platforms) {
+            let platX = platform.x + xOffset;
+            let platY = platform.y;
+
+            if (entity.x + entity.width > platX && entity.x < platX + platform.width &&
+                entity.y + entity.height > platY && entity.y < platY + platform.height) {
+                
+                // Collision detected on Y axis
+                if (entity.vy > 0) { // Falling down
+                    entity.y = platY - entity.height;
+                    entity.onGround = true;
+                    entity.vy = 0;
+                } else if (entity.vy < 0) { // Jumping up
+                    entity.y = platY + platform.height;
+                    entity.ceilingBump = true;
+                    entity.vy = 0;
+                }
+            }
+        }
+    }
+}
+
+export function checkHazardCollisions(entity) {
+    if (entity.invulnerable > 0) return false;
+
+    for (let loop = -1; loop <= 1; loop++) {
+        const xOffset = loop * LEVEL_WIDTH;
+        for (let hazard of gameState.hazards) {
+            let hazX = hazard.x + xOffset;
+            let hazY = hazard.y;
+            
+            // Simple Circle-Rect or Rect-Rect collision
+            // Hazards are usually triangles (spikes), treat as smaller rects at bottom
+            if (entity.x + entity.width * 0.5 > hazX && entity.x + entity.width * 0.5 < hazX + hazard.width &&
+                entity.y + entity.height > hazY + hazard.height / 2 && entity.y < hazY + hazard.height) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+export function findGrapplePoint(entity, directionX, directionY) {
+    let bestPoint = null;
+    let minDist = Infinity;
+    
+    // Search angle: Look in direction of input or facing
+    // We scan all ceiling platforms and special grapple points
+    
+    // Normalize absolute entity X for map checking
+    // Actually, just check all points with loop offset
+    
+    for (let loop = -1; loop <= 1; loop++) {
+        const xOffset = loop * LEVEL_WIDTH;
+        
+        // Check "Grapple Points" (ceilings)
+        // We define grappleable surfaces as the bottom of platforms
+        for (let platform of gameState.platforms) {
+            // Check if platform is above player and within range
+            let platX = platform.x + xOffset;
+            let platY = platform.y + platform.height; // Bottom edge
+            
+            // Check corners and center
+            const pointsToCheck = [
+                {x: platX, y: platY},
+                {x: platX + platform.width, y: platY},
+                {x: platX + platform.width/2, y: platY}
+            ];
+            
+            for (let pt of pointsToCheck) {
+                const d = dist(entity.x + entity.width/2, entity.y + entity.height/2, pt.x, pt.y);
+                if (d < gameState.grappleRange && pt.y < entity.y) {
+                    // Simple priority: Closest point
+                    // Advanced: Best alignment with input vector
+                    
+                    // Filter by direction if input is given
+                    if (directionY < 0) { // Aiming up
+                        // If aiming right, prefer points to the right
+                        if (directionX > 0 && pt.x < entity.x) continue;
+                        if (directionX < 0 && pt.x > entity.x) continue;
+                    }
+
+                    if (d < minDist) {
+                        minDist = d;
+                        bestPoint = { x: pt.x, y: pt.y, obj: platform };
+                    }
+                }
+            }
+        }
+    }
+    
+    return bestPoint;
+}
+
+function dist(x1, y1, x2, y2) {
+    return Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
+}
+
+// Raycasting for hook visibility (prevent grappling through walls)
+export function raycast(x1, y1, x2, y2) {
+    // Check if line intersects any platform
+    for (let loop = -1; loop <= 1; loop++) {
+        const xOffset = loop * LEVEL_WIDTH;
+        for (let platform of gameState.platforms) {
+            let hit = collideLineRect(
+                x1, y1, x2, y2,
+                platform.x + xOffset, platform.y, platform.width, platform.height
+            );
+            if (hit) return true; // Blocked
+        }
+    }
+    return false; // Clear
+}
+</file>
+
+<file name="particles.js">
+/**
+ * Visual effects system.
+ */
+import { gameState } from './globals.js';
+
+export class Particle {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.type = type; // 'dust', 'spark', 'explosion', 'speedline'
+        this.age = 0;
+        this.dead = false;
+        
+        // Defaults
+        this.vx = (Math.random() - 0.5) * 2;
+        this.vy = (Math.random() - 0.5) * 2;
+        this.size = Math.random() * 3 + 2;
+        this.color = [255, 255, 255];
+        this.alpha = 255;
+        this.decay = 5;
+        
+        this.initType();
+    }
+    
+    initType() {
+        switch(this.type) {
+            case 'dust':
+                this.vy = -0.5 - Math.random();
+                this.color = [200, 200, 200];
+                this.decay = 8;
+                break;
+            case 'spark':
+                this.vx = (Math.random() - 0.5) * 10;
+                this.vy = (Math.random() - 0.5) * 10;
+                this.color = [255, 255, 0];
+                this.decay = 15;
+                break;
+            case 'boost':
+                this.vx = -10; // Moves left relative to player
+                this.vy = (Math.random() - 0.5);
+                this.color = [0, 255, 255];
+                this.size = 2;
+                this.decay = 10;
+                break;
+            case 'explosion':
+                this.vx = (Math.random() - 0.5) * 15;
+                this.vy = (Math.random() - 0.5) * 15;
+                this.color = [255, 100, 0];
+                this.size = Math.random() * 10 + 5;
+                this.decay = 10;
+                break;
+        }
+    }
+    
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        
+        if (this.type === 'explosion' || this.type === 'spark') {
+            this.vy += 0.2; // Gravity for heavy particles
+            this.vx *= 0.95;
+        }
+        
+        this.alpha -= this.decay;
+        this.age++;
+        
+        if (this.alpha <= 0) this.dead = true;
+    }
+    
+    render(p) {
+        p.push();
+        p.noStroke();
+        p.fill(this.color[0], this.color[1], this.color[2], this.alpha);
+        p.circle(this.x, this.y, this.size);
+        p.pop();
+    }
+}
+
+export function spawnParticles(x, y, type, count) {
+    for (let i = 0; i < count; i++) {
+        gameState.particles.push(new Particle(x, y, type));
+    }
+}
+</file>
+
+<file name="input.js">
+/**
+ * Input handling for keyboard events.
+ */
+import { gameState } from './globals.js';
+
+const keys = {};
+
+export function handleInput(p) {
+    // Only processed inside specific entity updates usually, 
+    // but we track state here.
+}
+
+export function handleKeyPressed(p) {
+    keys[p.keyCode] = true;
+
+    // Log input
+    if (p.logs) {
+        p.logs.inputs.push({
+            input_type: 'keyPressed',
+            data: { key: p.key, keyCode: p.keyCode },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+
+    // Phase Transitions
+    if (p.keyCode === 13) { // ENTER
+        if (gameState.gamePhase === "START") {
+            gameState.gamePhase = "PLAYING";
+            logGameInfo(p, "Phase Change: PLAYING");
+        } else if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+             // Optional: Enter could also restart
+             resetGame(p);
+        }
+    }
+
+    if (p.keyCode === 27) { // ESC
+        if (gameState.gamePhase === "PLAYING") {
+            gameState.gamePhase = "PAUSED";
+            logGameInfo(p, "Phase Change: PAUSED");
+        } else if (gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = "PLAYING";
+            logGameInfo(p, "Phase Change: PLAYING");
+        }
+    }
+
+    if (p.keyCode === 82) { // R
+        if (gameState.gamePhase.includes("GAME_OVER")) {
+            resetGame(p);
+        }
+    }
+}
+
+export function handleKeyReleased(p) {
+    keys[p.keyCode] = false;
+    
+    if (p.logs) {
+        p.logs.inputs.push({
+            input_type: 'keyReleased',
+            data: { key: p.key, keyCode: p.keyCode },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+
+export function isKeyDown(keyCode) {
+    return !!keys[keyCode];
+}
+
+function logGameInfo(p, message) {
+    if (p.logs) {
+        p.logs.game_info.push({
+            data: { message: message, gamePhase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    }
+}
+
+// Reset function needs to be imported dynamically or attached to window to avoid circular deps if Game.js imports Input.js
+// We will assign the reset function in Game.js
+let resetGameFn = () => {};
+export function registerResetFunction(fn) {
+    resetGameFn = fn;
+}
+function resetGame(p) {
+    resetGameFn(p);
+}
+
+// Key Mapping
+export const KEYS = {
+    LEFT: 37,
+    UP: 38,
+    RIGHT: 39,
+    DOWN: 40,
+    Z: 90,      // Jump
+    X: 88,      // Unused/Alternate
+    SPACE: 32,  // Item
+    SHIFT: 16   // Grapple
+};
+</file>
+
+<file name="level.js">
+/**
+ * Level data and generation.
+ */
+import { gameState, LEVEL_WIDTH, CANVAS_HEIGHT, COLORS } from './globals.js';
+import { PowerUp } from './entities.js';
+
+export class Platform {
+    constructor(x, y, w, h) {
+        this.x = x;
+        this.y = y;
+        this.width = w;
+        this.height = h;
+    }
+}
+
+export class Hazard {
+    constructor(x, y, w, h) {
+        this.x = x;
+        this.y = y;
+        this.width = w;
+        this.height = h;
+    }
+}
+
+export function generateLevel() {
+    gameState.platforms = [];
+    gameState.hazards = [];
+    gameState.entities = gameState.entities.filter(e => e.constructor.name === "Runner"); // Keep players
+    
+    // Create a 3200px wide looping track
+    // Floor
+    addPlatform(0, 350, 800, 50);
+    addPlatform(900, 300, 500, 50); // Step up
+    addPlatform(1500, 350, 400, 50); // Lower
+    
+    // Walls and ceilings
+    addPlatform(600, 200, 200, 20); // Floating platform
+    addPlatform(800, 100, 20, 200); // Vertical Wall
+    
+    // Big Gap with ceiling grapple
+    addPlatform(2000, 350, 200, 50);
+    addPlatform(2400, 300, 200, 50);
+    addPlatform(2100, 50, 400, 20); // Ceiling for grappling
+    
+    // Spikes
+    addHazard(1400, 340, 100, 40); // Between floors
+    addHazard(2200, 380, 200, 20); // Pit spikes
+    
+    // End loop transition
+    addPlatform(2800, 350, 400, 50);
+    
+    // Powerups
+    gameState.entities.push(new PowerUp(650, 150));
+    gameState.entities.push(new PowerUp(2100, 200));
+}
+
+function addPlatform(x, y, w, h) {
+    gameState.platforms.push(new Platform(x, y, w, h));
+}
+
+function addHazard(x, y, w, h) {
+    gameState.hazards.push(new Hazard(x, y, w, h));
+}
+
+export function renderLevel(p) {
+    // We need to render platforms multiple times for the loop illusion 
+    // if the camera sees the seam.
+    
+    const camX = gameState.cameraX;
+    
+    // Calculate visible loops
+    // E.g., if camera is at 3100, we see end of Loop 0 and start of Loop 1.
+    
+    // Render Platforms
+    p.fill(COLORS.platforms);
+    p.noStroke();
+    
+    // Draw logic: Draw normal, then draw offset -LEVEL_WIDTH and +LEVEL_WIDTH
+    // Just draw 3 copies always? Efficient enough for < 50 platforms.
+    
+    [-1, 0, 1].forEach(loop => {
+        const offset = loop * LEVEL_WIDTH;
+        
+        // Optimization: Check bounds
+        if (offset + LEVEL_WIDTH < camX || offset > camX + 600) return; // Crude culling
+        
+        p.push();
+        p.translate(offset - camX, -gameState.cameraY);
+        
+        gameState.platforms.forEach(plat => {
+             // Simple culling
+             if (plat.x + plat.width + offset < camX || plat.x + offset > camX + 600) {
+                 // return; // Logic is tricky with translate. Just draw.
+             }
+             p.rect(plat.x, plat.y, plat.width, plat.height);
+             
+             // Tech details
+             p.stroke(60, 70, 90);
+             p.line(plat.x, plat.y, plat.x + plat.width, plat.y);
+             p.line(plat.x, plat.y + plat.height, plat.x + plat.width, plat.y + plat.height);
+             p.noStroke();
+        });
+        
+        // Draw Hazards
+        p.fill(COLORS.spikes);
+        gameState.hazards.forEach(haz => {
+             p.triangle(
+                 haz.x, haz.y + haz.height,
+                 haz.x + haz.width/2, haz.y,
+                 haz.x + haz.width, haz.y + haz.height
+             );
+        });
+        
+        p.pop();
+    });
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

@@ -1,0 +1,606 @@
+<analysis>
+- Issue identified: The game lacks distinct directional attacks (up, down, forward, back aerial/ground) and sufficient visual feedback for these attacks. The existing attack input logic for "back attack" was also potentially ambiguous.
+- Files affected:
+    - `index.html`: To update the controls description.
+    - `entities.js`: To implement directional attack logic in the `Player` class, adjust hitbox properties based on direction, and add visual animations/effects for each attack type in the `Player`'s render method. The `Fighter` class needs a new property to track the current attack direction.
+- Changes needed:
+    - Update the `index.html` controls text to reflect directional attacks.
+    - In `entities.js`, modify the `Fighter` class to include `currentAttackDirection` and reset it when not attacking.
+    - In `entities.js`, enhance the `Player.update` method to correctly detect and apply directional inputs (Up, Down, Forward, Back, Neutral) when the attack key is pressed, adjusting hitbox position, damage, and knockback accordingly.
+    - In `entities.js`, extend the `Player.render` method to draw distinct visual cues (stick figure poses and temporary stroke effects) for each directional attack, making the combat more "visual".
+</analysis>
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>A Few Quick Matches</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #111; color: #eee; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 2px solid #444; box-shadow: 0 0 20px rgba(0,0,0,0.5); width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 20px; cursor: pointer; background: #333; color: #fff; border: 1px solid #555; border-radius: 4px; transition: background 0.2s; font-weight: bold; }
+      .control-button:hover { background: #444; }
+      .control-button.active { background: #007bff; border-color: #0056b3; }
+      h1 { margin-bottom: 10px; text-transform: uppercase; letter-spacing: 2px; font-size: 24px; color: #f0f0f0; }
+      .info-text { max-width: 600px; text-align: center; color: #aaa; margin-bottom: 20px; font-size: 14px; line-height: 1.5; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle">A Few Quick Matches</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN', this)">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="setMode('TEST_1', this)">TEST 1 (Physics)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="setMode('TEST_2', this)">TEST 2 (Win)</button>
+      </div>
+      <p id="gameDescription" class="info-text">
+        A fast-paced stick figure platform fighter! Engage in high-speed combat, execute stylish combos, and master the art of the dash-cancel. Defeat your opponent by depleting their health bar.
+      </p>
+      <p id="gameControls" class="info-text">
+        <strong>Controls:</strong> ARROWS to Move • SPACE to Jump (x2) • Z to Attack (ARROWS + Z for Directional: Up, Down, Forward, Back) • SHIFT to Dash<br>
+        <strong>Tips:</strong> Hit an enemy to enable Dash-Cancel!
+      </p>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+    
+    <script>
+      function setMode(mode, btn) {
+        window.setControlMode(mode);
+        // Update UI
+        document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      }
+    </script>
+  </body>
+</html>
+</code>
+<code filename="entities.js">
+/**
+ * Game entities: Player, Enemy, Platform, Hitbox.
+ */
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { updatePhysics, resolvePlatformCollision, checkCollision, applyKnockback } from './physics.js';
+import { createExplosion } from './particles.js';
+
+// --- Base Entity ---
+export class Entity {
+    constructor(x, y, width, height) {
+        this.x = x;
+        this.y = y;
+        this.width = width;
+        this.height = height;
+        this.vx = 0;
+        this.vy = 0;
+        this.isGrounded = false;
+        this.facing = 1; // 1 Right, -1 Left
+        this.color = [255, 255, 255];
+        this.markedForDeletion = false;
+    }
+
+    update() {}
+    render(p) {}
+}
+
+// --- Platform ---
+export class Platform extends Entity {
+    constructor(x, y, width, height) {
+        super(x, y, width, height);
+        this.color = [100, 100, 120];
+    }
+
+    render(p) {
+        p.push();
+        p.fill(this.color);
+        p.stroke(200);
+        p.strokeWeight(2);
+        p.rectMode(p.CENTER);
+        p.rect(this.x, this.y, this.width, this.height);
+        p.pop();
+    }
+}
+
+// --- Hitbox ---
+// Represents an active attack area
+export class Hitbox extends Entity {
+    constructor(owner, x, y, width, height, damage, knockbackX, knockbackY, duration) {
+        super(x, y, width, height);
+        this.owner = owner;
+        this.damage = damage;
+        this.kbX = knockbackX;
+        this.kbY = knockbackY;
+        this.duration = duration;
+        this.age = 0;
+        this.hitList = []; // Entities already hit
+    }
+
+    update() {
+        this.age++;
+        if (this.age >= this.duration) {
+            this.markedForDeletion = true;
+        }
+
+        // Move with owner if it's a melee attack attached to body
+        // For now, static relative to spawn or attached logic could be complex. 
+        // We'll assume detached for simplicity or simple offset updates in owner.
+    }
+
+    render(p) {
+        // Debug render
+        // p.push();
+        // p.noFill();
+        // p.stroke(255, 0, 0, 100);
+        // p.rectMode(p.CENTER);
+        // p.rect(this.x, this.y, this.width, this.height);
+        // p.pop();
+    }
+}
+
+// --- Fighter (Base for Player and AI) ---
+export class Fighter extends Entity {
+    constructor(x, y, isPlayer = false) {
+        super(x, y, 30, 60); // Standard human size
+        this.isPlayer = isPlayer;
+        
+        // Stats
+        this.maxHealth = 100;
+        this.health = 100;
+        this.moveSpeed = 5;
+        this.jumpForce = -12;
+        this.dashSpeed = 15;
+        
+        // State
+        this.state = "IDLE"; // IDLE, RUN, JUMP, FALL, ATTACK, DASH, STUN, DEAD
+        this.stateTimer = 0;
+        this.canDash = true;
+        this.hasDoubleJump = true;
+        this.attackCooldown = 0;
+        this.dashCooldown = 0;
+        
+        // Combo system
+        this.hasHit = false; // Can we cancel?
+        
+        // Visuals
+        this.animFrame = 0;
+        this.currentAttackDirection = null; // Added for visual feedback
+    }
+
+    update(p) {
+        if (this.health <= 0 && this.state !== "DEAD") {
+            this.setState("DEAD");
+        }
+        
+        this.stateTimer++;
+        if (this.attackCooldown > 0) this.attackCooldown--;
+        if (this.dashCooldown > 0) this.dashCooldown--;
+
+        // Input handling is done in subclasses (Player) or AI logic (Enemy)
+        
+        // State Machine Update
+        switch (this.state) {
+            case "IDLE":
+            case "RUN":
+            case "JUMP":
+            case "FALL":
+                this.handleMovementState(p);
+                break;
+            case "ATTACK":
+                this.handleAttackState(p);
+                break;
+            case "DASH":
+                this.handleDashState(p);
+                break;
+            case "STUN":
+                this.handleStunState(p);
+                break;
+            case "DEAD":
+                this.vx = 0;
+                break;
+        }
+
+        updatePhysics(this);
+        
+        // Collision with Platforms
+        gameState.platforms.forEach(platform => {
+            resolvePlatformCollision(this, platform);
+        });
+
+        // Bounds check (Death pit)
+        if (this.y > CANVAS_HEIGHT + 100) {
+            this.health = 0;
+            this.setState("DEAD");
+        }
+    }
+
+    handleMovementState(p) {
+        // Base physics logic happens in updatePhysics, this controls velocity intent
+    }
+
+    handleAttackState(p) {
+        // Default empty, override in subclass if needed
+    }
+
+    handleDashState(p) {
+        // Default empty, override in subclass if needed
+    }
+
+    handleStunState(p) {
+        // Default recovery logic
+        if (this.stateTimer > 20) {
+            this.setState("IDLE");
+        }
+    }
+
+    setState(newState) {
+        this.state = newState;
+        this.stateTimer = 0;
+        if (newState === "ATTACK") {
+            this.hasHit = false;
+        } else {
+            this.currentAttackDirection = null; // Reset attack direction when not attacking
+        }
+    }
+
+    takeDamage(amount, kbX, kbY) {
+        if (this.state === "DEAD") return;
+        this.health -= amount;
+        applyKnockback(this, kbX, kbY);
+        this.setState("STUN");
+        
+        // Hitstop effect
+        gameState.hitStop = 5;
+        gameState.camera.shake = 10;
+        
+        createExplosion(this.x, this.y, 10, 'SPARK');
+        createExplosion(this.x, this.y, 5, 'BLOOD');
+    }
+
+    // Render Stick Figure
+    render(p) {
+        p.push();
+        p.translate(this.x, this.y);
+        if (this.facing === -1) p.scale(-1, 1);
+
+        // Flicker if damaged recently?
+        if (this.state === "STUN" && p.frameCount % 4 === 0) {
+            p.pop();
+            return; 
+        }
+
+        p.stroke(this.isPlayer ? 0 : 255); // Black for player, White for enemy (or configurable)
+        
+        if (this.isPlayer) {
+            p.stroke(50, 255, 100); // Green tint for player
+        } else {
+            // Use custom enemy color
+            p.stroke(this.color);
+        }
+
+        p.strokeWeight(3);
+        p.noFill();
+
+        // Animation procedural logic
+        let legOffset = 0;
+        let armOffset = 0;
+        
+        if (this.state === "RUN" && this.isGrounded) {
+            legOffset = Math.sin(p.frameCount * 0.5) * 10;
+        }
+        
+        // Head
+        p.circle(0, -20, 15);
+        
+        // Body
+        p.line(0, -12, 0, 10);
+        
+        // Legs
+        p.line(0, 10, -10 + legOffset, 30);
+        p.line(0, 10, 10 - legOffset, 30);
+        
+        // Arms
+        if (this.state === "ATTACK") {
+            // Directional attack animations
+            switch (this.currentAttackDirection) {
+                case 'UP':
+                    p.line(0, -5, 0, -30); // Arms up
+                    break;
+                case 'DOWN':
+                    p.line(0, 5, 0, 30); // Arms down
+                    break;
+                case 'BACK':
+                    p.line(0, -5, -20, -10); // Arm back
+                    break;
+                case 'FORWARD':
+                case 'NEUTRAL':
+                default:
+                    p.line(0, -5, 20, -5); // Arm forward (punch)
+                    break;
+            }
+        } else {
+            p.line(0, -5, 15 + armOffset, 10);
+            p.line(0, -5, -15 - armOffset, 10);
+        }
+
+        // Add visual feedback for attacks
+        if (this.state === "ATTACK" && this.stateTimer < 10) { // Visual for first 10 frames of attack
+            p.push();
+            let alpha = p.map(this.stateTimer, 0, 10, 255, 0);
+            p.stroke(255, 200, 50, alpha); // Yellowish attack glow
+            p.strokeWeight(4);
+            p.noFill();
+
+            switch (this.currentAttackDirection) {
+                case 'UP':
+                    p.line(0, -20, 0, -50); // Line above head
+                    p.arc(0, -50, 20, 20, p.PI, p.TWO_PI); // Small arc at top
+                    break;
+                case 'DOWN':
+                    p.line(0, 20, 0, 50); // Line below feet
+                    p.arc(0, 50, 20, 20, 0, p.PI); // Small arc at bottom
+                    break;
+                case 'BACK':
+                    p.line(-10, -5, -40, -5); // Line behind
+                    break;
+                case 'FORWARD':
+                case 'NEUTRAL':
+                default:
+                    p.line(10, -5, 40, -5); // Line in front (punch)
+                    break;
+            }
+            p.pop();
+        }
+
+        // Debug Hitbox
+        // p.stroke(0, 255, 0);
+        // p.rect(0, 0, this.width, this.height);
+
+        p.pop();
+    }
+}
+
+// --- Player Class ---
+export class Player extends Fighter {
+    constructor(x, y) {
+        super(x, y, true);
+    }
+
+    update(p) {
+        // Imports
+        const { isKeyDown, isKeyPressed, KEYS, consumeKeyPress } =  window.inputModule; // We will attach input to window for easy access in classes
+        
+        super.update(p);
+        
+        if (this.state === "DEAD") return;
+        if (this.state === "STUN") {
+            if (this.stateTimer > 20) this.setState("IDLE"); // Recovery
+            return;
+        }
+
+        // Movement
+        if (this.state !== "DASH" && this.state !== "ATTACK") {
+            if (isKeyDown(KEYS.LEFT)) {
+                this.vx = -this.moveSpeed;
+                this.facing = -1;
+                if (this.isGrounded) this.setState("RUN");
+            } else if (isKeyDown(KEYS.RIGHT)) {
+                this.vx = this.moveSpeed;
+                this.facing = 1;
+                if (this.isGrounded) this.setState("RUN");
+            } else {
+                this.vx = 0;
+                if (this.isGrounded) this.setState("IDLE");
+            }
+
+            // Jump
+            if (isKeyPressed(KEYS.SPACE)) {
+                if (this.isGrounded) {
+                    this.vy = this.jumpForce;
+                    this.isGrounded = false;
+                    this.setState("JUMP");
+                    createExplosion(this.x, this.y + 30, 5, 'DUST');
+                    consumeKeyPress(KEYS.SPACE);
+                } else if (this.hasDoubleJump) {
+                    this.vy = this.jumpForce;
+                    this.hasDoubleJump = false;
+                    createExplosion(this.x, this.y + 30, 5, 'DUST');
+                    consumeKeyPress(KEYS.SPACE);
+                }
+            }
+        }
+        
+        // Dash
+        if (isKeyPressed(KEYS.SHIFT) && this.canDash && this.dashCooldown === 0) {
+            // Can dash if idle/move/jump OR if Attacking and HasHit (Dash Cancel)
+            if (this.state !== "ATTACK" || (this.state === "ATTACK" && this.hasHit)) {
+                this.setState("DASH");
+                this.canDash = false; // Need to land to reset or cooldown
+                this.dashCooldown = 60;
+                
+                // Dash direction
+                let dirX = 0;
+                let dirY = 0;
+                if (isKeyDown(KEYS.LEFT)) dirX = -1;
+                if (isKeyDown(KEYS.RIGHT)) dirX = 1;
+                if (isKeyDown(KEYS.UP)) dirY = -1;
+                if (isKeyDown(KEYS.DOWN)) dirY = 1;
+                
+                if (dirX === 0 && dirY === 0) dirX = this.facing;
+                
+                // Normalize roughly
+                const mag = Math.sqrt(dirX*dirX + dirY*dirY);
+                if (mag > 0) { // Avoid division by zero
+                    this.vx = (dirX / mag) * this.dashSpeed;
+                    this.vy = (dirY / mag) * this.dashSpeed;
+                } else { // Default to forward dash if no direction
+                    this.vx = this.facing * this.dashSpeed;
+                    this.vy = 0;
+                }
+                
+                consumeKeyPress(KEYS.SHIFT);
+                createExplosion(this.x, this.y, 8, 'LINE');
+            }
+        }
+
+        // Attack
+        if (isKeyPressed(KEYS.Z) && this.attackCooldown === 0 && this.state !== "DASH") {
+            this.setState("ATTACK");
+            this.attackCooldown = 20;
+            
+            let hbX, hbY, hbWidth, hbHeight, hbDamage, hbKbX, hbKbY;
+
+            let attackDirX = 0;
+            let attackDirY = 0;
+            if (isKeyDown(KEYS.UP)) attackDirY = -1;
+            if (isKeyDown(KEYS.DOWN)) attackDirY = 1;
+            if (isKeyDown(KEYS.LEFT)) attackDirX = -1;
+            if (isKeyDown(KEYS.RIGHT)) attackDirX = 1;
+
+            // Determine attack type based on directional input
+            if (attackDirY === -1) { // Up Attack (Prioritize vertical)
+                this.currentAttackDirection = 'UP';
+                hbX = this.x;
+                hbY = this.y - (this.height / 2) - 20; // Above head
+                hbWidth = 40;
+                hbHeight = 40;
+                hbDamage = 12;
+                hbKbX = 0;
+                hbKbY = -15; // Strong vertical knockback
+            } else if (attackDirY === 1) { // Down Attack (Prioritize vertical)
+                this.currentAttackDirection = 'DOWN';
+                hbX = this.x;
+                hbY = this.y + (this.height / 2) + 20; // Below feet
+                hbWidth = 40;
+                hbHeight = 40;
+                hbDamage = 8;
+                hbKbX = 0;
+                hbKbY = 10; // Downward knockback (spike-like)
+            } else if ((attackDirX === -1 && this.facing === 1) || (attackDirX === 1 && this.facing === -1)) { 
+                // Back Attack: Attacking opposite to current facing direction
+                this.currentAttackDirection = 'BACK';
+                hbX = this.x + (30 * -this.facing); // Behind player
+                hbY = this.y;
+                hbWidth = 40;
+                hbHeight = 40;
+                hbDamage = 8;
+                hbKbX = 8 * -this.facing;
+                hbKbY = -3; // Weaker, for spacing/repositioning
+            } else if ((attackDirX === 1 && this.facing === 1) || (attackDirX === -1 && this.facing === -1)) { 
+                // Explicit Forward Attack: Attacking in current facing direction
+                this.currentAttackDirection = 'FORWARD';
+                hbX = this.x + (30 * this.facing); // In front of player
+                hbY = this.y;
+                hbWidth = 40;
+                hbHeight = 40;
+                hbDamage = 10;
+                hbKbX = 10 * this.facing;
+                hbKbY = -5;
+            } else { // Neutral Attack (Default if no specific direction or conflicting horizontal)
+                this.currentAttackDirection = 'NEUTRAL';
+                hbX = this.x + (30 * this.facing); // In front of player
+                hbY = this.y;
+                hbWidth = 40;
+                hbHeight = 40;
+                hbDamage = 10;
+                hbKbX = 10 * this.facing;
+                hbKbY = -5;
+            }
+            
+            const hb = new Hitbox(this, hbX, hbY, hbWidth, hbHeight, hbDamage, hbKbX, hbKbY, 10);
+            gameState.projectiles.push(hb);
+            consumeKeyPress(KEYS.Z);
+        }
+        
+        if (this.state === "ATTACK") {
+            // Apply a little friction during ground attack
+            if (this.isGrounded) this.vx *= 0.5;
+            if (this.stateTimer > 15) {
+                this.setState("IDLE");
+            }
+        }
+        
+        if (this.state === "DASH") {
+            this.vy = 0; // defy gravity
+            if (this.stateTimer > 10) {
+                this.vx *= 0.2;
+                this.vy *= 0.2;
+                this.setState("FALL");
+            }
+        }
+    }
+}
+
+// --- Enemy AI ---
+export class Enemy extends Fighter {
+    constructor(x, y, level = 1, color = [255, 50, 50]) {
+        super(x, y, false);
+        this.decisionTimer = 0;
+        this.target = null;
+        this.level = level;
+        this.color = color;
+        
+        // Scale stats based on level
+        this.moveSpeed = 5 + (level * 0.5);
+        this.damageMultiplier = 1 + (level * 0.15);
+        this.maxHealth = 100 + (level * 10);
+        this.health = this.maxHealth;
+    }
+
+    update(p) {
+        super.update(p);
+        this.target = gameState.player;
+        if (!this.target) return;
+        
+        if (this.state === "DEAD" || this.state === "STUN") return;
+        
+        const dist = Math.abs(this.target.x - this.x);
+        const dy = this.target.y - this.y;
+        
+        // Simple AI
+        this.decisionTimer++;
+        if (this.decisionTimer > 30) { // React every half second roughly
+             this.decisionTimer = 0;
+        }
+
+        // Face player
+        if (this.target.x > this.x) this.facing = 1;
+        else this.facing = -1;
+
+        if (this.state !== "ATTACK" && this.state !== "DASH") {
+            // Movement
+            if (dist > 50) {
+                this.vx = this.moveSpeed * this.facing;
+                this.setState("RUN");
+            } else {
+                this.vx = 0;
+                this.setState("IDLE");
+                
+                // Attack if close
+                if (this.attackCooldown === 0 && Math.random() < 0.1) {
+                     this.setState("ATTACK");
+                     this.attackCooldown = 40; // Slower than player
+                     const hbX = this.x + (30 * this.facing);
+                     const damage = 8 * this.damageMultiplier;
+                     const hb = new Hitbox(this, hbX, this.y, 40, 40, damage, 8 * this.facing, -5, 10);
+                     gameState.projectiles.push(hb);
+                }
+            }
+            
+            // Jump if target is above or random
+            if ((dy < -50 || Math.random() < 0.01) && this.isGrounded) {
+                this.vy = this.jumpForce;
+                this.isGrounded = false;
+                this.setState("JUMP");
+            }
+        }
+        
+        if (this.state === "ATTACK") {
+             if (this.stateTimer > 20) this.setState("IDLE");
+        }
+    }
+}
+</code>

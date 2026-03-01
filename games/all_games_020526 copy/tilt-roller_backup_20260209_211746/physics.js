@@ -1,0 +1,223 @@
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CONFIG } from './globals.js';
+import { clamp, AABB } from './utils.js';
+import { inputState } from './input.js';
+
+export class PhysicsSystem {
+    constructor() {
+        this.gravity = new THREE.Vector3(0, -CONFIG.GRAVITY_STRENGTH, 0);
+        this.tempVector = new THREE.Vector3();
+        this.timeAccumulator = 0;
+        this.fixedTimeStep = 1/60;
+    }
+
+    update(deltaTime) {
+        if (!gameState.player || !gameState.worldContainer) return;
+
+        // Accumulate time buffer
+        this.timeAccumulator += deltaTime;
+        
+        // Cap accumulator to prevent spiral of death if lag is huge (max ~6 steps)
+        if (this.timeAccumulator > 0.1) this.timeAccumulator = 0.1;
+
+        // Run fixed physics steps
+        while (this.timeAccumulator >= this.fixedTimeStep) {
+            this.step(this.fixedTimeStep);
+            this.timeAccumulator -= this.fixedTimeStep;
+        }
+    }
+
+    step(dt) {
+        // 1. Update Stage Tilt based on Input
+        this.updateTilt();
+
+        // 2. Calculate Local Gravity Vector
+        // Visual Rotation (Stage)
+        const tiltX = gameState.currentTilt.x; // Pitch
+        const tiltZ = gameState.currentTilt.y; // Roll
+
+        // Calculate Gravity in Local Space
+        const localGravity = new THREE.Vector3(0, -1, 0);
+        localGravity.applyAxisAngle(new THREE.Vector3(1, 0, 0), -tiltX); // Counter-pitch
+        localGravity.applyAxisAngle(new THREE.Vector3(0, 0, 1), -tiltZ); // Counter-roll
+        
+        localGravity.multiplyScalar(CONFIG.GRAVITY_STRENGTH);
+        gameState.gravityVector.copy(localGravity);
+
+        // 3. Integrate Player Physics
+        this.integrateBall(dt);
+        
+        // 4. Collision Detection
+        this.handleCollisions();
+        
+        // 5. Check Triggers (Win/Loss)
+        this.checkTriggers();
+    }
+
+    updateTilt() {
+        const targetX = inputState.axis.y * CONFIG.MAX_TILT; // Up key = Negative Tilt (Forward)
+        const targetZ = -inputState.axis.x * CONFIG.MAX_TILT; // Right key = Negative Z Tilt (Right down)
+        
+        // Interpolate current tilt towards target
+        gameState.currentTilt.x += (targetX - gameState.currentTilt.x) * CONFIG.TILT_SPEED;
+        gameState.currentTilt.y += (targetZ - gameState.currentTilt.y) * CONFIG.TILT_SPEED;
+        
+        // Apply to visual container
+        gameState.worldContainer.rotation.x = gameState.currentTilt.x;
+        gameState.worldContainer.rotation.z = gameState.currentTilt.y;
+    }
+
+    integrateBall(dt) {
+        const player = gameState.player;
+        
+        // Normalize time scaling to 60fps base for existing tuning
+        const timeScale = dt * 60;
+        
+        // Apply Gravity
+        player.velocity.add(gameState.gravityVector.clone().multiplyScalar(timeScale)); 
+        
+        // Apply Brake (Friction)
+        if (inputState.brake) {
+            player.velocity.multiplyScalar(0.85); // Stronger brake
+        } else {
+            // Natural rolling friction
+            player.velocity.multiplyScalar(0.92);
+        }
+        
+        // Update Position
+        player.position.add(player.velocity.clone().multiplyScalar(timeScale));
+        
+        // Update Mesh Position
+        player.mesh.position.copy(player.position);
+        
+        // Update Ball Rotation (Visual Rolling)
+        const speed = player.velocity.length();
+        if (speed > 0.001) {
+            const axis = new THREE.Vector3()
+                .crossVectors(new THREE.Vector3(0, 1, 0), player.velocity)
+                .normalize();
+            
+            // Fix: include timeScale so rotation matches distance traveled
+            const angle = (speed * timeScale) / CONFIG.BALL_RADIUS;
+            
+            const q = new THREE.Quaternion().setFromAxisAngle(axis, angle);
+            player.mesh.quaternion.multiplyQuaternions(q, player.mesh.quaternion);
+        }
+    }
+
+    handleCollisions() {
+        const player = gameState.player;
+        
+        // Reset ground flag
+        player.onGround = false;
+
+        // Check against all level objects
+        for (const obj of gameState.levelObjects) {
+            if (obj.type === 'BOX') {
+                this.resolveSphereBox(player, obj);
+            }
+        }
+    }
+
+    resolveSphereBox(player, box) {
+        // Get box AABB
+        const boxAABB = box.aabb;
+        
+        // Find closest point on box to sphere center
+        const closest = boxAABB.closestPointToPoint(player.position);
+        
+        // Distance
+        const distance = player.position.distanceTo(closest);
+        
+        if (distance < CONFIG.BALL_RADIUS) {
+            // Collision detected
+            let normal = new THREE.Vector3();
+            let penetration = 0;
+
+            // Robust check for inside or very close to surface
+            // If distance is near 0, closestPointToPoint returns the point itself (inside)
+            if (distance < 0.0001) {
+                // Find closest face to push out
+                const p = player.position;
+                const min = boxAABB.min;
+                const max = boxAABB.max;
+                
+                const dists = [
+                    Math.abs(p.x - min.x), Math.abs(max.x - p.x),
+                    Math.abs(p.y - min.y), Math.abs(max.y - p.y),
+                    Math.abs(p.z - min.z), Math.abs(max.z - p.z)
+                ];
+                
+                let minIndex = 0;
+                let minD = dists[0];
+                for(let i=1; i<6; i++) {
+                    if(dists[i] < minD) {
+                        minD = dists[i];
+                        minIndex = i;
+                    }
+                }
+                
+                // Set normal based on closest face
+                if(minIndex === 0) normal.set(-1, 0, 0);
+                else if(minIndex === 1) normal.set(1, 0, 0);
+                else if(minIndex === 2) normal.set(0, -1, 0);
+                else if(minIndex === 3) normal.set(0, 1, 0);
+                else if(minIndex === 4) normal.set(0, 0, -1);
+                else if(minIndex === 5) normal.set(0, 0, 1);
+                
+                // Penetration is distance to face + radius (to bring sphere surface to face)
+                penetration = minD + CONFIG.BALL_RADIUS;
+                
+            } else {
+                // Standard collision
+                normal.subVectors(player.position, closest).normalize();
+                penetration = CONFIG.BALL_RADIUS - distance;
+            }
+            
+            // Position Correction
+            player.position.add(normal.clone().multiplyScalar(penetration));
+            
+            // Velocity Correction (Bounce + Slide)
+            const velocityDot = player.velocity.dot(normal);
+            
+            if (velocityDot < 0) {
+                // Remove velocity component along normal (Slide)
+                const restitution = 0.3; // Bounciness
+                const j = -(1 + restitution) * velocityDot;
+                
+                const impulse = normal.multiplyScalar(j);
+                player.velocity.add(impulse);
+                
+                // If normal is roughly up, we are on ground
+                if (normal.y > 0.7) {
+                    player.onGround = true;
+                }
+            }
+        }
+    }
+
+    checkTriggers() {
+        const player = gameState.player;
+        
+        // 1. Loss Condition: Fallen too far down
+        if (player.position.y < -20) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+        }
+        
+        // 2. Win Condition: Reached Goal
+        if (gameState.goal) {
+            const distToGoal = new THREE.Vector2(player.position.x, player.position.z)
+                .distanceTo(new THREE.Vector2(gameState.goal.position.x, gameState.goal.position.z));
+                
+            if (distToGoal < (gameState.goal.radius + CONFIG.BALL_RADIUS)) {
+                // Ensure we are somewhat vertically aligned too
+                if (Math.abs(player.position.y - gameState.goal.position.y) < 2.0) {
+                    if (gameState.gamePhase === "PLAYING") {
+                        gameState.score += 1000;
+                        gameState.gamePhase = "GAME_OVER_WIN";
+                    }
+                }
+            }
+        }
+    }
+}

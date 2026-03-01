@@ -1,0 +1,215 @@
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+import { checkAABB, checkSphereAABB } from './math_utils.js';
+
+export class SpatialGrid {
+    constructor(cellSize) {
+        this.cellSize = cellSize;
+        this.cells = new Map();
+    }
+
+    clear() {
+        this.cells.clear();
+    }
+
+    getKey(x, z) {
+        return `${Math.floor(x / this.cellSize)},${Math.floor(z / this.cellSize)}`;
+    }
+
+    insert(entity) {
+        const key = this.getKey(entity.mesh.position.x, entity.mesh.position.z);
+        if (!this.cells.has(key)) {
+            this.cells.set(key, []);
+        }
+        this.cells.get(key).push(entity);
+    }
+
+    getPotentialCollisions(entity) {
+        const x = entity.mesh.position.x;
+        const z = entity.mesh.position.z;
+        const keys = [
+            this.getKey(x, z),
+            this.getKey(x + this.cellSize, z),
+            this.getKey(x - this.cellSize, z),
+            this.getKey(x, z + this.cellSize),
+            this.getKey(x, z - this.cellSize),
+            this.getKey(x + this.cellSize, z + this.cellSize),
+            this.getKey(x - this.cellSize, z - this.cellSize),
+            this.getKey(x + this.cellSize, z - this.cellSize),
+            this.getKey(x - this.cellSize, z + this.cellSize)
+        ];
+
+        let results = [];
+        for (let key of keys) {
+            if (this.cells.has(key)) {
+                results = results.concat(this.cells.get(key));
+            }
+        }
+        return results;
+    }
+}
+
+// Global collision grid
+export const collisionGrid = new SpatialGrid(5);
+
+export function updatePhysics(deltaTime) {
+    // 1. Update Grid
+    collisionGrid.clear();
+    gameState.entities.forEach(ent => {
+        if (ent.colliderType === 'sphere') {
+            collisionGrid.insert(ent);
+        }
+    });
+
+    // 2. Physics Steps
+    const subSteps = 2; // Physics sub-stepping for stability
+    const subDelta = deltaTime / subSteps;
+
+    for (let i = 0; i < subSteps; i++) {
+        stepPhysics(subDelta);
+    }
+}
+
+function stepPhysics(dt) {
+    // Resolve collisions for dynamic entities
+    gameState.entities.forEach(entity => {
+        if (entity.isStatic) return;
+
+        // Apply forces
+        if (!entity.onGround) {
+            entity.velocity.add(gameState.gravity.clone().multiplyScalar(dt));
+        }
+
+        // Apply friction
+        const friction = entity.onGround ? entity.groundFriction : entity.airFriction;
+        entity.velocity.x *= Math.pow(friction, dt * 60);
+        entity.velocity.z *= Math.pow(friction, dt * 60);
+
+        // Move
+        entity.mesh.position.add(entity.velocity.clone().multiplyScalar(dt));
+        
+        // Update bounding volume
+        entity.updateCollider();
+
+        // 1. Entity vs Environment (Platforms)
+        entity.onGround = false;
+        resolveEnvironmentCollisions(entity);
+
+        // 2. Entity vs Entity (Pushing)
+        resolveEntityCollisions(entity);
+        
+        // 3. Entity vs Dynamic Obstacles
+        resolveObstacleCollisions(entity);
+    });
+}
+
+function resolveEnvironmentCollisions(entity) {
+    // Check against all static platforms (broad phase could be optimized, but N is small ~20-50)
+    
+    // We only care about platforms close to us, but for now loop all
+    // Optimization: In a real engine, we'd use an Octree for static geometry
+    
+    for (const platform of gameState.platforms) {
+        // Broad phase check using slightly expanded bounds
+        const expandedRadius = entity.radius + 0.5;
+        if (checkSphereAABB({center: entity.mesh.position, radius: expandedRadius}, platform.bounds)) {
+            handleSphereBoxCollision(entity, platform);
+        }
+    }
+}
+
+function handleSphereBoxCollision(entity, platform) {
+    // Determine the closest point on the box to the sphere center
+    const box = platform.bounds;
+    const center = entity.mesh.position;
+    
+    const closestX = Math.max(box.min.x, Math.min(center.x, box.max.x));
+    const closestY = Math.max(box.min.y, Math.min(center.y, box.max.y));
+    const closestZ = Math.max(box.min.z, Math.min(center.z, box.max.z));
+    
+    const distVec = new THREE.Vector3(center.x - closestX, center.y - closestY, center.z - closestZ);
+    const distSq = distVec.lengthSq();
+    
+    // Use a slightly larger radius for detection to ensure onGround is set reliably
+    const contactThreshold = 0.1;
+    const detectionRadius = entity.radius + contactThreshold;
+    
+    if (distSq < detectionRadius * detectionRadius && distSq > 0.000001) {
+        const dist = Math.sqrt(distSq);
+        const normal = distVec.clone().divideScalar(dist);
+        
+        // 1. Resolve Penetration (only if actually inside the physical radius)
+        if (dist < entity.radius) {
+            const overlap = entity.radius - dist;
+            entity.mesh.position.add(normal.clone().multiplyScalar(overlap));
+            
+            // Resolve velocity (remove velocity along normal)
+            const velDot = entity.velocity.dot(normal);
+            if (velDot < 0) {
+                entity.velocity.sub(normal.clone().multiplyScalar(velDot));
+            }
+        }
+        
+        // 2. Ground Detection (lenient)
+        // Check if this is a floor collision (normal points up)
+        if (normal.y > 0.7) {
+            // Only consider grounded if we aren't moving up rapidly (jumping)
+            if (entity.velocity.y <= 0.1) {
+                entity.onGround = true;
+                entity.lastGroundY = platform.mesh.position.y;
+            }
+        }
+    } else if (distSq < 0.000001) {
+        // Center is inside box, push up by default
+        entity.mesh.position.y += entity.radius;
+    }
+}
+
+function resolveEntityCollisions(entity) {
+    const neighbors = collisionGrid.getPotentialCollisions(entity);
+    
+    for (const other of neighbors) {
+        if (entity === other) continue;
+        
+        const distSq = entity.mesh.position.distanceToSquared(other.mesh.position);
+        const minDist = entity.radius + other.radius;
+        
+        if (distSq < minDist * minDist && distSq > 0.0001) {
+            const dist = Math.sqrt(distSq);
+            const overlap = minDist - dist;
+            
+            // Push direction
+            const dir = new THREE.Vector3()
+                .subVectors(entity.mesh.position, other.mesh.position)
+                .normalize();
+                
+            // Separate entities (share the movement 50/50)
+            const push = dir.multiplyScalar(overlap * 0.5);
+            entity.mesh.position.add(push);
+            
+            // Dynamic push update: Only push other if it's not the current entity being processed in outer loop
+            // To avoid double processing, we can just apply half here and half when 'other' processes 'entity'
+            // But 'other' might be processed already.
+            // Simple approach: modify position directly.
+            
+            // Transfer some momentum
+            // Fall Guys physics: chaotically bouncy
+            const bounce = 0.5;
+            const relativeVel = new THREE.Vector3().subVectors(entity.velocity, other.velocity);
+            const impulse = relativeVel.dot(dir);
+            
+            if (impulse < 0) {
+                 const j = impulse * -(1 + bounce) * 0.5; // simple equal mass assumption
+                 const impulseVec = dir.multiplyScalar(j);
+                 
+                 entity.velocity.add(impulseVec);
+            }
+        }
+    }
+}
+
+function resolveObstacleCollisions(entity) {
+    for (const obst of gameState.obstacles) {
+        obst.resolveCollision(entity);
+    }
+}

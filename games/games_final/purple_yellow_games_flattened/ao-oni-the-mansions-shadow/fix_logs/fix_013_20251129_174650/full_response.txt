@@ -1,0 +1,1149 @@
+<analysis>
+- Issue identified: Need to remove levels 7 and 8 (keeping only levels 1-6), and move the objective in level 6 closer to the right-side monster's patrol path
+- Files affected: index.html, levels.js, game.js, rendering.js
+- Changes needed: 
+  1. Remove createLevel7() and createLevel8() functions from levels.js
+  2. Remove cases 7 and 8 from loadLevel() switch statement
+  3. Move obj6_2 in level 6 from (496, 48) to approximately (520, 100) to be closer to the right monster's patrol
+  4. Update final level check in game.js from >=8 to >=6
+  5. Update UI text in rendering.js from "/ 8" to "/ 6"
+  6. Update description in index.html from "8 progressively challenging levels" to "6 progressively challenging levels"
+</analysis>
+
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 640px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">Ao Oni: The Mansion's Shadow</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic Movement)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Level Progress)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto 20px auto; line-height: 1.4;">Escape the haunted mansion while evading Ao Oni, a terrifying blue monster that stalks the halls. Navigate through 6 progressively challenging levels, each with unique layouts and puzzles. Find keys, unlock doors, and solve environmental puzzles to progress. Stay hidden in closets and behind furniture when Ao Oni is near. Break line of sight to escape chases. Complete all levels to escape the mansion and win!</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Keys: HOLD to move player continuously | Shift (Tap): Toggle sprint mode for faster movement | Space: Interact with doors, items, hiding spots | Z: Toggle flashlight (in dark levels) | Enter: Start game from title screen | Escape: Pause/Unpause game | R: Restart (returns to title screen)</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</code>
+
+<code filename="game.js">
+// game.js - Main game file
+import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { loadLevel } from './levels.js';
+import { initTestController, getTestAction } from './testing.js';
+import { 
+  renderStartScreen, 
+  renderGameOverScreen, 
+  renderPausedIndicator, 
+  renderUI,
+  renderDarkness,
+  renderMessages 
+} from './rendering.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Initialize logs
+  p.logs = {
+    game_info: [],
+    inputs: [],
+    player_info: []
+  };
+
+  let lastPlayerLogFrame = -10;
+
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: { phase: gameState.gamePhase, level: gameState.level },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+
+  p.draw = function() {
+    p.background(40, 35, 45);
+
+    // Handle automated testing
+    if (gameState.controlMode !== "HUMAN") {
+      const actions = getTestAction();
+      
+      // Process test actions - set key states for continuous movement
+      // Clear all movement keys first
+      gameState.keysPressed[37] = false; // left
+      gameState.keysPressed[38] = false; // up
+      gameState.keysPressed[39] = false; // right
+      gameState.keysPressed[40] = false; // down
+      
+      for (const keyCode of actions) {
+        // Handle movement keys as continuous (set pressed state)
+        if (keyCode === 37 || keyCode === 38 || keyCode === 39 || keyCode === 40) {
+          gameState.keysPressed[keyCode] = true;
+        } else if (keyCode === 16) {
+          gameState.isRunning = !gameState.isRunning;
+        } else if (keyCode === 13 && gameState.gamePhase === GAME_PHASES.START) {
+          gameState.gamePhase = GAME_PHASES.PLAYING;
+          gameState.level = 1;
+          gameState.score = 0;
+          loadLevel(1);
+          
+          p.logs.game_info.push({
+            data: { phase: gameState.gamePhase, level: gameState.level, mode: "AUTO_START" },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+        } else if (keyCode === 32 && gameState.gamePhase === GAME_PHASES.PLAYING) {
+          handleInteraction();
+        }
+      }
+    }
+
+    if (gameState.gamePhase === GAME_PHASES.START) {
+      renderStartScreen(p);
+    } else if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      updateGame(p);
+      renderGame(p);
+      renderUI(p);
+      renderDarkness(p);
+      renderMessages(p);
+    } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+      renderGame(p);
+      renderUI(p);
+      renderDarkness(p);
+      renderPausedIndicator(p);
+      renderMessages(p);
+    } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN) {
+      renderGameOverScreen(p, true);
+    } else if (gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+      renderGameOverScreen(p, false);
+    }
+
+    // Log player info periodically
+    if (gameState.player && gameState.gamePhase === GAME_PHASES.PLAYING) {
+      if (p.frameCount - lastPlayerLogFrame >= 10) {
+        p.logs.player_info.push({
+          screen_x: gameState.player.x,
+          screen_y: gameState.player.y,
+          game_x: gameState.player.x,
+          game_y: gameState.player.y,
+          framecount: p.frameCount
+        });
+        lastPlayerLogFrame = p.frameCount;
+      }
+    }
+  };
+
+  function updateGame(p) {
+    // Don't update if game is over
+    if (gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE || 
+        gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN) {
+      return;
+    }
+
+    // Update player
+    if (gameState.player) {
+      gameState.player.update(p);
+    }
+
+    // Update Ao Onis
+    for (const aoOni of gameState.aoOnis) {
+      aoOni.update(p);
+    }
+
+    // Update items
+    for (const item of gameState.items) {
+      item.update();
+    }
+
+    // Update messages
+    updateMessages();
+
+    // Check for level completion
+    if (gameState.exitZone && gameState.exitZone.checkPlayer() && !gameState.levelComplete) {
+      gameState.levelComplete = true;
+      
+      // Award completion bonus
+      gameState.score += 100;
+      addMessage("Level Complete! +100", "success");
+      
+      // Award undetected bonus
+      if (gameState.undetectedBonus) {
+        gameState.score += 50;
+        addMessage("Undetected Bonus! +50", "success");
+      }
+      
+      // Check if final level (now level 6)
+      if (gameState.level >= 6) {
+        setTimeout(() => {
+          gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
+          p.logs.game_info.push({
+            data: { phase: gameState.gamePhase, won: true, finalScore: gameState.score },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+        }, 500);
+      } else {
+        // Load next level immediately
+        gameState.level++;
+        loadLevel(gameState.level);
+        addMessage(`Level ${gameState.level}`, "info");
+        p.logs.game_info.push({
+          data: { phase: "LEVEL_COMPLETE", nextLevel: gameState.level },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+    }
+  }
+
+  function renderGame(p) {
+    // Background
+    p.fill(60, 55, 65);
+    p.noStroke();
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+    // Walls
+    p.fill(80, 70, 75);
+    p.stroke(60, 50, 55);
+    p.strokeWeight(2);
+    for (const wall of gameState.walls) {
+      p.rect(wall.x, wall.y, wall.w, wall.h);
+    }
+
+    // Doors
+    for (const door of gameState.doors) {
+      door.render(p);
+    }
+
+    // Hiding spots
+    for (const spot of gameState.hidingSpots) {
+      spot.render(p);
+    }
+
+    // Items
+    for (const item of gameState.items) {
+      item.render(p);
+    }
+
+    // Exit zone
+    if (gameState.exitZone) {
+      gameState.exitZone.render(p);
+    }
+
+    // Ao Onis
+    for (const aoOni of gameState.aoOnis) {
+      aoOni.render(p);
+    }
+
+    // Player
+    if (gameState.player) {
+      gameState.player.render(p);
+    }
+  }
+
+  p.keyPressed = function() {
+    // Log input
+    p.logs.inputs.push({
+      input_type: "keyPressed",
+      data: { key: p.key, keyCode: p.keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+
+    if (gameState.controlMode === "HUMAN") {
+      // Game phase transitions
+      if (p.keyCode === 13) { // ENTER
+        if (gameState.gamePhase === GAME_PHASES.START) {
+          gameState.gamePhase = GAME_PHASES.PLAYING;
+          gameState.level = 1;
+          gameState.score = 0;
+          loadLevel(1);
+          
+          p.logs.game_info.push({
+            data: { phase: gameState.gamePhase, level: gameState.level },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+        }
+      } else if (p.keyCode === 27) { // ESC
+        if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+          gameState.gamePhase = GAME_PHASES.PAUSED;
+          p.logs.game_info.push({
+            data: { phase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+        } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+          gameState.gamePhase = GAME_PHASES.PLAYING;
+          p.logs.game_info.push({
+            data: { phase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+        }
+      } else if (p.keyCode === 82) { // R
+        gameState.gamePhase = GAME_PHASES.START;
+        gameState.level = 1;
+        gameState.score = 0;
+        gameState.inventory = [];
+        gameState.hasFlashlight = false;
+        gameState.flashlightOn = false;
+        gameState.messages = [];
+        gameState.isRunning = false;
+        
+        p.logs.game_info.push({
+          data: { phase: gameState.gamePhase, action: "restart" },
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+
+      // Gameplay controls
+      if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+        if (p.keyCode === 16) { // SHIFT - toggle sprint mode
+          gameState.isRunning = !gameState.isRunning;
+          addMessage(gameState.isRunning ? "Sprint Mode ON" : "Sprint Mode OFF", "info");
+        } else if (p.keyCode === 32) { // SPACE
+          handleInteraction();
+        } else if (p.keyCode === 90) { // Z
+          if (gameState.hasFlashlight) {
+            gameState.flashlightOn = !gameState.flashlightOn;
+            addMessage(gameState.flashlightOn ? "Flashlight ON" : "Flashlight OFF", "info");
+          }
+        }
+        
+        // CONTINUOUS MOVEMENT: Track key pressed state
+        if (p.keyCode === 37 || p.keyCode === 38 || p.keyCode === 39 || p.keyCode === 40) {
+          gameState.keysPressed[p.keyCode] = true;
+        }
+      }
+    }
+
+    return false;
+  };
+
+  p.keyReleased = function() {
+    // Log input
+    p.logs.inputs.push({
+      input_type: "keyReleased",
+      data: { key: p.key, keyCode: p.keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+
+    if (gameState.controlMode === "HUMAN") {
+      // CONTINUOUS MOVEMENT: Track key released state
+      if (p.keyCode === 37 || p.keyCode === 38 || p.keyCode === 39 || p.keyCode === 40) {
+        gameState.keysPressed[p.keyCode] = false;
+      }
+    }
+
+    return false;
+  };
+
+  function handleInteraction() {
+    if (!gameState.player) return;
+
+    // Check if hiding
+    if (gameState.player.hiding) {
+      gameState.player.unhide();
+      addMessage("Left hiding spot", "info");
+      return;
+    }
+
+    // Check hiding spots
+    for (const spot of gameState.hidingSpots) {
+      if (spot.canHide()) {
+        gameState.player.hide(spot);
+        spot.occupied = true;
+        addMessage("Hiding...", "info");
+        return;
+      }
+    }
+
+    // Check doors - increased interaction range to 50 pixels
+    for (const door of gameState.doors) {
+      const dist = Math.hypot(
+        door.x + door.w / 2 - gameState.player.x,
+        door.y + door.h / 2 - gameState.player.y
+      );
+      if (dist < 50) {
+        const result = door.interact();
+        if (result === "unlocked") {
+          addMessage("Door unlocked!", "success");
+        } else if (result === "locked") {
+          addMessage("Door is locked. Need key!", "warning");
+        } else if (result === "opened") {
+          addMessage("Door opened", "info");
+        }
+        return;
+      }
+    }
+
+    // Check items
+    for (const item of gameState.items) {
+      if (item.checkPickup()) {
+        item.collect();
+        return;
+      }
+    }
+  }
+});
+
+// Message system
+function addMessage(text, type = "info") {
+  if (!gameState.messages) {
+    gameState.messages = [];
+  }
+  gameState.messages.push({
+    text: text,
+    type: type,
+    time: 120 // frames to display
+  });
+}
+
+function updateMessages() {
+  if (!gameState.messages) {
+    gameState.messages = [];
+    return;
+  }
+  
+  for (let i = gameState.messages.length - 1; i >= 0; i--) {
+    gameState.messages[i].time--;
+    if (gameState.messages[i].time <= 0) {
+      gameState.messages.splice(i, 1);
+    }
+  }
+}
+
+// Expose globally
+window.addMessage = addMessage;
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    if (typeof loadLevel === 'function') {
+      loadLevel(levelNum);
+    } else if (typeof initializeLevel === 'function') {
+      initializeLevel(levelNum);
+    }
+    if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  initTestController(mode);
+  
+  // Update button states
+  const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const activeBtn = document.getElementById(mode === 'HUMAN' ? 'humanModeBtn' : `${mode}_ModeBtn`);
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+};
+</code>
+
+<code filename="rendering.js">
+// rendering.js - Rendering functions
+import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderStartScreen(p) {
+  p.background(20, 15, 30);
+  
+  // Title
+  p.fill(150, 100, 200);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(32);
+  p.text("Ao Oni: The Mansion's Shadow", CANVAS_WIDTH / 2, 60);
+  
+  // Subtitle
+  p.fill(200, 180, 220);
+  p.textSize(12);
+  p.text("A Survival Horror Experience", CANVAS_WIDTH / 2, 90);
+  
+  // Instructions
+  p.fill(220, 220, 240);
+  p.textSize(10);
+  p.textAlign(p.LEFT, p.TOP);
+  const instructions = [
+    "OBJECTIVE: Escape the haunted mansion",
+    "- Navigate through 6 challenging levels",
+    "- Collect required objectives (★) to unlock exit",
+    "- Find keys to unlock doors",
+    "- Avoid Ao Oni, the blue monster",
+    "- Hide when spotted to evade capture",
+    "",
+    "CONTROLS:",
+    "Arrow Keys - Move",
+    "Shift - Sprint",
+    "Space - Interact (doors, items, hide)",
+    "Z - Toggle flashlight (in dark levels)",
+    "ESC - Pause game",
+    "R - Restart to title"
+  ];
+  
+  let y = 110;
+  for (const line of instructions) {
+    p.text(line, 70, y);
+    y += 14;
+  }
+  
+  // Press Enter prompt
+  p.fill(255, 255, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(16);
+  const blink = Math.floor(p.frameCount / 30) % 2;
+  if (blink) {
+    p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 300);
+  }
+}
+
+export function renderGameOverScreen(p, won) {
+  p.background(20, 15, 30);
+  
+  if (won) {
+    p.fill(100, 255, 100);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(32);
+    p.text("YOU ESCAPED!", CANVAS_WIDTH / 2, 100);
+    
+    p.fill(200, 255, 200);
+    p.textSize(16);
+    p.text("Congratulations on escaping the mansion!", CANVAS_WIDTH / 2, 140);
+  } else {
+    p.fill(255, 100, 100);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(32);
+    p.text("GAME OVER", CANVAS_WIDTH / 2, 100);
+    
+    p.fill(255, 200, 200);
+    p.textSize(16);
+    p.text("Ao Oni caught you...", CANVAS_WIDTH / 2, 140);
+    
+    // Add dramatic effect
+    p.fill(255, 0, 0, 50);
+    p.noStroke();
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  }
+  
+  // Final score
+  p.fill(255, 255, 255);
+  p.textSize(20);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 190);
+  
+  // Instructions
+  p.fill(220, 220, 240);
+  p.textSize(14);
+  p.text("Press R to restart", CANVAS_WIDTH / 2, 250);
+  
+  const blink = Math.floor(p.frameCount / 30) % 2;
+  if (blink) {
+    p.text("▼", CANVAS_WIDTH / 2, 280);
+  }
+}
+
+export function renderPausedIndicator(p) {
+  p.push();
+  p.fill(0, 0, 0, 150);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.fill(255, 255, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(28);
+  p.text("PAUSED", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  
+  p.textSize(12);
+  p.fill(220, 220, 240);
+  p.text("Press ESC to resume", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 35);
+  p.pop();
+}
+
+export function renderUI(p) {
+  // Top UI bar - darker background
+  p.push();
+  p.fill(0, 0, 0, 180);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, 28);
+  p.pop();
+  
+  // Score - top right
+  p.push();
+  p.fill(255, 255, 100);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(14);
+  p.text(`Score: ${gameState.score}`, CANVAS_WIDTH - 8, 7);
+  p.pop();
+  
+  // Level - top left
+  p.push();
+  p.fill(100, 200, 255);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(14);
+  p.text(`Level: ${gameState.level} / 6`, 8, 7);
+  p.pop();
+  
+  // Objectives collected indicator - top center
+  if (gameState.requiredItemIds.length > 0) {
+    p.push();
+    const collected = gameState.collectedRequiredItems.size;
+    const total = gameState.requiredItemIds.length;
+    const isComplete = collected >= total;
+    
+    p.fill(isComplete ? 100 : 255, isComplete ? 255 : 150, isComplete ? 100 : 150);
+    p.textAlign(p.CENTER, p.TOP);
+    p.textSize(12);
+    p.text(`Objectives: ${collected}/${total} ${isComplete ? '✓' : ''}`, CANVAS_WIDTH / 2, 8);
+    p.pop();
+  }
+  
+  // Bottom UI bar
+  p.push();
+  p.fill(0, 0, 0, 180);
+  p.noStroke();
+  p.rect(0, CANVAS_HEIGHT - 45, CANVAS_WIDTH, 45);
+  p.pop();
+  
+  // Inventory header
+  p.push();
+  p.fill(255, 255, 255);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(12);
+  p.text("Inventory:", 8, CANVAS_HEIGHT - 38);
+  p.pop();
+  
+  // Inventory items
+  p.push();
+  let x = 8;
+  const y = CANVAS_HEIGHT - 20;
+  
+  if (gameState.inventory && gameState.inventory.length > 0) {
+    for (const item of gameState.inventory) {
+      // Item box
+      p.fill(50, 50, 60);
+      p.stroke(200, 200, 220);
+      p.strokeWeight(2);
+      p.rect(x, y - 16, 20, 20, 2);
+      
+      // Item icon
+      p.fill(255, 215, 0);
+      p.noStroke();
+      p.textAlign(p.CENTER, p.CENTER);
+      p.textSize(12);
+      if (item.type === "key") {
+        p.text("🔑", x + 10, y - 6);
+      } else if (item.type === "flashlight") {
+        p.text("🔦", x + 10, y - 6);
+      } else {
+        p.text("📦", x + 10, y - 6);
+      }
+      
+      x += 26;
+    }
+  } else {
+    p.fill(150, 150, 150);
+    p.noStroke();
+    p.textAlign(p.LEFT, p.CENTER);
+    p.textSize(10);
+    p.text("(empty)", x, y - 6);
+  }
+  p.pop();
+  
+  // Sprint indicator - bottom right
+  if (gameState.isRunning) {
+    p.push();
+    p.fill(100, 255, 100);
+    p.textAlign(p.RIGHT, p.TOP);
+    p.textSize(11);
+    p.text("SPRINTING", CANVAS_WIDTH - 8, CANVAS_HEIGHT - 38);
+    p.pop();
+  }
+  
+  // Chase indicator - flashing border effect
+  if (gameState.inChase) {
+    p.push();
+    const alpha = 50 + Math.sin(p.frameCount * 0.2) * 30;
+    p.fill(255, 0, 0, alpha);
+    p.noStroke();
+    p.rect(0, 28, CANVAS_WIDTH, 8);
+    p.rect(0, 28, 8, CANVAS_HEIGHT - 73);
+    p.rect(CANVAS_WIDTH - 8, 28, 8, CANVAS_HEIGHT - 73);
+    p.rect(0, CANVAS_HEIGHT - 45 - 8, CANVAS_WIDTH, 8);
+    
+    p.fill(255, 100, 100);
+    p.textAlign(p.CENTER, p.TOP);
+    p.textSize(12);
+    p.text("! CHASE !", CANVAS_WIDTH / 2, 32);
+    p.pop();
+  }
+}
+
+export function renderMessages(p) {
+  if (!gameState.messages || gameState.messages.length === 0) return;
+  
+  p.push();
+  let y = 50;
+  
+  for (const msg of gameState.messages) {
+    const alpha = Math.min(255, msg.time * 2);
+    
+    // Message background
+    p.fill(0, 0, 0, alpha * 0.7);
+    p.noStroke();
+    const textW = p.textWidth(msg.text);
+    p.rect(CANVAS_WIDTH / 2 - textW / 2 - 10, y - 10, textW + 20, 22, 5);
+    
+    // Message text
+    let color;
+    if (msg.type === "success") {
+      color = [100, 255, 100, alpha];
+    } else if (msg.type === "warning") {
+      color = [255, 200, 100, alpha];
+    } else if (msg.type === "error") {
+      color = [255, 100, 100, alpha];
+    } else {
+      color = [255, 255, 255, alpha];
+    }
+    
+    p.fill(...color);
+    p.textAlign(p.CENTER, p.TOP);
+    p.textSize(12);
+    p.text(msg.text, CANVAS_WIDTH / 2, y - 5);
+    
+    y += 26;
+  }
+  
+  p.pop();
+}
+
+export function renderDarkness(p) {
+  if (gameState.level >= 7 && gameState.player) {
+    p.push();
+    
+    // Create darkness overlay
+    p.fill(0, 0, 0, 200);
+    p.noStroke();
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    // Player light
+    const lightRadius = gameState.flashlightOn ? 100 : 65;
+    const gradient = p.drawingContext.createRadialGradient(
+      gameState.player.x, gameState.player.y, 0,
+      gameState.player.x, gameState.player.y, lightRadius
+    );
+    gradient.addColorStop(0, 'rgba(255, 255, 200, 0.8)');
+    gradient.addColorStop(0.5, 'rgba(255, 255, 200, 0.3)');
+    gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    
+    p.drawingContext.globalCompositeOperation = 'destination-out';
+    p.drawingContext.fillStyle = gradient;
+    p.drawingContext.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.drawingContext.globalCompositeOperation = 'source-over';
+    
+    p.pop();
+  }
+}
+</code>
+
+<code filename="levels.js">
+// levels.js - Level data and management
+import { gameState, TILE_SIZE, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Door, Item, HidingSpot, ExitZone } from './entities.js';
+import { AoOni } from './aooni.js';
+import { Player } from './player.js';
+
+export function createLevel1() {
+  // Level 1: Tutorial - Super Easy (No enemies!)
+  // Scaled to 640x400 canvas
+  
+  gameState.walls = [
+    // Outer walls
+    { x: 0, y: 0, w: CANVAS_WIDTH, h: 16 },
+    { x: 0, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: CANVAS_WIDTH - 16, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: 0, y: CANVAS_HEIGHT - 16, w: CANVAS_WIDTH, h: 16 },
+    
+    // One simple obstacle in the middle
+    { x: 304, y: 176, w: 32, h: 48 }
+  ];
+
+  gameState.doors = [];
+
+  gameState.items = [
+    new Item(160, 250, "objective", "obj1_1", true)
+  ];
+
+  gameState.requiredItemIds = ["obj1_1"];
+
+  gameState.hidingSpots = [
+    new HidingSpot(80, 70, 32, 24, "closet")
+  ];
+
+  gameState.exitZone = new ExitZone(480, 300, 80, 56);
+
+  gameState.player = new Player(64, 64);
+
+  gameState.aoOnis = [];
+  
+  gameState.entities = [gameState.player];
+}
+
+export function createLevel2() {
+  // Level 2: Introduction to enemies - Easy
+  // Scaled to 640x400 canvas
+  
+  gameState.walls = [
+    // Outer walls
+    { x: 0, y: 0, w: CANVAS_WIDTH, h: 16 },
+    { x: 0, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: CANVAS_WIDTH - 16, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: 0, y: CANVAS_HEIGHT - 16, w: CANVAS_WIDTH, h: 16 },
+    
+    // Vertical divider
+    { x: 304, y: 16, w: 16, h: 160 },
+    { x: 304, y: 240, w: 16, h: 144 }
+  ];
+
+  gameState.doors = [
+    new Door(304, 176, 16, 64, true, "key2_1")
+  ];
+
+  gameState.items = [
+    new Item(80, 64, "key", "key2_1", false),
+    new Item(480, 64, "objective", "obj2_1", true)
+  ];
+
+  gameState.requiredItemIds = ["obj2_1"];
+
+  gameState.hidingSpots = [
+    new HidingSpot(40, 270, 32, 24, "closet"),
+    new HidingSpot(440, 270, 32, 24, "closet")
+  ];
+
+  gameState.exitZone = new ExitZone(520, 32, 64, 48);
+
+  gameState.player = new Player(48, 48);
+
+  gameState.aoOnis = [
+    new AoOni(480, 300, 0.6, [
+      [480, 300],
+      [544, 300],
+      [544, 250],
+      [480, 250]
+    ])
+  ];
+  
+  gameState.entities = [gameState.player, ...gameState.aoOnis];
+}
+
+export function createLevel3() {
+  // Level 3: Basic challenge - Medium-Easy
+  // Scaled to 640x400 canvas
+  
+  gameState.walls = [
+    // Outer walls
+    { x: 0, y: 0, w: CANVAS_WIDTH, h: 16 },
+    { x: 0, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: CANVAS_WIDTH - 16, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: 0, y: CANVAS_HEIGHT - 16, w: CANVAS_WIDTH, h: 16 },
+    
+    // Two vertical dividers
+    { x: 216, y: 16, w: 16, h: 160 },
+    { x: 216, y: 240, w: 16, h: 144 },
+    { x: 432, y: 16, w: 16, h: 160 },
+    { x: 432, y: 240, w: 16, h: 144 }
+  ];
+
+  gameState.doors = [
+    new Door(216, 176, 16, 64, false)
+  ];
+
+  gameState.items = [
+    new Item(104, 300, "objective", "obj3_1", true),
+    new Item(544, 300, "objective", "obj3_2", true)
+  ];
+
+  gameState.requiredItemIds = ["obj3_1", "obj3_2"];
+
+  gameState.hidingSpots = [
+    new HidingSpot(40, 64, 32, 24, "closet"),
+    new HidingSpot(304, 64, 48, 16, "table"),
+    new HidingSpot(520, 64, 32, 24, "closet")
+  ];
+
+  gameState.exitZone = new ExitZone(288, 32, 64, 48);
+
+  gameState.player = new Player(48, 300);
+
+  gameState.aoOnis = [
+    new AoOni(544, 80, 0.6, [
+      [520, 80],
+      [576, 80],
+      [576, 120],
+      [520, 120]
+    ], 80)
+  ];
+  
+  gameState.entities = [gameState.player, ...gameState.aoOnis];
+}
+
+export function createLevel4() {
+  // Level 4: Simple layout with safer item placement
+  // Scaled to 640x400 canvas
+  
+  gameState.walls = [
+    // Outer walls
+    { x: 0, y: 0, w: CANVAS_WIDTH, h: 16 },
+    { x: 0, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: CANVAS_WIDTH - 16, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: 0, y: CANVAS_HEIGHT - 16, w: CANVAS_WIDTH, h: 16 },
+    
+    // Central vertical wall
+    { x: 304, y: 16, w: 16, h: 120 },
+    { x: 304, y: 220, w: 16, h: 164 },
+    
+    // Horizontal walls
+    { x: 16, y: 120, w: 176, h: 16 },
+    { x: 432, y: 120, w: 192, h: 16 },
+    
+    // Small barriers
+    { x: 104, y: 240, w: 16, h: 80 },
+    { x: 488, y: 240, w: 16, h: 80 }
+  ];
+
+  gameState.doors = [
+    new Door(304, 136, 16, 84, true, "key4_1")
+  ];
+
+  gameState.items = [
+    new Item(48, 40, "key", "key4_1", false),
+    new Item(560, 48, "objective", "obj4_1", true)
+  ];
+
+  gameState.requiredItemIds = ["obj4_1"];
+
+  gameState.hidingSpots = [
+    new HidingSpot(40, 280, 32, 24, "closet"),
+    new HidingSpot(384, 40, 32, 24, "closet")
+  ];
+
+  gameState.exitZone = new ExitZone(520, 320, 64, 48);
+
+  gameState.player = new Player(40, 180);
+
+  gameState.aoOnis = [
+    new AoOni(416, 300, 1.0, [
+      [416, 300],
+      [544, 300],
+      [544, 200],
+      [416, 200]
+    ])
+  ];
+  
+  gameState.entities = [gameState.player, ...gameState.aoOnis];
+}
+
+export function createLevel5() {
+  // Level 5: Two-room layout with SAFE spawn positioning
+  // Monster placed FAR from player spawn (top-right vs bottom-left)
+  // Scaled to 640x400 canvas
+  
+  gameState.walls = [
+    // Outer walls
+    { x: 0, y: 0, w: CANVAS_WIDTH, h: 16 },
+    { x: 0, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: CANVAS_WIDTH - 16, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: 0, y: CANVAS_HEIGHT - 16, w: CANVAS_WIDTH, h: 16 },
+    
+    // Central horizontal wall
+    { x: 16, y: 200, w: 272, h: 16 },
+    { x: 368, y: 200, w: 256, h: 16 },
+    
+    // Vertical walls
+    { x: 216, y: 16, w: 16, h: 100 },
+    { x: 408, y: 280, w: 16, h: 104 },
+    
+    // Small barriers
+    { x: 104, y: 80, w: 16, h: 60 },
+    { x: 520, y: 80, w: 16, h: 60 }
+  ];
+
+  gameState.doors = [
+    new Door(288, 200, 80, 16, false)
+  ];
+
+  gameState.items = [
+    new Item(48, 48, "objective", "obj5_1", true),
+    new Item(560, 340, "objective", "obj5_2", true)
+  ];
+
+  gameState.requiredItemIds = ["obj5_1", "obj5_2"];
+
+  gameState.hidingSpots = [
+    new HidingSpot(152, 40, 32, 24, "closet"),
+    new HidingSpot(328, 320, 48, 16, "table"),
+    new HidingSpot(480, 320, 32, 24, "closet")
+  ];
+
+  gameState.exitZone = new ExitZone(520, 32, 64, 48);
+
+  // Player spawns BOTTOM-LEFT
+  gameState.player = new Player(40, 340);
+
+  // Monster spawns and patrols TOP-RIGHT (far from player!)
+  gameState.aoOnis = [
+    new AoOni(560, 60, 0.9, [
+      [560, 60],
+      [560, 120],
+      [480, 120],
+      [480, 60]
+    ])
+  ];
+  
+  gameState.entities = [gameState.player, ...gameState.aoOnis];
+}
+
+export function createLevel6() {
+  // Level 6: Three-room maze with SAFE spawn positioning
+  // Monsters positioned FAR from player spawn
+  // Scaled to 640x400 canvas
+  
+  gameState.walls = [
+    // Outer walls
+    { x: 0, y: 0, w: CANVAS_WIDTH, h: 16 },
+    { x: 0, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: CANVAS_WIDTH - 16, y: 0, w: 16, h: CANVAS_HEIGHT },
+    { x: 0, y: CANVAS_HEIGHT - 16, w: CANVAS_WIDTH, h: 16 },
+    
+    // Vertical dividers
+    { x: 216, y: 16, w: 16, h: 140 },
+    { x: 216, y: 220, w: 16, h: 164 },
+    { x: 408, y: 16, w: 16, h: 140 },
+    { x: 408, y: 220, w: 16, h: 164 },
+    
+    // Horizontal barriers
+    { x: 16, y: 140, w: 104, h: 16 },
+    { x: 328, y: 140, w: 64, h: 16 },
+    { x: 496, y: 140, w: 112, h: 16 }
+  ];
+
+  gameState.doors = [
+    new Door(216, 156, 16, 64, true, "key6a"),
+    new Door(408, 156, 16, 64, true, "key6b")
+  ];
+
+  gameState.items = [
+    new Item(190, 135, "key", "key6a", false),
+    new Item(328, 280, "key", "key6b", false),
+    new Item(304, 280, "objective", "obj6_1", true),
+    // Moved obj6_2 closer to monster's patrol (was at 496, 48)
+    new Item(520, 100, "objective", "obj6_2", true)
+  ];
+
+  gameState.requiredItemIds = ["obj6_1", "obj6_2"];
+
+  gameState.hidingSpots = [
+    new HidingSpot(40, 280, 32, 24, "closet"),
+    new HidingSpot(272, 40, 48, 16, "table"),
+    new HidingSpot(544, 180, 32, 24, "closet")
+  ];
+
+  gameState.exitZone = new ExitZone(288, 320, 64, 48);
+
+  // Player spawns BOTTOM-LEFT
+  gameState.player = new Player(40, 340);
+
+  // Monsters patrol TOP areas (far from player spawn!)
+  gameState.aoOnis = [
+    new AoOni(104, 80, 1.2, [
+      [64, 60],
+      [180, 60],
+      [180, 100],
+      [64, 100]
+    ]),
+    // Right monster - expanded patrol path
+    new AoOni(550, 60, 1.2, [
+      [550, 60],
+      [550, 340],
+      [480, 340],
+      [480, 60]
+    ])
+  ];
+  
+  gameState.entities = [gameState.player, ...gameState.aoOnis];
+}
+
+export function loadLevel(levelNum) {
+  // Reset level-specific state
+  gameState.walls = [];
+  gameState.doors = [];
+  gameState.items = [];
+  gameState.hidingSpots = [];
+  gameState.aoOnis = [];
+  gameState.entities = [];
+  gameState.exitZone = null;
+  gameState.inventory = [];
+  gameState.inChase = false;
+  gameState.levelComplete = false;
+  gameState.undetectedBonus = true;
+  gameState.requiredItemIds = [];
+  gameState.collectedRequiredItems = new Set();
+
+  switch (levelNum) {
+    case 1:
+      createLevel1();
+      break;
+    case 2:
+      createLevel2();
+      break;
+    case 3:
+      createLevel3();
+      break;
+    case 4:
+      createLevel4();
+      break;
+    case 5:
+      createLevel5();
+      break;
+    case 6:
+      createLevel6();
+      break;
+  }
+}
+</code>

@@ -1,0 +1,241 @@
+import { 
+    gameState, CANVAS_WIDTH, CANVAS_HEIGHT, 
+    PHASE_START, PHASE_PLAYING, PHASE_PAUSED, PHASE_GAME_OVER_WIN, PHASE_GAME_OVER_LOSE,
+    resetGameState, TYPE_PLATFORM
+} from './globals.js';
+import { Player } from './entities.js';
+import { handleInput, initInput, handleKeyPressed } from './input.js';
+import { generateLevel } from './levelGen.js';
+import { checkEntityCollisions } from './physics.js';
+import { renderUI } from './ui.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    // Logs initialization
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        p.noSmooth(); // Pixel art feel
+        
+        // Initial Game State Log
+        p.logs.game_info.push({
+            event: "INITIALIZATION",
+            timestamp: Date.now(),
+            gameState: gameState
+        });
+
+        // Initialize empty game state
+        resetGameState();
+    };
+
+    p.draw = function() {
+        // Update Time
+        const now = p.millis();
+        gameState.deltaTime = (now - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = now;
+        gameState.frameCount = p.frameCount;
+
+        // --- UPDATE ---
+        if (gameState.gamePhase === PHASE_START) {
+            handleInput(p);
+        } else if (gameState.gamePhase === PHASE_PLAYING) {
+            updateGame(p);
+        }
+
+        // --- RENDER ---
+        p.background(30, 20, 30); // Dark background
+        
+        if (gameState.gamePhase !== PHASE_START) {
+            renderGameWorld(p);
+        }
+        
+        // UI Overlay
+        renderUI(p);
+        
+        // Shake reset
+        if (gameState.cameraShake > 0) gameState.cameraShake *= 0.9;
+        if (gameState.cameraShake < 0.5) gameState.cameraShake = 0;
+    };
+
+    p.keyPressed = function() {
+        // Log input
+        p.logs.inputs.push({
+            type: "pressed",
+            key: p.key,
+            keyCode: p.keyCode,
+            frame: p.frameCount
+        });
+        
+        handleKeyPressed(p, p.keyCode);
+    };
+});
+
+window.gameInstance = gameInstance;
+
+// Helper function to expose Control Mode setter
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+    // Restart game to apply clean state for testing
+    resetGameState();
+    // Re-seed for consistency in tests
+    window.gameInstance.randomSeed(42);
+};
+
+function updateGame(p) {
+    // 1. Level Gen / Init if needed (Safety check)
+    // Ensure player exists. If platforms exist (from startGame), just create player.
+    if (!gameState.player) {
+        if (gameState.platforms.length === 0) {
+            generateLevel(p);
+        }
+        // Spawn player at bottom center
+        gameState.player = new Player(CANVAS_WIDTH / 2, CANVAS_HEIGHT - 100);
+        gameState.entities.push(gameState.player);
+    }
+    
+    // 2. Input
+    handleInput(p);
+
+    // 3. Update Entities
+    gameState.entities.forEach(e => e.update(p));
+    gameState.particles.forEach(pt => pt.update(p));
+
+    // 4. Physics & Collisions
+    checkEntityCollisions();
+
+    // 5. Cleanup Dead Entities
+    gameState.entities = gameState.entities.filter(e => !e.dead);
+    gameState.particles = gameState.particles.filter(pt => pt.life > 0);
+
+    // 6. Camera Logic
+    if (gameState.player) {
+        const targetY = gameState.player.y - CANVAS_HEIGHT * 0.6;
+        gameState.cameraY = p.lerp(gameState.cameraY, targetY, 0.1);
+        
+        // Clamp Camera (don't show below floor)
+        // Actually, we want to stop camera from going below start
+        if (gameState.cameraY > 0) gameState.cameraY = 0;
+        // Don't show above top
+        // if (gameState.cameraY < -gameState.worldHeight) gameState.cameraY = -gameState.worldHeight;
+        
+        // 7. Smoke Logic
+        gameState.smokeY -= gameState.smokeSpeed;
+        
+        // Win Condition Check (Top of tower)
+        if (gameState.player.y < -gameState.worldHeight + 200) {
+             gameState.gamePhase = PHASE_GAME_OVER_WIN;
+        }
+
+        // Logging Player Info periodically
+        if (p.frameCount % 60 === 0) {
+            p.logs.player_info.push({
+                x: gameState.player.x,
+                y: gameState.player.y,
+                health: gameState.player.health,
+                frame: p.frameCount
+            });
+        }
+    }
+}
+
+function renderGameWorld(p) {
+    p.push();
+    
+    // Camera Transform
+    let shakeX = p.random(-gameState.cameraShake, gameState.cameraShake);
+    let shakeY = p.random(-gameState.cameraShake, gameState.cameraShake);
+    p.translate(0 - shakeX, -gameState.cameraY - shakeY);
+
+    // Draw Background Grid/Pattern (Parallax illusion)
+    drawBackground(p);
+
+    // Draw Platforms
+    p.fill(80, 70, 90);
+    p.stroke(100, 90, 120);
+    gameState.platforms.forEach(plat => {
+        // Cull
+        if (plat.y - gameState.cameraY < CANVAS_HEIGHT && plat.y + plat.height - gameState.cameraY > 0) {
+            p.rect(plat.x, plat.y, plat.width, plat.height);
+            // Decorative rivets
+            p.fill(60, 50, 70);
+            p.noStroke();
+            p.rect(plat.x + 2, plat.y + 2, plat.width - 4, 4);
+            p.stroke(100, 90, 120); // Reset stroke
+            p.fill(80, 70, 90); // Reset fill
+        }
+    });
+
+    // Draw Entities
+    // Sort by Z? Not needed strictly for 2D usually, but helpful for particles on top
+    gameState.entities.forEach(e => e.render(p, 0)); // camY handled by translate
+    
+    // Draw Particles
+    gameState.particles.forEach(pt => pt.render(p, 0));
+
+    // Draw Smoke
+    drawSmoke(p);
+
+    p.pop();
+}
+
+function drawBackground(p) {
+    // Determine Zone based on cameraY
+    // Zone 1: Industrial (Grey)
+    // Zone 2: Lab (White/Blue) - higher up
+    // Zone 3: Hive (Red/Organic)
+    
+    let depth = -gameState.cameraY;
+    let color1, color2;
+    
+    if (depth < 1000) {
+        color1 = p.color(40, 30, 40);
+        color2 = p.color(20, 15, 20);
+    } else if (depth < 2500) {
+        color1 = p.color(30, 40, 50);
+        color2 = p.color(10, 20, 30);
+    } else {
+        color1 = p.color(50, 20, 20);
+        color2 = p.color(20, 10, 10);
+    }
+    
+    // Draw simple bricks
+    p.noStroke();
+    p.fill(color1);
+    // Optimization: Draw only a few large rects or a pattern relative to camera
+    // Just drawing a solid rect for background is done in p.background
+    // Let's add vertical pillars in background
+    p.fill(color2);
+    p.rect(100, Math.floor(gameState.cameraY / 100) * 100 - 100, 40, CANVAS_HEIGHT + 200);
+    p.rect(460, Math.floor(gameState.cameraY / 100) * 100 - 100, 40, CANVAS_HEIGHT + 200);
+}
+
+function drawSmoke(p) {
+    p.fill(0, 255, 0, 100);
+    p.noStroke();
+    
+    let y = gameState.smokeY;
+    // Draw rising bubbles/wave
+    p.beginShape();
+    p.vertex(0, CANVAS_HEIGHT + Math.abs(gameState.cameraY) + 500); // Bottom left far down
+    p.vertex(CANVAS_WIDTH, CANVAS_HEIGHT + Math.abs(gameState.cameraY) + 500); // Bottom right far down
+    p.vertex(CANVAS_WIDTH, y);
+    
+    // Wavy top
+    for (let x = CANVAS_WIDTH; x >= 0; x -= 20) {
+        let waveHeight = Math.sin(x * 0.05 + p.frameCount * 0.1) * 20;
+        p.vertex(x, y + waveHeight);
+    }
+    
+    p.endShape(p.CLOSE);
+}

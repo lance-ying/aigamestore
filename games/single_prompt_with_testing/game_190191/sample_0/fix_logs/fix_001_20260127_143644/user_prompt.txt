@@ -1,0 +1,1277 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+🌸 p5.js says: There's an error as "getWorldCenter" could not be called as a function (on line 96 in entities.js [http://[::]:1415/games/single_prompt_with_testing/game_190191/sample_0/entities.js:96:35]).
+Verify whether "s" has "getWorldCenter" in it and check the spelling, letter-casing (JavaScript is case-sensitive) and its type.
+For more: https://developer.mozilla.org/docs/Web/JavaScript/Reference/Errors/Not_a_function#What_went_wrong
+p5.js:60084 ▶️ Error at line 96 in "Target.checkCollision" in entities.js (http://[::]:1415/games/single_prompt_with_testing/game_190191/sample_0/entities.js:96:35)
+
+▶️ Called from line 87 in "updateGameLogic" in game.js (http://[::]:1415/games/single_prompt_with_testing/game_190191/sample_0/game.js:87:28)
+
+▶️ Called from line 55 in "p.draw" in game.js (http://[::]:1415/games/single_prompt_with_testing/game_190191/sample_0/game.js:55:17)
+
+
+entities.js:96 Uncaught TypeError: s.getWorldCenter is not a function
+    at Target.checkCollision (entities.js:96:35)
+    at updateGameLogic (game.js:87:28)
+    at p.draw (game.js:55:17)
+    at _main.default.redraw (p5.js:70809:27)
+    at _draw (p5.js:63046:25)
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Letter Drop Physics</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; font-family: sans-serif; transition: background 0.2s; }
+      .control-button.active { background: #007bff; }
+      .control-button:hover:not(.active) { background: #555; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: monospace; margin-bottom: 10px; letter-spacing: 2px;">LETTER DROP PHYSICS</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="setMode('TEST_1')">TEST (Input)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="setMode('TEST_2')">TEST (Sim)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: sans-serif; max-width: 600px; margin: 0 auto 10px auto; font-size: 14px;">
+        Type letters to create physical shapes. Collect all stars to advance.
+      </p>
+      <p id="gameControls" style="color: #888; font-family: monospace; font-size: 12px;">
+        [A-Z]: Type | [ENTER]: Drop | [R]: Retry | [ESC]: Pause
+      </p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script>
+      // Global helper for buttons
+      window.setMode = function(mode) {
+        if(window.getGameState) {
+          window.getGameState().controlMode = mode;
+          document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+          if(mode === 'HUMAN') document.getElementById('humanModeBtn').classList.add('active');
+          if(mode === 'TEST_1') document.getElementById('test_1_ModeBtn').classList.add('active');
+          if(mode === 'TEST_2') document.getElementById('test_2_ModeBtn').classList.add('active');
+        }
+      };
+    </script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+// Global constants and state management
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TARGET_FPS = 60;
+
+// Physics Constants
+export const GRAVITY = 0.5;
+export const AIR_RESISTANCE = 0.99;
+export const FRICTION = 0.5;
+export const RESTITUTION = 0.3; // Bounciness
+export const PHYSICS_SUBSTEPS = 5; // Stability
+
+// Game Colors
+export const COLORS = {
+    BACKGROUND: [20, 24, 30],
+    TEXT: [240, 240, 240],
+    ACCENT: [100, 200, 255],
+    TARGET: [255, 215, 0],
+    OBSTACLE: [100, 110, 120],
+    PLAYER_OBJ: [200, 220, 240],
+    SUCCESS: [100, 255, 100],
+    DANGER: [255, 100, 100]
+};
+
+// Global Game State
+export const gameState = {
+    // Phase Management
+    gamePhase: "START", // START, PLAYING, SIMULATING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    previousPhase: null, // For pausing
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2...
+    
+    // Time
+    frameCount: 0,
+    deltaTime: 0,
+    lastFrameTime: 0,
+
+    // Level Management
+    currentLevelIndex: 0,
+    levels: [], // Loaded level data
+    
+    // Gameplay Data
+    inputString: "", // What the player types
+    spawnX: 50,
+    spawnY: 100,
+    
+    // Physics World
+    physicsBodies: [], // All active physical bodies (letters)
+    staticBodies: [], // Walls, floors
+    targets: [],      // Collectible stars
+    particles: [],    // Visual effects
+    
+    // Scoring
+    starsCollected: 0,
+    totalStarsInLevel: 0
+};
+
+// Expose state globally as required
+export function getGameState() {
+    return gameState;
+}
+window.getGameState = getGameState;
+</file>
+
+<file name="game.js">
+// Main Game Entry Point
+
+import { gameState, getGameState, CANVAS_WIDTH, CANVAS_HEIGHT, PHYSICS_SUBSTEPS } from './globals.js';
+import { updatePhysicsWorld } from './physics_core.js';
+import { renderStartScreen, renderHUD, renderPauseScreen, renderGameOverWin } from './ui.js';
+import { loadLevel, nextLevel } from './levels.js';
+import { handleKeyPressed } from './input.js';
+import { get_automated_testing_action } from './input.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    p.logs = {
+        "game_info": [],
+        "inputs": [],
+        "player_info": []
+    };
+
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        gameState.gamePhase = "START";
+        
+        // Log start
+        p.logs.game_info.push({
+            data: { gamePhase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+    };
+
+    p.draw = function() {
+        gameState.frameCount = p.frameCount;
+        gameState.deltaTime = 1 / p.frameRate(); // Approx
+
+        // Background
+        p.background(gameState.gamePhase === "GAME_OVER_WIN" ? [20, 50, 20] : [20, 24, 30]);
+
+        // Automated Testing Inputs
+        const autoAction = get_automated_testing_action();
+        if (autoAction) {
+            handleKeyPressed(p, autoAction.keyCode, autoAction.key);
+        }
+
+        switch (gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                break;
+            case "PLANNING":
+            case "SIMULATING":
+            case "PAUSED":
+                updateGameLogic(p);
+                renderGame(p);
+                renderHUD(p);
+                
+                if (gameState.gamePhase === "PAUSED") {
+                    renderPauseScreen(p);
+                }
+                break;
+            case "GAME_OVER_WIN":
+                renderGameOverWin(p);
+                break;
+        }
+    };
+
+    function updateGameLogic(p) {
+        if (gameState.gamePhase !== "SIMULATING") return;
+
+        const dt = 1 / 60; // Fixed time step for physics consistency
+        
+        // Substep physics for stability
+        for(let i=0; i<PHYSICS_SUBSTEPS; i++) {
+             updatePhysicsWorld([...gameState.physicsBodies, ...gameState.staticBodies], dt / PHYSICS_SUBSTEPS);
+        }
+        
+        // Check collisions with targets
+        // We iterate backwards safely
+        for (let i = gameState.targets.length - 1; i >= 0; i--) {
+            const target = gameState.targets[i];
+            if (target.collected) continue;
+            
+            let hit = false;
+            for (const body of gameState.physicsBodies) {
+                if (target.checkCollision(body)) {
+                    hit = true;
+                    break;
+                }
+            }
+            
+            if (hit) {
+                target.collected = true;
+                gameState.starsCollected++;
+            }
+        }
+        
+        // Check Win Condition
+        if (gameState.starsCollected >= gameState.totalStarsInLevel && gameState.totalStarsInLevel > 0) {
+            // Delay slightly or just win immediately
+            nextLevel();
+        }
+        
+        // Check Fail Condition (All bodies fell off)
+        let activeBodies = 0;
+        for (const body of gameState.physicsBodies) {
+            if (body.pos.y < CANVAS_HEIGHT + 100) {
+                activeBodies++;
+            }
+        }
+        
+        if (gameState.physicsBodies.length > 0 && activeBodies === 0 && gameState.starsCollected < gameState.totalStarsInLevel) {
+            // Auto restart if everything fell out? 
+            // Optional: for now let player press R
+        }
+    }
+
+    function renderGame(p) {
+        // Draw Static Bodies (Obstacles)
+        gameState.staticBodies.forEach(b => b.render(p));
+        
+        // Draw Targets
+        gameState.targets.forEach(t => t.render(p));
+        
+        // Draw Physics Bodies (Letters)
+        gameState.physicsBodies.forEach(b => b.render(p));
+    }
+
+    p.keyPressed = function() {
+        // Log input
+        p.logs.inputs.push({
+            input_type: 'keyPressed',
+            data: { key: p.key, keyCode: p.keyCode },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+        
+        handleKeyPressed(p, p.keyCode, p.key);
+    };
+});
+
+window.gameInstance = gameInstance;
+</file>
+
+<file name="ui.js">
+// UI Rendering
+
+import { gameState, COLORS, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderStartScreen(p) {
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(COLORS.TEXT);
+    p.textSize(40);
+    p.text("Letter Drop Physics", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 60);
+    
+    p.textSize(18);
+    p.fill(COLORS.PLAYER_OBJ);
+    p.text("How does a 'p' fall?", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 10);
+    
+    p.fill(COLORS.TEXT);
+    p.textSize(16);
+    p.text("Type letters to solve puzzles.", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 30);
+    p.text("Press ENTER to Start", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 80);
+}
+
+export function renderHUD(p) {
+    // Level Info
+    p.textAlign(p.LEFT, p.TOP);
+    p.fill(COLORS.TEXT);
+    p.textSize(16);
+    p.text(`Level ${gameState.currentLevelIndex + 1}`, 10, 10);
+    
+    p.textAlign(p.RIGHT, p.TOP);
+    p.text("R: Restart | ESC: Pause", CANVAS_WIDTH - 10, 10);
+
+    // Typing Line
+    if (gameState.gamePhase === "PLANNING") {
+        renderTypingLine(p);
+    }
+}
+
+function renderTypingLine(p) {
+    const x = gameState.spawnX;
+    const y = gameState.spawnY;
+    
+    // Spawn Marker
+    p.noFill();
+    p.stroke(COLORS.ACCENT);
+    p.circle(x, y, 10);
+    p.line(x-15, y, x+15, y); // Baseline
+    
+    // Typed Text
+    p.fill(COLORS.TEXT);
+    p.noStroke();
+    p.textSize(24);
+    p.textAlign(p.LEFT, p.BOTTOM);
+    
+    // Draw text being typed
+    const spacing = 18; // Approx width per char
+    for(let i=0; i<gameState.inputString.length; i++) {
+        p.text(gameState.inputString[i], x + i * spacing, y);
+    }
+    
+    // Cursor blink
+    if (p.frameCount % 60 < 30) {
+        const cursorX = x + gameState.inputString.length * spacing;
+        p.stroke(COLORS.ACCENT);
+        p.line(cursorX, y - 25, cursorX, y);
+    }
+    
+    // Instructions
+    p.textAlign(p.CENTER, p.BOTTOM);
+    p.textSize(14);
+    p.fill(150);
+    p.text("Type & Press ENTER", x, y - 40);
+}
+
+export function renderPauseScreen(p) {
+    p.fill(0, 150);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(COLORS.TEXT);
+    p.textSize(32);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+}
+
+export function renderGameOverWin(p) {
+    p.fill(0, 200);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    p.textAlign(p.CENTER, p.CENTER);
+    p.fill(COLORS.SUCCESS);
+    p.textSize(40);
+    p.text("ALL LEVELS CLEARED!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 20);
+    p.fill(COLORS.TEXT);
+    p.textSize(20);
+    p.text("You are a Physics Master.", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 30);
+}
+</file>
+
+<file name="glyph_data.js">
+// Glyph Definitions for Letter Physics
+// Maps characters to physics shapes
+
+import { BoxShape, CircleShape } from './physics_core.js';
+
+export function createGlyphShapes(char) {
+    const shapes = [];
+    const c = char.toLowerCase();
+    
+    // Standard size unit
+    const S = 20; 
+    
+    switch(c) {
+        case 'o':
+            shapes.push(new CircleShape(S/2, 0, 0));
+            break;
+        case 'l':
+        case 'i':
+            shapes.push(new BoxShape(S/3, S*1.5, 0, 0));
+            break;
+        case '.':
+            shapes.push(new BoxShape(S/3, S/3, 0, S/2));
+            break;
+        case '-':
+        case '_':
+            shapes.push(new BoxShape(S*2, S/4, 0, 0));
+            break;
+        case 'm':
+        case 'w':
+            shapes.push(new BoxShape(S*1.5, S, 0, 0));
+            break;
+        case 'p':
+            // Vertical stem on left
+            shapes.push(new BoxShape(S/3, S*1.5, -S/3, S/4)); 
+            // Loop on top right
+            shapes.push(new CircleShape(S/2, S/4, -S/4));
+            break;
+        case 'q':
+             // Vertical stem on right
+            shapes.push(new BoxShape(S/3, S*1.5, S/3, S/4));
+             // Loop on top left
+            shapes.push(new CircleShape(S/2, -S/4, -S/4));
+            break;
+        case 'b':
+             // Vertical stem left
+            shapes.push(new BoxShape(S/3, S*1.5, -S/3, -S/4));
+             // Loop bottom right
+            shapes.push(new CircleShape(S/2, S/4, S/4));
+            break;
+        case 'd':
+             // Vertical stem right
+            shapes.push(new BoxShape(S/3, S*1.5, S/3, -S/4));
+             // Loop bottom left
+            shapes.push(new CircleShape(S/2, -S/4, S/4));
+            break;
+        case 'a':
+            shapes.push(new CircleShape(S/2, 0, S/4));
+            shapes.push(new BoxShape(S/4, S, S/2, S/4));
+            break;
+        default:
+            // Generic Box for unknown chars
+            shapes.push(new BoxShape(S, S, 0, 0));
+            break;
+    }
+    return shapes;
+}
+</file>
+
+<file name="math_utils.js">
+// Vector and Math Utilities for Physics
+
+export class Vec2 {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+    }
+
+    add(v) { return new Vec2(this.x + v.x, this.y + v.y); }
+    sub(v) { return new Vec2(this.x - v.x, this.y - v.y); }
+    mult(s) { return new Vec2(this.x * s, this.y * s); }
+    div(s) { return new Vec2(this.x / s, this.y / s); }
+    
+    dot(v) { return this.x * v.x + this.y * v.y; }
+    cross(v) { return this.x * v.y - this.y * v.x; }
+    
+    mag() { return Math.sqrt(this.x * this.x + this.y * this.y); }
+    magSq() { return this.x * this.x + this.y * this.y; }
+    
+    normalize() {
+        const m = this.mag();
+        return m === 0 ? new Vec2(0, 0) : this.div(m);
+    }
+    
+    rotate(angle) {
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+        return new Vec2(
+            this.x * cos - this.y * sin,
+            this.x * sin + this.y * cos
+        );
+    }
+    
+    copy() { return new Vec2(this.x, this.y); }
+    dist(v) { return this.sub(v).mag(); }
+}
+
+export function clamp(val, min, max) {
+    return Math.max(min, Math.min(max, val));
+}
+
+// SAT (Separating Axis Theorem) Helpers
+export function verticesToAxes(vertices) {
+    const axes = [];
+    for (let i = 0; i < vertices.length; i++) {
+        const p1 = vertices[i];
+        const p2 = vertices[(i + 1) % vertices.length];
+        const edge = p2.sub(p1);
+        axes.push(new Vec2(-edge.y, edge.x).normalize());
+    }
+    return axes;
+}
+
+export function projectPolygon(vertices, axis) {
+    let min = Infinity;
+    let max = -Infinity;
+    for (const v of vertices) {
+        const proj = v.dot(axis);
+        if (proj < min) min = proj;
+        if (proj > max) max = proj;
+    }
+    return { min, max };
+}
+</file>
+
+<file name="entities.js">
+// Game Entities
+
+import { Body, BoxShape } from './physics_core.js';
+import { createGlyphShapes } from './glyph_data.js';
+import { gameState, COLORS } from './globals.js';
+import { Vec2 } from './math_utils.js';
+
+export class LetterEntity extends Body {
+    constructor(char, x, y) {
+        super(x, y, false);
+        this.char = char;
+        
+        const shapes = createGlyphShapes(char);
+        shapes.forEach(s => this.addShape(s));
+        
+        this.color = COLORS.PLAYER_OBJ;
+    }
+    
+    render(p) {
+        p.push();
+        p.translate(this.pos.x, this.pos.y);
+        p.rotate(this.angle);
+        
+        // Debug draw shapes
+        p.noFill();
+        p.stroke(this.color);
+        p.strokeWeight(2);
+        
+        // Draw the actual character for visuals
+        p.push();
+        p.fill(this.color);
+        p.noStroke();
+        p.textAlign(p.CENTER, p.CENTER);
+        p.textSize(24);
+        p.text(this.char, 0, 0);
+        p.pop();
+        
+        // Optional: Draw physics bounds (for debugging or style)
+        /*
+        for(const s of this.shapes) {
+            p.noFill();
+            p.stroke(255, 50);
+            if(s.type === 0) { // Box
+                p.push();
+                p.translate(s.offset.x, s.offset.y);
+                p.rectMode(p.CENTER);
+                p.rect(0,0, s.width, s.height);
+                p.pop();
+            } else { // Circle
+                p.circle(s.offset.x, s.offset.y, s.radius*2);
+            }
+        }
+        */
+        p.pop();
+    }
+}
+
+export class Obstacle extends Body {
+    constructor(x, y, w, h, angle = 0) {
+        super(x, y, true);
+        this.angle = angle;
+        this.addShape(new BoxShape(w, h));
+        this.color = COLORS.OBSTACLE;
+        this.width = w;
+        this.height = h;
+    }
+    
+    render(p) {
+        p.push();
+        p.translate(this.pos.x, this.pos.y);
+        p.rotate(this.angle);
+        p.fill(this.color);
+        p.noStroke();
+        p.rectMode(p.CENTER);
+        p.rect(0, 0, this.width, this.height);
+        p.pop();
+    }
+}
+
+export class Target {
+    constructor(x, y) {
+        this.pos = new Vec2(x, y);
+        this.radius = 15;
+        this.collected = false;
+        this.pulse = 0;
+    }
+    
+    checkCollision(body) {
+        if (this.collected) return false;
+        
+        // Simple check against body center/shapes
+        // For game feel, check distance to body center for now
+        // More accurate: check against all shapes
+        
+        for (const s of body.shapes) {
+            const worldCenter = s.getWorldCenter(body.pos, body.angle);
+            const dist = worldCenter.dist(this.pos);
+            let collisionDist = this.radius;
+            
+            if (s.type === 1) collisionDist += s.radius; // Circle
+            else collisionDist += Math.max(s.width, s.height) / 2; // Box approx
+            
+            if (dist < collisionDist) return true;
+        }
+        return false;
+    }
+    
+    render(p) {
+        if (this.collected) return;
+        
+        this.pulse += 0.05;
+        const r = this.radius + Math.sin(this.pulse) * 3;
+        
+        p.push();
+        p.translate(this.pos.x, this.pos.y);
+        p.fill(COLORS.TARGET);
+        p.noStroke();
+        
+        // Draw Star
+        p.beginShape();
+        for (let i = 0; i < 5; i++) {
+            const angle = p.TWO_PI * i / 5 - p.HALF_PI;
+            const sx = Math.cos(angle) * r;
+            const sy = Math.sin(angle) * r;
+            p.vertex(sx, sy);
+            
+            const angle2 = p.TWO_PI * (i + 0.5) / 5 - p.HALF_PI;
+            const sx2 = Math.cos(angle2) * (r * 0.5);
+            const sy2 = Math.sin(angle2) * (r * 0.5);
+            p.vertex(sx2, sy2);
+        }
+        p.endShape(p.CLOSE);
+        p.pop();
+    }
+}
+</file>
+
+<file name="levels.js">
+// Level Design
+
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Obstacle, Target } from './entities.js';
+
+export function loadLevel(index) {
+    gameState.physicsBodies = [];
+    gameState.staticBodies = [];
+    gameState.targets = [];
+    gameState.particles = [];
+    gameState.inputString = "";
+    gameState.starsCollected = 0;
+    
+    // Bounds
+    const floor = new Obstacle(CANVAS_WIDTH/2, CANVAS_HEIGHT + 10, CANVAS_WIDTH, 20);
+    // gameState.staticBodies.push(floor); // Don't add floor by default, let items fall off
+    
+    switch(index) {
+        case 0: // The Drop
+            gameState.spawnX = 100;
+            gameState.spawnY = 100;
+            gameState.staticBodies.push(new Obstacle(100, 300, 200, 20)); // Platform
+            gameState.targets.push(new Target(100, 250)); // Target on platform
+            break;
+            
+        case 1: // The Ramp
+            gameState.spawnX = 50;
+            gameState.spawnY = 50;
+            gameState.staticBodies.push(new Obstacle(150, 200, 300, 20, Math.PI/6)); // Ramp
+            gameState.staticBodies.push(new Obstacle(500, 350, 100, 20)); // Catch
+            gameState.targets.push(new Target(500, 320));
+            break;
+            
+        case 2: // The Gap
+            gameState.spawnX = 50;
+            gameState.spawnY = 100;
+            gameState.staticBodies.push(new Obstacle(100, 300, 200, 20)); // Left
+            gameState.staticBodies.push(new Obstacle(500, 300, 200, 20)); // Right
+            gameState.targets.push(new Target(500, 250));
+            break;
+            
+        case 3: // The Tower
+            gameState.spawnX = 300;
+            gameState.spawnY = 100;
+            gameState.staticBodies.push(new Obstacle(300, 380, 200, 20));
+            gameState.targets.push(new Target(300, 200)); // High up
+            break;
+
+        case 4: // The P Hook
+            gameState.spawnX = 300;
+            gameState.spawnY = 50;
+            // A peg to hook onto
+            gameState.staticBodies.push(new Obstacle(300, 200, 20, 20));
+            gameState.targets.push(new Target(300, 250)); // Below peg
+            break;
+            
+        default:
+            gameState.gamePhase = "GAME_OVER_WIN";
+            return;
+    }
+    
+    gameState.totalStarsInLevel = gameState.targets.length;
+}
+
+export function nextLevel() {
+    gameState.currentLevelIndex++;
+    gameState.gamePhase = "PLANNING";
+    loadLevel(gameState.currentLevelIndex);
+}
+
+export function resetLevel() {
+    gameState.gamePhase = "PLANNING";
+    loadLevel(gameState.currentLevelIndex);
+}
+</file>
+
+<file name="physics_core.js">
+// Custom Impulse-based Physics Engine
+import { Vec2, clamp, verticesToAxes, projectPolygon } from './math_utils.js';
+import { gameState, GRAVITY, AIR_RESISTANCE, FRICTION, RESTITUTION, PHYSICS_SUBSTEPS } from './globals.js';
+
+// --- Shape Definitions ---
+export const SHAPE_TYPE = {
+    BOX: 0,
+    CIRCLE: 1
+};
+
+export class Shape {
+    constructor(type, offsetX, offsetY) {
+        this.type = type;
+        this.offset = new Vec2(offsetX || 0, offsetY || 0); // Offset from body COM
+    }
+}
+
+export class BoxShape extends Shape {
+    constructor(width, height, offsetX, offsetY) {
+        super(SHAPE_TYPE.BOX, offsetX, offsetY);
+        this.width = width;
+        this.height = height;
+    }
+    
+    // Get vertices in world space
+    getVertices(pos, angle) {
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+        const hw = this.width / 2;
+        const hh = this.height / 2;
+        
+        // Local corners
+        const localVerts = [
+            new Vec2(-hw, -hh),
+            new Vec2(hw, -hh),
+            new Vec2(hw, hh),
+            new Vec2(-hw, hh)
+        ];
+        
+        // Transform to world
+        return localVerts.map(v => {
+            // Apply rotation + offset rotation + position
+            const rx = v.x + this.offset.x;
+            const ry = v.y + this.offset.y;
+            return new Vec2(
+                pos.x + (rx * cos - ry * sin),
+                pos.y + (rx * sin + ry * cos)
+            );
+        });
+    }
+}
+
+export class CircleShape extends Shape {
+    constructor(radius, offsetX, offsetY) {
+        super(SHAPE_TYPE.CIRCLE, offsetX, offsetY);
+        this.radius = radius;
+    }
+    
+    getWorldCenter(pos, angle) {
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+        return new Vec2(
+            pos.x + (this.offset.x * cos - this.offset.y * sin),
+            pos.y + (this.offset.x * sin + this.offset.y * cos)
+        );
+    }
+}
+
+// --- Rigid Body ---
+let nextBodyId = 0;
+export class Body {
+    constructor(x, y, isStatic = false) {
+        this.id = nextBodyId++;
+        this.pos = new Vec2(x, y);
+        this.vel = new Vec2(0, 0);
+        this.force = new Vec2(0, 0);
+        
+        this.angle = 0;
+        this.angVel = 0;
+        this.torque = 0;
+        
+        this.isStatic = isStatic;
+        this.mass = 0;
+        this.invMass = 0;
+        this.inertia = 0;
+        this.invInertia = 0;
+        
+        this.shapes = []; // Compound shapes
+        this.restitution = RESTITUTION;
+        this.friction = FRICTION;
+        this.color = [255, 255, 255];
+    }
+    
+    addShape(shape) {
+        this.shapes.push(shape);
+        this.recalculateMass();
+    }
+    
+    recalculateMass() {
+        if (this.isStatic) {
+            this.mass = Infinity;
+            this.invMass = 0;
+            this.inertia = Infinity;
+            this.invInertia = 0;
+            return;
+        }
+        
+        // Simplified mass calculation based on area
+        let totalMass = 0;
+        let totalInertia = 0;
+        
+        for (const s of this.shapes) {
+            let m = 0;
+            let i = 0;
+            if (s.type === SHAPE_TYPE.BOX) {
+                m = s.width * s.height * 0.01; // Density factor
+                i = m * (s.width*s.width + s.height*s.height) / 12;
+            } else {
+                m = Math.PI * s.radius * s.radius * 0.01;
+                i = m * s.radius * s.radius / 2;
+            }
+            
+            // Parallel axis theorem for offset
+            const distSq = s.offset.magSq();
+            i += m * distSq;
+            
+            totalMass += m;
+            totalInertia += i;
+        }
+        
+        this.mass = totalMass;
+        this.invMass = totalMass > 0 ? 1 / totalMass : 0;
+        this.inertia = totalInertia;
+        this.invInertia = totalInertia > 0 ? 1 / totalInertia : 0;
+    }
+    
+    applyForce(f) {
+        this.force = this.force.add(f);
+    }
+    
+    integrate(dt) {
+        if (this.isStatic) return;
+        
+        // Linear
+        const acc = this.force.mult(this.invMass);
+        acc.y += GRAVITY; // Apply gravity directly
+        this.vel = this.vel.add(acc.mult(dt));
+        this.vel = this.vel.mult(AIR_RESISTANCE);
+        this.pos = this.pos.add(this.vel.mult(dt));
+        
+        // Angular
+        const angAcc = this.torque * this.invInertia;
+        this.angVel += angAcc * dt;
+        this.angVel *= AIR_RESISTANCE;
+        this.angle += this.angVel * dt;
+        
+        // Clear forces
+        this.force = new Vec2(0, 0);
+        this.torque = 0;
+        
+        // World bounds check (simple kill floor)
+        if (this.pos.y > 1000) {
+           // Mark for deletion or just let it fall forever
+        }
+    }
+}
+
+// --- Collision System ---
+
+class Manifold {
+    constructor(bodyA, bodyB, normal, depth, contact1, contact2, contactCount) {
+        this.bodyA = bodyA;
+        this.bodyB = bodyB;
+        this.normal = normal; // From A to B
+        this.depth = depth;
+        this.contacts = [];
+        if(contactCount > 0) this.contacts.push(contact1);
+        if(contactCount > 1) this.contacts.push(contact2);
+    }
+}
+
+// Check collision between two bodies
+function checkCollision(bodyA, bodyB) {
+    // Broadphase: AABB check could go here
+    
+    // Narrowphase: Check all shapes against all shapes
+    for (const shapeA of bodyA.shapes) {
+        for (const shapeB of bodyB.shapes) {
+            let manifold = null;
+            
+            if (shapeA.type === SHAPE_TYPE.BOX && shapeB.type === SHAPE_TYPE.BOX) {
+                manifold = checkPolygons(bodyA, shapeA, bodyB, shapeB);
+            } else if (shapeA.type === SHAPE_TYPE.CIRCLE && shapeB.type === SHAPE_TYPE.CIRCLE) {
+                manifold = checkCircles(bodyA, shapeA, bodyB, shapeB);
+            } else if (shapeA.type === SHAPE_TYPE.BOX && shapeB.type === SHAPE_TYPE.CIRCLE) {
+                manifold = checkPolygonCircle(bodyA, shapeA, bodyB, shapeB);
+            } else if (shapeA.type === SHAPE_TYPE.CIRCLE && shapeB.type === SHAPE_TYPE.BOX) {
+                manifold = checkPolygonCircle(bodyB, shapeB, bodyA, shapeA);
+                if (manifold) manifold.normal = manifold.normal.mult(-1); // Flip normal
+            }
+            
+            if (manifold) return manifold; // Just return the first collision for simplicity
+        }
+    }
+    return null;
+}
+
+function checkCircles(bodyA, shapeA, bodyB, shapeB) {
+    const centerA = shapeA.getWorldCenter(bodyA.pos, bodyA.angle);
+    const centerB = shapeB.getWorldCenter(bodyB.pos, bodyB.angle);
+    
+    const diff = centerB.sub(centerA);
+    const distSq = diff.magSq();
+    const radiusSum = shapeA.radius + shapeB.radius;
+    
+    if (distSq >= radiusSum * radiusSum) return null;
+    
+    const dist = Math.sqrt(distSq);
+    let normal;
+    if (dist === 0) normal = new Vec2(0, 1);
+    else normal = diff.div(dist);
+    
+    const depth = radiusSum - dist;
+    const contact = centerA.add(normal.mult(shapeA.radius));
+    
+    return new Manifold(bodyA, bodyB, normal, depth, contact, null, 1);
+}
+
+function checkPolygons(bodyA, shapeA, bodyB, shapeB) {
+    const vertsA = shapeA.getVertices(bodyA.pos, bodyA.angle);
+    const vertsB = shapeB.getVertices(bodyB.pos, bodyB.angle);
+    
+    const axes = [...verticesToAxes(vertsA), ...verticesToAxes(vertsB)];
+    let minOverlap = Infinity;
+    let smallestAxis = null;
+    
+    for (const axis of axes) {
+        const pA = projectPolygon(vertsA, axis);
+        const pB = projectPolygon(vertsB, axis);
+        
+        if (pA.max < pB.min || pB.max < pA.min) return null; // Separated
+        
+        const overlap1 = pA.max - pB.min;
+        const overlap2 = pB.max - pA.min;
+        const overlap = Math.min(overlap1, overlap2);
+        
+        if (overlap < minOverlap) {
+            minOverlap = overlap;
+            smallestAxis = axis;
+            // Ensure axis points from A to B
+            const centerA = bodyA.pos;
+            const centerB = bodyB.pos;
+            const dir = centerB.sub(centerA);
+            if (dir.dot(axis) < 0) {
+                smallestAxis = axis.mult(-1);
+            }
+        }
+    }
+    
+    // Simplification: Use center of overlap as contact point (not accurate but functional for game)
+    // Finding exact contact points for Polygons is complex (Clipping). 
+    // For this constraint, we approximate contact at the deepest vertex.
+    
+    let contactPoint = findDeepestPoint(vertsA, vertsB, smallestAxis);
+    
+    return new Manifold(bodyA, bodyB, smallestAxis, minOverlap, contactPoint, null, 1);
+}
+
+function findDeepestPoint(vertsA, vertsB, normal) {
+    let minProj = Infinity;
+    let deepest = new Vec2(0,0);
+    // Find vertex in B that is most negative along normal (pointing from A to B)
+    // Actually we want vertex in A that is furthest in direction of normal
+    // OR vertex in B furthest in direction of -normal
+    // Let's grab the vertex of B that is closest to A's center along the normal is wrong.
+    // Standard: Find support point.
+    
+    // Simplification for stability: Average of all vertices of B inside A?
+    // Let's just pick the vertex of B with the minimum projection along the normal
+    const negNormal = normal.mult(-1);
+    for (const v of vertsB) {
+        const proj = v.dot(negNormal);
+        if (proj < minProj) {
+            minProj = proj;
+            deepest = v;
+        }
+    }
+    return deepest;
+}
+
+function checkPolygonCircle(bodyA, shapeA, bodyB, shapeB) {
+    const vertsA = shapeA.getVertices(bodyA.pos, bodyA.angle);
+    const centerB = shapeB.getWorldCenter(bodyB.pos, bodyB.angle);
+    
+    let minOverlap = Infinity;
+    let normal = null;
+    
+    // Axes of polygon
+    const axes = verticesToAxes(vertsA);
+    // Axis from closest vertex to circle center
+    let closestVert = null;
+    let minDistSq = Infinity;
+    
+    for(const v of vertsA) {
+        const d = v.sub(centerB).magSq();
+        if(d < minDistSq) {
+            minDistSq = d;
+            closestVert = v;
+        }
+    }
+    axes.push(closestVert.sub(centerB).normalize());
+    
+    for (const axis of axes) {
+        // Project polygon
+        const pA = projectPolygon(vertsA, axis);
+        // Project circle
+        const projC = centerB.dot(axis);
+        const pB = { min: projC - shapeB.radius, max: projC + shapeB.radius };
+        
+        if (pA.max < pB.min || pB.max < pA.min) return null;
+        
+        const overlap1 = pA.max - pB.min;
+        const overlap2 = pB.max - pA.min;
+        const overlap = Math.min(overlap1, overlap2);
+        
+        if (overlap < minOverlap) {
+            minOverlap = overlap;
+            normal = axis;
+            if (centerB.sub(bodyA.pos).dot(axis) < 0) {
+                normal = axis.mult(-1);
+            }
+        }
+    }
+    
+    const contact = centerB.sub(normal.mult(shapeB.radius));
+    return new Manifold(bodyA, bodyB, normal, minOverlap, contact, null, 1);
+}
+
+
+function resolveCollision(m) {
+    const a = m.bodyA;
+    const b = m.bodyB;
+    const normal = m.normal;
+    const contact = m.contacts[0];
+    
+    // Relative velocity
+    const ra = contact.sub(a.pos);
+    const rb = contact.sub(b.pos);
+    
+    const raCrossN = ra.cross(normal);
+    const rbCrossN = rb.cross(normal);
+    
+    const angVelA = a.angVel; // Scalar in 2D
+    const angVelB = b.angVel;
+    
+    // V_rel = Vb + wb x rb - (Va + wa x ra)
+    // Cross product in 2D: scalar x vector -> vector
+    // w x r = (-w*r.y, w*r.x)
+    const angLinVelA = new Vec2(-angVelA * ra.y, angVelA * ra.x);
+    const angLinVelB = new Vec2(-angVelB * rb.y, angVelB * rb.x);
+    
+    const velA = a.vel.add(angLinVelA);
+    const velB = b.vel.add(angLinVelB);
+    const rv = velB.sub(velA);
+    
+    // Velocity along normal
+    const contactVel = rv.dot(normal);
+    
+    // Do not resolve if velocities are separating
+    if (contactVel > 0) return;
+    
+    // Impulse scalar
+    const ran2 = raCrossN * raCrossN;
+    const rbn2 = rbCrossN * rbCrossN;
+    
+    const invMassSum = a.invMass + b.invMass + (ran2 * a.invInertia) + (rbn2 * b.invInertia);
+    if (invMassSum === 0) return;
+    
+    const e = Math.min(a.restitution, b.restitution);
+    const j = -(1 + e) * contactVel / invMassSum;
+    
+    const impulse = normal.mult(j);
+    
+    // Apply impulse
+    if (!a.isStatic) {
+        a.vel = a.vel.sub(impulse.mult(a.invMass));
+        a.angVel -= (ra.cross(impulse)) * a.invInertia;
+    }
+    if (!b.isStatic) {
+        b.vel = b.vel.add(impulse.mult(b.invMass));
+        b.angVel += (rb.cross(impulse)) * b.invInertia;
+    }
+    
+    // Positional Correction (prevent sinking)
+    const percent = 0.2; // Penetration percentage to correct
+    const slop = 0.01; // Penetration allowance
+    const correctionVal = Math.max(m.depth - slop, 0.0) / invMassSum * percent;
+    const correction = normal.mult(correctionVal);
+    
+    if(!a.isStatic) a.pos = a.pos.sub(correction.mult(a.invMass));
+    if(!b.isStatic) b.pos = b.pos.add(correction.mult(b.invMass));
+}
+
+export function updatePhysicsWorld(bodies, dt) {
+    // 1. Integrate Forces
+    for (const b of bodies) {
+        b.integrate(dt);
+    }
+    
+    // 2. Collision Detection & Resolution
+    // Simple O(N^2) for now
+    for (let i = 0; i < bodies.length; i++) {
+        for (let j = i + 1; j < bodies.length; j++) {
+            const A = bodies[i];
+            const B = bodies[j];
+            if (A.isStatic && B.isStatic) continue;
+            
+            const manifold = checkCollision(A, B);
+            if (manifold) {
+                resolveCollision(manifold);
+            }
+        }
+    }
+}
+</file>
+
+<file name="input.js">
+// Input Handling
+
+import { gameState } from './globals.js';
+import { LetterEntity } from './entities.js';
+import { resetLevel } from './levels.js';
+
+// Key Codes
+const KEY_ENTER = 13;
+const KEY_BACKSPACE = 8;
+const KEY_SPACE = 32;
+const KEY_ESC = 27;
+const KEY_R = 82;
+
+export function handleKeyPressed(p, keyCode, key) {
+    // Global Controls
+    if (keyCode === KEY_ESC) {
+        if (gameState.gamePhase === "PLAYING" || gameState.gamePhase === "SIMULATING" || gameState.gamePhase === "PLANNING") {
+            gameState.previousPhase = gameState.gamePhase;
+            gameState.gamePhase = "PAUSED";
+        } else if (gameState.gamePhase === "PAUSED") {
+            gameState.gamePhase = gameState.previousPhase;
+        }
+        return;
+    }
+    
+    if (keyCode === KEY_R) {
+        if (gameState.gamePhase === "SIMULATING" || gameState.gamePhase === "PLANNING" || gameState.gamePhase === "PLAYING") {
+            resetLevel();
+        }
+        return;
+    }
+
+    // Phase Specific
+    if (gameState.gamePhase === "START") {
+        if (keyCode === KEY_ENTER) {
+            gameState.gamePhase = "PLANNING";
+            resetLevel(); // Load level 0
+        }
+    } else if (gameState.gamePhase === "PLANNING") {
+        handleTypingInput(keyCode, key);
+    }
+}
+
+function handleTypingInput(keyCode, key) {
+    if (keyCode === KEY_ENTER) {
+        // Spawn Entities
+        if (gameState.inputString.length > 0) {
+            spawnLetters();
+            gameState.gamePhase = "SIMULATING";
+        }
+    } else if (keyCode === KEY_BACKSPACE) {
+        gameState.inputString = gameState.inputString.slice(0, -1);
+    } else if (key.length === 1) {
+        // Alpha numeric filter
+        if (/[a-zA-Z0-9_\-\.\s]/.test(key)) {
+            // Limit length
+            if (gameState.inputString.length < 20) {
+                gameState.inputString += key;
+            }
+        }
+    }
+}
+
+function spawnLetters() {
+    const spacing = 18;
+    const startX = gameState.spawnX;
+    const startY = gameState.spawnY;
+    
+    for (let i = 0; i < gameState.inputString.length; i++) {
+        const char = gameState.inputString[i];
+        if (char === ' ') continue; // Skip spaces
+        
+        const x = startX + i * spacing;
+        // Small random offset y to prevent perfect stacking issues
+        const y = startY - Math.random() * 2; 
+        
+        const letter = new LetterEntity(char, x, y);
+        gameState.physicsBodies.push(letter);
+    }
+}
+
+// Automated Testing Hook
+export function get_automated_testing_action() {
+    // Very basic automation simulation
+    if (gameState.controlMode === "TEST_1") {
+        // Test Typing
+        if (gameState.gamePhase === "PLANNING") {
+             if (gameState.inputString.length < 5) return { key: 'a', keyCode: 65 };
+        }
+    }
+    return null;
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

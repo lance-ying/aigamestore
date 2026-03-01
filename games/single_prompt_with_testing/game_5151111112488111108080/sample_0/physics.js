@@ -16,24 +16,26 @@ export function updatePhysics() {
     player.mesh.position.add(player.velocity.clone().multiplyScalar(dt));
     
     // 3. Collision Detection with Tiles
-    // Only check collision if falling downward to allow jumping through bottom (though not applicable here really)
-    // or just generally when close to surface.
+    // Only check collision if falling downward
     if (player.velocity.y < 0) {
         let landed = false;
         
+        // Calculate dynamic threshold based on velocity to prevent tunneling
+        // We want to catch the player if they passed through the surface in this frame
+        // Minimum threshold of 0.5 (half tile height) plus the distance traveled this frame
+        const collisionThreshold = Math.max(0.5, Math.abs(player.velocity.y * dt) + 0.1);
+        
         // Optimization: Only check tiles nearby
-        // We can sort or just iterate. Since we remove old tiles, array isn't huge (10-20 tiles).
         for (const tile of gameState.tiles) {
             // Check if player is somewhat above the tile vertically
             // Tile top is at tile.y + height/2
             const tileTop = tile.mesh.position.y + tile.height / 2;
             const playerBottom = player.mesh.position.y - player.radius;
             
-            // Broad phase vertical check
-            if (playerBottom <= tileTop && playerBottom >= tileTop - 0.5) {
+            // Broad phase vertical check with dynamic threshold
+            if (playerBottom <= tileTop && playerBottom >= tileTop - collisionThreshold) {
                 // Narrow phase: Horizontal check
                 // Simple AABB check for the tile vs Sphere center
-                // We project sphere to XZ plane
                 
                 const minX = tile.mesh.position.x - tile.width / 2;
                 const maxX = tile.mesh.position.x + tile.width / 2;

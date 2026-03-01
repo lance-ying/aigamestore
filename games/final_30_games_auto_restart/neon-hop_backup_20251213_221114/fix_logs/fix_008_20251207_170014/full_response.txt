@@ -1,0 +1,481 @@
+<analysis>
+- Issue identified: 
+    1. Platforms are too small (User feedback).
+    2. Camera is too far (User feedback).
+    3. Restarting causes immediate game over. This is likely due to the camera not resetting position (leaving the player blind at the start) and/or the initial platform generation being too difficult immediately.
+    4. Canvas width is too wide.
+- Files affected: `index.html`, `globals.js`, `game.js`, `level.js`.
+- Changes needed:
+    1. `globals.js`: Update `CANVAS_WIDTH` to 480. Increase `TILE_SIZE` to 6. Adjust `cameraOffset` to zoom in (lower Y, closer Z).
+    2. `index.html`: Update CSS width for `#game-container` to 480px.
+    3. `level.js`: In `initLevel`, spawn a "safe zone" of straight tiles (x=0) at the beginning so the player doesn't have to steer immediately upon restart.
+    4. `game.js`: Move `updateCamera(dt)` outside the `if (gameState.gamePhase === "PLAYING")` block. This ensures the camera tracks the player (who is reset to the start) even while in the "START" menu or "GAME OVER" screen, preventing the camera from being stuck at the death location when the game restarts.
+</analysis>
+
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Neon Hop</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      
+      /* Important: Container size constraints */
+      #game-container { 
+          width: 480px; 
+          height: 400px; 
+          box-shadow: 0 0 20px rgba(0,255,255,0.2);
+          position: relative;
+      }
+      
+      canvas { display: block; }
+      
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; font-family: sans-serif; transition: background 0.2s; }
+      .control-button:hover { background: #555; }
+      .control-button.active { background: #007bff; }
+      
+      h1, p { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; color: #eee; margin: 5px 0; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 15px;">
+      <h1 id="gameTitle">Neon Hop</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST 1 (Survival)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST 2 (Win)</button>
+        <button id="test_3_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_3')">TEST 3 (Lose)</button>
+      </div>
+      <p id="gameDescription" style="font-size: 14px; max-width: 600px; color: #aaa;">
+        Bounce along the neon path. Steer Left/Right. Don't fall into the void.
+      </p>
+    </div>
+    
+    <!-- Game Container created by JS, but placeholder here for structure logic if needed -->
+    <!-- The script will append it to body or find it -->
+    <div id="game-container"></div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/seedrandom/3.0.5/seedrandom.min.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</code>
+
+<code filename="globals.js">
+/**
+ * Global constants and state management for Neon Hop
+ */
+
+// Canvas dimensions hard constrained
+export const CANVAS_WIDTH = 480;
+export const CANVAS_HEIGHT = 400;
+
+// Game constants
+export const WORLD_GRAVITY = -0.05;
+export const BOUNCE_FORCE = 0.8;
+
+// Speed and Spacing Logic
+export const BASE_SPEED = 0.3125; // Exact sync: 10 units / 32 frames flight time
+export function getSpeed(level) {
+    // Increase speed by ~6% per level
+    return BASE_SPEED + (Math.max(1, level) - 1) * 0.02;
+}
+export function getSpacing(level) {
+    // Physics sync: Distance = Speed * 32 frames (derived from gravity and bounce force)
+    return getSpeed(level) * 32;
+}
+
+export const LATERAL_SPEED = 0.4;
+export const LATERAL_FRICTION = 0.9;
+export const MAX_LATERAL_SPEED = 0.5;
+export const TILE_SIZE = 6;
+// TILE_SPACING removed as constant, use getSpacing(level)
+
+export const WIN_DISTANCE = Infinity; // Endless mode
+export const LEVEL_LENGTH = 500; // New level every 500m
+
+// Colors
+export const COLOR_BG = 0x110515; // Deep purple/black
+export const COLOR_PLAYER = 0x00ffff; // Cyan
+export const COLOR_TILE_BASE = 0x2a1a3a;
+export const COLOR_TILE_EMISSIVE = 0xff00ff; // Magenta
+export const COLOR_COLLECTIBLE = 0xffd700; // Gold
+
+// Level Palettes
+export const PALETTES = [
+    { base: 0x2a1a3a, emissive: 0xff00ff, bg: 0x110515 }, // Level 1: Neon Purple
+    { base: 0x001a33, emissive: 0x00ffff, bg: 0x000510 }, // Level 2: Cyber Blue
+    { base: 0x330000, emissive: 0xff3300, bg: 0x1a0500 }, // Level 3: Magma Red
+    { base: 0x002200, emissive: 0x33ff00, bg: 0x001100 }, // Level 4: Matrix Green
+    { base: 0x222222, emissive: 0xffffff, bg: 0x000000 }, // Level 5: Monochrome
+];
+
+// Game State Object
+export const gameState = {
+    // Core state
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2, TEST_3
+    
+    // Time tracking
+    frameCount: 0,
+    deltaTime: 0,
+    lastFrameTime: 0,
+    startTime: 0,
+    
+    // Three.js core
+    scene: null,
+    camera: null,
+    renderer: null,
+    gameContainer: null,
+    
+    // Lighting
+    lights: [],
+    ambientLight: null,
+    directionalLight: null,
+    
+    // Game entities and data
+    player: null,
+    entities: [],      // Generic entity list for updates
+    tiles: [],         // Specific list for platform logic
+    collectibles: [],  // Points
+    particles: [],     // Visual effects
+    
+    // Physics
+    gravity: { x: 0, y: WORLD_GRAVITY, z: 0 },
+    
+    // Scoring
+    score: 0,
+    distance: 0,
+    level: 1,
+    combo: 0,
+    maxCombo: 0,
+    
+    // Camera state
+    cameraOffset: { x: 0, y: 12, z: -18 }, // Zoomed in closer (was y:16, z:-25)
+    cameraLookAtOffset: { x: 0, y: 0, z: 10 },
+    
+    // Input state
+    keys: {
+        ArrowLeft: false,
+        ArrowRight: false,
+        ArrowUp: false,
+        ArrowDown: false,
+        KeyA: false,
+        KeyD: false,
+        KeyW: false,
+        KeyS: false,
+        Space: false,
+        Shift: false,
+        KeyZ: false
+    }
+};
+
+// Global accessor as required
+window.getGameState = () => gameState;
+
+// Logging system (write-only)
+export const logs = {
+    game_info: [],
+    player_info: [],
+    inputs: []
+};
+window.logs = logs;
+
+// Helper to log game info
+export function logGameInfo(info, data = {}) {
+    logs.game_info.push({
+        info: info,
+        data: data,
+        game_status: gameState.gamePhase,
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+}
+</code>
+
+<code filename="game.js">
+/**
+ * Main Game Entry Point and Loop
+ */
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, COLOR_BG, WIN_DISTANCE, logGameInfo } from './globals.js';
+import { initRandom } from './utils.js';
+import { Player } from './entities.js';
+import { initLevel, updateLevelGeneration } from './level.js';
+import { updatePhysics } from './physics.js';
+import { setupInput, restartGame } from './input.js';
+import { setupUI, renderUI } from './ui.js';
+import { setupCamera, updateCamera } from './camera.js';
+
+// Setup basic three.js scene
+function setupScene() {
+    const container = document.getElementById('game-container') || document.body;
+    
+    // Create container if not exists for strict sizing
+    if (container === document.body) {
+        const div = document.createElement('div');
+        div.id = 'game-container';
+        div.style.width = `${CANVAS_WIDTH}px`;
+        div.style.height = `${CANVAS_HEIGHT}px`;
+        div.style.position = 'relative';
+        div.style.overflow = 'hidden';
+        document.body.appendChild(div);
+        gameState.gameContainer = div;
+    } else {
+        gameState.gameContainer = container;
+    }
+
+    // Renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+    renderer.shadowMap.enabled = true;
+    gameState.gameContainer.appendChild(renderer.domElement);
+    gameState.renderer = renderer;
+
+    // Scene
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(COLOR_BG);
+    scene.fog = new THREE.FogExp2(COLOR_BG, 0.02);
+    gameState.scene = scene;
+
+    // Lights
+    const ambient = new THREE.AmbientLight(0xffffff, 0.2);
+    scene.add(ambient);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(10, 20, 10);
+    dirLight.castShadow = true;
+    dirLight.shadow.camera.top = 20;
+    dirLight.shadow.camera.bottom = -20;
+    dirLight.shadow.camera.left = -20;
+    dirLight.shadow.camera.right = 20;
+    scene.add(dirLight);
+}
+
+// Initialization
+function init() {
+    initRandom(42);
+    setupScene();
+    setupCamera();
+    setupUI();
+    setupInput();
+
+    // Create Player
+    gameState.player = new Player();
+    gameState.entities.push(gameState.player);
+    gameState.scene.add(gameState.player.mesh);
+
+    // Initial Level
+    initLevel();
+    
+    // Listen for restart
+    window.addEventListener("game-restart", () => {
+        initLevel();
+    });
+    
+    // Set control mode from global if set by test buttons
+    if (window.controlMode) {
+        gameState.controlMode = window.controlMode;
+    }
+
+    logGameInfo("Game Initialized");
+    
+    // Start Loop
+    requestAnimationFrame(gameLoop);
+}
+
+let lastTime = performance.now();
+
+function gameLoop(time) {
+    const dt = Math.min((time - lastTime) / 1000, 0.1); // Cap dt
+    lastTime = time;
+    
+    gameState.deltaTime = dt;
+    gameState.frameCount++;
+
+    update(dt);
+    render();
+    
+    requestAnimationFrame(gameLoop);
+}
+
+function update(dt) {
+    // Mode switcher check (from buttons)
+    if (window.controlMode && window.controlMode !== gameState.controlMode) {
+        gameState.controlMode = window.controlMode;
+    }
+
+    if (gameState.gamePhase === "PLAYING") {
+        // Update Player
+        if (gameState.player) {
+            gameState.player.update(dt);
+            
+            // Win condition check
+            if (gameState.player.position.z >= WIN_DISTANCE) {
+                gameState.gamePhase = "GAME_OVER_WIN";
+                logGameInfo("Level Complete", { score: gameState.score });
+            }
+        }
+        
+        // Update Physics
+        updatePhysics(dt);
+        
+        // Update Entities
+        gameState.collectibles.forEach(e => e.update(dt));
+        gameState.particles.forEach(e => e.update(dt));
+        gameState.tiles.forEach(e => e.update(dt));
+        
+        // Level Gen
+        updateLevelGeneration();
+    }
+    
+    // Update Camera always to ensure it snaps back on restart/menu screens
+    updateCamera(dt);
+    
+    // UI Update is continuous in render, but logic can go here
+}
+
+function render() {
+    gameState.renderer.render(gameState.scene, gameState.camera);
+    renderUI();
+}
+
+// Expose setControlMode for HTML buttons
+window.setControlMode = function(mode) {
+    console.log("Setting mode to:", mode);
+    window.controlMode = mode;
+    gameState.controlMode = mode;
+    // Restart to apply clean state for tests usually
+    if (mode.startsWith("TEST")) {
+        restartGame();
+        // Auto start
+        gameState.gamePhase = "PLAYING";
+    }
+};
+
+// Start
+init();
+</code>
+
+<code filename="level.js">
+/**
+ * Procedural Level Generation
+ */
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, getSpacing, getSpeed, LEVEL_LENGTH, PALETTES, COLOR_BG } from './globals.js';
+import { Tile, Collectible } from './entities.js';
+import { randomRange, randomInt, lerp } from './utils.js';
+
+let nextSpawnZ = 0;
+let lastX = 0;
+
+export function initLevel() {
+    nextSpawnZ = 0;
+    lastX = 0;
+    gameState.level = 1;
+    
+    // Reset background to initial
+    if (gameState.scene) {
+        gameState.scene.background = new THREE.Color(COLOR_BG);
+        gameState.scene.fog = new THREE.FogExp2(COLOR_BG, 0.02);
+    }
+    
+    // Spawn initial platform
+    new Tile(0, 0, PALETTES[0]);
+    nextSpawnZ += getSpacing(1);
+    
+    // Safe zone: Spawn 3 straight tiles to allow player to orient
+    for (let i = 0; i < 3; i++) {
+        spawnSafeTile();
+    }
+    
+    // Pre-spawn some normal tiles
+    for (let i = 0; i < 7; i++) {
+        spawnNextTile();
+    }
+}
+
+export function updateLevelGeneration() {
+    if (!gameState.player) return;
+    
+    const playerZ = gameState.player.position.z;
+    const renderDistance = 100;
+    
+    // Generate ahead
+    while (nextSpawnZ < playerZ + renderDistance) {
+        spawnNextTile();
+    }
+    
+    // Update Environment (Level Transition)
+    updateEnvironment(playerZ);
+}
+
+function updateEnvironment(playerZ) {
+    // Determine current level based on player position
+    const currentLevel = Math.floor(playerZ / LEVEL_LENGTH) + 1;
+    gameState.level = currentLevel;
+    
+    // Get palette for current level
+    const paletteIndex = (currentLevel - 1) % PALETTES.length;
+    const targetBgHex = PALETTES[paletteIndex].bg;
+    
+    // Smoothly lerp background color
+    if (gameState.scene) {
+        const currentBg = gameState.scene.background;
+        const targetBg = new THREE.Color(targetBgHex);
+        
+        currentBg.lerp(targetBg, 0.05);
+        gameState.scene.fog.color.copy(currentBg);
+    }
+}
+
+function spawnSafeTile() {
+    const tileLevel = Math.floor(nextSpawnZ / LEVEL_LENGTH) + 1;
+    const paletteIndex = (tileLevel - 1) % PALETTES.length;
+    const palette = PALETTES[paletteIndex];
+    
+    // Force straight line
+    let nextX = 0;
+    lastX = nextX;
+    
+    new Tile(nextX, nextSpawnZ, palette);
+    nextSpawnZ += getSpacing(tileLevel);
+}
+
+function spawnNextTile() {
+    // Determine level for this specific tile
+    const tileLevel = Math.floor(nextSpawnZ / LEVEL_LENGTH) + 1;
+    const paletteIndex = (tileLevel - 1) % PALETTES.length;
+    const palette = PALETTES[paletteIndex];
+    
+    // Difficulty Scaling
+    // Base deviation increased to 7 (was 4) to make initial levels harder
+    const difficultyMultiplier = Math.min(tileLevel - 1, 10);
+    const maxDev = Math.min(7 + (difficultyMultiplier * 1.5), 14);
+    
+    // Determine next position
+    let nextX = lastX + randomRange(-maxDev, maxDev);
+    
+    // Clamp to lane width
+    const laneWidth = 12;
+    if (nextX > laneWidth) nextX = laneWidth;
+    if (nextX < -laneWidth) nextX = -laneWidth;
+    
+    lastX = nextX;
+    
+    new Tile(nextX, nextSpawnZ, palette);
+    
+    // Chance for collectible
+    if (Math.random() > 0.7) {
+        new Collectible(nextX, nextSpawnZ);
+    }
+    
+    // Calculate spacing based on the speed of the level this tile belongs to
+    // This ensures the jump arc matches the distance
+    nextSpawnZ += getSpacing(tileLevel);
+}
+</code>

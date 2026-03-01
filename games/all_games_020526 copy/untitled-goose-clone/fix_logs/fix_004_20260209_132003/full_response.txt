@@ -1,0 +1,521 @@
+<analysis>
+- Issue identified: The "X" key control instruction is missing from the bottom controls list in `index.html`, and the checklist cannot be toggled while the game is in the "PAUSED" state. Additionally, the checklist toggle logic is case-sensitive and might fail if the user holds Shift (e.g., pressing 'X' instead of 'x').
+- Files affected: `index.html`, `globals.js`, `game.js`, `ui.js`.
+- Changes needed:
+  1. Update `index.html` to include the "X: Toggle off and on the checklist" instruction in the controls paragraph.
+  2. Update `globals.js` to include `X: false` in the `keys` state to ensure case-insensitive key detection.
+  3. Update `game.js` to allow the checklist toggle during both "PLAYING" and "PAUSED" phases.
+  4. Update `ui.js` to change "Toggle List" to "Toggle Checklist" on the start screen for consistency.
+</analysis>
+
+<code filename="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Game</title>
+    <style>
+      html, body { 
+          margin: 0; 
+          padding: 0; 
+          height: 100%; 
+          overflow: hidden; 
+          background: #222; 
+          font-family: Arial, sans-serif;
+      }
+      body { 
+          display: flex; 
+          flex-direction: column; 
+          justify-content: center; 
+          align-items: center; 
+      }
+      /* Ensure container is strictly sized */
+      #game-container {
+          box-shadow: 0 0 20px rgba(0,0,0,0.5);
+          background: #000;
+      }
+      canvas { 
+          display: block;
+      }
+      .control-buttons { 
+          display: flex; 
+          gap: 10px; 
+          margin-bottom: 15px; 
+          flex-wrap: wrap; 
+          justify-content: center; 
+      }
+      .control-button { 
+          padding: 8px 16px; 
+          cursor: pointer; 
+          background: #444; 
+          color: #fff; 
+          border: 1px solid #555; 
+          border-radius: 4px; 
+          transition: background 0.2s;
+      }
+      .control-button:hover { background: #555; }
+      .control-button:active { background: #666; }
+      h1 { color: #fff; font-size: 24px; margin-bottom: 10px; }
+      p { color: #aaa; margin: 5px 0; font-size: 14px; text-align: center; max-width: 600px; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <!-- Removed game title h1 -->
+      <!-- Removed control-buttons div as only one mode remains and it's the default -->
+      <!-- Removed game description p -->
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">
+        Become a mischievous goose! Ruin the gardener's day by stealing items, setting pranks, and honking. Complete your tasks to win, but avoid the chasing gardener.
+      </p>
+    </div>
+    
+    <!-- Game container will be injected here by game.js -->
+    
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/seedrandom/3.0.5/seedrandom.min.js"></script>
+    <script type="module" src="game.js"></script>
+
+    <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">
+      Arrow Keys / WASD: Waddle (Move) | Shift (hold): Run | Space: HONK! (Startles the gardener) | Z: Grab / Drop item (Interact) | X: Toggle off and on the checklist | Enter: Start Game | Escape: Pause / Resume | R: Restart (Game Over screens)
+    </p>
+  </body>
+</html>
+</code>
+
+<code filename="globals.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const gameState = {
+    // Phase Management
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN",
+    showTodoList: true,
+    
+    // Core Three.js
+    scene: null,
+    camera: null,
+    renderer: null,
+    gameContainer: null,
+    
+    // World & Physics
+    gravity: new THREE.Vector3(0, -0.5, 0), // Stronger gravity for snappy feeling
+    groundLevel: 0,
+    
+    // Entities
+    player: null,
+    gardener: null,
+    entities: [],     // All interactive objects (keys, rake, etc)
+    staticProps: [], // Fences, trees, etc
+    
+    // Game Logic
+    tasks: [],
+    score: 0,
+    
+    // Input State
+    keys: {
+        ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false,
+        w: false, a: false, s: false, d: false,
+        Shift: false,
+        " ": false, // Space
+        z: false,
+        x: false,
+        X: false,
+        Enter: false,
+        Escape: false,
+        r: false
+    },
+    
+    // Time
+    frameCount: 0,
+    deltaTime: 0,
+    lastTime: 0,
+    
+    // Debug/Logging
+    logs: {
+        game_info: [],
+        player_info: [],
+        inputs: []
+    }
+};
+
+// Log Helper
+export function logGameInfo(infoType, data) {
+    if (!gameState.logs[infoType]) return;
+    gameState.logs[infoType].push({
+        ...data,
+        framecount: gameState.frameCount,
+        timestamp: Date.now()
+    });
+}
+
+// Global accessor
+window.getGameState = () => gameState;
+window.logs = gameState.logs; // Expose strictly for requirements
+
+// Game Constants
+export const COLORS = {
+    GOOSE_WHITE: 0xFFFFFF,
+    GOOSE_BEAK: 0xFFA500,
+    GRASS: 0x7CFC00,
+    WATER: 0x00BFFF,
+    DIRT: 0x8B4513,
+    GARDENER_SHIRT: 0x87CEEB,
+    GARDENER_HAT: 0xD2B48C,
+    FENCE: 0xDEB887
+};
+
+export const ZONES = {
+    LAKE: { x: 15, z: 15, radius: 6 },
+    PICNIC: { x: -10, z: 10, radius: 4 }
+};
+</code>
+
+<code filename="game.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, ZONES } from './globals.js';
+import { setupLighting } from './lighting.js';
+import { setupCamera, updateCamera } from './camera.js';
+import { Goose, Gardener, Item, StaticProp } from './entities.js';
+import { initTasks, checkTasks } from './task_system.js';
+import { initUI, renderUI } from './ui.js';
+
+// Setup Main System
+function init() {
+    // 1. Container
+    const container = document.createElement('div');
+    container.id = 'game-container';
+    container.style.width = `${CANVAS_WIDTH}px`;
+    container.style.height = `${CANVAS_HEIGHT}px`;
+    container.style.position = 'relative';
+    container.style.overflow = 'hidden';
+    document.body.appendChild(container);
+    gameState.gameContainer = container;
+
+    // 2. Renderer
+    gameState.renderer = new THREE.WebGLRenderer({ antialias: true });
+    gameState.renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+    gameState.renderer.shadowMap.enabled = true;
+    gameState.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    container.appendChild(gameState.renderer.domElement);
+
+    // 3. Scene
+    gameState.scene = new THREE.Scene();
+    gameState.scene.background = new THREE.Color(0x87CEEB); // Sky Blue
+    
+    // 4. Lights & Camera
+    setupLighting();
+    setupCamera();
+    
+    // 5. Input
+    setupInput();
+    
+    // 6. UI
+    initUI();
+    
+    // 7. Start Loop
+    gameState.lastTime = performance.now();
+    requestAnimationFrame(gameLoop);
+    
+    // Initial Logs
+    gameState.logs.game_info.push({ status: "initialized", timestamp: Date.now() });
+}
+
+function setupGameWorld() {
+    // Clear old
+    while(gameState.scene.children.length > 0){ 
+        gameState.scene.remove(gameState.scene.children[0]); 
+    }
+    // Re-add lights
+    setupLighting();
+    
+    // Reset State
+    gameState.entities = [];
+    gameState.staticProps = [];
+    gameState.score = 0;
+    
+    // Ground
+    const groundGeo = new THREE.PlaneGeometry(100, 100);
+    const groundMat = new THREE.MeshStandardMaterial({ color: 0x7CFC00 }); // Grass Green
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    gameState.scene.add(ground);
+    
+    // Lake
+    const lakeGeo = new THREE.CircleGeometry(ZONES.LAKE.radius, 32);
+    const lakeMat = new THREE.MeshStandardMaterial({ color: 0x00BFFF });
+    const lake = new THREE.Mesh(lakeGeo, lakeMat);
+    lake.rotation.x = -Math.PI / 2;
+    lake.position.set(ZONES.LAKE.x, 0.01, ZONES.LAKE.z); // Slightly above ground
+    lake.receiveShadow = true;
+    gameState.scene.add(lake);
+    
+    // Picnic Blanket
+    const blanketGeo = new THREE.PlaneGeometry(3, 3);
+    const blanketMat = new THREE.MeshStandardMaterial({ color: 0xFF0000 }); // Red Blanket
+    const blanket = new THREE.Mesh(blanketGeo, blanketMat);
+    blanket.rotation.x = -Math.PI / 2;
+    blanket.position.set(ZONES.PICNIC.x, 0.01, ZONES.PICNIC.z);
+    blanket.receiveShadow = true;
+    gameState.scene.add(blanket);
+
+    // Entities
+    gameState.player = new Goose(0, 0);
+    gameState.gardener = new Gardener(5, 5);
+    gameState.entities.push(gameState.player, gameState.gardener);
+    
+    // Items
+    createItem('Rake', 8, 8, 0x808080, 'long');
+    createItem('Radio', 10, -5, 0x333333, 'box');
+    createItem('Apple', -2, 4, 0xFF0000, 'sphere');
+    createItem('Sandwich', 5, 8, 0xF5DEB3, 'box'); // Wheat color
+    createItem('Thermos', 3, 3, 0x0000FF, 'box');
+    
+    // Props (Environment)
+    // Fences
+    for(let i=-20; i<=20; i+=2) {
+        if (Math.abs(i) > 4) { // Gap for gate
+            new StaticProp(i, -20, 'fence');
+            new StaticProp(i, 20, 'fence');
+            new StaticProp(-20, i, 'fence');
+            new StaticProp(20, i, 'fence');
+        }
+    }
+    
+    // Trees
+    new StaticProp(-15, -15, 'tree');
+    new StaticProp(15, -15, 'tree');
+    new StaticProp(-15, 15, 'tree');
+    
+    // Init Tasks
+    initTasks();
+    
+    // Removed Test Modes setup
+}
+
+function createItem(name, x, z, color, type) {
+    const item = new Item(name, x, z, color, type);
+    gameState.entities.push(item);
+}
+
+function setupInput() {
+    window.addEventListener('keydown', e => {
+        if (gameState.keys.hasOwnProperty(e.key) || gameState.keys.hasOwnProperty(e.code)) {
+            gameState.keys[e.key] = true;
+            gameState.logs.inputs.push({ type: 'keydown', key: e.key, frame: gameState.frameCount });
+            
+            // Phase Controls
+            if (e.key === 'Enter' && gameState.gamePhase === 'START') {
+                setupGameWorld();
+                gameState.gamePhase = 'PLAYING';
+            }
+            if (e.key === 'Escape') {
+                gameState.gamePhase = gameState.gamePhase === 'PLAYING' ? 'PAUSED' : 'PLAYING';
+            }
+            if (e.key.toLowerCase() === 'x' && (gameState.gamePhase === 'PLAYING' || gameState.gamePhase === 'PAUSED')) {
+                gameState.showTodoList = !gameState.showTodoList;
+            }
+            if (e.key.toLowerCase() === 'r' && (gameState.gamePhase === 'GAME_OVER_WIN' || gameState.gamePhase === 'GAME_OVER_LOSE')) {
+                gameState.gamePhase = 'START';
+            }
+        }
+    });
+    
+    window.addEventListener('keyup', e => {
+        if (gameState.keys.hasOwnProperty(e.key)) {
+            gameState.keys[e.key] = false;
+        }
+    });
+    
+    // Control Mode Override (kept for potential programmatic use, though no UI button calls it now)
+    window.setControlMode = (mode) => {
+        gameState.controlMode = mode;
+        console.log("Control Mode set to:", mode);
+        // Reset if needed
+        gameState.gamePhase = "START";
+    };
+}
+
+function gameLoop(time) {
+    const dt = Math.min((time - gameState.lastTime) / 1000, 0.1);
+    gameState.lastTime = time;
+    gameState.frameCount++;
+    gameState.deltaTime = dt;
+
+    if (gameState.gamePhase === 'PLAYING') {
+        // Update all entities
+        for (const entity of gameState.entities) {
+            entity.update(dt);
+        }
+        
+        checkTasks();
+        updateCamera();
+    }
+
+    gameState.renderer.render(gameState.scene, gameState.camera);
+    renderUI();
+
+    requestAnimationFrame(gameLoop);
+}
+
+// Start
+init();
+</code>
+
+<code filename="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+let canvas, ctx;
+
+export function initUI() {
+    // Check if canvas exists in container
+    const existing = document.querySelector('#ui-layer');
+    if (existing) existing.remove();
+
+    canvas = document.createElement('canvas');
+    canvas.id = 'ui-layer';
+    canvas.width = CANVAS_WIDTH;
+    canvas.height = CANVAS_HEIGHT;
+    canvas.style.position = 'absolute';
+    canvas.style.top = '0';
+    canvas.style.left = '0';
+    canvas.style.pointerEvents = 'none';
+    
+    if (gameState.gameContainer) {
+        gameState.gameContainer.appendChild(canvas);
+    } else {
+        document.body.appendChild(canvas);
+    }
+    
+    ctx = canvas.getContext('2d');
+}
+
+export function renderUI() {
+    if (!ctx) return;
+    
+    ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    if (gameState.gamePhase === "START") {
+        renderStartScreen();
+    } else if (gameState.gamePhase === "PLAYING") {
+        renderHUD();
+    } else if (gameState.gamePhase === "PAUSED") {
+        renderHUD();
+        // Pause overlay and text removed as per instructions
+    } else if (gameState.gamePhase === "GAME_OVER_WIN") {
+        renderWinScreen();
+    } else if (gameState.gamePhase === "GAME_OVER_LOSE") {
+        // Not really used yet, but good practice
+        renderLoseScreen();
+    }
+}
+
+function renderStartScreen() {
+    ctx.fillStyle = 'rgba(0,0,0,0.8)';
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    ctx.fillStyle = '#FFA500'; // Beak color
+    ctx.font = 'bold 24px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('press enter to begin', CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 20); // Centered message
+    
+    ctx.fillStyle = '#ccc';
+    ctx.font = '14px Arial';
+    ctx.fillText('Controls: Arrows/WASD to Move | SPACE to Honk | Z to Grab', CANVAS_WIDTH/2, 330);
+    ctx.fillText('Shift to Run | X to Toggle Checklist | ESC to Pause', CANVAS_WIDTH/2, 350);
+}
+
+function renderHUD() {
+    // Task List Paper Style
+    if (gameState.showTodoList) {
+        // Increased width to fit text
+        const paperW = 340;
+        const paperH = 180;
+        const pad = 10;
+        
+        ctx.fillStyle = '#fff';
+        ctx.shadowColor = 'rgba(0,0,0,0.5)';
+        ctx.shadowBlur = 10;
+        ctx.fillRect(CANVAS_WIDTH - paperW - pad, pad, paperW, paperH);
+        ctx.shadowBlur = 0;
+        
+        // Notebook lines
+        ctx.strokeStyle = '#add8e6';
+        ctx.lineWidth = 1;
+        for(let i=0; i<8; i++) {
+            const y = pad + 40 + i * 20;
+            ctx.beginPath();
+            ctx.moveTo(CANVAS_WIDTH - paperW - pad, y);
+            ctx.lineTo(CANVAS_WIDTH - pad, y);
+            ctx.stroke();
+        }
+        
+        ctx.fillStyle = '#333';
+        ctx.font = 'bold 16px "Courier New", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('TO DO LIST', CANVAS_WIDTH - paperW/2 - pad, pad + 25);
+        
+        ctx.textAlign = 'left';
+        ctx.font = '12px "Courier New", monospace';
+        
+        let yOff = pad + 45;
+        gameState.tasks.forEach(task => {
+            if (task.completed) {
+                ctx.fillStyle = '#888';
+                ctx.fillText('[x] ' + task.text, CANVAS_WIDTH - paperW - pad + 10, yOff);
+                // Strike through
+                ctx.beginPath();
+                ctx.moveTo(CANVAS_WIDTH - paperW - pad + 5, yOff - 4);
+                ctx.lineTo(CANVAS_WIDTH - pad - 5, yOff - 4);
+                ctx.stroke();
+            } else {
+                ctx.fillStyle = '#000';
+                ctx.fillText('[ ] ' + task.text, CANVAS_WIDTH - paperW - pad + 10, yOff);
+            }
+            yOff += 20;
+        });
+    }
+
+    // Score
+    ctx.fillStyle = '#fff';
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 3;
+    ctx.font = 'bold 24px Arial';
+    ctx.textAlign = 'left';
+    ctx.strokeText(`Score: ${gameState.score}`, 20, 40);
+    ctx.fillText(`Score: ${gameState.score}`, 20, 40);
+}
+
+function renderWinScreen() {
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    ctx.fillStyle = '#333';
+    ctx.font = 'bold 48px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('LOVELY MORNING!', CANVAS_WIDTH/2, 150);
+    
+    ctx.font = '24px Arial';
+    ctx.fillText('All tasks completed.', CANVAS_WIDTH/2, 200);
+    ctx.fillText(`Final Score: ${gameState.score}`, CANVAS_WIDTH/2, 240);
+    
+    ctx.fillStyle = '#666';
+    ctx.font = '16px Arial';
+    ctx.fillText('Press R to play again', CANVAS_WIDTH/2, 300);
+}
+
+function renderLoseScreen() {
+    ctx.fillStyle = 'rgba(0,0,0,0.9)';
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    ctx.fillStyle = '#f00';
+    ctx.font = 'bold 48px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('CAUGHT!', CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    ctx.fillStyle = '#fff';
+    ctx.font = '16px Arial';
+    ctx.fillText('Press R to Restart', CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 50);
+}
+</code>

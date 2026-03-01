@@ -1,0 +1,1945 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+when the game is paused, I dont want to see paused press ESC to resume, and I don't want the game to be grayed out, but I also don't want the HUD to be hidden, 
+
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Navigate an endless subway, dodging trains, jumping barriers, and sliding under obstacles across three tracks. Collect coins and power-ups to complete 5 challenging levels by reaching distance goals. Score increases with distance, coins, and level bonuses.</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Arrow Left/A: Move to left lane | Arrow Right/D: Move to right lane | Arrow Up/W: Jump over low obstacles | Arrow Down/S: Slide under high obstacles | Enter: Start game (from start screen) | R: Restart (return to start screen)</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+// globals.js - Game state and constants
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER: "GAME_OVER",
+  WIN: "WIN"
+};
+
+export const LANE_POSITIONS = [150, 300, 450]; // X positions for the three lanes
+export const PLAYER_START_Y = 300;
+export const PLAYER_WIDTH = 30;
+export const PLAYER_HEIGHT = 50;
+
+export const JUMP_HEIGHT = 100;
+export const JUMP_DURATION = 45; // frames - increased from 30 for floatier jump
+export const SLIDE_DURATION = 20; // frames
+
+export const INITIAL_GAME_SPEED = 5;
+export const MAX_GAME_SPEED = 20;
+export const SPEED_INCREMENT = 0.005;
+
+export const LEVELS = [
+  {
+    level: 1,
+    name: "Subway Beginner",
+    distanceGoal: 2000,
+    initialSpeed: 5,
+    speedIncrement: 0.005,
+    obstacleChance: 0.20,
+    powerupInterval: 500,
+    multiplier: 1
+  },
+  {
+    level: 2,
+    name: "Urban Explorer",
+    distanceGoal: 4000,
+    initialSpeed: 7,
+    speedIncrement: 0.008,
+    obstacleChance: 0.30,
+    powerupInterval: 750,
+    multiplier: 1.5
+  },
+  {
+    level: 3,
+    name: "Track Master",
+    distanceGoal: 7000,
+    initialSpeed: 10,
+    speedIncrement: 0.012,
+    obstacleChance: 0.40,
+    powerupInterval: 1000,
+    multiplier: 2
+  },
+  {
+    level: 4,
+    name: "Speed Demon",
+    distanceGoal: 11000,
+    initialSpeed: 13,
+    speedIncrement: 0.015,
+    obstacleChance: 0.50,
+    powerupInterval: 1250,
+    multiplier: 2.5
+  },
+  {
+    level: 5,
+    name: "Endless Legend",
+    distanceGoal: 16000,
+    initialSpeed: 16,
+    speedIncrement: 0.018,
+    obstacleChance: 0.60,
+    powerupInterval: 1500,
+    multiplier: 3
+  }
+];
+
+export const gameState = {
+  gamePhase: GAME_PHASES.START,
+  controlMode: "HUMAN",
+  player: null,
+  entities: [],
+  obstacles: [],
+  coins: [],
+  powerups: [],
+  score: 0,
+  coinsCollected: 0,
+  distanceRun: 0,
+  currentLevel: 0,
+  gameSpeed: INITIAL_GAME_SPEED,
+  lastPowerupDistance: 0,
+  framesSinceStart: 0,
+  lives: 3,
+  highScores: []
+};
+
+// Global function to get game state
+export function getGameState() {
+  return gameState;
+}
+
+// Attach to window for testing
+if (typeof window !== 'undefined') {
+  window.getGameState = getGameState;
+}
+</file>
+
+<file name="game.js">
+// game.js - Main game file
+import { gameState, getGameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT, LANE_POSITIONS, LEVELS } from './globals.js';
+import { Player } from './player.js';
+import { renderBackground } from './background.js';
+import { renderUI, renderStartScreen, renderGameOverScreen, renderWinScreen } from './ui.js';
+import { handleInput } from './input.js';
+import { spawnEntities } from './spawner.js';
+import { checkCollisions } from './collision.js';
+
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  let player;
+  
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Initialize logs (write-only)
+    p.logs = {
+      "game_info": [],
+      "inputs": [],
+      "player_info": []
+    };
+    
+    // Initialize player
+    player = new Player(p);
+    gameState.player = player;
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: { phase: "START", action: "game_initialized" },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+  
+  p.draw = function() {
+    // Render based on game phase
+    if (gameState.gamePhase === GAME_PHASES.START) {
+      renderStartScreen(p);
+      return;
+    }
+    
+    if (gameState.gamePhase === GAME_PHASES.GAME_OVER) {
+      renderBackground(p, gameState.distanceRun);
+      renderAllEntities(p);
+      renderGameOverScreen(p);
+      return;
+    }
+    
+    if (gameState.gamePhase === GAME_PHASES.WIN) {
+      renderBackground(p, gameState.distanceRun);
+      renderAllEntities(p);
+      renderWinScreen(p);
+      return;
+    }
+    
+    if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+      renderBackground(p, gameState.distanceRun);
+      renderAllEntities(p);
+      renderUI(p, player);
+      return;
+    }
+    
+    // PLAYING phase
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      gameState.framesSinceStart++;
+      
+      // Update game speed
+      const level = LEVELS[gameState.currentLevel];
+      gameState.gameSpeed = Math.min(
+        level.initialSpeed + gameState.framesSinceStart * level.speedIncrement / 60,
+        level.initialSpeed + 5
+      );
+      
+      // Update distance
+      gameState.distanceRun += gameState.gameSpeed / 10;
+      
+      // Update score based on distance
+      if (p.frameCount % 10 === 0) {
+        const multiplier = gameState.currentLevel + 1;
+        gameState.score += Math.floor(1 * multiplier);
+      }
+      
+      // Check level completion
+      if (gameState.distanceRun >= level.distanceGoal) {
+        completeLevel(p);
+        return;
+      }
+      
+      // Update player
+      player.update();
+      
+      // Spawn entities
+      if (p.frameCount % 3 === 0) {
+        spawnEntities(p);
+      }
+      
+      // Update entities
+      updateEntities(p);
+      
+      // Check collisions
+      const collisionResult = checkCollisions(p, player);
+      if (collisionResult.collision) {
+        gameOver(p);
+        return;
+      }
+      
+      // Log player info periodically
+      if (p.frameCount % 30 === 0) {
+        p.logs.player_info.push({
+          screen_x: player.x,
+          screen_y: player.y,
+          game_x: player.x,
+          game_y: player.y,
+          framecount: p.frameCount,
+          timestamp: Date.now()
+        });
+      }
+      
+      // Render
+      renderBackground(p, gameState.distanceRun);
+      renderAllEntities(p);
+      renderUI(p, player);
+    }
+  };
+  
+  function updateEntities(p) {
+    // Update and clean up inactive entities
+    gameState.obstacles = gameState.obstacles.filter(obstacle => {
+      if (obstacle.active) {
+        obstacle.update(gameState.gameSpeed);
+        return true;
+      }
+      return false;
+    });
+    
+    gameState.coins = gameState.coins.filter(coin => {
+      if (coin.active) {
+        coin.update(gameState.gameSpeed);
+        return true;
+      }
+      return false;
+    });
+    
+    gameState.powerups = gameState.powerups.filter(powerup => {
+      if (powerup.active) {
+        powerup.update(gameState.gameSpeed);
+        return true;
+      }
+      return false;
+    });
+  }
+  
+  function renderAllEntities(p) {
+    // Sort entities by z-value (highest z first = furthest away first) for proper depth ordering
+    const sortedObstacles = [...gameState.obstacles].sort((a, b) => b.z - a.z);
+    const sortedCoins = [...gameState.coins].sort((a, b) => b.z - a.z);
+    const sortedPowerups = [...gameState.powerups].sort((a, b) => b.z - a.z);
+    
+    // Render obstacles
+    for (const obstacle of sortedObstacles) {
+      if (obstacle.active) {
+        obstacle.render();
+      }
+    }
+    
+    // Render coins
+    for (const coin of sortedCoins) {
+      if (coin.active && !coin.collected) {
+        coin.render();
+      }
+    }
+    
+    // Render powerups
+    for (const powerup of sortedPowerups) {
+      if (powerup.active && !powerup.collected) {
+        powerup.render();
+      }
+    }
+    
+    // Render player on top
+    player.render();
+  }
+  
+  function completeLevel(p) {
+    // Award level completion bonus
+    const multiplier = gameState.currentLevel + 1;
+    gameState.score += Math.floor(500 * multiplier);
+    
+    // Check if all levels completed
+    if (gameState.currentLevel >= LEVELS.length - 1) {
+      // WIN!
+      gameState.gamePhase = GAME_PHASES.WIN;
+      
+      p.logs.game_info.push({
+        data: { phase: "WIN", score: gameState.score, distance: gameState.distanceRun },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    } else {
+      // Next level
+      gameState.currentLevel++;
+      gameState.framesSinceStart = 0;
+      
+      p.logs.game_info.push({
+        data: { 
+          phase: "LEVEL_COMPLETE", 
+          level: gameState.currentLevel,
+          score: gameState.score 
+        },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+  
+  function gameOver(p) {
+    gameState.gamePhase = GAME_PHASES.GAME_OVER;
+    
+    p.logs.game_info.push({
+      data: { 
+        phase: "GAME_OVER", 
+        score: gameState.score,
+        distance: gameState.distanceRun,
+        level: gameState.currentLevel + 1
+      },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+  
+  p.keyPressed = function() {
+    // Log all key presses
+    p.logs.inputs.push({
+      input_type: "keyPressed",
+      data: { key: p.key, keyCode: p.keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+    
+    handleInput(p, player, p.keyCode);
+  };
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Control mode switching
+window.setControlMode = function(mode) {
+  // Ensure mode is always HUMAN since testing modes are removed
+  if (mode !== 'HUMAN') {
+    console.warn('Attempted to set control mode to non-HUMAN value. Defaulting to HUMAN.');
+    mode = 'HUMAN';
+  }
+
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = ['humanModeBtn']; // Only human mode button remains
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const modeMap = {
+    'HUMAN': 'humanModeBtn',
+  };
+  
+  const activeBtn = document.getElementById(modeMap[mode]);
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+  
+  console.log('Control mode set to:', mode);
+};
+</file>
+
+<file name="ui.js">
+// ui.js - UI rendering functions
+import { CANVAS_WIDTH, CANVAS_HEIGHT, GAME_PHASES, LEVELS, gameState } from './globals.js';
+
+export function renderUI(p, player) {
+  p.push();
+  p.textFont('Arial');
+  
+  // HUD during gameplay
+  if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+    // Score
+    p.fill(255);
+    p.textSize(16);
+    p.textAlign(p.LEFT, p.TOP);
+    p.text(`SCORE: ${gameState.score.toString().padStart(6, '0')}`, 10, 10);
+    
+    // Coins
+    p.fill(255, 215, 0);
+    p.text(`COINS: ${gameState.coinsCollected.toString().padStart(3, '0')}`, 10, 30);
+    
+    // Lives - display as hearts
+    p.fill(255);
+    p.text('LIVES:', 10, 50);
+    for (let i = 0; i < gameState.lives; i++) {
+      p.fill(255, 50, 50);
+      p.noStroke();
+      // Draw heart shape
+      const heartX = 60 + i * 25;
+      const heartY = 57;
+      const heartSize = 8;
+      p.push();
+      p.translate(heartX, heartY);
+      p.beginShape();
+      p.vertex(0, heartSize * 0.3);
+      p.bezierVertex(-heartSize * 0.5, -heartSize * 0.3, -heartSize, heartSize * 0.1, 0, heartSize);
+      p.bezierVertex(heartSize, heartSize * 0.1, heartSize * 0.5, -heartSize * 0.3, 0, heartSize * 0.3);
+      p.endShape(p.CLOSE);
+      p.pop();
+    }
+    
+    // Distance
+    p.fill(255);
+    p.textAlign(p.RIGHT, p.TOP);
+    p.text(`DIST: ${Math.floor(gameState.distanceRun).toString().padStart(5, '0')}m`, CANVAS_WIDTH - 10, 10);
+    
+    // Level
+    p.textAlign(p.CENTER, p.TOP);
+    const level = LEVELS[gameState.currentLevel];
+    p.text(`LEVEL ${level.level}: ${level.name}`, CANVAS_WIDTH / 2, 10);
+    
+    // Progress bar
+    const progressWidth = 200;
+    const progressHeight = 10;
+    const progressX = (CANVAS_WIDTH - progressWidth) / 2;
+    const progressY = 35;
+    const progress = Math.min(1, gameState.distanceRun / level.distanceGoal);
+    
+    p.fill(50);
+    p.stroke(255);
+    p.strokeWeight(1);
+    p.rect(progressX, progressY, progressWidth, progressHeight);
+    
+    p.fill(100, 200, 100);
+    p.noStroke();
+    p.rect(progressX, progressY, progressWidth * progress, progressHeight);
+    
+    // Powerup indicators
+    let powerupY = 75;
+    
+    if (player.jetpackActive) {
+      renderPowerupIndicator(p, 'JETPACK', player.jetpackTimer, 180, 50, 200, 50, 10, powerupY);
+      powerupY += 25;
+    }
+    
+    if (player.hoverboardActive) {
+      p.fill(255, 150, 0);
+      p.textAlign(p.LEFT, p.TOP);
+      p.textSize(14);
+      p.text('HOVERBOARD', 10, powerupY);
+      powerupY += 20;
+    }
+    
+    if (player.magnetActive) {
+      renderPowerupIndicator(p, 'MAGNET', player.magnetTimer, 300, 150, 50, 200, 10, powerupY);
+      powerupY += 25;
+    }
+  }
+  
+  p.pop();
+}
+
+function renderPowerupIndicator(p, label, current, max, r, g, b, x, y) {
+  p.textAlign(p.LEFT, p.TOP);
+  p.fill(255);
+  p.textSize(12);
+  p.text(label, x, y);
+  
+  const barWidth = 100;
+  const barHeight = 8;
+  const barX = x + 80;
+  
+  p.fill(50);
+  p.stroke(255);
+  p.strokeWeight(1);
+  p.rect(barX, y, barWidth, barHeight);
+  
+  p.fill(r, g, b);
+  p.noStroke();
+  const progress = current / max;
+  p.rect(barX, y, barWidth * progress, barHeight);
+}
+
+export function renderStartScreen(p) {
+  p.push();
+  p.background(20, 30, 50);
+  
+  // Controls
+  p.fill(150, 200, 255);
+  p.textSize(12);
+  p.textAlign(p.LEFT, p.TOP);
+  const controlX = 80;
+  let controlY = 230;
+  
+  p.text('← / A: Move Left', controlX, controlY);
+  controlY += 20;
+  p.text('→ / D: Move Right', controlX, controlY);
+  controlY += 20;
+  p.text('↑ / W: Jump', controlX, controlY);
+  controlY += 20;
+  p.text('↓ / S: Slide', controlX, controlY);
+  
+  p.textAlign(p.RIGHT, p.TOP);
+  controlY = 230;
+  const controlX2 = CANVAS_WIDTH - 80;
+  p.text('R: Restart', controlX2, controlY);
+  
+  // New title / Start prompt
+  p.fill(255, 255, 100);
+  p.textSize(20);
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  // Blinking effect
+  if (p.frameCount % 60 < 40) {
+    p.text('press enter to begin', CANVAS_WIDTH / 2, 150); // Centered where old title was
+  }
+  
+  p.pop();
+}
+
+export function renderGameOverScreen(p) {
+  p.push();
+  p.background(40, 20, 20, 200);
+  
+  p.fill(255, 100, 100);
+  p.textSize(48);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.text('GAME OVER', CANVAS_WIDTH / 2, 120);
+  
+  p.fill(255);
+  p.textSize(20);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 180);
+  p.text(`Distance: ${Math.floor(gameState.distanceRun)}m`, CANVAS_WIDTH / 2, 210);
+  p.text(`Coins: ${gameState.coinsCollected}`, CANVAS_WIDTH / 2, 240);
+  p.text(`Level: ${LEVELS[gameState.currentLevel].level}`, CANVAS_WIDTH / 2, 270);
+  
+  p.fill(255, 255, 100);
+  p.textSize(18);
+  
+  if (p.frameCount % 60 < 40) {
+    p.text('PRESS R TO RESTART', CANVAS_WIDTH / 2, 330);
+  }
+  
+  p.pop();
+}
+
+export function renderWinScreen(p) {
+  p.push();
+  p.background(20, 50, 20, 200);
+  
+  p.fill(100, 255, 100);
+  p.textSize(40);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.text('CONGRATULATIONS!', CANVAS_WIDTH / 2, 100);
+  
+  p.fill(255, 255, 100);
+  p.textSize(24);
+  p.text('You completed all levels!', CANVAS_WIDTH / 2, 150);
+  
+  p.fill(255);
+  p.textSize(20);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 200);
+  p.text(`Total Distance: ${Math.floor(gameState.distanceRun)}m`, CANVAS_WIDTH / 2, 230);
+  p.text(`Total Coins: ${gameState.coinsCollected}`, CANVAS_WIDTH / 2, 260);
+  
+  p.fill(255, 255, 100);
+  p.textSize(18);
+  
+  if (p.frameCount % 60 < 40) {
+    p.text('PRESS R TO RESTART', CANVAS_WIDTH / 2, 330);
+  }
+  
+  p.pop();
+}
+</file>
+
+<file name="collision.js">
+// collision.js - Collision detection functions
+import { gameState } from './globals.js';
+
+export function checkCollisions(p, player) {
+  const playerBox = player.getBoundingBox();
+  
+  // Check obstacle collisions
+  for (const obstacle of gameState.obstacles) {
+    if (!obstacle.active) continue;
+    
+    // Only check collision if obstacle is close enough (in z-space)
+    if (obstacle.z > 150) continue;
+    
+    // Skip collision if jetpack is active or invincible
+    if (player.jetpackActive || player.invincible) continue;
+    
+    const obstacleBoxes = obstacle.getBoundingBoxes();
+    
+    for (const box of obstacleBoxes) {
+      if (boxCollision(playerBox, box)) {
+        // Collision detected
+        if (player.hoverboardActive) {
+          // Use hoverboard protection
+          player.hoverboardActive = false;
+          obstacle.active = false; // Remove obstacle
+          
+          // Log event
+          p.logs.player_info.push({
+            screen_x: player.x,
+            screen_y: player.y,
+            game_x: player.x,
+            game_y: player.y,
+            event: "hoverboard_used",
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+        } else {
+          // Lose a life
+          gameState.lives--;
+          
+          p.logs.player_info.push({
+            screen_x: player.x,
+            screen_y: player.y,
+            game_x: player.x,
+            game_y: player.y,
+            event: "life_lost",
+            lives_remaining: gameState.lives,
+            framecount: p.frameCount,
+            timestamp: Date.now()
+          });
+          
+          if (gameState.lives <= 0) {
+            // Game over
+            return { collision: true, type: 'obstacle' };
+          } else {
+            // Grant brief invincibility (2 seconds at 60fps)
+            player.activateInvincibility(120);
+            obstacle.active = false; // Remove the obstacle that hit the player
+          }
+        }
+      }
+    }
+  }
+  
+  // Check coin collisions
+  for (const coin of gameState.coins) {
+    if (!coin.active || coin.collected) continue;
+    
+    // Only check collision if coin is close enough
+    if (coin.z > 150) continue;
+    
+    const coinBox = coin.getBoundingBox();
+    const magnetRadius = 150;
+    
+    // Auto-collect with magnet or jetpack
+    if (player.magnetActive || player.jetpackActive) {
+      const { screenX } = coin.getScreenPosition();
+      const distance = p.dist(player.x, player.y, screenX, coinBox.y + coinBox.height / 2);
+      if (distance < magnetRadius) {
+        collectCoin(p, coin);
+      }
+    } else if (boxCollision(playerBox, coinBox)) {
+      collectCoin(p, coin);
+    }
+  }
+  
+  // Check powerup collisions
+  for (const powerup of gameState.powerups) {
+    if (!powerup.active || powerup.collected) continue;
+    
+    // Only check collision if powerup is close enough
+    if (powerup.z > 150) continue;
+    
+    const powerupBox = powerup.getBoundingBox();
+    
+    if (boxCollision(playerBox, powerupBox)) {
+      collectPowerup(p, player, powerup);
+    }
+  }
+  
+  return { collision: false };
+}
+
+function boxCollision(box1, box2) {
+  return box1.x < box2.x + box2.width &&
+         box1.x + box1.width > box2.x &&
+         box1.y < box2.y + box2.height &&
+         box1.y + box1.height > box2.y;
+}
+
+function collectCoin(p, coin) {
+  coin.collected = true;
+  coin.active = false;
+  
+  const level = gameState.currentLevel;
+  const multiplier = level < 5 ? gameState.currentLevel + 1 : 3;
+  const points = Math.floor(10 * multiplier);
+  
+  gameState.coinsCollected++;
+  gameState.score += points;
+  
+  p.logs.player_info.push({
+    screen_x: gameState.player.x,
+    screen_y: gameState.player.y,
+    game_x: gameState.player.x,
+    game_y: gameState.player.y,
+    event: "coin_collected",
+    points: points,
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function collectPowerup(p, player, powerup) {
+  powerup.collected = true;
+  powerup.active = false;
+  
+  const level = gameState.currentLevel;
+  const multiplier = level < 5 ? gameState.currentLevel + 1 : 3;
+  const points = Math.floor(50 * multiplier);
+  
+  gameState.score += points;
+  
+  if (powerup.type === 'jetpack') {
+    player.activateJetpack(180); // 3 seconds at 60fps
+  } else if (powerup.type === 'hoverboard') {
+    player.activateHoverboard();
+  } else if (powerup.type === 'magnet') {
+    player.activateMagnet(300); // 5 seconds at 60fps
+  }
+  
+  p.logs.player_info.push({
+    screen_x: player.x,
+    screen_y: player.y,
+    game_x: player.x,
+    game_y: player.y,
+    event: "powerup_collected",
+    powerup_type: powerup.type,
+    points: points,
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+</file>
+
+<file name="background.js">
+// background.js - Background rendering
+import { CANVAS_WIDTH, CANVAS_HEIGHT, LANE_POSITIONS } from './globals.js';
+
+export function renderBackground(p, distanceRun) {
+  p.background(30, 40, 60);
+  
+  // Sky gradient
+  for (let i = 0; i < CANVAS_HEIGHT * 0.5; i++) {
+    const inter = i / (CANVAS_HEIGHT * 0.5);
+    const c = p.lerpColor(p.color(50, 60, 100), p.color(30, 40, 60), inter);
+    p.stroke(c);
+    p.line(0, i, CANVAS_WIDTH, i);
+  }
+  
+  // Distant buildings (parallax)
+  p.noStroke();
+  const buildingOffset = (distanceRun * 0.1) % 200;
+  
+  for (let i = -1; i < 5; i++) {
+    const x = i * 150 - buildingOffset;
+    const height = 80 + (i % 3) * 30;
+    p.fill(60, 70, 90);
+    p.rect(x, CANVAS_HEIGHT * 0.4 - height, 100, height);
+    
+    // Windows
+    p.fill(100, 120, 150);
+    for (let row = 0; row < height / 20; row++) {
+      for (let col = 0; col < 4; col++) {
+        p.rect(x + 10 + col * 20, CANVAS_HEIGHT * 0.4 - height + 10 + row * 20, 10, 10);
+      }
+    }
+  }
+  
+  // Ground plane
+  p.fill(40, 50, 70);
+  p.noStroke();
+  p.rect(0, CANVAS_HEIGHT * 0.7, CANVAS_WIDTH, CANVAS_HEIGHT * 0.3);
+  
+  // Track lines with perspective
+  p.stroke(80, 90, 110);
+  p.strokeWeight(3);
+  
+  const horizonY = CANVAS_HEIGHT * 0.4;
+  const groundY = CANVAS_HEIGHT * 0.7;
+  
+  for (let i = 0; i < 3; i++) {
+    const laneX = LANE_POSITIONS[i];
+    const topX = CANVAS_WIDTH / 2 + (laneX - CANVAS_WIDTH / 2) * 0.3;
+    p.line(topX, horizonY, laneX, groundY);
+  }
+  
+  // Track ties
+  p.strokeWeight(2);
+  for (let i = 0; i < 10; i++) {
+    const depth = i / 10;
+    const y = p.lerp(horizonY, groundY, depth);
+    const scale = 0.3 + depth * 0.7;
+    
+    for (let j = 0; j < 2; j++) {
+      const laneX1 = LANE_POSITIONS[j];
+      const laneX2 = LANE_POSITIONS[j + 1];
+      const topX1 = CANVAS_WIDTH / 2 + (laneX1 - CANVAS_WIDTH / 2) * (0.3 + depth * 0.7);
+      const topX2 = CANVAS_WIDTH / 2 + (laneX2 - CANVAS_WIDTH / 2) * (0.3 + depth * 0.7);
+      
+      p.stroke(60, 70, 90);
+      p.line(topX1, y, topX2, y);
+    }
+  }
+  
+  p.noStroke();
+}
+</file>
+
+<file name="testing.js">
+// testing.js - Automated testing support
+import { gameState, GAME_PHASES } from './globals.js';
+
+export function getTestAction(p) {
+  if (gameState.controlMode === "HUMAN") {
+    return null;
+  }
+  
+  const player = gameState.player;
+  if (!player) return null;
+  
+  if (gameState.controlMode === "TEST_1") {
+    return getBasicTestAction(p, player);
+  } else if (gameState.controlMode === "TEST_2") {
+    return getWinTestAction(p, player);
+  }
+  
+  return null;
+}
+
+function getBasicTestAction(p, player) {
+  // Basic testing: avoid obvious obstacles, collect coins
+  const frameCount = p.frameCount;
+  
+  // Check for upcoming obstacles in current lane
+  let needToMove = false;
+  let moveLeft = false;
+  
+  for (const obstacle of gameState.obstacles) {
+    if (!obstacle.active) continue;
+    if (obstacle.z > 100 && obstacle.z < 800) {
+      if (obstacle.lanes.includes(player.currentLaneIndex)) {
+        needToMove = true;
+        
+        // Try to move to a safe lane
+        if (player.currentLaneIndex > 0 && !obstacle.lanes.includes(player.currentLaneIndex - 1)) {
+          moveLeft = true;
+        } else if (player.currentLaneIndex < 2 && !obstacle.lanes.includes(player.currentLaneIndex + 1)) {
+          moveLeft = false;
+        }
+        
+        // Handle jump/slide obstacles
+        if (obstacle.type === 'jump' && obstacle.z < 400) {
+          return { action: 'jump' };
+        } else if (obstacle.type === 'slide' && obstacle.z < 400) {
+          return { action: 'slide' };
+        }
+        break;
+      }
+    }
+  }
+  
+  if (needToMove && frameCount % 15 === 0) {
+    return { action: moveLeft ? 'left' : 'right' };
+  }
+  
+  // Occasionally move to collect coins
+  if (frameCount % 90 === 0 && !needToMove) {
+    const targetLane = p.floor(p.random(0, 3));
+    if (targetLane < player.currentLaneIndex) {
+      return { action: 'left' };
+    } else if (targetLane > player.currentLaneIndex) {
+      return { action: 'right' };
+    }
+  }
+  
+  return null;
+}
+
+function getWinTestAction(p, player) {
+  // Advanced AI to try to win the game
+  const frameCount = p.frameCount;
+  
+  // Find nearest obstacle in each lane
+  const laneObstacles = [null, null, null];
+  for (const obstacle of gameState.obstacles) {
+    if (!obstacle.active || obstacle.z < 0 || obstacle.z > 1000) continue;
+    
+    for (const lane of obstacle.lanes) {
+      if (!laneObstacles[lane] || obstacle.z < laneObstacles[lane].z) {
+        laneObstacles[lane] = obstacle;
+      }
+    }
+  }
+  
+  // Check current lane for obstacles
+  const currentObstacle = laneObstacles[player.currentLaneIndex];
+  
+  if (currentObstacle && currentObstacle.z < 600) {
+    // Handle obstacle based on type
+    if (currentObstacle.type === 'jump' && currentObstacle.z < 300 && !player.isJumping) {
+      return { action: 'jump' };
+    } else if (currentObstacle.type === 'slide' && currentObstacle.z < 300 && !player.isSliding) {
+      return { action: 'slide' };
+    } else if (currentObstacle.type === 'train' && currentObstacle.z < 500) {
+      // Try to switch lanes
+      if (player.currentLaneIndex > 0 && !laneObstacles[player.currentLaneIndex - 1]) {
+        return { action: 'left' };
+      } else if (player.currentLaneIndex < 2 && !laneObstacles[player.currentLaneIndex + 1]) {
+        return { action: 'right' };
+      } else if (player.currentLaneIndex > 0) {
+        return { action: 'left' };
+      } else if (player.currentLaneIndex < 2) {
+        return { action: 'right' };
+      }
+    }
+  }
+  
+  // Try to collect coins and powerups
+  let bestLane = player.currentLaneIndex;
+  let bestScore = 0;
+  
+  for (let lane = 0; lane < 3; lane++) {
+    let score = 0;
+    
+    // Count coins in lane
+    for (const coin of gameState.coins) {
+      if (coin.active && !coin.collected && coin.lane === lane && coin.z < 800 && coin.z > 0) {
+        score += 1;
+      }
+    }
+    
+    // Powerups are more valuable
+    for (const powerup of gameState.powerups) {
+      if (powerup.active && !powerup.collected && powerup.lane === lane && powerup.z < 800 && powerup.z > 0) {
+        score += 5;
+      }
+    }
+    
+    // Penalize if obstacle in lane
+    if (laneObstacles[lane] && laneObstacles[lane].z < 600) {
+      score -= 10;
+    }
+    
+    if (score > bestScore) {
+      bestScore = score;
+      bestLane = lane;
+    }
+  }
+  
+  // Move towards best lane
+  if (bestLane < player.currentLaneIndex && frameCount % 10 === 0) {
+    return { action: 'left' };
+  } else if (bestLane > player.currentLaneIndex && frameCount % 10 === 0) {
+    return { action: 'right' };
+  }
+  
+  return null;
+}
+
+export function executeTestAction(p, player, action) {
+  if (!action) return;
+  
+  switch (action.action) {
+    case 'left':
+      player.moveLeft();
+      p.logs.inputs.push({
+        input_type: "test_action",
+        data: { action: "left" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+      break;
+    case 'right':
+      player.moveRight();
+      p.logs.inputs.push({
+        input_type: "test_action",
+        data: { action: "right" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+      break;
+    case 'jump':
+      player.jump();
+      p.logs.inputs.push({
+        input_type: "test_action",
+        data: { action: "jump" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+      break;
+    case 'slide':
+      player.slide();
+      p.logs.inputs.push({
+        input_type: "test_action",
+        data: { action: "slide" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+      break;
+  }
+}
+</file>
+
+<file name="entities.js">
+// entities.js - Game entities (obstacles, coins, powerups)
+import { CANVAS_WIDTH, CANVAS_HEIGHT, LANE_POSITIONS, PLAYER_START_Y } from './globals.js';
+
+export class Obstacle {
+  constructor(p, type, lanes, z) {
+    this.p = p;
+    this.type = type; // 'train', 'jump', 'slide'
+    this.lanes = lanes; // Array of lane indices this obstacle occupies
+    this.z = z;
+    this.active = true;
+  }
+  
+  update(speed) {
+    // Obstacles move 2.5x faster than base game speed for better gameplay
+    this.z -= speed * 2.5;
+    if (this.z < -50) {
+      this.active = false;
+    }
+  }
+  
+  getScreenPosition(laneIndex) {
+    const p = this.p;
+    const scale = p.max(0.3, 1000 / (this.z + 1000)); // Changed min from 0.1 to 0.3 to match background tracks
+    
+    // Calculate screen Y with perspective
+    const horizonY = CANVAS_HEIGHT * 0.4; // 160
+    const playerLevelY = PLAYER_START_Y; // 300
+    const screenY = horizonY + (playerLevelY - horizonY) * scale;
+    
+    // Calculate screen X with perspective - converge toward center at distance
+    const centerX = CANVAS_WIDTH / 2;
+    const laneX = LANE_POSITIONS[laneIndex];
+    const offsetFromCenter = laneX - centerX;
+    const screenX = centerX + offsetFromCenter * scale;
+    
+    return { scale, screenY, screenX };
+  }
+  
+  getBoundingBoxes() {
+    const boxes = [];
+    
+    for (const laneIndex of this.lanes) {
+      const { scale, screenY, screenX } = this.getScreenPosition(laneIndex);
+      
+      if (this.type === 'train') {
+        boxes.push({
+          x: screenX - 40 * scale,
+          y: screenY - 100 * scale,
+          width: 80 * scale,
+          height: 100 * scale
+        });
+      } else if (this.type === 'jump') {
+        boxes.push({
+          x: screenX - 30 * scale,
+          y: screenY - 20 * scale,
+          width: 60 * scale,
+          height: 20 * scale
+        });
+      } else if (this.type === 'slide') {
+        // Repositioned and enlarged so it actually blocks a standing player
+        boxes.push({
+          x: screenX - 30 * scale,
+          y: screenY - 50 * scale,
+          width: 60 * scale,
+          height: 40 * scale
+        });
+      }
+    }
+    
+    return boxes;
+  }
+  
+  render() {
+    const p = this.p;
+    
+    p.push();
+    
+    for (const laneIndex of this.lanes) {
+      const { scale, screenY, screenX } = this.getScreenPosition(laneIndex);
+      
+      if (scale < 0.3) continue; // Changed from 0.1 to 0.3
+      
+      if (this.type === 'train') {
+        // Draw train
+        p.fill(120, 120, 120);
+        p.stroke(80, 80, 80);
+        p.strokeWeight(2);
+        p.rect(screenX - 40 * scale, screenY - 100 * scale, 80 * scale, 100 * scale, 5);
+        
+        // Train windows
+        p.fill(50, 150, 200);
+        p.noStroke();
+        p.rect(screenX - 25 * scale, screenY - 80 * scale, 20 * scale, 25 * scale);
+        p.rect(screenX + 5 * scale, screenY - 80 * scale, 20 * scale, 25 * scale);
+        
+        // "DODGE!" text if close enough
+        if (scale > 0.5) {
+          p.fill(255, 50, 50);
+          p.textAlign(p.CENTER, p.CENTER);
+          p.textSize(14 * scale);
+          p.textStyle(p.BOLD);
+          p.text('DODGE!', screenX, screenY - 120 * scale);
+        }
+      } else if (this.type === 'jump') {
+        // Draw low barrier
+        p.fill(255, 220, 0);
+        p.stroke(0);
+        p.strokeWeight(2);
+        p.rect(screenX - 30 * scale, screenY - 20 * scale, 60 * scale, 20 * scale);
+        
+        // Hazard stripes
+        p.fill(0);
+        for (let i = 0; i < 3; i++) {
+          p.rect(screenX - 30 * scale + i * 20 * scale, screenY - 20 * scale, 10 * scale, 20 * scale);
+        }
+        
+        // "JUMP!" text if close enough
+        if (scale > 0.5) {
+          p.fill(255, 255, 50);
+          p.stroke(0);
+          p.strokeWeight(2);
+          p.textAlign(p.CENTER, p.CENTER);
+          p.textSize(16 * scale);
+          p.textStyle(p.BOLD);
+          p.text('JUMP!', screenX, screenY - 40 * scale);
+          
+          // Up arrow
+          p.noStroke();
+          p.fill(255, 255, 50);
+          p.triangle(
+            screenX, screenY - 60 * scale,
+            screenX - 8 * scale, screenY - 48 * scale,
+            screenX + 8 * scale, screenY - 48 * scale
+          );
+        }
+      } else if (this.type === 'slide') {
+        // Draw high barrier - repositioned to actually block standing player
+        p.fill(200, 50, 50);
+        p.stroke(150, 30, 30);
+        p.strokeWeight(2);
+        p.rect(screenX - 30 * scale, screenY - 50 * scale, 60 * scale, 40 * scale);
+        
+        // "SLIDE!" text if close enough
+        if (scale > 0.5) {
+          p.fill(255, 100, 100);
+          p.stroke(0);
+          p.strokeWeight(2);
+          p.textAlign(p.CENTER, p.CENTER);
+          p.textSize(16 * scale);
+          p.textStyle(p.BOLD);
+          p.text('SLIDE!', screenX, screenY - 70 * scale);
+          
+          // Down arrow
+          p.noStroke();
+          p.fill(255, 100, 100);
+          p.triangle(
+            screenX, screenY - 60 * scale,
+            screenX - 8 * scale, screenY - 72 * scale,
+            screenX + 8 * scale, screenY - 72 * scale
+          );
+        }
+      }
+    }
+    
+    p.pop();
+  }
+}
+
+export class Coin {
+  constructor(p, lane, z, yOffset = 0) {
+    this.p = p;
+    this.lane = lane;
+    this.z = z;
+    this.yOffset = yOffset;
+    this.active = true;
+    this.collected = false;
+  }
+  
+  update(speed) {
+    // Coins move at same speed as obstacles for consistency
+    this.z -= speed * 2.5;
+    if (this.z < -50) {
+      this.active = false;
+    }
+  }
+  
+  getScreenPosition() {
+    const p = this.p;
+    const scale = p.max(0.3, 1000 / (this.z + 1000)); // Changed min from 0.1 to 0.3 to match background tracks
+    
+    // Calculate screen Y with perspective
+    const horizonY = CANVAS_HEIGHT * 0.4; // 160
+    const playerLevelY = PLAYER_START_Y; // 300
+    const screenY = horizonY + (playerLevelY - horizonY) * scale - this.yOffset * scale;
+    
+    // Calculate screen X with perspective - converge toward center at distance
+    const centerX = CANVAS_WIDTH / 2;
+    const laneX = LANE_POSITIONS[this.lane];
+    const offsetFromCenter = laneX - centerX;
+    const screenX = centerX + offsetFromCenter * scale;
+    
+    return { scale, screenY, screenX };
+  }
+  
+  getBoundingBox() {
+    const { scale, screenY, screenX } = this.getScreenPosition();
+    const size = 15 * scale;
+    return {
+      x: screenX - size / 2,
+      y: screenY - size / 2,
+      width: size,
+      height: size
+    };
+  }
+  
+  render() {
+    const p = this.p;
+    if (this.collected) return;
+    
+    const { scale, screenY, screenX } = this.getScreenPosition();
+    
+    if (scale < 0.3) return; // Changed from 0.1 to 0.3
+    
+    p.push();
+    
+    // Coin glow
+    p.noStroke();
+    p.fill(255, 220, 100, 100);
+    p.circle(screenX, screenY, 20 * scale);
+    
+    // Coin
+    p.fill(255, 215, 0);
+    p.stroke(200, 170, 0);
+    p.strokeWeight(2);
+    p.circle(screenX, screenY, 15 * scale);
+    
+    // Highlight
+    p.fill(255, 255, 200);
+    p.noStroke();
+    p.circle(screenX - 3 * scale, screenY - 3 * scale, 5 * scale);
+    
+    p.pop();
+  }
+}
+
+export class Powerup {
+  constructor(p, type, lane, z) {
+    this.p = p;
+    this.type = type; // 'jetpack', 'hoverboard', 'magnet'
+    this.lane = lane;
+    this.z = z;
+    this.active = true;
+    this.collected = false;
+  }
+  
+  update(speed) {
+    // Powerups move at same speed as obstacles for consistency
+    this.z -= speed * 2.5;
+    if (this.z < -50) {
+      this.active = false;
+    }
+  }
+  
+  getScreenPosition() {
+    const p = this.p;
+    const scale = p.max(0.3, 1000 / (this.z + 1000)); // Changed min from 0.1 to 0.3 to match background tracks
+    
+    // Calculate screen Y with perspective
+    const horizonY = CANVAS_HEIGHT * 0.4; // 160
+    const playerLevelY = PLAYER_START_Y; // 300
+    const screenY = horizonY + (playerLevelY - horizonY) * scale - 50 * scale;
+    
+    // Calculate screen X with perspective - converge toward center at distance
+    const centerX = CANVAS_WIDTH / 2;
+    const laneX = LANE_POSITIONS[this.lane];
+    const offsetFromCenter = laneX - centerX;
+    const screenX = centerX + offsetFromCenter * scale;
+    
+    return { scale, screenY, screenX };
+  }
+  
+  getBoundingBox() {
+    const { scale, screenY, screenX } = this.getScreenPosition();
+    const size = 30 * scale;
+    return {
+      x: screenX - size / 2,
+      y: screenY - size / 2,
+      width: size,
+      height: size
+    };
+  }
+  
+  render() {
+    const p = this.p;
+    if (this.collected) return;
+    
+    const { scale, screenY, screenX } = this.getScreenPosition();
+    
+    if (scale < 0.3) return; // Changed from 0.1 to 0.3
+    
+    p.push();
+    
+    const size = 30 * scale;
+    
+    // Background circle
+    p.noStroke();
+    p.fill(255, 255, 255, 150);
+    p.circle(screenX, screenY, size * 1.3);
+    
+    if (this.type === 'jetpack') {
+      // Green rocket
+      p.fill(50, 200, 50);
+      p.stroke(30, 150, 30);
+      p.strokeWeight(2);
+      p.triangle(
+        screenX, screenY - size * 0.4,
+        screenX - size * 0.3, screenY + size * 0.4,
+        screenX + size * 0.3, screenY + size * 0.4
+      );
+      p.fill(255, 100, 0);
+      p.noStroke();
+      p.triangle(
+        screenX - size * 0.15, screenY + size * 0.4,
+        screenX, screenY + size * 0.6,
+        screenX + size * 0.15, screenY + size * 0.4
+      );
+    } else if (this.type === 'hoverboard') {
+      // Orange board
+      p.fill(255, 150, 0);
+      p.stroke(200, 100, 0);
+      p.strokeWeight(2);
+      p.rect(screenX - size * 0.4, screenY - size * 0.15, size * 0.8, size * 0.3, 5);
+      
+      // Wheels
+      p.fill(50);
+      p.circle(screenX - size * 0.25, screenY + size * 0.2, size * 0.15);
+      p.circle(screenX + size * 0.25, screenY + size * 0.2, size * 0.15);
+    } else if (this.type === 'magnet') {
+      // Purple magnet
+      p.fill(150, 50, 200);
+      p.stroke(100, 30, 150);
+      p.strokeWeight(2);
+      p.rect(screenX - size * 0.35, screenY - size * 0.4, size * 0.25, size * 0.8, 5);
+      p.rect(screenX + size * 0.1, screenY - size * 0.4, size * 0.25, size * 0.8, 5);
+      
+      p.fill(255, 100, 100);
+      p.noStroke();
+      p.rect(screenX - size * 0.35, screenY - size * 0.4, size * 0.25, size * 0.3);
+      
+      p.fill(100, 100, 255);
+      p.rect(screenX + size * 0.1, screenY - size * 0.4, size * 0.25, size * 0.3);
+    }
+    
+    p.pop();
+  }
+}
+</file>
+
+<file name="player.js">
+// player.js - Player entity and movement logic
+import { LANE_POSITIONS, PLAYER_START_Y, PLAYER_WIDTH, PLAYER_HEIGHT, JUMP_HEIGHT, JUMP_DURATION, SLIDE_DURATION } from './globals.js';
+
+export class Player {
+  constructor(p) {
+    this.p = p;
+    this.currentLaneIndex = 1; // Start in middle lane
+    this.x = LANE_POSITIONS[this.currentLaneIndex];
+    this.y = PLAYER_START_Y;
+    this.targetX = this.x;
+    this.width = PLAYER_WIDTH;
+    this.height = PLAYER_HEIGHT;
+    this.baseHeight = PLAYER_HEIGHT;
+    
+    // Jump state
+    this.isJumping = false;
+    this.jumpFrame = 0;
+    this.jumpStartY = PLAYER_START_Y;
+    
+    // Slide state
+    this.isSliding = false;
+    this.slideFrame = 0;
+    
+    // Powerups
+    this.jetpackActive = false;
+    this.jetpackTimer = 0;
+    this.hoverboardActive = false;
+    this.magnetActive = false;
+    this.magnetTimer = 0;
+    
+    // Invincibility after taking damage
+    this.invincible = false;
+    this.invincibilityTimer = 0;
+    
+    // Animation
+    this.bobOffset = 0;
+  }
+  
+  moveLeft() {
+    if (this.currentLaneIndex > 0) {
+      this.currentLaneIndex--;
+      this.targetX = LANE_POSITIONS[this.currentLaneIndex];
+    }
+  }
+  
+  moveRight() {
+    if (this.currentLaneIndex < LANE_POSITIONS.length - 1) {
+      this.currentLaneIndex++;
+      this.targetX = LANE_POSITIONS[this.currentLaneIndex];
+    }
+  }
+  
+  jump() {
+    if (!this.isJumping && !this.isSliding && !this.jetpackActive) {
+      this.isJumping = true;
+      this.jumpFrame = 0;
+      this.jumpStartY = this.y;
+    }
+  }
+  
+  slide() {
+    if (!this.isJumping && !this.isSliding && !this.jetpackActive) {
+      this.isSliding = true;
+      this.slideFrame = 0;
+    }
+  }
+  
+  activateJetpack(duration) {
+    this.jetpackActive = true;
+    this.jetpackTimer = duration;
+    this.isJumping = false;
+    this.isSliding = false;
+  }
+  
+  activateHoverboard() {
+    this.hoverboardActive = true;
+  }
+  
+  activateMagnet(duration) {
+    this.magnetActive = true;
+    this.magnetTimer = duration;
+  }
+  
+  activateInvincibility(duration) {
+    this.invincible = true;
+    this.invincibilityTimer = duration;
+  }
+  
+  update() {
+    const p = this.p;
+    
+    // Faster lane change for more responsive tap-based controls (increased from 0.2 to 0.5)
+    if (this.x !== this.targetX) {
+      const diff = this.targetX - this.x;
+      this.x += diff * 0.5;
+      if (Math.abs(diff) < 1) {
+        this.x = this.targetX;
+      }
+    }
+    
+    // Update powerup timers
+    if (this.jetpackActive) {
+      this.jetpackTimer--;
+      if (this.jetpackTimer <= 0) {
+        this.jetpackActive = false;
+      }
+    }
+    
+    if (this.magnetActive) {
+      this.magnetTimer--;
+      if (this.magnetTimer <= 0) {
+        this.magnetActive = false;
+      }
+    }
+    
+    // Update invincibility timer
+    if (this.invincible) {
+      this.invincibilityTimer--;
+      if (this.invincibilityTimer <= 0) {
+        this.invincible = false;
+      }
+    }
+    
+    // Handle jetpack (overrides jump/slide)
+    if (this.jetpackActive) {
+      this.y = PLAYER_START_Y - 120;
+      this.height = this.baseHeight;
+      return;
+    }
+    
+    // Handle jump
+    if (this.isJumping) {
+      this.jumpFrame++;
+      const progress = this.jumpFrame / JUMP_DURATION;
+      
+      if (progress < 0.5) {
+        // Going up
+        const jumpProgress = progress * 2;
+        this.y = this.jumpStartY - JUMP_HEIGHT * p.sin(jumpProgress * p.PI / 2);
+      } else {
+        // Coming down
+        const fallProgress = (progress - 0.5) * 2;
+        this.y = this.jumpStartY - JUMP_HEIGHT * p.cos(fallProgress * p.PI / 2);
+      }
+      
+      this.height = this.baseHeight;
+      
+      if (this.jumpFrame >= JUMP_DURATION) {
+        this.isJumping = false;
+        this.y = PLAYER_START_Y;
+      }
+    }
+    // Handle slide
+    else if (this.isSliding) {
+      this.slideFrame++;
+      this.y = PLAYER_START_Y + 20;
+      this.height = this.baseHeight * 0.4;
+      
+      if (this.slideFrame >= SLIDE_DURATION) {
+        this.isSliding = false;
+        this.y = PLAYER_START_Y;
+        this.height = this.baseHeight;
+      }
+    }
+    // Normal running state
+    else {
+      this.y = PLAYER_START_Y;
+      this.height = this.baseHeight;
+      this.bobOffset = p.sin(p.frameCount * 0.3) * 3;
+    }
+  }
+  
+  getBoundingBox() {
+    return {
+      x: this.x - this.width / 2,
+      y: this.y - this.height + this.bobOffset,
+      width: this.width,
+      height: this.height
+    };
+  }
+  
+  render() {
+    const p = this.p;
+    p.push();
+    
+    const box = this.getBoundingBox();
+    
+    // Draw hoverboard glow if active
+    if (this.hoverboardActive) {
+      p.stroke(255, 150, 0);
+      p.strokeWeight(4);
+      p.noFill();
+      p.rect(box.x - 5, box.y - 5, box.width + 10, box.height + 10, 5);
+    }
+    
+    // Flash if invincible
+    if (this.invincible && p.frameCount % 10 < 5) {
+      p.fill(255, 255, 255, 150);
+      p.noStroke();
+      p.rect(box.x - 3, box.y - 3, box.width + 6, box.height + 6, 5);
+    }
+    
+    // Draw player body
+    p.fill(50, 150, 255);
+    p.stroke(30, 100, 200);
+    p.strokeWeight(2);
+    p.rect(box.x, box.y, box.width, box.height, 5);
+    
+    // Draw face
+    p.fill(255);
+    p.noStroke();
+    p.circle(box.x + box.width * 0.3, box.y + box.height * 0.25, 5);
+    p.circle(box.x + box.width * 0.7, box.y + box.height * 0.25, 5);
+    
+    // Draw jetpack flames if active
+    if (this.jetpackActive) {
+      p.fill(255, 100, 0);
+      p.triangle(
+        box.x + box.width * 0.3, box.y + box.height,
+        box.x + box.width * 0.5, box.y + box.height + 20,
+        box.x + box.width * 0.4, box.y + box.height
+      );
+      p.fill(255, 200, 0);
+      p.triangle(
+        box.x + box.width * 0.6, box.y + box.height,
+        box.x + box.width * 0.5, box.y + box.height + 15,
+        box.x + box.width * 0.7, box.y + box.height
+      );
+    }
+    
+    p.pop();
+  }
+}
+</file>
+
+<file name="input.js">
+// input.js - Input handling
+import { gameState, GAME_PHASES } from './globals.js';
+
+export function handleInput(p, player, keyCode) {
+  // Game phase controls
+  if (keyCode === 13) { // ENTER
+    if (gameState.gamePhase === GAME_PHASES.START) {
+      startGame();
+      
+      p.logs.game_info.push({
+        data: { phase: "PLAYING", action: "game_started" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+    return;
+  }
+  
+  if (keyCode === 27) { // ESC
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      gameState.gamePhase = GAME_PHASES.PAUSED;
+      
+      p.logs.game_info.push({
+        data: { phase: "PAUSED", action: "game_paused" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+      gameState.gamePhase = GAME_PHASES.PLAYING;
+      
+      p.logs.game_info.push({
+        data: { phase: "PLAYING", action: "game_resumed" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+    return;
+  }
+  
+  if (keyCode === 82) { // R
+    if (gameState.gamePhase === GAME_PHASES.GAME_OVER || 
+        gameState.gamePhase === GAME_PHASES.WIN) {
+      resetGame();
+      
+      p.logs.game_info.push({
+        data: { phase: "START", action: "game_reset" },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+    return;
+  }
+  
+  // Gameplay controls
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) return;
+  
+  // Movement controls
+  if (keyCode === 37 || keyCode === 65) { // LEFT or A
+    player.moveLeft();
+    
+    p.logs.inputs.push({
+      input_type: "keyPressed",
+      data: { key: "LEFT", keyCode: keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  } else if (keyCode === 39 || keyCode === 68) { // RIGHT or D
+    player.moveRight();
+    
+    p.logs.inputs.push({
+      input_type: "keyPressed",
+      data: { key: "RIGHT", keyCode: keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  } else if (keyCode === 38 || keyCode === 87) { // UP or W
+    player.jump();
+    
+    p.logs.inputs.push({
+      input_type: "keyPressed",
+      data: { key: "UP", keyCode: keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  } else if (keyCode === 40 || keyCode === 83) { // DOWN or S
+    player.slide();
+    
+    p.logs.inputs.push({
+      input_type: "keyPressed",
+      data: { key: "DOWN", keyCode: keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+}
+
+function startGame() {
+  gameState.gamePhase = GAME_PHASES.PLAYING;
+  gameState.score = 0;
+  gameState.coinsCollected = 0;
+  gameState.distanceRun = 0;
+  gameState.currentLevel = 0;
+  gameState.gameSpeed = 5;
+  gameState.lastPowerupDistance = 0;
+  gameState.framesSinceStart = 0;
+  gameState.lives = 3;
+  
+  // Clear entities
+  gameState.entities = [];
+  gameState.obstacles = [];
+  gameState.coins = [];
+  gameState.powerups = [];
+  
+  // Reset player state
+  if (gameState.player) {
+    gameState.player.invincible = false;
+    gameState.player.invincibilityTimer = 0;
+  }
+}
+
+function resetGame() {
+  gameState.gamePhase = GAME_PHASES.START;
+  gameState.score = 0;
+  gameState.coinsCollected = 0;
+  gameState.distanceRun = 0;
+  gameState.currentLevel = 0;
+  gameState.gameSpeed = 5;
+  gameState.lastPowerupDistance = 0;
+  gameState.framesSinceStart = 0;
+  gameState.lives = 3;
+  
+  // Clear entities
+  gameState.entities = [];
+  gameState.obstacles = [];
+  gameState.coins = [];
+  gameState.powerups = [];
+  
+  // Reset player state
+  if (gameState.player) {
+    gameState.player.invincible = false;
+    gameState.player.invincibilityTimer = 0;
+  }
+}
+</file>
+
+<file name="spawner.js">
+// spawner.js - Entity spawning logic
+import { Obstacle, Coin, Powerup } from './entities.js';
+import { gameState, LEVELS } from './globals.js';
+
+export function spawnEntities(p) {
+  const level = LEVELS[gameState.currentLevel];
+  const spawnZ = 1000; // Reduced from 1200 since obstacles now move 2.5x faster
+  
+  // Spawn obstacles
+  if (p.random() < level.obstacleChance * 0.1) {
+    spawnObstacle(p, spawnZ);
+  }
+  
+  // Spawn coins - reduced to 0.02 to prevent excessive coins
+  if (p.random() < 0.02) {
+    spawnCoins(p, spawnZ);
+  }
+  
+  // Spawn powerups based on distance
+  if (gameState.distanceRun - gameState.lastPowerupDistance >= level.powerupInterval) {
+    spawnPowerup(p, spawnZ);
+    gameState.lastPowerupDistance = gameState.distanceRun;
+  }
+}
+
+function spawnObstacle(p, z) {
+  const obstacleTypes = ['train', 'jump', 'slide'];
+  const type = p.random(obstacleTypes);
+  
+  let lanes = [];
+  
+  if (type === 'train') {
+    // Trains can span 1-2 lanes (reduced from 1-3 for easier gameplay)
+    const numLanes = p.random() < 0.6 ? 1 : 2;
+    const startLane = p.floor(p.random(0, 4 - numLanes));
+    for (let i = 0; i < numLanes; i++) {
+      lanes.push(startLane + i);
+    }
+  } else {
+    // Jump and slide barriers typically span 1 lane (reduced from 1-2)
+    const numLanes = 1;
+    const startLane = p.floor(p.random(0, 3));
+    lanes.push(startLane);
+  }
+  
+  const obstacle = new Obstacle(p, type, lanes, z);
+  gameState.obstacles.push(obstacle);
+  gameState.entities.push(obstacle);
+}
+
+function spawnCoins(p, z) {
+  const pattern = p.floor(p.random(0, 3));
+  
+  if (pattern === 0) {
+    // Single lane of coins - reduced from 5 to 3
+    const lane = p.floor(p.random(0, 3));
+    for (let i = 0; i < 3; i++) {
+      const coin = new Coin(p, lane, z + i * 50, 0);
+      gameState.coins.push(coin);
+      gameState.entities.push(coin);
+    }
+  } else if (pattern === 1) {
+    // Zigzag pattern - reduced from 5 to 3
+    for (let i = 0; i < 3; i++) {
+      const lane = (i % 3);
+      const coin = new Coin(p, lane, z + i * 50, 0);
+      gameState.coins.push(coin);
+      gameState.entities.push(coin);
+    }
+  } else {
+    // Single coin per lane (simplified from all lanes)
+    const lane = p.floor(p.random(0, 3));
+    const coin = new Coin(p, lane, z, 0);
+    gameState.coins.push(coin);
+    gameState.entities.push(coin);
+  }
+}
+
+function spawnPowerup(p, z) {
+  const types = ['jetpack', 'hoverboard', 'magnet'];
+  const type = p.random(types);
+  const lane = p.floor(p.random(0, 3));
+  
+  const powerup = new Powerup(p, type, lane, z);
+  gameState.powerups.push(powerup);
+  gameState.entities.push(powerup);
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

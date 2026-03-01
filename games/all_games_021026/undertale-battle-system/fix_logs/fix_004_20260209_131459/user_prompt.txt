@@ -1,0 +1,2208 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+when I pause, the text puase shows up, can you make it so that the game just freezes without the text and graying out
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 450px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;">press enter to begin</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">As a human in the monster-filled Underground, navigate encounters. Use a unique battle system to SPARE enemies through dialogue and dodging attacks, or FIGHT. Survive three encounters to escape.</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;"><strong>Controls:</strong> Arrow Keys: Move your SOUL (red heart) to dodge attacks in battle / Navigate menu options | Z Key: Confirm menu selection / Advance dialogue | Space: Quick dodge (short cooldown) | Enter: Start game from main menu | ESC: Pause/Unpause game | R: Return to start screen from game over</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="automated_testing_controller.js">
+// automated_testing_controller.js - Automated testing AI
+import { GAME_PHASES, BATTLE_PHASES } from './globals.js';
+import { ENEMY_ACTS } from './enemies.js';
+
+// Helper to create action objects
+function createAction(keyCode, key, pressed = true) {
+  return { keyCode, key, pressed };
+}
+
+// TEST_1: Basic movement and menu testing
+function getTest1Action(gameState) {
+  const { battlePhase, player } = gameState;
+  
+  // Random movement during enemy turn
+  if (battlePhase === BATTLE_PHASES.ENEMY_TURN && player) {
+    const actions = [
+      createAction(37, 'ArrowLeft'),
+      createAction(39, 'ArrowRight'),
+      createAction(38, 'ArrowUp'),
+      createAction(40, 'ArrowDown')
+    ];
+    
+    // Random dodge occasionally
+    if (Math.random() < 0.05) {
+      return createAction(32, ' ');
+    }
+    
+    return actions[Math.floor(Math.random() * actions.length)];
+  }
+  
+  // Navigate menus
+  if (battlePhase === BATTLE_PHASES.MENU) {
+    if (Math.random() < 0.1) {
+      return createAction(90, 'z'); // Confirm
+    }
+    return createAction(39, 'ArrowRight'); // Move right
+  }
+  
+  // Confirm dialogues
+  if (battlePhase === BATTLE_PHASES.DIALOGUE || battlePhase === BATTLE_PHASES.VICTORY) {
+    return createAction(90, 'z');
+  }
+  
+  // Attack timing
+  if (battlePhase === BATTLE_PHASES.ATTACK_INPUT) {
+    if (gameState.attackTiming >= 45 && gameState.attackTiming <= 55) {
+      return createAction(90, 'z');
+    }
+  }
+  
+  return null;
+}
+
+// TEST_2: Win by sparing all enemies (Pacifist route)
+let test2State = {
+  positionHistory: [],
+  stuckCounter: 0,
+  lastAction: null,
+  actionsUsed: {}
+};
+
+function getTest2Action(gameState) {
+  const { battlePhase, currentEnemy, player, menuSelection, inSubMenu, subMenuSelection } = gameState;
+  
+  // Handle enemy turn - optimal dodging
+  if (battlePhase === BATTLE_PHASES.ENEMY_TURN && player) {
+    return getDodgeAction(gameState);
+  }
+  
+  // Handle menu
+  if (battlePhase === BATTLE_PHASES.MENU) {
+    if (!currentEnemy) return null;
+    
+    if (inSubMenu) {
+      // In ACT submenu - select the right action
+      const enemyName = currentEnemy.name;
+      const actOptions = ENEMY_ACTS[enemyName] || [];
+      
+      // Select first action (Compliment/Joke/Flex) until can spare
+      if (subMenuSelection === 0 && !test2State.actionsUsed[enemyName]) {
+        test2State.actionsUsed[enemyName] = true;
+        return createAction(90, 'z'); // Confirm
+      }
+      
+      // Need to navigate to correct option first
+      if (subMenuSelection !== 0) {
+        return createAction(37, 'ArrowLeft');
+      }
+      
+      return createAction(90, 'z');
+    } else {
+      // Main menu
+      if (currentEnemy.canSpare) {
+        // Navigate to SPARE (index 3)
+        if (menuSelection < 3) {
+          return createAction(39, 'ArrowRight');
+        } else {
+          return createAction(90, 'z'); // Confirm SPARE
+        }
+      } else {
+        // Navigate to ACT (index 1)
+        if (menuSelection < 1) {
+          return createAction(39, 'ArrowRight');
+        } else if (menuSelection > 1) {
+          return createAction(37, 'ArrowLeft');
+        } else {
+          return createAction(90, 'z'); // Confirm ACT
+        }
+      }
+    }
+  }
+  
+  // Handle dialogues and victory
+  if (battlePhase === BATTLE_PHASES.DIALOGUE || battlePhase === BATTLE_PHASES.VICTORY) {
+    return createAction(90, 'z');
+  }
+  
+  return null;
+}
+
+// TEST_3: Win by fighting (Genocide route)
+let test3State = {
+  positionHistory: [],
+  actionsUsed: {}
+};
+
+function getTest3Action(gameState) {
+  const { battlePhase, player, menuSelection } = gameState;
+  
+  // Optimal dodging during enemy turn
+  if (battlePhase === BATTLE_PHASES.ENEMY_TURN && player) {
+    return getDodgeAction(gameState);
+  }
+  
+  // Select FIGHT
+  if (battlePhase === BATTLE_PHASES.MENU) {
+    if (menuSelection !== 0) {
+      return createAction(37, 'ArrowLeft');
+    }
+    return createAction(90, 'z');
+  }
+  
+  // Perfect timing attack
+  if (battlePhase === BATTLE_PHASES.ATTACK_INPUT) {
+    if (gameState.attackTiming >= 45 && gameState.attackTiming <= 55) {
+      return createAction(90, 'z');
+    }
+  }
+  
+  // Handle dialogues
+  if (battlePhase === BATTLE_PHASES.DIALOGUE || battlePhase === BATTLE_PHASES.VICTORY) {
+    return createAction(90, 'z');
+  }
+  
+  return null;
+}
+
+// TEST_4: Intentionally lose by taking damage
+function getTest4Action(gameState) {
+  const { battlePhase } = gameState;
+  
+  // Don't move during enemy turn - take all hits
+  if (battlePhase === BATTLE_PHASES.ENEMY_TURN) {
+    return null; // Stay still
+  }
+  
+  // Select FIGHT to keep game moving
+  if (battlePhase === BATTLE_PHASES.MENU) {
+    if (gameState.menuSelection !== 0) {
+      return createAction(37, 'ArrowLeft');
+    }
+    return createAction(90, 'z');
+  }
+  
+  // Attack without timing
+  if (battlePhase === BATTLE_PHASES.ATTACK_INPUT) {
+    if (gameState.attackTiming > 80) {
+      return createAction(90, 'z');
+    }
+  }
+  
+  // Handle dialogues
+  if (battlePhase === BATTLE_PHASES.DIALOGUE || battlePhase === BATTLE_PHASES.VICTORY) {
+    return createAction(90, 'z');
+  }
+  
+  return null;
+}
+
+// TEST_5: Mixed strategy (some fight, some spare)
+let test5State = {
+  strategy: {},
+  positionHistory: []
+};
+
+function getTest5Action(gameState) {
+  const { battlePhase, currentEnemy, player, menuSelection, enemyIndex } = gameState;
+  
+  if (!currentEnemy) return null;
+  
+  // Define strategy per enemy (0: fight, 1: spare, 2: spare)
+  const strategies = ['fight', 'spare', 'spare'];
+  const currentStrategy = strategies[enemyIndex] || 'fight';
+  
+  // Optimal dodging
+  if (battlePhase === BATTLE_PHASES.ENEMY_TURN && player) {
+    return getDodgeAction(gameState);
+  }
+  
+  // Menu handling
+  if (battlePhase === BATTLE_PHASES.MENU) {
+    if (currentStrategy === 'fight') {
+      // Select FIGHT
+      if (menuSelection !== 0) {
+        return createAction(37, 'ArrowLeft');
+      }
+      return createAction(90, 'z');
+    } else {
+      // Spare strategy (similar to TEST_2)
+      if (gameState.inSubMenu) {
+        if (gameState.subMenuSelection !== 0) {
+          return createAction(37, 'ArrowLeft');
+        }
+        return createAction(90, 'z');
+      } else {
+        if (currentEnemy.canSpare) {
+          if (menuSelection < 3) {
+            return createAction(39, 'ArrowRight');
+          } else {
+            return createAction(90, 'z');
+          }
+        } else {
+          if (menuSelection < 1) {
+            return createAction(39, 'ArrowRight');
+          } else if (menuSelection > 1) {
+            return createAction(37, 'ArrowLeft');
+          } else {
+            return createAction(90, 'z');
+          }
+        }
+      }
+    }
+  }
+  
+  // Attack timing
+  if (battlePhase === BATTLE_PHASES.ATTACK_INPUT) {
+    if (gameState.attackTiming >= 45 && gameState.attackTiming <= 55) {
+      return createAction(90, 'z');
+    }
+  }
+  
+  // Handle dialogues
+  if (battlePhase === BATTLE_PHASES.DIALOGUE || battlePhase === BATTLE_PHASES.VICTORY) {
+    return createAction(90, 'z');
+  }
+  
+  return null;
+}
+
+// Helper function for optimal dodging
+function getDodgeAction(gameState) {
+  const { player } = gameState;
+  if (!player) return null;
+  
+  // Get all projectiles from attack manager (we'll use simple heuristic)
+  // Move in a circular pattern to avoid most attacks
+  const frame = gameState.gamePhase === 'PLAYING' ? (Date.now() / 50) : 0;
+  const pattern = Math.floor(frame) % 4;
+  
+  const actions = [
+    createAction(37, 'ArrowLeft'),   // 0
+    createAction(40, 'ArrowDown'),   // 1
+    createAction(39, 'ArrowRight'),  // 2
+    createAction(38, 'ArrowUp')      // 3
+  ];
+  
+  // Use dodge occasionally
+  if (Math.random() < 0.05 && gameState.dodgeCooldown <= 0) {
+    return createAction(32, ' ');
+  }
+  
+  return actions[pattern];
+}
+
+// Random fallback action
+function getRandomAction(gameState) {
+  const actions = [
+    createAction(37, 'ArrowLeft'),
+    createAction(39, 'ArrowRight'),
+    createAction(38, 'ArrowUp'),
+    createAction(40, 'ArrowDown'),
+    createAction(90, 'z')
+  ];
+  return actions[Math.floor(Math.random() * actions.length)];
+}
+
+// Main controller function
+export function get_automated_testing_action(gameState) {
+  // Don't act during non-playing phases
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING) {
+    return null;
+  }
+  
+  switch (gameState.controlMode) {
+    case "TEST_1":
+      return getTest1Action(gameState);
+    case "TEST_2":
+      return getTest2Action(gameState);
+    case "TEST_3":
+      return getTest3Action(gameState);
+    case "TEST_4":
+      return getTest4Action(gameState);
+    case "TEST_5":
+      return getTest5Action(gameState);
+    default:
+      return getRandomAction(gameState);
+  }
+}
+
+// Expose globally
+window.get_automated_testing_action = get_automated_testing_action;
+export default get_automated_testing_action;
+</file>
+
+<file name="globals.js">
+// globals.js - Global game state and constants
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 450;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const BATTLE_PHASES = {
+  MENU: "MENU",
+  ATTACK_INPUT: "ATTACK_INPUT",
+  ENEMY_TURN: "ENEMY_TURN",
+  DIALOGUE: "DIALOGUE",
+  VICTORY: "VICTORY"
+};
+
+export const gameState = {
+  player: null,
+  entities: [],
+  score: 0,
+  gamePhase: GAME_PHASES.START,
+  controlMode: "HUMAN",
+  battlePhase: BATTLE_PHASES.MENU,
+  currentEnemy: null,
+  enemyIndex: 0,
+  menuSelection: 0,
+  subMenuSelection: 0,
+  inSubMenu: false,
+  playerHP: 20,
+  maxHP: 20,
+  dodgeCooldown: 0,
+  attackTiming: 0,
+  isAttacking: false,
+  dialogueQueue: [],
+  currentDialogue: "",
+  enemiesDefeated: 0,
+  enemiesSpared: 0,
+  totalEnemies: 9,
+  damageFlash: 0
+};
+// Expose gameState to the window object for external access
+window.gameState = gameState;
+
+// Global function to get game state
+export function getGameState() {
+  return gameState;
+}
+
+// Expose getGameState to the window object for external access
+window.getGameState = getGameState;
+</file>
+
+<file name="game.js">
+// game.js - Main game loop and initialization
+import { 
+  CANVAS_WIDTH, 
+  CANVAS_HEIGHT, 
+  GAME_PHASES, 
+  BATTLE_PHASES,
+  gameState, 
+  getGameState 
+} from './globals.js';
+import { Player } from './player.js';
+import { createEnemyByIndex, ENEMY_ACTS } from './enemies.js';
+import { AttackPatternManager } from './projectiles.js';
+import { 
+  drawBattleUI, 
+  drawMenu, 
+  drawSubMenu, 
+  drawDialogue, 
+  drawAttackBar,
+  drawVictoryMessage 
+} from './battle_ui.js';
+import {
+  drawStartScreen,
+  drawPausedIndicator,
+  drawGameOver,
+  drawScore
+} from './screens.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Game objects
+  let keys = {};
+  let attackManager;
+  let lastSubMenuType = null;
+  
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Initialize logs
+    p.logs = {
+      game_info: [],
+      inputs: [],
+      player_info: []
+    };
+    
+    // Initialize game objects
+    attackManager = new AttackPatternManager();
+    
+    // Log initial state
+    logGameInfo("Game initialized");
+  };
+  
+  p.draw = function() {
+    p.background(0);
+    
+    // Update dodge cooldown
+    if (gameState.dodgeCooldown > 0) {
+      gameState.dodgeCooldown--;
+    }
+    
+    // Decrease damage flash
+    if (gameState.damageFlash > 0) {
+      gameState.damageFlash--;
+    }
+    
+    // Game phase rendering
+    switch (gameState.gamePhase) {
+      case GAME_PHASES.START:
+        drawStartScreen(p);
+        break;
+        
+      case GAME_PHASES.PLAYING:
+        updateGame();
+        drawGame();
+        break;
+        
+      case GAME_PHASES.PAUSED:
+        drawGame();
+        drawPausedIndicator(p);
+        break;
+        
+      case GAME_PHASES.GAME_OVER_WIN:
+        drawGameOver(p, true);
+        break;
+        
+      case GAME_PHASES.GAME_OVER_LOSE:
+        drawGameOver(p, false);
+        break;
+    }
+  };
+  
+  function updateGame() {
+    switch (gameState.battlePhase) {
+      case BATTLE_PHASES.MENU:
+        // Waiting for player input
+        break;
+        
+      case BATTLE_PHASES.ATTACK_INPUT:
+        // Update attack timing bar
+        gameState.attackTiming += 2;
+        if (gameState.attackTiming > 100) {
+          gameState.attackTiming = 0;
+        }
+        break;
+        
+      case BATTLE_PHASES.ENEMY_TURN:
+        // Update attack pattern
+        if (gameState.player && gameState.currentEnemy) {
+          const dodgeActivated = gameState.player.update(p, keys, gameState.dodgeCooldown);
+          if (dodgeActivated) {
+            gameState.dodgeCooldown = 60; // 1 second cooldown
+          }
+          
+          const finished = attackManager.update(p);
+          
+          // Check collisions
+          if (attackManager.checkCollisions(gameState.player, p)) {
+            takeDamage(2);
+          }
+          
+          // Log player position periodically
+          if (p.frameCount % 10 === 0) {
+            logPlayerInfo();
+          }
+          
+          if (finished) {
+            endEnemyTurn();
+          }
+        }
+        break;
+        
+      case BATTLE_PHASES.DIALOGUE:
+        // Waiting for Z press to continue
+        break;
+        
+      case BATTLE_PHASES.VICTORY:
+        // Waiting for Z press to continue
+        break;
+    }
+  }
+  
+  function drawGame() {
+    drawScore(p);
+    drawBattleUI(p);
+    
+    switch (gameState.battlePhase) {
+      case BATTLE_PHASES.MENU:
+        drawMenu(p);
+        if (gameState.inSubMenu) {
+          drawSubMenu(p, lastSubMenuType);
+        }
+        break;
+        
+      case BATTLE_PHASES.ATTACK_INPUT:
+        drawAttackBar(p, gameState.attackTiming);
+        break;
+        
+      case BATTLE_PHASES.ENEMY_TURN:
+        if (gameState.player) {
+          gameState.player.draw(p, gameState.damageFlash);
+        }
+        attackManager.draw(p);
+        break;
+        
+      case BATTLE_PHASES.DIALOGUE:
+        if (gameState.currentDialogue) {
+          drawDialogue(p, gameState.currentDialogue);
+        }
+        break;
+        
+      case BATTLE_PHASES.VICTORY:
+        drawVictoryMessage(p, gameState.currentDialogue);
+        break;
+    }
+  }
+  
+  p.keyPressed = function() {
+    keys[p.keyCode] = true;
+    
+    logInput("keyPressed", p.key, p.keyCode);
+    
+    // Global controls
+    if (p.keyCode === 13) { // ENTER
+      if (gameState.gamePhase === GAME_PHASES.START) {
+        startGame();
+      }
+      return;
+    }
+    
+    if (p.keyCode === 27) { // ESC
+      if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+        gameState.gamePhase = GAME_PHASES.PAUSED;
+        logGameInfo("Game paused");
+      } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+        gameState.gamePhase = GAME_PHASES.PLAYING;
+        logGameInfo("Game resumed");
+      }
+      return;
+    }
+    
+    if (p.keyCode === 82) { // R
+      if (gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN || 
+          gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE) {
+        resetGame();
+      }
+      return;
+    }
+    
+    // Game controls
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      handleKeyPress(p.keyCode, p.key);
+    }
+  };
+  
+  function handleKeyPress(keyCode, key) {
+    switch (gameState.battlePhase) {
+      case BATTLE_PHASES.MENU:
+        handleMenuInput(keyCode);
+        break;
+        
+      case BATTLE_PHASES.ATTACK_INPUT:
+        if (keyCode === 90) { // Z
+          executeAttack();
+        }
+        break;
+        
+      case BATTLE_PHASES.DIALOGUE:
+        if (keyCode === 90) { // Z
+          if (gameState.dialogueQueue.length > 0) {
+            gameState.currentDialogue = gameState.dialogueQueue.shift();
+          } else {
+            startEnemyTurn();
+          }
+        }
+        break;
+        
+      case BATTLE_PHASES.VICTORY:
+        if (keyCode === 90) { // Z
+          nextEncounter();
+        }
+        break;
+    }
+  }
+  
+  function handleMenuInput(keyCode) {
+    if (gameState.inSubMenu) {
+      // Submenu navigation
+      if (keyCode === 37) { // LEFT
+        gameState.subMenuSelection = Math.max(0, gameState.subMenuSelection - 1);
+      } else if (keyCode === 39) { // RIGHT
+        const maxOptions = lastSubMenuType === "ACT" ? 
+          (ENEMY_ACTS[gameState.currentEnemy.name]?.length || 0) + 1 : 2;
+        gameState.subMenuSelection = Math.min(maxOptions - 1, gameState.subMenuSelection + 1);
+      } else if (keyCode === 38) { // UP
+        gameState.subMenuSelection = Math.max(0, gameState.subMenuSelection - 2);
+      } else if (keyCode === 40) { // DOWN
+        const maxOptions = lastSubMenuType === "ACT" ? 
+          (ENEMY_ACTS[gameState.currentEnemy.name]?.length || 0) + 1 : 2;
+        gameState.subMenuSelection = Math.min(maxOptions - 1, gameState.subMenuSelection + 2);
+      } else if (keyCode === 90) { // Z - confirm
+        executeSubMenuAction();
+      }
+    } else {
+      // Main menu navigation
+      if (keyCode === 37) { // LEFT
+        gameState.menuSelection = Math.max(0, gameState.menuSelection - 1);
+      } else if (keyCode === 39) { // RIGHT
+        gameState.menuSelection = Math.min(3, gameState.menuSelection + 1);
+      } else if (keyCode === 90) { // Z - confirm
+        executeMenuAction();
+      }
+    }
+  }
+  
+  function executeMenuAction() {
+    const actions = ["FIGHT", "ACT", "ITEM", "SPARE"];
+    const action = actions[gameState.menuSelection];
+    
+    switch (action) {
+      case "FIGHT":
+        gameState.battlePhase = BATTLE_PHASES.ATTACK_INPUT;
+        gameState.attackTiming = 0;
+        gameState.isAttacking = true;
+        break;
+        
+      case "ACT":
+        gameState.inSubMenu = true;
+        gameState.subMenuSelection = 0;
+        lastSubMenuType = "ACT";
+        break;
+        
+      case "ITEM":
+        gameState.inSubMenu = true;
+        gameState.subMenuSelection = 0;
+        lastSubMenuType = "ITEM";
+        break;
+        
+      case "SPARE":
+        if (gameState.currentEnemy && gameState.currentEnemy.canSpare) {
+          spareEnemy();
+        } else {
+          showDialogue("The enemy isn't ready to be spared.");
+          setTimeout(() => startEnemyTurn(), 1000);
+        }
+        break;
+    }
+  }
+  
+  function executeSubMenuAction() {
+    gameState.inSubMenu = false;
+    
+    if (lastSubMenuType === "ACT") {
+      const actOptions = ENEMY_ACTS[gameState.currentEnemy.name] || [];
+      if (gameState.subMenuSelection < actOptions.length) {
+        const result = gameState.currentEnemy.performAct(gameState.subMenuSelection);
+        showDialogue(result);
+        setTimeout(() => startEnemyTurn(), 1500);
+      } else {
+        // Check option
+        showDialogue(gameState.currentEnemy.getCheckText());
+        setTimeout(() => startEnemyTurn(), 2000);
+      }
+    } else if (lastSubMenuType === "ITEM") {
+      if (gameState.subMenuSelection === 0) {
+        // Bandage
+        gameState.playerHP = Math.min(gameState.maxHP, gameState.playerHP + 10);
+        showDialogue("You used a Bandage. Recovered 10 HP!");
+      } else {
+        // Monster Candy
+        gameState.playerHP = Math.min(gameState.maxHP, gameState.playerHP + 5);
+        showDialogue("You ate Monster Candy. Recovered 5 HP!");
+      }
+      setTimeout(() => startEnemyTurn(), 1500);
+    }
+  }
+  
+  function executeAttack() {
+    gameState.battlePhase = BATTLE_PHASES.DIALOGUE;
+    
+    // Calculate damage based on timing
+    const timing = gameState.attackTiming;
+    let damage = 3;
+    
+    // Perfect hit zone (40-60)
+    if (timing >= 40 && timing <= 60) {
+      damage = 8;
+      gameState.currentDialogue = "Perfect hit! Dealt 8 damage!";
+    } else if (timing >= 30 && timing <= 70) {
+      damage = 5;
+      gameState.currentDialogue = "Good hit! Dealt 5 damage!";
+    } else {
+      gameState.currentDialogue = "Weak hit. Dealt 3 damage.";
+    }
+    
+    gameState.currentEnemy.takeDamage(damage);
+    
+    if (gameState.currentEnemy.hp <= 0) {
+      defeatEnemy();
+    } else {
+      setTimeout(() => startEnemyTurn(), 1500);
+    }
+  }
+  
+  function showDialogue(text) {
+    gameState.battlePhase = BATTLE_PHASES.DIALOGUE;
+    gameState.currentDialogue = text;
+  }
+  
+  function startEnemyTurn() {
+    if (!gameState.currentEnemy || gameState.currentEnemy.hp <= 0) return;
+    
+    gameState.battlePhase = BATTLE_PHASES.ENEMY_TURN;
+    gameState.currentDialogue = "";
+    
+    // Initialize player position
+    if (!gameState.player) {
+      gameState.player = new Player(CANVAS_WIDTH / 2, 305);
+    }
+    
+    // Start attack pattern
+    attackManager.startPattern(gameState.currentEnemy.getAttackPattern(), p);
+    
+    logPlayerInfo();
+  }
+  
+  function endEnemyTurn() {
+    attackManager.clear();
+    gameState.battlePhase = BATTLE_PHASES.MENU;
+    gameState.menuSelection = 0;
+  }
+  
+  function takeDamage(amount) {
+    gameState.playerHP -= amount;
+    gameState.damageFlash = 20;
+    
+    if (gameState.playerHP <= 0) {
+      gameState.playerHP = 0;
+      gameOverLose();
+    }
+  }
+  
+  function spareEnemy() {
+    gameState.enemiesSpared++;
+    gameState.score++; // Increment score for sparing
+    gameState.currentDialogue = `You spared ${gameState.currentEnemy.name}!`;
+    gameState.battlePhase = BATTLE_PHASES.VICTORY;
+  }
+  
+  function defeatEnemy() {
+    gameState.enemiesDefeated++;
+    gameState.score++; // Increment score for defeating
+    gameState.currentDialogue = `${gameState.currentEnemy.name} was defeated...`;
+    gameState.battlePhase = BATTLE_PHASES.VICTORY;
+  }
+  
+  function nextEncounter() {
+    gameState.enemyIndex++;
+    
+    if (gameState.enemyIndex >= gameState.totalEnemies) {
+      gameOverWin();
+    } else {
+      startEncounter();
+    }
+  }
+  
+  function startEncounter() {
+    gameState.currentEnemy = createEnemyByIndex(gameState.enemyIndex);
+    gameState.battlePhase = BATTLE_PHASES.MENU;
+    gameState.menuSelection = 0;
+    gameState.inSubMenu = false;
+    gameState.player = null;
+    attackManager.clear();
+  }
+  
+  function startGame() {
+    resetGameState();
+    gameState.gamePhase = GAME_PHASES.PLAYING;
+    startEncounter();
+    logGameInfo("Game started");
+  }
+  
+  function resetGameState() {
+    gameState.player = null;
+    gameState.entities = [];
+    gameState.score = 0;
+    gameState.enemyIndex = 0;
+    gameState.enemiesDefeated = 0;
+    gameState.enemiesSpared = 0;
+    gameState.playerHP = gameState.maxHP;
+    gameState.menuSelection = 0;
+    gameState.subMenuSelection = 0;
+    gameState.inSubMenu = false;
+    gameState.dodgeCooldown = 0;
+    gameState.attackTiming = 0;
+    gameState.damageFlash = 0;
+    gameState.currentDialogue = "";
+    gameState.dialogueQueue = [];
+  }
+  
+  function resetGame() {
+    resetGameState();
+    gameState.gamePhase = GAME_PHASES.START;
+    logGameInfo("Game reset");
+  }
+  
+  function gameOverWin() {
+    gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
+    logGameInfo("Game over - WIN");
+  }
+  
+  function gameOverLose() {
+    gameState.gamePhase = GAME_PHASES.GAME_OVER_LOSE;
+    logGameInfo("Game over - LOSE");
+  }
+  
+  p.keyReleased = function() {
+    keys[p.keyCode] = false;
+    logInput("keyReleased", p.key, p.keyCode);
+  };
+  
+  // Logging functions
+  function logGameInfo(data) {
+    p.logs.game_info.push({
+      data: data,
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+  
+  function logInput(inputType, key, keyCode) {
+    p.logs.inputs.push({
+      input_type: inputType,
+      data: { key, keyCode },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  }
+  
+  function logPlayerInfo() {
+    if (gameState.player) {
+      p.logs.player_info.push({
+        screen_x: gameState.player.x,
+        screen_y: gameState.player.y,
+        game_x: gameState.player.x,
+        game_y: gameState.player.y,
+        framecount: p.frameCount
+      });
+    }
+  }
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+
+// Control mode management
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = ['humanModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const modeMap = {
+    'HUMAN': 'humanModeBtn'
+  };
+  
+  const activeBtn = document.getElementById(modeMap[mode]);
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+};
+</file>
+
+<file name="enemies.js">
+// enemies.js - Enemy classes and definitions
+export class Enemy {
+  constructor(name, hp, dialogue, spareCondition) {
+    this.name = name;
+    this.hp = hp;
+    this.maxHP = hp;
+    this.dialogue = dialogue;
+    this.spareCondition = spareCondition;
+    this.canSpare = false;
+    this.actCount = 0;
+    this.turnCount = 0;
+  }
+
+  takeDamage(amount) {
+    this.hp -= amount;
+    if (this.hp < 0) this.hp = 0;
+  }
+
+  checkSpareCondition() {
+    return this.canSpare;
+  }
+
+  getCheckText() {
+    return `${this.name} - ${this.hp}/${this.maxHP} HP\n${this.spareCondition}`;
+  }
+}
+
+// EASY ENEMIES (1-3)
+
+export class Froggit extends Enemy {
+  constructor() {
+    super(
+      "Froggit",
+      20,
+      ["Ribbit, ribbit.", "Life is difficult for this enemy.", "Froggit doesn't understand your compliment.", "Froggit seems flattered!"],
+      "Compliment this frog to spare."
+    );
+    this.attackPattern = "SIMPLE_FLIES";
+  }
+
+  performAct(actIndex) {
+    this.actCount++;
+    this.turnCount++;
+    
+    if (actIndex === 0) { // Compliment
+      if (this.actCount >= 2) {
+        this.canSpare = true;
+        return "Froggit is blushing! You can SPARE now.";
+      }
+      return this.dialogue[Math.min(this.actCount + 1, this.dialogue.length - 1)];
+    } else if (actIndex === 1) { // Threaten
+      return "Froggit didn't understand.";
+    }
+    return this.dialogue[0];
+  }
+
+  getAttackPattern() {
+    return this.attackPattern;
+  }
+}
+
+export class Whimsun extends Enemy {
+  constructor() {
+    super(
+      "Whimsun",
+      15,
+      ["...", "This monster is too sensitive to fight.", "Whimsun laughed a little.", "Whimsun is smiling!"],
+      "Tell a joke to spare."
+    );
+    this.attackPattern = "BUTTERFLIES";
+  }
+
+  performAct(actIndex) {
+    this.actCount++;
+    this.turnCount++;
+    
+    if (actIndex === 0) { // Joke
+      if (this.actCount >= 1) {
+        this.canSpare = true;
+        return "Whimsun is giggling! You can SPARE now.";
+      }
+      return this.dialogue[2];
+    } else if (actIndex === 1) { // Console
+      return "Whimsun stops crying.";
+    }
+    return this.dialogue[0];
+  }
+
+  getAttackPattern() {
+    return this.attackPattern;
+  }
+}
+
+export class Moldsmal extends Enemy {
+  constructor() {
+    super(
+      "Moldsmal",
+      18,
+      ["...", "It doesn't seem to have a brain.", "Moldsmal jiggled in response.", "Moldsmal seems content!"],
+      "Imitate this gelatinous monster."
+    );
+    this.attackPattern = "SIMPLE_BOUNCES";
+  }
+
+  performAct(actIndex) {
+    this.actCount++;
+    this.turnCount++;
+    
+    if (actIndex === 0) { // Imitate
+      if (this.actCount >= 1) {
+        this.canSpare = true;
+        return "Moldsmal is happy! You can SPARE now.";
+      }
+      return this.dialogue[2];
+    } else if (actIndex === 1) { // Flirt
+      return "Moldsmal wobbles excitedly.";
+    }
+    return this.dialogue[0];
+  }
+
+  getAttackPattern() {
+    return this.attackPattern;
+  }
+}
+
+// MEDIUM ENEMIES (4-6)
+
+export class Tsunderplane extends Enemy {
+  constructor() {
+    super(
+      "Tsunderplane",
+      30,
+      ["Hmph!", "I-it's not like I wanted to fight you!", "Tsunderplane noticed your muscles.", "Tsunderplane is impressed!"],
+      "Show your strength to spare."
+    );
+    this.attackPattern = "PLANES";
+  }
+
+  performAct(actIndex) {
+    this.actCount++;
+    this.turnCount++;
+    
+    if (actIndex === 0) { // Flex
+      if (this.actCount >= 2) {
+        this.canSpare = true;
+        return "Tsunderplane is blushing! You can SPARE now.";
+      }
+      return this.dialogue[2];
+    } else if (actIndex === 1) { // Approach
+      return "Tsunderplane turns away. 'B-baka!'";
+    }
+    return this.dialogue[0];
+  }
+
+  getAttackPattern() {
+    return this.attackPattern;
+  }
+}
+
+export class Loox extends Enemy {
+  constructor() {
+    super(
+      "Loox",
+      35,
+      ["Don't pick on me!", "Loox is staring at you.", "Loox looks away shyly.", "Loox feels understood!"],
+      "Don't pick on them."
+    );
+    this.attackPattern = "EYES";
+  }
+
+  performAct(actIndex) {
+    this.actCount++;
+    this.turnCount++;
+    
+    if (actIndex === 0) { // Don't Pick On
+      if (this.actCount >= 2) {
+        this.canSpare = true;
+        return "Loox appreciates your kindness! You can SPARE now.";
+      }
+      return this.dialogue[2];
+    } else if (actIndex === 1) { // Pick On
+      return "Loox starts tearing up...";
+    }
+    return this.dialogue[0];
+  }
+
+  getAttackPattern() {
+    return this.attackPattern;
+  }
+}
+
+export class Migosp extends Enemy {
+  constructor() {
+    super(
+      "Migosp",
+      32,
+      ["It seems desperate for friends.", "Migosp is looking for others.", "Migosp buzzes happily!", "Migosp found a friend!"],
+      "Be their friend."
+    );
+    this.attackPattern = "SWARM";
+  }
+
+  performAct(actIndex) {
+    this.actCount++;
+    this.turnCount++;
+    
+    if (actIndex === 0) { // Befriend
+      if (this.actCount >= 2) {
+        this.canSpare = true;
+        return "Migosp is overjoyed! You can SPARE now.";
+      }
+      return this.dialogue[2];
+    } else if (actIndex === 1) { // Ignore
+      return "Migosp looks sad...";
+    }
+    return this.dialogue[0];
+  }
+
+  getAttackPattern() {
+    return this.attackPattern;
+  }
+}
+
+// HARD ENEMIES (7-9)
+
+export class KnightKnight extends Enemy {
+  constructor() {
+    super(
+      "Knight Knight",
+      45,
+      ["ZZZ...", "A heavy sleeper blocks your way.", "Knight Knight is stirring...", "Knight Knight is awake and grateful!"],
+      "Sing a lullaby to spare."
+    );
+    this.attackPattern = "SWORD_SWIPES";
+  }
+
+  performAct(actIndex) {
+    this.actCount++;
+    this.turnCount++;
+    
+    if (actIndex === 0) { // Sing
+      if (this.actCount >= 3) {
+        this.canSpare = true;
+        return "Knight Knight sleeps peacefully! You can SPARE now.";
+      }
+      return this.dialogue[2];
+    } else if (actIndex === 1) { // Shout
+      return "Knight Knight stirs uncomfortably...";
+    }
+    return this.dialogue[0];
+  }
+
+  getAttackPattern() {
+    return this.attackPattern;
+  }
+}
+
+export class Madjick extends Enemy {
+  constructor() {
+    super(
+      "Madjick",
+      50,
+      ["The magical orbs are hypnotic...", "Madjick is channeling power.", "Madjick's focus wavers.", "Madjick respects your power!"],
+      "Show magical prowess."
+    );
+    this.attackPattern = "MAGIC_ORBS";
+  }
+
+  performAct(actIndex) {
+    this.actCount++;
+    this.turnCount++;
+    
+    if (actIndex === 0) { // Magic Trick
+      if (this.actCount >= 3) {
+        this.canSpare = true;
+        return "Madjick is impressed by your magic! You can SPARE now.";
+      }
+      return this.dialogue[2];
+    } else if (actIndex === 1) { // Dispel
+      return "The magic intensifies!";
+    }
+    return this.dialogue[0];
+  }
+
+  getAttackPattern() {
+    return this.attackPattern;
+  }
+}
+
+export class FinalFroggit extends Enemy {
+  constructor() {
+    super(
+      "Final Froggit",
+      55,
+      ["The final guardian appears.", "Final Froggit knows your journey.", "Final Froggit nods in understanding.", "Final Froggit lets you pass!"],
+      "Show your determination."
+    );
+    this.attackPattern = "ADVANCED_FLIES";
+  }
+
+  performAct(actIndex) {
+    this.actCount++;
+    this.turnCount++;
+    
+    if (actIndex === 0) { // Show Mercy
+      if (this.actCount >= 3) {
+        this.canSpare = true;
+        return "Final Froggit sees your true heart! You can SPARE now.";
+      }
+      return this.dialogue[2];
+    } else if (actIndex === 1) { // Challenge
+      return "Final Froggit remains steadfast.";
+    }
+    return this.dialogue[0];
+  }
+
+  getAttackPattern() {
+    return this.attackPattern;
+  }
+}
+
+export function createEnemyByIndex(index) {
+  switch (index) {
+    case 0: return new Froggit();
+    case 1: return new Whimsun();
+    case 2: return new Moldsmal();
+    case 3: return new Tsunderplane();
+    case 4: return new Loox();
+    case 5: return new Migosp();
+    case 6: return new KnightKnight();
+    case 7: return new Madjick();
+    case 8: return new FinalFroggit();
+    default: return null;
+  }
+}
+
+export const ENEMY_ACTS = {
+  Froggit: ["Compliment", "Threaten"],
+  Whimsun: ["Joke", "Console"],
+  Moldsmal: ["Imitate", "Flirt"],
+  Tsunderplane: ["Flex", "Approach"],
+  Loox: ["Don't Pick On", "Pick On"],
+  Migosp: ["Befriend", "Ignore"],
+  "Knight Knight": ["Sing", "Shout"],
+  Madjick: ["Magic Trick", "Dispel"],
+  "Final Froggit": ["Show Mercy", "Challenge"]
+};
+</file>
+
+<file name="battle_ui.js">
+// battle_ui.js - Battle UI rendering
+import { CANVAS_WIDTH, CANVAS_HEIGHT, BATTLE_PHASES, gameState } from './globals.js';
+import { ENEMY_ACTS } from './enemies.js';
+
+export function drawBattleUI(p) {
+  // Draw battle box
+  p.push();
+  p.fill(0);
+  p.stroke(255);
+  p.strokeWeight(4);
+  p.rect(CANVAS_WIDTH / 2 - 140, 240, 280, 130);
+  p.pop();
+  
+  // Draw HP bar
+  p.push();
+  p.fill(255);
+  p.noStroke();
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(14);
+  p.text(`HP: ${gameState.playerHP} / ${gameState.maxHP}`, 30, 210);
+  
+  // HP bar background
+  p.fill(100, 0, 0);
+  p.rect(80, 210, 100, 16);
+  
+  // HP bar fill
+  const hpPercent = gameState.playerHP / gameState.maxHP;
+  p.fill(255, 255, 0);
+  p.rect(80, 210, 100 * hpPercent, 16);
+  p.pop();
+  
+  // Draw enemy
+  if (gameState.currentEnemy) {
+    p.push();
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(18);
+    p.text(gameState.currentEnemy.name, CANVAS_WIDTH / 2, 100);
+    
+    // Enemy HP bar
+    const enemyHpPercent = gameState.currentEnemy.hp / gameState.currentEnemy.maxHP;
+    p.fill(100, 0, 0);
+    p.rect(CANVAS_WIDTH / 2 - 80, 120, 160, 10);
+    p.fill(0, 255, 0);
+    p.rect(CANVAS_WIDTH / 2 - 80, 120, 160 * enemyHpPercent, 10);
+    
+    // Draw simple enemy sprite
+    drawEnemySprite(p, gameState.currentEnemy.name);
+    p.pop();
+  }
+}
+
+function drawEnemySprite(p, enemyName) {
+  const x = CANVAS_WIDTH / 2;
+  const y = 170;
+  
+  p.push();
+  p.noStroke();
+  
+  switch (enemyName) {
+    case "Froggit":
+      // Green frog
+      p.fill(100, 200, 100);
+      p.ellipse(x, y, 50, 40);
+      p.fill(50, 150, 50);
+      p.ellipse(x - 12, y - 8, 12, 12); // Eye
+      p.ellipse(x + 12, y - 8, 12, 12); // Eye
+      p.fill(0);
+      p.circle(x - 12, y - 8, 6);
+      p.circle(x + 12, y - 8, 6);
+      break;
+      
+    case "Whimsun":
+      // Pink butterfly
+      p.fill(255, 150, 255);
+      p.ellipse(x - 15, y, 25, 35);
+      p.ellipse(x + 15, y, 25, 35);
+      p.fill(200, 100, 200);
+      p.ellipse(x, y, 12, 30);
+      // Antennae
+      p.stroke(100);
+      p.strokeWeight(2);
+      p.line(x - 3, y - 15, x - 8, y - 25);
+      p.line(x + 3, y - 15, x + 8, y - 25);
+      break;
+      
+    case "Moldsmal":
+      // Green blob
+      p.fill(150, 255, 150);
+      p.ellipse(x, y, 45, 35);
+      p.fill(100, 200, 100);
+      p.ellipse(x, y - 5, 30, 20);
+      p.fill(50, 150, 50);
+      p.circle(x - 8, y - 3, 8);
+      p.circle(x + 8, y - 3, 8);
+      break;
+      
+    case "Tsunderplane":
+      // Blue airplane
+      p.fill(150, 150, 255);
+      p.triangle(x - 30, y, x + 30, y, x, y - 20);
+      p.rect(x - 15, y, 30, 15);
+      p.fill(100, 100, 200);
+      p.triangle(x - 25, y + 5, x - 5, y + 5, x - 15, y + 15);
+      p.triangle(x + 25, y + 5, x + 5, y + 5, x + 15, y + 15);
+      break;
+      
+    case "Loox":
+      // Large eye
+      p.fill(255);
+      p.ellipse(x, y, 50, 50);
+      p.fill(100, 150, 255);
+      p.circle(x, y, 30);
+      p.fill(0);
+      p.circle(x, y, 15);
+      p.fill(255);
+      p.circle(x - 3, y - 3, 5);
+      break;
+      
+    case "Migosp":
+      // Yellow bug swarm
+      for (let i = 0; i < 5; i++) {
+        const angle = (i / 5) * p.TWO_PI;
+        const bx = x + p.cos(angle) * 20;
+        const by = y + p.sin(angle) * 15;
+        p.fill(255, 200, 100);
+        p.ellipse(bx, by, 10, 15);
+        p.fill(200, 150, 50);
+        p.ellipse(bx, by, 6, 10);
+      }
+      break;
+      
+    case "Knight Knight":
+      // Armored knight
+      p.fill(180, 180, 200);
+      p.rect(x - 20, y - 10, 40, 35);
+      p.fill(150, 150, 180);
+      p.ellipse(x, y - 20, 35, 30);
+      p.fill(100, 100, 120);
+      p.rect(x - 25, y, 10, 20); // Arm
+      p.rect(x + 15, y, 10, 20); // Arm
+      p.fill(200, 200, 220);
+      p.triangle(x + 20, y - 5, x + 30, y + 10, x + 20, y + 10); // Sword
+      break;
+      
+    case "Madjick":
+      // Magical orb creature
+      p.fill(255, 100, 255);
+      p.ellipse(x, y, 40, 40);
+      p.fill(200, 50, 200);
+      p.triangle(x, y - 25, x - 15, y + 20, x + 15, y + 20);
+      // Orbiting particles
+      const time = p.frameCount * 0.1;
+      for (let i = 0; i < 3; i++) {
+        const angle = time + (i * p.TWO_PI / 3);
+        const px = x + p.cos(angle) * 30;
+        const py = y + p.sin(angle) * 30;
+        p.fill(255, 150, 255);
+        p.circle(px, py, 8);
+      }
+      break;
+      
+    case "Final Froggit":
+      // Larger, more imposing frog
+      p.fill(50, 180, 50);
+      p.ellipse(x, y, 60, 50);
+      p.fill(30, 130, 30);
+      p.ellipse(x - 15, y - 10, 16, 16); // Eye
+      p.ellipse(x + 15, y - 10, 16, 16); // Eye
+      p.fill(0);
+      p.circle(x - 15, y - 10, 8);
+      p.circle(x + 15, y - 10, 8);
+      p.fill(255, 200, 0);
+      p.stroke(255, 200, 0);
+      p.strokeWeight(2);
+      p.line(x - 20, y + 10, x - 30, y + 20); // Crown
+      p.line(x, y + 5, x, y - 5);
+      p.line(x + 20, y + 10, x + 30, y + 20);
+      break;
+  }
+  p.pop();
+}
+
+export function drawMenu(p) {
+  // Menu box
+  p.push();
+  p.fill(0);
+  p.stroke(255);
+  p.strokeWeight(3);
+  p.rect(40, 380, 520, 50);
+  
+  const options = ["FIGHT", "ACT", "ITEM", "SPARE"];
+  const spacing = 130;
+  const startX = 80;
+  
+  p.noStroke();
+  for (let i = 0; i < options.length; i++) {
+    const x = startX + i * spacing;
+    
+    // Highlight selected
+    if (gameState.menuSelection === i) {
+      p.fill(255, 255, 0);
+      p.text("❤", x - 20, 405);
+    }
+    
+    // Yellow text if can spare
+    if (options[i] === "SPARE" && gameState.currentEnemy && gameState.currentEnemy.canSpare) {
+      p.fill(255, 255, 0);
+    } else {
+      p.fill(255);
+    }
+    
+    p.textAlign(p.LEFT, p.CENTER);
+    p.textSize(16);
+    p.text(options[i], x, 405);
+  }
+  p.pop();
+}
+
+export function drawSubMenu(p, subMenuType) {
+  p.push();
+  p.fill(0);
+  p.stroke(255);
+  p.strokeWeight(3);
+  p.rect(40, 300, 520, 70);
+  
+  let options = [];
+  
+  if (subMenuType === "ACT" && gameState.currentEnemy) {
+    options = ENEMY_ACTS[gameState.currentEnemy.name] || [];
+    options.push("Check");
+  } else if (subMenuType === "ITEM") {
+    options = ["Bandage", "Monster Candy"];
+  }
+  
+  const cols = 2;
+  const spacing = 260;
+  const rowHeight = 25;
+  
+  p.noStroke();
+  for (let i = 0; i < options.length; i++) {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const x = 80 + col * spacing;
+    const y = 315 + row * rowHeight;
+    
+    if (gameState.subMenuSelection === i) {
+      p.fill(255, 255, 0);
+      p.text("❤", x - 20, y);
+    }
+    
+    p.fill(255);
+    p.textAlign(p.LEFT, p.CENTER);
+    p.textSize(14);
+    p.text(options[i], x, y);
+  }
+  p.pop();
+}
+
+export function drawDialogue(p, text) {
+  p.push();
+  p.fill(0);
+  p.stroke(255);
+  p.strokeWeight(3);
+  p.rect(40, 300, 520, 70);
+  
+  p.fill(255);
+  p.noStroke();
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(14);
+  p.text(text, 60, 315, 480, 50);
+  p.pop();
+}
+
+export function drawAttackBar(p, timing) {
+  const barWidth = 300;
+  const barHeight = 20;
+  const x = CANVAS_WIDTH / 2 - barWidth / 2;
+  const y = 320;
+  
+  p.push();
+  
+  // Background
+  p.fill(50);
+  p.stroke(255);
+  p.strokeWeight(2);
+  p.rect(x, y, barWidth, barHeight);
+  
+  // Target zone
+  p.fill(100, 255, 100, 100);
+  p.noStroke();
+  const targetStart = barWidth * 0.4;
+  const targetWidth = barWidth * 0.2;
+  p.rect(x + targetStart, y, targetWidth, barHeight);
+  
+  // Moving indicator
+  const indicatorX = x + (timing / 100) * barWidth;
+  p.fill(255, 255, 0);
+  p.rect(indicatorX - 3, y, 6, barHeight);
+  
+  p.fill(255);
+  p.textAlign(p.CENTER, p.BOTTOM);
+  p.textSize(14);
+  p.text("Press Z when in the green zone!", CANVAS_WIDTH / 2, y - 5);
+  
+  p.pop();
+}
+
+export function drawVictoryMessage(p, message) {
+  p.push();
+  p.fill(0, 200);
+  p.noStroke();
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.fill(255, 255, 0);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(24);
+  p.text(message, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+  
+  p.textSize(16);
+  p.text("(Press Z to continue)", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 40);
+  p.pop();
+}
+</file>
+
+<file name="screens.js">
+// screens.js - Game screen rendering functions
+import { CANVAS_WIDTH, CANVAS_HEIGHT, GAME_PHASES, gameState } from './globals.js';
+
+export function drawStartScreen(p) {
+  p.background(0);
+  
+  p.push();
+  // Removed game name text from canvas as per feedback
+  // p.fill(255, 255, 0);
+  // p.textAlign(p.CENTER, p.CENTER);
+  // p.textSize(48);
+  // p.text("UNDERTALE", CANVAS_WIDTH / 2, 80);
+  
+  p.fill(255);
+  p.textSize(16);
+  p.textAlign(p.CENTER, p.TOP);
+  
+  const instructions = [
+    "You are a human who fell into the Underground.",
+    "Navigate encounters with monsters using the battle system.",
+    "",
+    "FIGHT - Deal damage to enemies",
+    "ACT - Interact with enemies to find peaceful solutions",
+    "SPARE - Let the enemy go when their name is YELLOW",
+    "",
+    "During enemy attacks:",
+    "Arrow Keys - Move your SOUL to dodge",
+    "Space - Quick dodge (cooldown)",
+    "",
+    "Survive three encounters to escape!",
+    // Removed "PRESS ENTER TO START" as the HTML h1 now serves this purpose.
+  ];
+  
+  let yPos = 140;
+  for (let line of instructions) {
+    if (line === "") {
+      yPos += 10;
+    } 
+    // Removed specific handling for "PRESS ENTER TO START" line
+    p.text(line, CANVAS_WIDTH / 2, yPos);
+    yPos += line === "" ? 0 : 20;
+  }
+  
+  p.pop();
+}
+
+export function drawPausedIndicator(p) {
+  p.push();
+  p.fill(255, 255, 0);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.textSize(14);
+  p.text("PAUSED", CANVAS_WIDTH - 10, 10);
+  p.pop();
+}
+
+export function drawGameOver(p, isWin) {
+  p.background(0);
+  
+  p.push();
+  if (isWin) {
+    p.fill(255, 255, 0);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(36);
+    p.text("YOU WON!", CANVAS_WIDTH / 2, 120);
+    
+    p.fill(255);
+    p.textSize(18);
+    p.text("You escaped the Underground!", CANVAS_WIDTH / 2, 170);
+    p.text(`Enemies Defeated: ${gameState.enemiesDefeated}`, CANVAS_WIDTH / 2, 210);
+    p.text(`Enemies Spared: ${gameState.enemiesSpared}`, CANVAS_WIDTH / 2, 240);
+    p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 270); // Display final score
+    
+    if (gameState.enemiesSpared === gameState.totalEnemies) {
+      p.fill(255, 255, 100);
+      p.textSize(24);
+      p.text("TRUE PACIFIST!", CANVAS_WIDTH / 2, 310); // Adjusted Y
+      p.textSize(14);
+      p.text("You didn't hurt anyone!", CANVAS_WIDTH / 2, 340); // Adjusted Y
+    }
+  } else {
+    p.fill(255, 0, 0);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(36);
+    p.text("GAME OVER", CANVAS_WIDTH / 2, 120);
+    
+    p.fill(255);
+    p.textSize(18);
+    p.text("You were defeated...", CANVAS_WIDTH / 2, 170);
+    p.text(`Enemies Defeated: ${gameState.enemiesDefeated}`, CANVAS_WIDTH / 2, 210);
+    p.text(`Enemies Spared: ${gameState.enemiesSpared}`, CANVAS_WIDTH / 2, 240);
+    p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 270); // Display final score
+  }
+  
+  p.fill(255, 255, 0);
+  p.textSize(20);
+  p.text("PRESS R TO RESTART", CANVAS_WIDTH / 2, 360); // Adjusted Y
+  p.pop();
+}
+
+export function drawScore(p) {
+  p.push();
+  p.fill(255);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(12);
+  p.text(`Score: ${gameState.score}`, 10, 10);
+  p.text(`Defeated: ${gameState.enemiesDefeated} | Spared: ${gameState.enemiesSpared}`, 10, 25);
+  p.text(`Encounter: ${gameState.enemyIndex + 1}/${gameState.totalEnemies}`, 10, 40);
+  p.pop();
+}
+</file>
+
+<file name="projectiles.js">
+// projectiles.js - Projectile and attack pattern systems
+export class Projectile {
+  constructor(x, y, vx, vy, size, color) {
+    this.x = x;
+    this.y = y;
+    this.vx = vx;
+    this.vy = vy;
+    this.size = size;
+    this.color = color;
+    this.active = true;
+    this.rotation = 0;
+    this.rotationSpeed = 0;
+  }
+
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.rotation += this.rotationSpeed;
+    
+    // Deactivate if out of bounds
+    if (this.x < 0 || this.x > 600 || this.y < 200 || this.y > 400) {
+      this.active = false;
+    }
+  }
+
+  draw(p) {
+    p.push();
+    p.translate(this.x, this.y);
+    p.rotate(this.rotation);
+    p.fill(...this.color);
+    p.noStroke();
+    
+    // Different shapes for visual variety
+    if (this.size < 10) {
+      p.circle(0, 0, this.size);
+    } else {
+      p.rect(-this.size / 2, -this.size / 2, this.size, this.size);
+    }
+    
+    p.pop();
+  }
+
+  checkCollision(player, p) {
+    const dist = p.dist(this.x, this.y, player.x, player.y);
+    return dist < (this.size / 2 + player.size / 2);
+  }
+}
+
+export class AttackPatternManager {
+  constructor() {
+    this.projectiles = [];
+    this.frameCount = 0;
+    this.maxDuration = 300; // 5 seconds at 60fps
+    this.currentPattern = null;
+  }
+
+  startPattern(patternName, p) {
+    this.projectiles = [];
+    this.frameCount = 0;
+    this.currentPattern = patternName;
+    
+    // Seed for deterministic patterns
+    p.randomSeed(42 + (patternName.charCodeAt(0) || 0));
+  }
+
+  update(p) {
+    this.frameCount++;
+    
+    // Generate projectiles based on pattern
+    if (this.currentPattern) {
+      this.generateProjectiles(p);
+    }
+    
+    // Update all projectiles
+    for (let proj of this.projectiles) {
+      proj.update();
+    }
+    
+    // Remove inactive projectiles
+    this.projectiles = this.projectiles.filter(proj => proj.active);
+    
+    return this.frameCount >= this.maxDuration;
+  }
+
+  generateProjectiles(p) {
+    const centerX = 300;
+    const centerY = 305;
+    
+    switch (this.currentPattern) {
+      // EASY PATTERNS
+      case "SIMPLE_FLIES":
+        if (this.frameCount % 30 === 0) {
+          const angle = p.random(0, p.TWO_PI);
+          const speed = 1.5;
+          this.projectiles.push(new Projectile(
+            centerX + p.cos(angle) * 150,
+            centerY + p.sin(angle) * 75,
+            -p.cos(angle) * speed,
+            -p.sin(angle) * speed,
+            8,
+            [100, 200, 100]
+          ));
+        }
+        break;
+        
+      case "BUTTERFLIES":
+        if (this.frameCount % 25 === 0) {
+          const startX = p.random(0, 1) > 0.5 ? 160 : 440;
+          const targetY = 240 + p.random(0, 130);
+          this.projectiles.push(new Projectile(
+            startX,
+            targetY,
+            (startX < 300 ? 1.2 : -1.2),
+            p.sin(this.frameCount * 0.05) * 0.5,
+            10,
+            [255, 150, 255]
+          ));
+        }
+        break;
+        
+      case "SIMPLE_BOUNCES":
+        if (this.frameCount % 35 === 0) {
+          const startY = 240 + p.random(0, 130);
+          const proj = new Projectile(
+            160,
+            startY,
+            1.0,
+            p.random(-0.5, 0.5),
+            12,
+            [150, 255, 150]
+          );
+          this.projectiles.push(proj);
+        }
+        break;
+      
+      // MEDIUM PATTERNS
+      case "PLANES":
+        if (this.frameCount % 40 === 0) {
+          const lane = p.floor(p.random(0, 3));
+          const yPos = 250 + lane * 40;
+          const proj = new Projectile(
+            460,
+            yPos,
+            -2.5,
+            0,
+            15,
+            [150, 150, 255]
+          );
+          proj.rotationSpeed = 0.1;
+          this.projectiles.push(proj);
+        }
+        
+        // Add occasional vertical attacks
+        if (this.frameCount % 60 === 0) {
+          this.projectiles.push(new Projectile(
+            centerX + p.random(-100, 100),
+            220,
+            0,
+            1.5,
+            12,
+            [200, 100, 200]
+          ));
+        }
+        break;
+        
+      case "EYES":
+        if (this.frameCount % 30 === 0) {
+          const side = p.floor(p.random(0, 4)); // 4 sides
+          let x, y, vx, vy;
+          
+          if (side === 0) { // Top
+            x = 160 + p.random(0, 280);
+            y = 220;
+            vx = p.random(-0.5, 0.5);
+            vy = 1.8;
+          } else if (side === 1) { // Bottom
+            x = 160 + p.random(0, 280);
+            y = 390;
+            vx = p.random(-0.5, 0.5);
+            vy = -1.8;
+          } else if (side === 2) { // Left
+            x = 140;
+            y = 240 + p.random(0, 130);
+            vx = 1.8;
+            vy = p.random(-0.5, 0.5);
+          } else { // Right
+            x = 460;
+            y = 240 + p.random(0, 130);
+            vx = -1.8;
+            vy = p.random(-0.5, 0.5);
+          }
+          
+          this.projectiles.push(new Projectile(x, y, vx, vy, 11, [255, 100, 100]));
+        }
+        break;
+        
+      case "SWARM":
+        if (this.frameCount % 20 === 0) {
+          // Create a cluster of small fast projectiles
+          const clusterX = p.random(0, 1) > 0.5 ? 160 : 440;
+          const clusterY = 240 + p.random(20, 110);
+          
+          for (let i = 0; i < 3; i++) {
+            const angle = p.random(0, p.TWO_PI);
+            const speed = 1.8;
+            this.projectiles.push(new Projectile(
+              clusterX,
+              clusterY,
+              p.cos(angle) * speed * (clusterX < 300 ? 1 : -1),
+              p.sin(angle) * speed,
+              7,
+              [255, 200, 100]
+            ));
+          }
+        }
+        break;
+      
+      // HARD PATTERNS
+      case "SWORD_SWIPES":
+        if (this.frameCount % 25 === 0) {
+          const horizontal = p.random(0, 1) > 0.5;
+          
+          if (horizontal) {
+            const y = 250 + p.floor(p.random(0, 3)) * 40;
+            for (let x = 440; x >= 160; x -= 20) {
+              this.projectiles.push(new Projectile(
+                x,
+                y,
+                -3.0,
+                0,
+                14,
+                [200, 200, 255]
+              ));
+            }
+          } else {
+            const x = 180 + p.floor(p.random(0, 5)) * 50;
+            for (let y = 370; y >= 240; y -= 20) {
+              this.projectiles.push(new Projectile(
+                x,
+                y,
+                0,
+                -3.0,
+                14,
+                [200, 200, 255]
+              ));
+            }
+          }
+        }
+        break;
+        
+      case "MAGIC_ORBS":
+        if (this.frameCount % 20 === 0) {
+          const angle = (this.frameCount * 0.05);
+          const radius = 140;
+          
+          for (let i = 0; i < 3; i++) {
+            const orbAngle = angle + (i * p.TWO_PI / 3);
+            const startX = centerX + p.cos(orbAngle) * radius;
+            const startY = centerY + p.sin(orbAngle) * (radius * 0.5);
+            
+            const proj = new Projectile(
+              startX,
+              startY,
+              -p.cos(orbAngle) * 1.5,
+              -p.sin(orbAngle) * 1.5,
+              13,
+              [255, 100, 255]
+            );
+            proj.rotationSpeed = 0.15;
+            this.projectiles.push(proj);
+          }
+        }
+        break;
+        
+      case "ADVANCED_FLIES":
+        // Faster, more complex version of SIMPLE_FLIES
+        if (this.frameCount % 18 === 0) {
+          const angle = p.random(0, p.TWO_PI);
+          const speed = 2.2;
+          this.projectiles.push(new Projectile(
+            centerX + p.cos(angle) * 150,
+            centerY + p.sin(angle) * 75,
+            -p.cos(angle) * speed,
+            -p.sin(angle) * speed,
+            9,
+            [100, 255, 100]
+          ));
+        }
+        
+        // Add homing-like behavior
+        if (this.frameCount % 45 === 0) {
+          const corners = [
+            {x: 160, y: 240},
+            {x: 440, y: 240},
+            {x: 160, y: 370},
+            {x: 440, y: 370}
+          ];
+          const corner = corners[p.floor(p.random(0, 4))];
+          const dx = centerX - corner.x;
+          const dy = centerY - corner.y;
+          const dist = p.sqrt(dx * dx + dy * dy);
+          
+          this.projectiles.push(new Projectile(
+            corner.x,
+            corner.y,
+            (dx / dist) * 2.0,
+            (dy / dist) * 2.0,
+            10,
+            [50, 255, 50]
+          ));
+        }
+        break;
+    }
+  }
+
+  draw(p) {
+    for (let proj of this.projectiles) {
+      proj.draw(p);
+    }
+  }
+
+  checkCollisions(player, p) {
+    for (let proj of this.projectiles) {
+      if (proj.active && proj.checkCollision(player, p)) {
+        proj.active = false;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  clear() {
+    this.projectiles = [];
+  }
+}
+</file>
+
+<file name="player.js">
+// player.js - Player class representing the SOUL
+import { CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export class Player {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.size = 12;
+    this.speed = 2.5;
+    this.dodgeSpeed = 5;
+    this.isDodging = false;
+    this.dodgeDuration = 0;
+  }
+
+  update(p, keys, dodgeCooldown) {
+    let moveSpeed = this.speed;
+    
+    // Check if space is pressed and cooldown is ready
+    if (keys[32] && dodgeCooldown <= 0) {
+      this.isDodging = true;
+      this.dodgeDuration = 8;
+      return true; // Signal dodge was activated
+    }
+
+    if (this.isDodging) {
+      moveSpeed = this.dodgeSpeed;
+      this.dodgeDuration--;
+      if (this.dodgeDuration <= 0) {
+        this.isDodging = false;
+      }
+    }
+
+    // Movement with arrow keys
+    if (keys[37]) this.x -= moveSpeed; // LEFT
+    if (keys[39]) this.x += moveSpeed; // RIGHT
+    if (keys[38]) this.y -= moveSpeed; // UP
+    if (keys[40]) this.y += moveSpeed; // DOWN
+
+    // Constrain to battle box (centered area)
+    const boxLeft = CANVAS_WIDTH / 2 - 140;
+    const boxRight = CANVAS_WIDTH / 2 + 140;
+    const boxTop = 240;
+    const boxBottom = 370;
+
+    this.x = p.constrain(this.x, boxLeft + this.size / 2, boxRight - this.size / 2);
+    this.y = p.constrain(this.y, boxTop + this.size / 2, boxBottom - this.size / 2);
+
+    return false; // No dodge activated
+  }
+
+  draw(p, damageFlash) {
+    p.push();
+    
+    // Flash red when damaged
+    if (damageFlash > 0) {
+      p.fill(255, 100, 100);
+    } else {
+      p.fill(255, 0, 0);
+    }
+    
+    // Draw heart shape
+    p.noStroke();
+    p.beginShape();
+    const x = this.x;
+    const y = this.y;
+    const s = this.size / 2;
+    
+    // Simple heart using triangles
+    p.triangle(x, y + s, x - s, y - s / 2, x, y);
+    p.triangle(x, y + s, x + s, y - s / 2, x, y);
+    
+    p.endShape();
+    
+    // Dodge indicator
+    if (this.isDodging) {
+      p.noFill();
+      p.stroke(255, 255, 0, 150);
+      p.strokeWeight(2);
+      p.circle(x, y, this.size * 2);
+    }
+    
+    p.pop();
+  }
+
+  getBounds() {
+    return {
+      x: this.x,
+      y: this.y,
+      width: this.size,
+      height: this.size
+    };
+  }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

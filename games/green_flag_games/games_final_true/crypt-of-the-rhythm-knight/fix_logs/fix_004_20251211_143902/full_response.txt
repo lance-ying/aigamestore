@@ -1,0 +1,995 @@
+<analysis>
+- Issue identified: The player feels punished by "simultaneous hits" (where hitting an enemy results in immediate retaliation in the same turn) and finds the skeleton ("white block") damage too high. They also requested increased health (10) and a shift in punishment logic to focus on rhythm mistakes rather than unavoidable combat damage.
+- Files affected: `globals.js`, `entities.js`, `physics.js`, `input.js`, `game.js`
+- Changes needed:
+  1.  `globals.js`: Increase `health` and `maxHealth` to 10.
+  2.  `entities.js`: Add a `stunned` property to the `Enemy` class to track if they were just hit.
+  3.  `physics.js`: In `handlePlayerCollision`, when the player attacks an enemy, set `stunned = true` on that enemy. This prevents the "simultaneous hit" scenario.
+  4.  `input.js`: In `updateEnemyAI`, check if the enemy is `stunned`. If so, skip their turn and reset the flag. Also, in `handleInput`, add logic to apply damage to the player if they miss a beat (timing == "MISS"), fulfilling the "only lose health when I miss a beat" request.
+  5.  `game.js`: Ensure the default health is set to 10 when initializing the player in `startLevel`.
+</analysis>
+
+<code filename="globals.js">
+/**
+ * Global constants and state management for Crypt of the Rhythm Knight
+ */
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+export const TILE_SIZE = 40;
+export const GRID_WIDTH = 15; // 600 / 40
+export const GRID_HEIGHT = 9; // 360 / 40 (leaving 40px for HUD)
+export const HUD_HEIGHT = 40;
+
+// Rhythm Constants
+export const BPM = 120;
+export const BEAT_MS = 60000 / BPM;
+export const INPUT_WINDOW = 150; // ms window around the beat to accept input
+
+// Colors
+export const COLORS = {
+    BACKGROUND: [20, 15, 25],
+    GRID_DARK: [30, 25, 35],
+    GRID_LIGHT: [35, 30, 40],
+    WALL: [60, 50, 70],
+    PLAYER: [100, 200, 255],
+    ENEMY_SLIME: [100, 255, 100],
+    ENEMY_BAT: [200, 100, 255],
+    ENEMY_SKELETON: [255, 255, 255],
+    GOLD: [255, 215, 0],
+    POTION: [255, 50, 50],
+    EXIT: [255, 255, 0],
+    BEAT_BAR: [0, 255, 255],
+    BEAT_PERFECT: [0, 255, 0],
+    BEAT_MISS: [255, 0, 0]
+};
+
+// Game State
+export const gameState = {
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2
+    
+    // Level
+    level: 1,
+    maxLevels: 10,
+    triggerNextLevel: false,
+
+    // Time & Rhythm
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    startTime: 0,
+    lastBeatTime: 0,
+    beatCount: 0,
+    nextBeatTime: 0,
+    
+    // Player Stats
+    score: 0,
+    multiplier: 1,
+    combo: 0,
+    health: 10,
+    maxHealth: 10,
+    
+    // World
+    entities: [],
+    particles: [],
+    grid: [], // 2D array of tiles
+    player: null,
+    exit: null,
+    
+    // Input state
+    lastInputBeat: -1, // Track which beat the player last acted on to prevent double moves
+    
+    // Camera Shake
+    shakeAmount: 0,
+    
+    // Debug/Logging
+    logs: {
+        game_info: [],
+        inputs: [],
+        player_info: []
+    }
+};
+
+/**
+ * Expose gameState globally
+ */
+export function getGameState() {
+    return gameState;
+}
+
+// Attach to window
+window.getGameState = getGameState;
+
+/**
+ * Reset game state for a new run
+ */
+export function resetGameState() {
+    gameState.score = 0;
+    gameState.multiplier = 1;
+    gameState.combo = 0;
+    gameState.health = 10;
+    gameState.level = 1;
+    gameState.triggerNextLevel = false;
+    
+    gameState.entities = [];
+    gameState.particles = [];
+    gameState.shakeAmount = 0;
+    gameState.lastInputBeat = -1;
+    gameState.beatCount = 0;
+    gameState.startTime = 0; // Will be set in game.js on start
+    
+    // Crucial: Clear player reference so startLevel doesn't inherit dead player stats
+    gameState.player = null;
+    gameState.exit = null;
+}
+</code>
+
+<code filename="entities.js">
+/**
+ * Game Entities: Player, Enemies, Items, Tiles
+ */
+
+import { gameState, TILE_SIZE, COLORS } from './globals.js';
+import { createParticleEffect } from './particles.js';
+
+// Base Entity Class
+export class Entity {
+    constructor(gridX, gridY) {
+        this.gridX = gridX;
+        this.gridY = gridY;
+        this.pixelX = gridX * TILE_SIZE;
+        this.pixelY = gridY * TILE_SIZE;
+        this.targetPixelX = this.pixelX;
+        this.targetPixelY = this.pixelY;
+        this.isMoving = false;
+        this.moveSpeed = 0.2; // Lerp speed
+        this.scaleX = 1;
+        this.scaleY = 1;
+        this.type = "ENTITY";
+    }
+
+    updatePosition() {
+        // Smooth movement interpolation
+        this.pixelX = this.lerp(this.pixelX, this.targetPixelX, this.moveSpeed);
+        this.pixelY = this.lerp(this.pixelY, this.targetPixelY, this.moveSpeed);
+        
+        // Bounce effect reset
+        this.scaleX = this.lerp(this.scaleX, 1, 0.1);
+        this.scaleY = this.lerp(this.scaleY, 1, 0.1);
+    }
+    
+    lerp(start, end, amt) {
+        return (1 - amt) * start + amt * end;
+    }
+
+    moveTo(gx, gy) {
+        this.gridX = gx;
+        this.gridY = gy;
+        this.targetPixelX = gx * TILE_SIZE;
+        this.targetPixelY = gy * TILE_SIZE;
+        // Squash and stretch effect
+        this.scaleX = 1.2;
+        this.scaleY = 0.8;
+    }
+    
+    bump(dirX, dirY) {
+        // Visual bump without moving grid pos
+        this.pixelX += dirX * 10;
+        this.pixelY += dirY * 10;
+        this.scaleX = 0.9;
+        this.scaleY = 1.1;
+    }
+
+    render(p) {
+        // Override in children
+    }
+}
+
+// Tiles
+export class Tile extends Entity {
+    constructor(x, y, walkable) {
+        super(x, y);
+        this.walkable = walkable;
+    }
+}
+
+export class Wall extends Tile {
+    constructor(x, y) {
+        super(x, y, false);
+        this.type = "WALL";
+    }
+    
+    render(p) {
+        p.fill(COLORS.WALL);
+        p.stroke(0);
+        p.strokeWeight(1);
+        p.rect(this.gridX * TILE_SIZE, this.gridY * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+        
+        // Detail
+        p.fill(COLORS.WALL[0] + 20, COLORS.WALL[1] + 20, COLORS.WALL[2] + 20);
+        p.rect(this.gridX * TILE_SIZE + 5, this.gridY * TILE_SIZE + 5, TILE_SIZE - 10, TILE_SIZE - 10);
+    }
+}
+
+export class Floor extends Tile {
+    constructor(x, y) {
+        super(x, y, true);
+        this.type = "FLOOR";
+        this.isChecker = (x + y) % 2 === 0;
+    }
+    
+    render(p) {
+        if (this.isChecker) {
+            p.fill(COLORS.GRID_DARK);
+        } else {
+            p.fill(COLORS.GRID_LIGHT);
+        }
+        p.noStroke();
+        p.rect(this.gridX * TILE_SIZE, this.gridY * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+    }
+}
+
+export class Exit extends Tile {
+    constructor(x, y) {
+        super(x, y, true);
+        this.type = "EXIT";
+    }
+    
+    render(p) {
+        p.fill(COLORS.GRID_DARK);
+        p.rect(this.gridX * TILE_SIZE, this.gridY * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+        
+        // Draw Stairs
+        p.fill(COLORS.EXIT);
+        for(let i=0; i<3; i++) {
+            p.rect(
+                this.gridX * TILE_SIZE + 10 + (i*5), 
+                this.gridY * TILE_SIZE + 10 + (i*5), 
+                20 - (i*5), 
+                5
+            );
+        }
+    }
+}
+
+// Characters
+export class Player extends Entity {
+    constructor(x, y) {
+        super(x, y);
+        this.type = "PLAYER";
+        this.moveSpeed = 0.3;
+    }
+
+    render(p) {
+        p.push();
+        p.translate(this.pixelX + TILE_SIZE/2, this.pixelY + TILE_SIZE/2);
+        p.scale(this.scaleX, this.scaleY);
+        
+        // Body
+        p.fill(COLORS.PLAYER);
+        p.rectMode(p.CENTER);
+        p.rect(0, 0, 24, 24, 4);
+        
+        // Helmet/Visor
+        p.fill(0);
+        p.rect(0, -4, 18, 6);
+        
+        // Eyes (glow)
+        p.fill(255);
+        p.circle(-4, -4, 2);
+        p.circle(4, -4, 2);
+        
+        p.pop();
+    }
+}
+
+export class Enemy extends Entity {
+    constructor(x, y, type) {
+        super(x, y);
+        this.enemyType = type; // SLIME, BAT, SKELETON
+        this.health = 1;
+        this.damage = 1;
+        this.type = "ENEMY";
+        this.stunned = false;
+        
+        if (type === 'SKELETON') this.health = 2;
+        if (type === 'BAT') this.moveSpeed = 0.4;
+    }
+    
+    takeDamage(amount) {
+        this.health -= amount;
+        this.scaleX = 1.4;
+        this.scaleY = 0.6;
+        if (this.health <= 0) {
+            this.die();
+        }
+    }
+    
+    die() {
+        createParticleEffect(this.pixelX + TILE_SIZE/2, this.pixelY + TILE_SIZE/2, COLORS.GOLD, 10);
+        
+        const idx = gameState.entities.indexOf(this);
+        if (idx > -1) gameState.entities.splice(idx, 1);
+        
+        // Drop gold
+        const gold = new Item(this.gridX, this.gridY, 'GOLD');
+        gameState.entities.push(gold);
+        
+        gameState.score += 50 * gameState.multiplier;
+    }
+    
+    render(p) {
+        p.push();
+        p.translate(this.pixelX + TILE_SIZE/2, this.pixelY + TILE_SIZE/2);
+        p.scale(this.scaleX, this.scaleY);
+        p.rectMode(p.CENTER);
+
+        // Stun indicator
+        if (this.stunned) {
+            p.noFill();
+            p.stroke(255, 255, 0);
+            p.strokeWeight(2);
+            p.circle(0, -15, 10);
+            p.noStroke();
+        }
+
+        if (this.enemyType === 'SLIME') {
+            p.fill(COLORS.ENEMY_SLIME);
+            p.circle(0, 4, 24);
+            p.fill(0);
+            p.circle(-4, 0, 4);
+            p.circle(4, 0, 4);
+        } else if (this.enemyType === 'BAT') {
+            p.fill(COLORS.ENEMY_BAT);
+            p.triangle(0, 10, -12, -10, 12, -10);
+            p.fill(255);
+            p.circle(-4, -4, 4);
+            p.circle(4, -4, 4);
+        } else if (this.enemyType === 'SKELETON') {
+            p.fill(COLORS.ENEMY_SKELETON);
+            p.rect(0, 0, 20, 26, 2);
+            p.fill(0);
+            p.circle(-5, -5, 6);
+            p.circle(5, -5, 6);
+            p.rect(0, 8, 10, 4); // Mouth
+        }
+        
+        p.pop();
+    }
+}
+
+export class Item extends Entity {
+    constructor(x, y, itemType) {
+        super(x, y);
+        this.itemType = itemType; // GOLD, POTION
+        this.type = "ITEM";
+        this.bobOffset = 0;
+    }
+    
+    render(p) {
+        this.bobOffset = p.sin(p.frameCount * 0.1) * 3;
+        
+        p.push();
+        p.translate(this.pixelX + TILE_SIZE/2, this.pixelY + TILE_SIZE/2 + this.bobOffset);
+        p.rectMode(p.CENTER);
+        
+        if (this.itemType === 'GOLD') {
+            p.fill(COLORS.GOLD);
+            p.circle(0, 0, 14);
+            p.fill(255, 255, 0);
+            p.circle(0, 0, 8);
+        } else if (this.itemType === 'POTION') {
+            p.fill(COLORS.POTION);
+            p.beginShape();
+            p.vertex(-6, 8);
+            p.vertex(6, 8);
+            p.vertex(4, -4);
+            p.vertex(-4, -4);
+            p.endShape(p.CLOSE);
+            p.rect(0, -6, 4, 4);
+        }
+        
+        p.pop();
+    }
+}
+</code>
+
+<code filename="physics.js">
+/**
+ * Collision and Movement Logic
+ */
+
+import { gameState, GRID_WIDTH, GRID_HEIGHT, TILE_SIZE } from './globals.js';
+import { createParticleEffect, createFloatingText } from './particles.js';
+import { Player, Enemy, Item } from './entities.js';
+
+export class PhysicsSystem {
+    
+    /**
+     * Attempt to move an entity to a target grid position
+     * @returns {boolean} true if moved, false if blocked
+     */
+    tryMoveEntity(entity, dx, dy) {
+        const targetX = entity.gridX + dx;
+        const targetY = entity.gridY + dy;
+        
+        // Bounds check
+        if (targetX < 0 || targetX >= GRID_WIDTH || targetY < 0 || targetY >= GRID_HEIGHT) {
+            return false;
+        }
+
+        // Wall check
+        if (gameState.dungeon && !gameState.dungeon.isWalkable(targetX, targetY)) {
+            // Bump effect against wall
+            entity.bump(dx * 0.5, dy * 0.5);
+            return false;
+        }
+
+        // Entity Collision check
+        const occupant = this.getEntityAt(targetX, targetY);
+        
+        if (entity.type === 'PLAYER') {
+            return this.handlePlayerCollision(entity, targetX, targetY, occupant, dx, dy);
+        } else if (entity.type === 'ENEMY') {
+            return this.handleEnemyCollision(entity, targetX, targetY, occupant);
+        }
+
+        return false;
+    }
+
+    getEntityAt(x, y) {
+        // Check regular entities
+        for (let e of gameState.entities) {
+            if (e.gridX === x && e.gridY === y) return e;
+        }
+        // Check player separately if not in list (though usually added to list)
+        if (gameState.player && gameState.player.gridX === x && gameState.player.gridY === y) return gameState.player;
+        
+        return null;
+    }
+
+    handlePlayerCollision(player, x, y, occupant, dx, dy) {
+        if (!occupant) {
+            // Move freely
+            player.moveTo(x, y);
+            
+            // Check for exit
+            if (gameState.exit && gameState.exit.gridX === x && gameState.exit.gridY === y) {
+                gameState.triggerNextLevel = true;
+                return true;
+            }
+            return true;
+        }
+        
+        if (occupant.type === 'ENEMY') {
+            // Attack!
+            player.bump(dx, dy);
+            occupant.takeDamage(1);
+            occupant.bump(dx * 0.5, dy * 0.5); // Knockback visual
+            
+            // Stun the enemy so they don't attack back this turn
+            occupant.stunned = true;
+            
+            createParticleEffect(occupant.pixelX + TILE_SIZE/2, occupant.pixelY + TILE_SIZE/2, [255, 255, 255], 5);
+            createFloatingText(occupant.pixelX + TILE_SIZE/2, occupant.pixelY, "HIT!", [255, 255, 255]);
+            return true; // Action taken (attack), but didn't move into tile
+        }
+        
+        if (occupant.type === 'ITEM') {
+            // Collect
+            this.collectItem(player, occupant);
+            player.moveTo(x, y);
+            return true;
+        }
+
+        return false;
+    }
+
+    handleEnemyCollision(enemy, x, y, occupant) {
+        if (!occupant) {
+            enemy.moveTo(x, y);
+            return true;
+        }
+        
+        if (occupant.type === 'PLAYER') {
+            // Enemy attacks player
+            this.damagePlayer(1);
+            enemy.bump((x - enemy.gridX), (y - enemy.gridY));
+            return true;
+        }
+
+        // Enemies don't attack other enemies or items
+        return false;
+    }
+
+    damagePlayer(amount) {
+        gameState.player.health -= amount;
+        gameState.shakeAmount = 10; // Screen shake
+        createFloatingText(gameState.player.pixelX + TILE_SIZE/2, gameState.player.pixelY, `-${amount} HP`, [255, 0, 0]);
+        
+        // Reset combo
+        gameState.combo = 0;
+        gameState.multiplier = 1;
+        
+        if (gameState.player.health <= 0) {
+            gameState.gamePhase = "GAME_OVER_LOSE";
+        }
+    }
+
+    collectItem(player, item) {
+        if (item.itemType === 'GOLD') {
+            gameState.score += 10 * gameState.multiplier;
+            createFloatingText(player.pixelX, player.pixelY, `+${10 * gameState.multiplier}`, [255, 215, 0]);
+        } else if (item.itemType === 'POTION') {
+            gameState.health = Math.min(gameState.health + 1, gameState.maxHealth);
+            createFloatingText(player.pixelX, player.pixelY, "+1 HP", [0, 255, 0]);
+        }
+        
+        // Remove item
+        const idx = gameState.entities.indexOf(item);
+        if (idx > -1) gameState.entities.splice(idx, 1);
+    }
+}
+
+export const physics = new PhysicsSystem();
+</code>
+
+<code filename="input.js">
+/**
+ * Input Handling
+ */
+
+import { gameState } from './globals.js';
+import { rhythmManager } from './rhythm.js';
+import { physics } from './physics.js';
+import { createFloatingText } from './particles.js';
+
+export function handleInput(p, keyCode) {
+    // Global controls
+    if (keyCode === 27) { // ESC
+        if (gameState.gamePhase === "PLAYING") gameState.gamePhase = "PAUSED";
+        else if (gameState.gamePhase === "PAUSED") gameState.gamePhase = "PLAYING";
+        return;
+    }
+    
+    if (keyCode === 82) { // R
+        if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+            // Restart handled in game.js logic or here?
+            // Usually simpler to expose a restart function or handle in game loop
+            // We'll set a flag or call a global reset if available. 
+            // For now, let's rely on game.js checking key or implementing reset here.
+            // But game.js has the p5 instance.
+        }
+        return;
+    }
+
+    if (keyCode === 13) { // ENTER
+        if (gameState.gamePhase === "START") {
+            gameState.gamePhase = "PLAYING";
+            gameState.startTime = p.millis(); // Start music/rhythm now
+        }
+        return;
+    }
+
+    // Gameplay controls
+    if (gameState.gamePhase !== "PLAYING") return;
+
+    // Movement
+    let dx = 0;
+    let dy = 0;
+    let actionTaken = false;
+
+    if (keyCode === 37) dx = -1; // Left
+    if (keyCode === 39) dx = 1;  // Right
+    if (keyCode === 38) dy = -1; // Up
+    if (keyCode === 40) dy = 1;  // Down
+    if (keyCode === 32) actionTaken = true; // Space (Skip)
+
+    if (dx !== 0 || dy !== 0 || actionTaken) {
+        const timing = rhythmManager.checkInputTiming(p.millis());
+        
+        // Log Input
+        gameState.logs.inputs.push({
+            key: keyCode,
+            timing: timing,
+            beat: gameState.beatCount
+        });
+
+        if (timing === "PERFECT" || timing === "GOOD") {
+            // SUCCESS
+            if (dx !== 0 || dy !== 0) {
+                const moved = physics.tryMoveEntity(gameState.player, dx, dy);
+                if (moved) actionTaken = true;
+            }
+            
+            if (actionTaken) {
+                // Rhythm success
+                gameState.combo++;
+                if (gameState.combo > 5) gameState.multiplier = 2;
+                if (gameState.combo > 10) gameState.multiplier = 3;
+                if (gameState.combo > 20) gameState.multiplier = 4;
+                
+                const player = gameState.player;
+                createFloatingText(player.pixelX + 20, player.pixelY - 10, "Nice!", [0, 255, 0]);
+                
+                // Process Turn
+                processGameTurn(p);
+            }
+        } 
+        else if (timing === "MISS") {
+            // FAIL - Stumble
+            // Player loses health on miss as requested
+            physics.damagePlayer(1);
+            
+            const player = gameState.player;
+            createFloatingText(player.pixelX + 20, player.pixelY - 10, "Miss!", [255, 0, 0]);
+            
+            // Player loses turn, but enemies still move?
+            // In NecroDancer, a miss is just a dropped input usually, but let's make it a stumble.
+            // To be punitive, we advance the enemy turn.
+            processGameTurn(p);
+        }
+        else if (timing === "ALREADY_ACTED") {
+            // Ignore
+        }
+    }
+}
+
+export function processGameTurn(p) {
+    // Update enemies
+    gameState.entities.forEach(entity => {
+        if (entity.type === 'ENEMY') {
+            updateEnemyAI(entity);
+        }
+    });
+}
+
+function updateEnemyAI(enemy) {
+    if (!gameState.player) return;
+
+    // Check Stun
+    if (enemy.stunned) {
+        enemy.stunned = false;
+        return; // Skip turn
+    }
+
+    // Determine behavior
+    // 1. Check distance
+    const dist = Math.abs(enemy.gridX - gameState.player.gridX) + Math.abs(enemy.gridY - gameState.player.gridY);
+    
+    // Slimes don't move
+    if (enemy.enemyType === 'SLIME') return;
+
+    // Skeletons move every beat towards player
+    if (enemy.enemyType === 'SKELETON') {
+        if (dist < 8) { // Aggro range
+             moveTowardsPlayer(enemy);
+        }
+    }
+    
+    // Bats move randomly or towards player every 2 beats
+    if (enemy.enemyType === 'BAT') {
+        // Use global beat count to determine move turn
+        if (gameState.beatCount % 2 === 0) {
+            if (Math.random() < 0.5) moveTowardsPlayer(enemy);
+            else moveRandomly(enemy);
+        }
+    }
+}
+
+function moveTowardsPlayer(enemy) {
+    const dx = gameState.player.gridX - enemy.gridX;
+    const dy = gameState.player.gridY - enemy.gridY;
+    
+    let moveX = 0;
+    let moveY = 0;
+    
+    if (Math.abs(dx) > Math.abs(dy)) {
+        moveX = Math.sign(dx);
+    } else {
+        moveY = Math.sign(dy);
+    }
+    
+    // Try primary direction
+    if (!physics.tryMoveEntity(enemy, moveX, moveY)) {
+        // Try secondary
+        if (moveX !== 0) {
+            moveX = 0; moveY = Math.sign(dy);
+        } else {
+            moveY = 0; moveX = Math.sign(dx);
+        }
+        if (moveY !== 0 || moveX !== 0) {
+             physics.tryMoveEntity(enemy, moveX, moveY);
+        }
+    }
+}
+
+function moveRandomly(enemy) {
+    const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+    const dir = dirs[Math.floor(Math.random() * dirs.length)];
+    physics.tryMoveEntity(enemy, dir[0], dir[1]);
+}
+</code>
+
+<code filename="game.js">
+/**
+ * Main Game Loop and p5.js Setup
+ */
+
+import { 
+    gameState, getGameState, resetGameState, 
+    CANVAS_WIDTH, CANVAS_HEIGHT, COLORS 
+} from './globals.js';
+import { rhythmManager } from './rhythm.js';
+import { Dungeon } from './grid.js';
+import { Player, Enemy, Item } from './entities.js';
+import { handleInput } from './input.js';
+import { renderUI, renderStartScreen, renderGameOver, renderPaused } from './ui.js';
+import { updateParticles, renderParticles } from './particles.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+    
+    p.logs = gameState.logs; // Link logs
+    
+    // Setup
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        // Log initial
+        p.logs.game_info.push({
+            data: { gamePhase: gameState.gamePhase },
+            framecount: p.frameCount,
+            timestamp: Date.now()
+        });
+        
+        // Initial setup
+        startGame(p);
+    };
+
+    // Draw Loop
+    p.draw = function() {
+        // Update Time
+        const currentTime = p.millis();
+        gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = currentTime;
+        gameState.frameCount = p.frameCount;
+        
+        // Background
+        p.background(COLORS.BACKGROUND);
+        
+        // Automated Inputs
+        if (gameState.controlMode !== 'HUMAN') {
+            const action = get_automated_testing_action(gameState);
+            if (action) {
+                p.keyPressed({ keyCode: action.keyCode });
+                // We simulate the key press logic manually since p.keyPressed is an event
+                handleKeyPress(p, action.keyCode);
+            }
+        }
+        
+        // State Machine
+        switch(gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                break;
+                
+            case "PLAYING":
+                updateGame(p);
+                renderGame(p);
+                renderUI(p);
+                break;
+                
+            case "PAUSED":
+                renderGame(p);
+                renderUI(p); // Show UI even when paused
+                renderPaused(p);
+                break;
+                
+            case "GAME_OVER_WIN":
+            case "GAME_OVER_LOSE":
+                renderGame(p);
+                renderGameOver(p, gameState.gamePhase === "GAME_OVER_WIN");
+                break;
+        }
+    };
+    
+    p.keyPressed = function(e) {
+        // Handle physical key press
+        // If simulated, e might be just { keyCode: ... }
+        const code = e.keyCode || e;
+        handleKeyPress(p, code);
+    };
+});
+
+function handleKeyPress(p, keyCode) {
+    // Log
+    p.logs.inputs.push({
+        type: 'press',
+        key: keyCode,
+        frame: p.frameCount,
+        time: p.millis()
+    });
+    
+    if (keyCode === 82) { // R - Restart
+        if (gameState.gamePhase === "GAME_OVER_WIN" || gameState.gamePhase === "GAME_OVER_LOSE") {
+             startGame(p);
+             gameState.gamePhase = "START";
+             return;
+        }
+    }
+    
+    handleInput(p, keyCode);
+}
+
+function startGame(p) {
+    resetGameState();
+    startLevel(p);
+}
+
+function nextLevel(p) {
+    gameState.level++;
+    if (gameState.level > gameState.maxLevels) {
+        gameState.gamePhase = "GAME_OVER_WIN";
+    } else {
+        startLevel(p);
+    }
+}
+
+function startLevel(p) {
+    // Clear previous entities but keep player stats if exists
+    gameState.entities = [];
+    gameState.particles = [];
+    
+    // Create Dungeon
+    const dungeon = new Dungeon();
+    gameState.dungeon = dungeon;
+    const startData = dungeon.generateLevel(p);
+    
+    gameState.grid = dungeon.tiles;
+    
+    // Create Player
+    // If player exists, preserve stats
+    let hp = 10; // Default to 10
+    let score = 0;
+    let combo = 0;
+    let multiplier = 1;
+    
+    if (gameState.player) {
+        hp = gameState.player.health;
+        score = gameState.score;
+        combo = gameState.combo;
+        multiplier = gameState.multiplier;
+    }
+    
+    gameState.player = new Player(startData.startX, startData.startY);
+    gameState.player.health = hp;
+    gameState.score = score;
+    gameState.combo = combo;
+    gameState.multiplier = multiplier;
+    
+    gameState.entities.push(gameState.player);
+    
+    // Create Enemies
+    const rooms = startData.rooms;
+    // Iterate all rooms for enemies, ensuring distance from player
+    for (let i = 0; i < rooms.length; i++) {
+        const r = rooms[i];
+        
+        // Chance to spawn enemies in this room
+        // More enemies in later levels
+        const enemyCount = p.floor(p.random(0, 2 + gameState.level));
+        
+        for(let j=0; j<enemyCount; j++) {
+            const ex = p.floor(p.random(r.x, r.x + r.w));
+            const ey = p.floor(p.random(r.y, r.y + r.h));
+            
+            // Don't spawn on player or exit
+            if (ex === gameState.player.gridX && ey === gameState.player.gridY) continue;
+            if (gameState.exit && ex === gameState.exit.gridX && ey === gameState.exit.gridY) continue;
+            
+            // Random enemy type based on level
+            const rand = p.random();
+            let type = 'SLIME';
+            if (gameState.level > 1 && rand > 0.5) type = 'SKELETON';
+            if (gameState.level > 2 && rand > 0.8) type = 'BAT';
+            
+            gameState.entities.push(new Enemy(ex, ey, type));
+        }
+    }
+    
+    // Create Items
+    for (let i = 0; i < rooms.length; i++) {
+        if (p.random() > 0.5) {
+            const r = rooms[i];
+            const x = p.floor(p.random(r.x, r.x + r.w));
+            const y = p.floor(p.random(r.y, r.y + r.h));
+            
+            // Avoid collisions
+            let occupied = false;
+            if (x === gameState.player.gridX && y === gameState.player.gridY) occupied = true;
+            if (gameState.exit && x === gameState.exit.gridX && y === gameState.exit.gridY) occupied = true;
+            
+            if (!occupied) {
+                gameState.entities.push(new Item(x, y, p.random() > 0.7 ? 'POTION' : 'GOLD'));
+            }
+        }
+    }
+}
+
+function updateGame(p) {
+    // Check for level transition
+    if (gameState.triggerNextLevel) {
+        gameState.triggerNextLevel = false;
+        nextLevel(p);
+        return;
+    }
+
+    // Rhythm Update
+    rhythmManager.update(p.millis());
+    
+    // Entity Updates (Animation mostly, physics logic is turn based in input.js)
+    gameState.entities.forEach(e => e.updatePosition());
+    
+    // Particle Updates
+    updateParticles();
+    
+    // Screen Shake Decay
+    if (gameState.shakeAmount > 0) {
+        gameState.shakeAmount *= 0.9;
+        if (gameState.shakeAmount < 0.5) gameState.shakeAmount = 0;
+    }
+    
+    // Log Player State occasionally
+    if (p.frameCount % 60 === 0 && gameState.player) {
+        p.logs.player_info.push({
+            x: gameState.player.gridX,
+            y: gameState.player.gridY,
+            health: gameState.player.health,
+            score: gameState.score,
+            combo: gameState.combo
+        });
+    }
+}
+
+function renderGame(p) {
+    p.push();
+    
+    // Screen Shake
+    if (gameState.shakeAmount > 0) {
+        p.translate(p.random(-gameState.shakeAmount, gameState.shakeAmount), p.random(-gameState.shakeAmount, gameState.shakeAmount));
+    }
+    
+    // Center Camera on Player
+    if (gameState.player) {
+        // Pixel Center
+        const px = gameState.player.pixelX + 20;
+        const py = gameState.player.pixelY + 20;
+        
+        // No camera translation needed for standard grid size
+    }
+    
+    // Render World
+    if (gameState.dungeon) gameState.dungeon.render(p);
+    
+    // Render Entities (Sort by Y for depth)
+    const sortedEntities = [...gameState.entities].sort((a,b) => a.pixelY - b.pixelY);
+    sortedEntities.forEach(e => e.render(p));
+    
+    // Render Particles (on top)
+    renderParticles(p);
+    
+    p.pop();
+}
+
+window.gameInstance = gameInstance;
+window.setControlMode = (mode) => {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+};
+</code>

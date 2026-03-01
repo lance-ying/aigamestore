@@ -1,0 +1,1126 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+entities.js:108 Uncaught ReferenceError: CANVAS_WIDTH is not defined
+    at Ball.logInfo (entities.js:108:47)
+    at Ball.update (entities.js:79:14)
+
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Helix Jump 3D</title>
+    <style>
+      html, body { 
+          margin: 0; 
+          padding: 0; 
+          height: 100%; 
+          overflow: hidden; 
+          background: #222; 
+          font-family: Arial, sans-serif;
+      }
+      body { 
+          display: flex; 
+          flex-direction: column; 
+          justify-content: center; 
+          align-items: center; 
+      }
+      #game-container {
+          box-shadow: 0 0 20px rgba(0,0,0,0.5);
+      }
+      .control-buttons { 
+          display: flex; 
+          gap: 10px; 
+          margin-bottom: 15px; 
+          flex-wrap: wrap; 
+          justify-content: center; 
+      }
+      .control-button { 
+          padding: 8px 16px; 
+          cursor: pointer; 
+          background: #444; 
+          color: #fff; 
+          border: none; 
+          border-radius: 4px; 
+          font-size: 14px;
+          transition: background 0.2s;
+      }
+      .control-button:hover {
+          background: #555;
+      }
+      .control-button.active { 
+          background: #007bff; 
+      }
+      h1 { margin-top: 0; color: #fff; font-size: 24px; margin-bottom: 10px; }
+      p { color: #ccc; margin: 5px 0; font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle">Helix Jump 3D</h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="setMode('HUMAN', this)">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="setMode('TEST_1', this)">TEST 1 (Physics)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="setMode('TEST_2', this)">TEST 2 (AI Win)</button>
+      </div>
+      <p>Arrow Left/Right to Rotate | ENTER to Start | ESC to Pause</p>
+    </div>
+    
+    <!-- Dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/seedrandom/3.0.5/seedrandom.min.js"></script>
+    
+    <!-- Game Module -->
+    <script type="module" src="game.js"></script>
+    
+    <script>
+        function setMode(mode, btn) {
+            if (window.setControlMode) {
+                window.setControlMode(mode);
+                // Update UI
+                document.querySelectorAll('.control-button').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            }
+        }
+    </script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+// Game Constants
+export const CONSTANTS = {
+    GRAVITY: -0.012,
+    BOUNCE_FORCE: 0.25,
+    TERMINAL_VELOCITY: -0.5,
+    BALL_RADIUS: 0.4,
+    BALL_DISTANCE: 2.5, // Distance from center
+    TOWER_RADIUS: 1.5,
+    PLATFORM_WIDTH: 2.0,
+    PLATFORM_HEIGHT: 0.2,
+    PLATFORM_GAP: 4.0, // Vertical distance between platforms
+    ROTATION_SPEED: 0.08,
+    CAMERA_OFFSET: new THREE.Vector3(0, 3, 8),
+    COLORS: {
+        BALL: 0xFF0055,
+        TOWER: 0xFFFFFF,
+        PLATFORM_SAFE: 0x222222, // Dark
+        PLATFORM_TRAP: 0xFF0000,
+        BACKGROUND: 0x87CEEB,
+        PARTICLE: 0xFFFFFF
+    },
+    LEVEL_COUNT: 50
+};
+
+// Global Game State
+export const gameState = {
+    // Phase
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2
+
+    // Systems
+    scene: null,
+    camera: null,
+    renderer: null,
+    gameContainer: null,
+    
+    // Entities
+    entities: [],
+    ball: null,
+    tower: null,
+    platforms: [],
+    particles: [],
+    
+    // State
+    score: 0,
+    level: 1,
+    towerRotation: 0,
+    targetRotation: 0, // For smoothing
+    cameraTargetY: 0,
+    
+    // Time
+    frameCount: 0,
+    deltaTime: 0,
+    lastTime: 0
+};
+
+// Expose gameState globally
+window.getGameState = () => gameState;
+
+// Logging system
+window.logs = {
+    game_info: [],
+    player_info: [],
+    inputs: []
+};
+
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+</file>
+
+<file name="game.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CONSTANTS, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { setupInput, handleInput } from './input.js';
+import { setupCamera, updateCamera } from './camera.js';
+import { updatePhysics } from './physics.js';
+import { Ball, Tower } from './entities.js';
+import { setupUI, renderUI } from './ui.js';
+
+// Initialization
+function init() {
+    // 1. Setup Container
+    const container = document.createElement('div');
+    container.id = 'game-container';
+    container.style.width = `${CANVAS_WIDTH}px`;
+    container.style.height = `${CANVAS_HEIGHT}px`;
+    container.style.position = 'relative';
+    container.style.overflow = 'hidden';
+    document.body.appendChild(container);
+    gameState.gameContainer = container;
+
+    // 2. Setup Renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    container.appendChild(renderer.domElement);
+    gameState.renderer = renderer;
+
+    // 3. Setup Scene
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(CONSTANTS.COLORS.BACKGROUND);
+    scene.fog = new THREE.Fog(CONSTANTS.COLORS.BACKGROUND, 10, 30);
+    gameState.scene = scene;
+
+    // 4. Setup Lighting
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(10, 20, 10);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 1024;
+    dirLight.shadow.mapSize.height = 1024;
+    dirLight.shadow.camera.near = 0.5;
+    dirLight.shadow.camera.far = 50;
+    dirLight.shadow.camera.left = -10;
+    dirLight.shadow.camera.right = 10;
+    dirLight.shadow.camera.top = 10;
+    dirLight.shadow.camera.bottom = -10;
+    scene.add(dirLight);
+    scene.add(dirLight.target);
+    gameState.directionalLight = dirLight;
+
+    // 5. Setup Camera
+    setupCamera();
+
+    // 6. Setup Game Entities
+    gameState.tower = new Tower();
+    gameState.ball = new Ball();
+    gameState.entities.push(gameState.tower);
+    gameState.entities.push(gameState.ball);
+
+    // 7. Setup UI & Input
+    setupUI();
+    setupInput();
+
+    // 8. Start Loop
+    gameState.lastTime = performance.now();
+    requestAnimationFrame(gameLoop);
+    
+    // Log start
+    logGameState();
+}
+
+function gameLoop(time) {
+    requestAnimationFrame(gameLoop);
+
+    const dt = Math.min((time - gameState.lastTime) / 1000, 0.1); // Cap dt
+    gameState.deltaTime = dt;
+    gameState.lastTime = time;
+    gameState.frameCount++;
+
+    // Logic
+    if (gameState.gamePhase === 'PLAYING') {
+        handleInput(dt);
+        
+        // Update Entities
+        gameState.tower.update(dt);
+        gameState.ball.update(dt);
+        gameState.particles.forEach((p, i) => {
+            p.update(dt);
+            if (!p.active) gameState.particles.splice(i, 1);
+        });
+
+        // Physics
+        updatePhysics(dt);
+        
+        // Camera
+        updateCamera(dt);
+    } else if (gameState.gamePhase === 'START') {
+        // Just idle rotate
+        gameState.tower.mesh.rotation.y += dt * 0.2;
+    }
+
+    // Render
+    gameState.renderer.render(gameState.scene, gameState.camera);
+    renderUI();
+    
+    // Periodic logging
+    if (gameState.frameCount % 60 === 0) logGameState();
+}
+
+function logGameState() {
+    if (window.logs) {
+        window.logs.game_info.push({
+            phase: gameState.gamePhase,
+            score: gameState.score,
+            level: Math.floor(Math.abs(gameState.cameraTargetY) / 4) + 1,
+            frame: gameState.frameCount,
+            time: Date.now()
+        });
+    }
+}
+
+// Global control mode setter
+window.setControlMode = function(mode) {
+    gameState.controlMode = mode;
+    console.log(`Control mode set to: ${mode}`);
+    if (mode.startsWith("TEST")) {
+        gameState.gamePhase = "PLAYING";
+    }
+};
+
+// Start
+init();
+</file>
+
+<file name="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+let uiContext = null;
+
+export function setupUI() {
+    const uiCanvas = document.createElement('canvas');
+    uiCanvas.width = CANVAS_WIDTH;
+    uiCanvas.height = CANVAS_HEIGHT;
+    uiCanvas.style.position = 'absolute';
+    uiCanvas.style.top = '0';
+    uiCanvas.style.left = '0';
+    uiCanvas.style.pointerEvents = 'none';
+    uiCanvas.style.zIndex = '100'; // Above renderer
+    
+    // Append to container
+    gameState.gameContainer.appendChild(uiCanvas);
+    uiContext = uiCanvas.getContext('2d');
+}
+
+export function renderUI() {
+    if (!uiContext) return;
+    
+    const ctx = uiContext;
+    ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    // Global HUD
+    if (gameState.gamePhase !== 'START') {
+        ctx.fillStyle = 'white';
+        ctx.font = 'bold 20px Arial';
+        ctx.textAlign = 'left';
+        ctx.fillText(`Score: ${gameState.score}`, 20, 30);
+        
+        // Level Indicator (Calculated from Y depth)
+        const currentLevel = Math.floor(Math.abs(gameState.cameraTargetY) / 4) + 1;
+        ctx.textAlign = 'right';
+        ctx.fillText(`Level: ${currentLevel}`, CANVAS_WIDTH - 20, 30);
+    }
+    
+    // Screens
+    if (gameState.gamePhase === 'START') {
+        renderOverlay(ctx, 'HELIX JUMP 3D', 'Press ENTER to Start', 'Use Left/Right Arrows to Rotate');
+    } else if (gameState.gamePhase === 'PAUSED') {
+        renderOverlay(ctx, 'PAUSED', 'Press ESC to Resume');
+    } else if (gameState.gamePhase === 'GAME_OVER_LOSE') {
+        renderOverlay(ctx, 'GAME OVER', 'Press R to Restart', `Final Score: ${gameState.score}`, '#ff0000');
+    } else if (gameState.gamePhase === 'GAME_OVER_WIN') {
+        renderOverlay(ctx, 'VICTORY!', 'Press R to Play Again', `Score: ${gameState.score}`, '#00ff00');
+    }
+}
+
+function renderOverlay(ctx, title, subtitle, extra = '', titleColor = 'white') {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    ctx.shadowColor = 'black';
+    ctx.shadowBlur = 10;
+    
+    ctx.fillStyle = titleColor;
+    ctx.font = 'bold 48px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(title, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 40);
+    
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 24px Arial';
+    ctx.fillText(subtitle, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 20);
+    
+    if (extra) {
+        ctx.font = '18px Arial';
+        ctx.fillStyle = '#cccccc';
+        ctx.fillText(extra, CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 60);
+    }
+    
+    ctx.shadowBlur = 0;
+}
+</file>
+
+<file name="entities.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CONSTANTS } from './globals.js';
+import { gameRNG, hslToHex } from './utils.js';
+
+export class Entity {
+    constructor() {
+        this.mesh = null;
+        this.active = true;
+    }
+
+    update(dt) {}
+    
+    destroy() {
+        if (this.mesh && this.mesh.parent) {
+            this.mesh.parent.remove(this.mesh);
+        }
+        if (this.mesh) {
+            if (this.mesh.geometry) this.mesh.geometry.dispose();
+            if (this.mesh.material) {
+                if (Array.isArray(this.mesh.material)) {
+                    this.mesh.material.forEach(m => m.dispose());
+                } else {
+                    this.mesh.material.dispose();
+                }
+            }
+        }
+        this.active = false;
+    }
+}
+
+export class Ball extends Entity {
+    constructor() {
+        super();
+        const geometry = new THREE.SphereGeometry(CONSTANTS.BALL_RADIUS, 32, 32);
+        const material = new THREE.MeshStandardMaterial({
+            color: CONSTANTS.COLORS.BALL,
+            roughness: 0.1,
+            metalness: 0.1,
+            emissive: 0x330011
+        });
+        
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.castShadow = true;
+        this.mesh.position.set(0, 5, CONSTANTS.BALL_DISTANCE); // Start slightly above
+        
+        this.velocity = new THREE.Vector3(0, 0, 0);
+        this.onGround = false;
+        this.squashFactor = 1.0;
+        
+        gameState.scene.add(this.mesh);
+        
+        // Trail effect variables
+        this.trailPositions = [];
+        this.trailTimer = 0;
+    }
+
+    update(dt) {
+        // Physics integration
+        this.velocity.y += CONSTANTS.GRAVITY;
+        if (this.velocity.y < CONSTANTS.TERMINAL_VELOCITY) {
+            this.velocity.y = CONSTANTS.TERMINAL_VELOCITY;
+        }
+
+        this.mesh.position.y += this.velocity.y;
+        
+        // Squash and stretch animation
+        if (Math.abs(this.velocity.y) > 0.1) {
+            const stretch = 1 + Math.abs(this.velocity.y) * 0.5;
+            this.mesh.scale.set(1/Math.sqrt(stretch), stretch, 1/Math.sqrt(stretch));
+        } else {
+            // Lerp back to 1
+            this.mesh.scale.lerp(new THREE.Vector3(1, 1, 1), 0.2);
+        }
+
+        // Trail Logic (Visual only)
+        this.updateTrail(dt);
+        
+        // Update Logs
+        this.logInfo();
+    }
+    
+    bounce() {
+        this.velocity.y = CONSTANTS.BOUNCE_FORCE;
+        this.onGround = false;
+        
+        // Squash effect on bounce
+        this.mesh.scale.set(1.4, 0.6, 1.4);
+        
+        // Spawn particles
+        this.createSplash(this.mesh.position.clone());
+    }
+    
+    createSplash(pos) {
+        for(let i=0; i<8; i++) {
+            gameState.particles.push(new Particle(pos, 0xFFFFFF));
+        }
+    }
+    
+    updateTrail(dt) {
+        // Simple trail implementation could be done here, 
+        // but for performance in this scope, we keep it simple.
+    }
+
+    logInfo() {
+        if (window.logs && window.logs.player_info) {
+            const screenPos = this.mesh.position.clone().project(gameState.camera);
+            window.logs.player_info.push({
+                screen_x: (screenPos.x + 1) * CANVAS_WIDTH / 2,
+                screen_y: (1 - screenPos.y) * CANVAS_HEIGHT / 2,
+                game_x: this.mesh.position.x,
+                game_y: this.mesh.position.y,
+                game_z: this.mesh.position.z,
+                velocity_y: this.velocity.y,
+                framecount: gameState.frameCount,
+                timestamp: Date.now()
+            });
+        }
+    }
+}
+
+export class Particle extends Entity {
+    constructor(position, color) {
+        super();
+        const geometry = new THREE.PlaneGeometry(0.2, 0.2);
+        const material = new THREE.MeshBasicMaterial({
+            color: color,
+            transparent: true,
+            opacity: 0.8,
+            side: THREE.DoubleSide
+        });
+        
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.copy(position);
+        this.mesh.position.y -= CONSTANTS.BALL_RADIUS; // Spawn at contact point
+        this.mesh.rotation.x = -Math.PI / 2; // Flat on ground
+        
+        // Random spread
+        const angle = Math.random() * Math.PI * 2;
+        const speed = Math.random() * 0.05 + 0.02;
+        this.velocity = new THREE.Vector3(Math.cos(angle) * speed, 0, Math.sin(angle) * speed);
+        
+        this.life = 1.0;
+        
+        gameState.scene.add(this.mesh);
+    }
+    
+    update(dt) {
+        this.life -= dt * 2.0; // Decay speed
+        this.mesh.position.add(this.velocity);
+        this.mesh.scale.multiplyScalar(0.95);
+        this.mesh.material.opacity = this.life;
+        
+        if (this.life <= 0) {
+            this.destroy();
+        }
+    }
+}
+
+export class Tower extends Entity {
+    constructor() {
+        super();
+        // Central Pillar
+        const height = CONSTANTS.LEVEL_COUNT * CONSTANTS.PLATFORM_GAP + 20;
+        const geometry = new THREE.CylinderGeometry(CONSTANTS.TOWER_RADIUS, CONSTANTS.TOWER_RADIUS, height, 32);
+        const material = new THREE.MeshStandardMaterial({ 
+            color: CONSTANTS.COLORS.TOWER,
+            roughness: 0.5 
+        });
+        
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.y = -height / 2 + 10; // Top near origin
+        this.mesh.receiveShadow = true;
+        
+        gameState.scene.add(this.mesh);
+        
+        // Rotation container for platforms
+        this.container = new THREE.Group();
+        gameState.scene.add(this.container);
+        
+        // Generate Levels
+        this.generateLevels();
+    }
+    
+    generateLevels() {
+        // Base hue for colors
+        let hue = gameRNG.float();
+        
+        for (let i = 0; i < CONSTANTS.LEVEL_COUNT; i++) {
+            const y = -i * CONSTANTS.PLATFORM_GAP;
+            
+            // Difficulty scaling
+            const difficulty = i / CONSTANTS.LEVEL_COUNT;
+            const gapSize = Math.max(Math.PI / 4, (Math.PI / 2) * (1 - difficulty * 0.5)); // Gaps get slightly smaller
+            const numTraps = i === 0 ? 0 : Math.floor(difficulty * 3) + 1;
+            
+            // Color variation per 5 levels
+            if (i % 5 === 0) hue = (hue + 0.1) % 1.0;
+            const levelColor = hslToHex(hue, 0.7, 0.5);
+            
+            const platform = new Platform(y, gapSize, numTraps, levelColor);
+            this.container.add(platform.mesh);
+            platform.parentGroup = this.container; // Reference for logic
+            gameState.platforms.push(platform);
+            
+            // Final platform (Goal)
+            if (i === CONSTANTS.LEVEL_COUNT - 1) {
+                // Add a "floor" platform at the very bottom
+                const floor = new Platform(y - CONSTANTS.PLATFORM_GAP, 0, 0, 0x00FF00); // No gap, green
+                floor.isGoal = true;
+                this.container.add(floor.mesh);
+                gameState.platforms.push(floor);
+            }
+        }
+    }
+    
+    update(dt) {
+        // Smooth rotation
+        gameState.towerRotation = THREE.MathUtils.lerp(gameState.towerRotation, gameState.targetRotation, 0.15);
+        this.container.rotation.y = gameState.towerRotation;
+        this.mesh.rotation.y = gameState.towerRotation;
+    }
+}
+
+export class Platform extends Entity {
+    constructor(y, gapSize, numTraps, color) {
+        super();
+        this.y = y;
+        this.gapSize = gapSize;
+        this.isGoal = false;
+        
+        // Define sectors
+        // 0 angle is facing +Z (towards camera initially, but camera is at +Z looking -Z)
+        // We generate sectors based on angle logic.
+        // Full circle is 0 to 2PI.
+        
+        // Randomize gap position
+        this.gapAngle = gameRNG.range(0, Math.PI * 2);
+        
+        this.mesh = new THREE.Group();
+        this.mesh.position.y = y;
+        
+        // Visual Geometry Construction
+        // We create arc segments.
+        const thickness = CONSTANTS.PLATFORM_HEIGHT;
+        const innerRadius = CONSTANTS.TOWER_RADIUS;
+        const outerRadius = CONSTANTS.TOWER_RADIUS + CONSTANTS.PLATFORM_WIDTH;
+        
+        // Safe Sector Material
+        const safeMat = new THREE.MeshStandardMaterial({ 
+            color: color,
+            roughness: 0.3 
+        });
+        
+        // Trap Material
+        const trapMat = new THREE.MeshStandardMaterial({ 
+            color: CONSTANTS.COLORS.PLATFORM_TRAP,
+            emissive: 0x550000,
+            roughness: 0.3
+        });
+        
+        // Generate logic for segments
+        // The circle is split into the gap and the rest.
+        // The rest is split into safe and trap zones.
+        
+        // Gap is from [gapAngle - gapSize/2] to [gapAngle + gapSize/2]
+        // Effectively we render the complement of the gap.
+        
+        const startDraw = this.gapAngle + gapSize / 2;
+        const endDraw = this.gapAngle - gapSize / 2 + Math.PI * 2; // Wrap around to draw full circle minus gap
+        
+        const totalArc = Math.PI * 2 - gapSize;
+        
+        // Add Traps
+        // We insert trap sectors randomly within the solid arc
+        const sectors = [];
+        
+        // Simple approach: Divide totalArc into chunks
+        // If numTraps > 0, replace some chunks with traps
+        const segmentCount = 12; // resolution of logic
+        const segmentArc = totalArc / segmentCount;
+        
+        let currentAngle = startDraw;
+        
+        for (let i = 0; i < segmentCount; i++) {
+            const isTrap = numTraps > 0 && gameRNG.bool(0.2 + (numTraps * 0.05)); // Probability based on trap count
+            
+            // Create arc geometry
+            const geometry = new THREE.RingGeometry(innerRadius, outerRadius, 16, 1, 0, segmentArc);
+            // Rotate and position is tricky with RingGeometry, it creates flat on Z plane usually or XY.
+            // RingGeometry lies on XY plane. We need to rotate X by -PI/2 to be flat on XZ.
+            
+            // Actually, Extrude geometry from Shape is better for thickness, but expensive.
+            // Let's use thick cylinders segments? No, RingGeometry + Extrude is easiest or just Cylinder sectors.
+            // Optimization: Just use thick CylinderGeometry sectors.
+            
+            // Using CylinderGeometry with thetaStart and thetaLength
+            // CylinderGeometry(radiusTop, radiusBottom, height, radialSegments, heightSegments, openEnded, thetaStart, thetaLength)
+            // But this creates a pie slice (including center). We want a ring.
+            // Easier: RingGeometry and just flat planes? No, 3D game.
+            // Let's use simple generic mesh building helper.
+            
+            const shape = new THREE.Shape();
+            shape.absarc(0, 0, outerRadius, 0, segmentArc, false);
+            shape.absarc(0, 0, innerRadius, segmentArc, 0, true);
+            
+            const extrudeSettings = { depth: thickness, bevelEnabled: false, curveSegments: 8 };
+            const geo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+            
+            // Fix orientation
+            geo.rotateX(Math.PI / 2); // Make it flat
+            
+            const mat = isTrap ? trapMat : safeMat;
+            const mesh = new THREE.Mesh(geo, mat);
+            
+            // Position and Rotate the segment
+            // The segment is created at angle 0 to segmentArc.
+            // We need to rotate it to currentAngle around Y.
+            mesh.rotation.y = currentAngle;
+            // Also center Y
+            mesh.position.y = -thickness / 2; // Center the extrusion
+            
+            mesh.userData = { isTrap: isTrap, start: currentAngle, end: currentAngle + segmentArc };
+            
+            this.mesh.add(mesh);
+            sectors.push({ start: currentAngle, end: currentAngle + segmentArc, isTrap: isTrap });
+            
+            currentAngle += segmentArc;
+        }
+        
+        this.sectors = sectors;
+        this.castShadow = true;
+        this.receiveShadow = true;
+    }
+}
+</file>
+
+<file name="utils.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState } from './globals.js';
+
+// Random number generator using seedrandom (assumed loaded globally or shimmed)
+// Since explicit import of seedrandom isn't available as an ES module in the constraints directly, 
+// we assume it's loaded in index.html and modifies Math.random or provides a generator.
+// But constraints say "Allowed libraries: three.js, seedrandom".
+// We will use a simple seeded random class if Math.seedrandom is not available, 
+// but usually the script tag provided in example handles it.
+
+export class RNG {
+    constructor(seed) {
+        // If seedrandom is loaded, it overrides Math.random usually, or we use new Math.seedrandom(seed)
+        if (window.Math.seedrandom) {
+            this.rng = new Math.seedrandom(seed);
+        } else {
+            // Fallback LCG
+            this.seed = seed;
+            this.rng = () => {
+                const x = Math.sin(this.seed++) * 10000;
+                return x - Math.floor(x);
+            };
+        }
+    }
+
+    float() {
+        return this.rng();
+    }
+
+    range(min, max) {
+        return min + this.float() * (max - min);
+    }
+    
+    int(min, max) {
+        return Math.floor(this.range(min, max));
+    }
+    
+    // Returns true/false based on probability (0-1)
+    bool(chance = 0.5) {
+        return this.float() < chance;
+    }
+}
+
+export const gameRNG = new RNG('helix_jump_seed_42');
+
+export function normalizeAngle(angle) {
+    let a = angle % (Math.PI * 2);
+    if (a < 0) a += Math.PI * 2;
+    return a;
+}
+
+export function lerp(start, end, amt) {
+    return (1 - amt) * start + amt * end;
+}
+
+// Convert HSL to Hex
+export function hslToHex(h, s, l) {
+    const color = new THREE.Color();
+    color.setHSL(h, s, l);
+    return color.getHex();
+}
+
+// Check if angle is within an arc range [start, end]
+// Handles wrapping around 2PI
+export function isAngleInArc(angle, start, end) {
+    const a = normalizeAngle(angle);
+    const s = normalizeAngle(start);
+    const e = normalizeAngle(end);
+    
+    if (s < e) {
+        return a >= s && a <= e;
+    } else {
+        // Wraps around 0
+        return a >= s || a <= e;
+    }
+}
+</file>
+
+<file name="camera.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CONSTANTS } from './globals.js';
+
+export function setupCamera() {
+    const aspect = 600 / 400;
+    const camera = new THREE.PerspectiveCamera(60, aspect, 0.1, 100);
+    camera.position.copy(CONSTANTS.CAMERA_OFFSET);
+    camera.lookAt(0, 0, 0);
+    gameState.camera = camera;
+    return camera;
+}
+
+export function updateCamera(dt) {
+    if (!gameState.camera) return;
+    
+    // Target Y is the ball's Y, but smoothed and clamped
+    // We don't want the camera to jitter on every bounce.
+    // It should follow the downward trend.
+    
+    let targetY = 0;
+    if (gameState.ball) {
+        targetY = gameState.ball.mesh.position.y;
+    }
+    
+    // Only move down, don't move up if ball bounces high (Helix Jump style)
+    if (targetY < gameState.cameraTargetY) {
+        gameState.cameraTargetY = targetY;
+    }
+    
+    // Smooth lerp
+    const currentY = gameState.camera.position.y - CONSTANTS.CAMERA_OFFSET.y;
+    const nextY = THREE.MathUtils.lerp(currentY, gameState.cameraTargetY, 2.0 * dt);
+    
+    gameState.camera.position.y = nextY + CONSTANTS.CAMERA_OFFSET.y;
+    gameState.camera.lookAt(0, nextY, 0);
+    
+    // Update lighting position to follow camera/player
+    if (gameState.directionalLight) {
+        gameState.directionalLight.position.y = gameState.camera.position.y + 10;
+        gameState.directionalLight.target.position.y = gameState.camera.position.y;
+        gameState.directionalLight.target.updateMatrixWorld();
+    }
+}
+</file>
+
+<file name="physics.js">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { gameState, CONSTANTS } from './globals.js';
+import { normalizeAngle } from './utils.js';
+
+export function updatePhysics(dt) {
+    if (!gameState.ball) return;
+    
+    const ball = gameState.ball;
+    
+    // Check collision with platforms
+    checkPlatformCollisions(ball);
+    
+    // Check failure condition (falling too far behind camera or missed goal)
+    // Actually, game over is usually hitting a trap. Falling is good.
+    // If we fall past the last level, we win.
+}
+
+function checkPlatformCollisions(ball) {
+    // Find nearby platform
+    // Platforms are at y = 0, -gap, -2gap...
+    // Find closest platform below ball
+    
+    // Ball Y position relative to world
+    const ballY = ball.mesh.position.y;
+    const ballRadius = CONSTANTS.BALL_RADIUS;
+    
+    // Current logical rotation of the ball relative to the tower
+    // The tower rotates, so the ball's angle relative to the platform is -towerRotation.
+    // Ball is fixed at Z+ (angle 0 in world space? No, usually +Z is 0 or PI/2 depending on conventions)
+    // Three.js: +Z is towards viewer. +X is right.
+    // atan2(z, x): atan2(1, 0) = PI/2.
+    // Let's define the "Ball Line" as angle PI/2 (Positive Z axis).
+    const ballWorldAngle = Math.PI / 2; 
+    
+    // Relative angle on the platform
+    // Platform rotates by towerRotation.
+    // So if tower is rotated 90 deg (PI/2), the part of the platform originally at 0 is now at PI/2 (under ball).
+    // So we check angle: (ballWorldAngle - towerRotation).
+    const relativeAngle = normalizeAngle(ballWorldAngle - gameState.towerRotation);
+    
+    for (const platform of gameState.platforms) {
+        // Simple bounding box check on Y
+        // Platform surface is at platform.y
+        // We care about top surface for bounce
+        
+        const platformTop = platform.y + CONSTANTS.PLATFORM_HEIGHT / 2;
+        const platformBottom = platform.y - CONSTANTS.PLATFORM_HEIGHT / 2;
+        
+        // Check if ball is intersecting the platform disc vertically
+        // We only bounce if we are falling and hitting the top
+        if (ball.velocity.y < 0 && 
+            ballY - ballRadius <= platformTop && 
+            ballY - ballRadius >= platformTop - 0.5) { // Tolerance
+            
+            // We are at the height of a platform.
+            // Check if we are over a gap or solid
+            
+            // Check sectors
+            if (platform.isGoal) {
+                // Win!
+                gameState.gamePhase = "GAME_OVER_WIN";
+                return;
+            }
+            
+            // Gap check: if gapAngle +/- gapSize/2 contains relativeAngle
+            // Gap is defined as the empty space.
+            const halfGap = platform.gapSize / 2;
+            const gapStart = normalizeAngle(platform.gapAngle - halfGap);
+            const gapEnd = normalizeAngle(platform.gapAngle + halfGap);
+            
+            // Helper to check arc inclusion
+            const inGap = isAngleBetween(relativeAngle, gapStart, gapEnd);
+            
+            if (inGap) {
+                // Pass through - Score up if we just passed a level
+                if (!platform.passed) {
+                    gameState.score += 10;
+                    platform.passed = true;
+                    // Trigger sound/effect?
+                }
+            } else {
+                // Hit solid - check Trap
+                let hitTrap = false;
+                
+                // Iterate sectors to find which one we hit
+                // Optimization: we could store sectors better, but loop is short (12 segments)
+                for (const sector of platform.sectors) {
+                    // Check if relativeAngle is inside this sector
+                    // Sector angles were defined in local space of platform generation.
+                    // Platform mesh rotation is handled by tower container rotation.
+                    // The sectors are static inside the group.
+                    // So relativeAngle maps directly to sector angles.
+                    
+                    // We need to normalize checks carefully due to wrapping
+                    // The sectors were generated consecutively.
+                    // Simplest: Check visual color at collision point? No, logic is better.
+                    
+                    // Actually, we generated sectors based on angle.
+                    // Let's just check the userData of the segments if we had a raycaster?
+                    // But mathematical is faster.
+                    
+                    // Let's use the stored sectors data.
+                    // Sector start/end are raw angles (0 to 2PI+).
+                    const sStart = normalizeAngle(sector.start);
+                    const sEnd = normalizeAngle(sector.end);
+                    
+                    if (isAngleBetween(relativeAngle, sStart, sEnd)) {
+                        if (sector.isTrap) hitTrap = true;
+                        break;
+                    }
+                }
+                
+                if (hitTrap) {
+                    gameState.gamePhase = "GAME_OVER_LOSE";
+                    // Death effect
+                    ball.destroy(); // hide ball
+                } else {
+                    // Bounce
+                    ball.bounce();
+                    // Add score for bounce? Maybe not, prevents farming.
+                }
+            }
+        }
+    }
+}
+
+function isAngleBetween(target, start, end) {
+    // Check if target is in [start, end] dealing with wrap around
+    if (start < end) {
+        return target >= start && target <= end;
+    } else {
+        return target >= start || target <= end;
+    }
+}
+</file>
+
+<file name="input.js">
+import { gameState, CONSTANTS } from './globals.js';
+import { normalizeAngle } from './utils.js';
+
+const keys = {};
+
+export function setupInput() {
+    document.addEventListener('keydown', (e) => {
+        keys[e.keyCode] = true;
+        
+        logInput('keydown', e.key, e.keyCode);
+        
+        // Global State Controls
+        if (e.code === 'Enter') {
+            if (gameState.gamePhase === 'START') {
+                gameState.gamePhase = 'PLAYING';
+            }
+        }
+        
+        if (e.code === 'Escape') {
+            if (gameState.gamePhase === 'PLAYING') gameState.gamePhase = 'PAUSED';
+            else if (gameState.gamePhase === 'PAUSED') gameState.gamePhase = 'PLAYING';
+        }
+        
+        if (e.code === 'KeyR') {
+            if (gameState.gamePhase === 'GAME_OVER_WIN' || gameState.gamePhase === 'GAME_OVER_LOSE') {
+                window.location.reload(); // Simplest reset for this complexity
+            }
+        }
+        
+        // Debug/Testing Controls for Manual Override in Test Mode
+        if (e.code === 'KeyT') {
+            // Toggle test mode manually if needed
+        }
+    });
+    
+    document.addEventListener('keyup', (e) => {
+        keys[e.keyCode] = false;
+        logInput('keyup', e.key, e.keyCode);
+    });
+}
+
+function logInput(type, key, code) {
+    if (window.logs) {
+        window.logs.inputs.push({
+            type, key, code,
+            frame: gameState.frameCount,
+            time: Date.now()
+        });
+    }
+}
+
+export function handleInput(dt) {
+    if (gameState.gamePhase !== 'PLAYING') return;
+
+    // AI / Test Control
+    if (gameState.controlMode.startsWith('TEST')) {
+        handleAIControl(dt);
+        return;
+    }
+
+    // Human Control
+    // Rotate Tower
+    const speed = CONSTANTS.ROTATION_SPEED;
+    
+    if (keys[37] || keys[65]) { // Left or A
+        gameState.targetRotation += speed;
+    }
+    if (keys[39] || keys[68]) { // Right or D
+        gameState.targetRotation -= speed;
+    }
+}
+
+function handleAIControl(dt) {
+    if (gameState.controlMode === 'TEST_1') {
+        // Simple spin
+        gameState.targetRotation -= CONSTANTS.ROTATION_SPEED;
+    } else if (gameState.controlMode === 'TEST_2') {
+        // Smart Solver
+        if (!gameState.ball) return;
+        
+        // Find platform below
+        const ballY = gameState.ball.mesh.position.y;
+        const platforms = gameState.platforms;
+        
+        let targetPlatform = null;
+        for (let p of platforms) {
+            // We want the first platform strictly below the ball
+            if (p.y < ballY - CONSTANTS.BALL_RADIUS) {
+                targetPlatform = p;
+                break;
+            }
+        }
+        
+        if (targetPlatform) {
+            // Goal: Align platform gap with Ball Angle (PI/2)
+            // Ball Angle relative to platform = (PI/2 - towerRotation)
+            // We want relativeAngle == gapAngle
+            // So: PI/2 - towerRotation = gapAngle
+            // => towerRotation = PI/2 - gapAngle
+            
+            const desiredRotation = Math.PI/2 - targetPlatform.gapAngle;
+            
+            // Smoothly move towards desired
+            // Normalize angles for shortest path
+            let diff = desiredRotation - gameState.targetRotation;
+            // Wrap diff to -PI to PI
+            while (diff > Math.PI) diff -= Math.PI * 2;
+            while (diff < -Math.PI) diff += Math.PI * 2;
+            
+            if (Math.abs(diff) > 0.1) {
+                gameState.targetRotation += Math.sign(diff) * CONSTANTS.ROTATION_SPEED;
+            } else {
+                 gameState.targetRotation = desiredRotation;
+            }
+        }
+    }
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

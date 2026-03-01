@@ -44,7 +44,8 @@ function startGame() {
     tilesGenerated = 0;
     
     // Create Player
-    const player = new Player(0, 5, 0); // Drop from sky
+    // Lowered start height to ensure safer landing on first tile
+    const player = new Player(0, 3, 0); 
     gameState.player = player;
     
     // Create Initial Platform (safe zone)

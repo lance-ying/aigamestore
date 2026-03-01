@@ -1,0 +1,865 @@
+<analysis>
+- Issue identified:
+    1. "Monster never dies": Likely caused by a failure in `handleEnemyDefeat` within `match3.js`, specifically the dynamic import of `createEnemy` which may be failing or creating a race condition/dependency issue.
+    2. "Never take damage": Player shield generation (Earth runes) is likely too high compared to enemy damage, and enemy damage scaling might be too low.
+    3. Progression: User wants 6 specific stages with varying difficulty.
+    4. UI: Missing rune explanation and unpolished ultimate meter.
+- Files affected: `globals.js`, `entities.js`, `match3.js`, `ui.js`
+- Changes needed:
+    1. `globals.js`: Update `maxStages` to 6.
+    2. `entities.js`: Implement 6 distinct enemy levels with appropriate names and stats (Easy/Medium/Hard).
+    3. `match3.js`: Fix `createEnemy` import (remove dynamic import). Reduce shield generation to balance difficulty. Ensure turn logic correctly triggers attacks.
+    4. `ui.js`: Add a Rune Legend at the top of the screen. Enhance the Ultimate bar visuals.
+</analysis>
+
+<code filename="globals.js">
+// globals.js
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const GRID_ROWS = 6;
+export const GRID_COLS = 6;
+export const TILE_SIZE = 45;
+export const GRID_OFFSET_X = 300; // Right side of screen
+export const GRID_OFFSET_Y = 80; // Lowered slightly to fit top UI
+
+export const RUNE_TYPES = {
+    FIRE: 0,  // Red - Damage
+    WATER: 1, // Blue - Heal
+    EARTH: 2, // Green - Shield
+    LIGHT: 3, // Yellow - Mana
+    DARK: 4   // Purple - Bonus/Debuff
+};
+
+export const COLORS = {
+    BACKGROUND: '#1a1a24',
+    UI_BG: '#252530',
+    GRID_BG: '#15151e',
+    TEXT: '#ffffff',
+    ACCENT: '#ffd700',
+    HP: '#ff4444',
+    MANA: '#4488ff',
+    SHIELD: '#44ff44',
+    FIRE: '#e74c3c',
+    WATER: '#3498db',
+    EARTH: '#2ecc71',
+    LIGHT: '#f1c40f',
+    DARK: '#9b59b6'
+};
+
+export const gameState = {
+    gamePhase: "START", // START, PLAYING, PAUSED, GAME_OVER_WIN, GAME_OVER_LOSE
+    controlMode: "HUMAN", // HUMAN, TEST_1, TEST_2
+    
+    // Performance
+    frameCount: 0,
+    lastFrameTime: 0,
+    deltaTime: 0,
+    
+    // Game Entities
+    player: null,
+    currentEnemy: null,
+    stage: 1,
+    maxStages: 6,
+    
+    // Grid State
+    grid: [], // 2D array of Tile objects
+    selectedTile: null, // {c, r}
+    cursor: { c: 0, r: 0 },
+    
+    // Battle State
+    turnState: "PLAYER_INPUT", // PLAYER_INPUT, ANIMATING, RESOLVING, ENEMY_TURN
+    matches: [],
+    fallingTiles: false,
+    comboMultiplier: 1,
+    
+    // Particles
+    particles: [],
+    floatingTexts: [],
+    
+    // Logs (Write-only references)
+    logs: null
+};
+
+// Initialize logs in main setup
+export function initLogs(p) {
+    gameState.logs = p.logs;
+}
+
+export function getGameState() {
+    return gameState;
+}
+
+window.getGameState = getGameState;
+</code>
+
+<code filename="entities.js">
+import { gameState, COLORS, RUNE_TYPES } from './globals.js';
+import { createFloatingText } from './particles.js';
+
+export class Entity {
+    constructor(name, maxHp) {
+        this.name = name;
+        this.maxHp = maxHp;
+        this.hp = maxHp;
+        this.shield = 0;
+        this.effects = [];
+    }
+
+    takeDamage(amount) {
+        let actualDamage = amount;
+        
+        // Shield absorption
+        if (this.shield > 0) {
+            if (this.shield >= actualDamage) {
+                this.shield -= actualDamage;
+                actualDamage = 0;
+            } else {
+                actualDamage -= this.shield;
+                this.shield = 0;
+            }
+        }
+        
+        this.hp = Math.max(0, this.hp - actualDamage);
+        return actualDamage;
+    }
+
+    heal(amount) {
+        this.hp = Math.min(this.maxHp, this.hp + amount);
+    }
+
+    addShield(amount) {
+        this.shield += amount;
+    }
+}
+
+export class Player extends Entity {
+    constructor() {
+        super("Hero", 100);
+        this.mana = 0;
+        this.maxMana = 100;
+        this.baseDamage = 10;
+        this.level = 1;
+        this.gold = 0;
+    }
+
+    castUltimate() {
+        if (this.mana >= this.maxMana && gameState.currentEnemy) {
+            this.mana = 0;
+            const dmg = 50;
+            gameState.currentEnemy.takeDamage(dmg);
+            createFloatingText(450, 100, `ULTIMATE! -${dmg}`, COLORS.LIGHT);
+            return true;
+        }
+        return false;
+    }
+
+    gainMana(amount) {
+        this.mana = Math.min(this.maxMana, this.mana + amount);
+    }
+}
+
+export class Enemy extends Entity {
+    constructor(stage) {
+        // 6 Stages: 2 Easy, 2 Medium, 2 Hard
+        let name = "Monster";
+        let hp = 100;
+        let damage = 10;
+        
+        if (stage === 1) {
+            name = "Slime (Easy)";
+            hp = 60;
+            damage = 8;
+        } else if (stage === 2) {
+            name = "Rat (Easy)";
+            hp = 80;
+            damage = 10;
+        } else if (stage === 3) {
+            name = "Wolf (Med)";
+            hp = 150;
+            damage = 15;
+        } else if (stage === 4) {
+            name = "Goblin (Med)";
+            hp = 200;
+            damage = 18;
+        } else if (stage === 5) {
+            name = "Dragon (Hard)";
+            hp = 350;
+            damage = 25;
+        } else if (stage === 6) {
+            name = "Demon King (Boss)";
+            hp = 500;
+            damage = 35;
+        }
+        
+        // TEST_2 Adjustment
+        if (gameState.controlMode === 'TEST_2') {
+            hp = 10; 
+        }
+        
+        super(name, hp);
+        this.damage = damage;
+        this.attackTimer = 0;
+    }
+
+    attack(player) {
+        const dmg = this.damage;
+        const dealt = player.takeDamage(dmg);
+        createFloatingText(150, 250, `-${dealt}`, COLORS.HP);
+        return dealt;
+    }
+}
+
+export function createPlayer() {
+    gameState.player = new Player();
+}
+
+export function createEnemy(stage) {
+    gameState.currentEnemy = new Enemy(stage);
+}
+</code>
+
+<code filename="match3.js">
+import { gameState, GRID_ROWS, GRID_COLS, RUNE_TYPES, TILE_SIZE, GRID_OFFSET_X, GRID_OFFSET_Y, COLORS } from './globals.js';
+import { createExplosion, createFloatingText } from './particles.js';
+import { createEnemy } from './entities.js';
+
+export class Tile {
+    constructor(c, r, type) {
+        this.c = c; // Grid Col
+        this.r = r; // Grid Row
+        this.type = type;
+        this.x = c * TILE_SIZE; // Relative pixel pos
+        this.y = r * TILE_SIZE;
+        this.targetX = this.x;
+        this.targetY = this.y;
+        this.state = 'IDLE'; // IDLE, SWAP, DROP, MATCHED
+        this.scale = 1;
+        this.alpha = 1;
+    }
+}
+
+export function initGrid() {
+    gameState.grid = [];
+    for (let c = 0; c < GRID_COLS; c++) {
+        gameState.grid[c] = [];
+        for (let r = 0; r < GRID_ROWS; r++) {
+            let type;
+            do {
+                type = Math.floor(Math.random() * 5);
+            } while (checkMatchAtInit(c, r, type));
+            gameState.grid[c][r] = new Tile(c, r, type);
+        }
+    }
+    gameState.cursor = { c: 0, r: 0 };
+    gameState.selectedTile = null;
+    gameState.turnState = "PLAYER_INPUT";
+    gameState.comboMultiplier = 1;
+}
+
+// Helper to prevent initial matches
+function checkMatchAtInit(c, r, type) {
+    // Check horizontal
+    if (c >= 2) {
+        if (gameState.grid[c-1][r].type === type && gameState.grid[c-2][r].type === type) return true;
+    }
+    // Check vertical
+    if (r >= 2) {
+        if (gameState.grid[c][r-1].type === type && gameState.grid[c][r-2].type === type) return true;
+    }
+    return false;
+}
+
+export function handleGridUpdate() {
+    if (gameState.turnState === "PLAYER_INPUT" || gameState.turnState === "ENEMY_TURN") return;
+
+    let stable = true;
+
+    // Animation update
+    for (let c = 0; c < GRID_COLS; c++) {
+        for (let r = 0; r < GRID_ROWS; r++) {
+            const tile = gameState.grid[c][r];
+            if (tile) {
+                // Move towards target
+                if (Math.abs(tile.x - tile.targetX) > 1 || Math.abs(tile.y - tile.targetY) > 1) {
+                    tile.x += (tile.targetX - tile.x) * 0.2;
+                    tile.y += (tile.targetY - tile.y) * 0.2;
+                    stable = false;
+                } else {
+                    tile.x = tile.targetX;
+                    tile.y = tile.targetY;
+                }
+            }
+        }
+    }
+
+    if (!stable) return; // Wait for animations
+
+    if (gameState.turnState === "ANIMATING") {
+        // Swap finished, check matches
+        const matches = findMatches();
+        if (matches.length > 0) {
+            gameState.turnState = "RESOLVING";
+            processMatches(matches);
+        } else {
+            gameState.turnState = "PLAYER_INPUT";
+        }
+    } else if (gameState.turnState === "RESOLVING") {
+        // Drop tiles if needed
+        applyGravity();
+    }
+}
+
+export function swapTiles(c1, r1, c2, r2) {
+    const tile1 = gameState.grid[c1][r1];
+    const tile2 = gameState.grid[c2][r2];
+
+    // Swap in array
+    gameState.grid[c1][r1] = tile2;
+    gameState.grid[c2][r2] = tile1;
+
+    // Update logical coords
+    tile1.c = c2;
+    tile1.r = r2;
+    tile2.c = c1;
+    tile2.r = r1;
+
+    // Set targets
+    tile1.targetX = c2 * TILE_SIZE;
+    tile1.targetY = r2 * TILE_SIZE;
+    tile2.targetX = c1 * TILE_SIZE;
+    tile2.targetY = r1 * TILE_SIZE;
+
+    gameState.turnState = "ANIMATING";
+}
+
+function findMatches() {
+    const matches = [];
+    
+    // Horizontal
+    for (let r = 0; r < GRID_ROWS; r++) {
+        for (let c = 0; c < GRID_COLS - 2; c++) {
+            const type = gameState.grid[c][r].type;
+            if (type === -1) continue;
+            let matchLen = 1;
+            while (c + matchLen < GRID_COLS && gameState.grid[c + matchLen][r].type === type) {
+                matchLen++;
+            }
+            if (matchLen >= 3) {
+                for (let i = 0; i < matchLen; i++) matches.push(gameState.grid[c + i][r]);
+                c += matchLen - 1;
+            }
+        }
+    }
+
+    // Vertical
+    for (let c = 0; c < GRID_COLS; c++) {
+        for (let r = 0; r < GRID_ROWS - 2; r++) {
+            const type = gameState.grid[c][r].type;
+            if (type === -1) continue;
+            let matchLen = 1;
+            while (r + matchLen < GRID_ROWS && gameState.grid[c][r + matchLen].type === type) {
+                matchLen++;
+            }
+            if (matchLen >= 3) {
+                for (let i = 0; i < matchLen; i++) matches.push(gameState.grid[c][r + i]);
+                r += matchLen - 1;
+            }
+        }
+    }
+    
+    // Unique tiles
+    return [...new Set(matches)];
+}
+
+function processMatches(matches) {
+    if (!gameState.player || !gameState.currentEnemy) return;
+
+    let damage = 0;
+    let healing = 0;
+    let shield = 0;
+    let mana = 0;
+
+    matches.forEach(tile => {
+        // Visuals
+        createExplosion(
+            GRID_OFFSET_X + tile.x + TILE_SIZE/2, 
+            GRID_OFFSET_Y + tile.y + TILE_SIZE/2, 
+            getRuneColor(tile.type)
+        );
+
+        // Effects
+        switch(tile.type) {
+            case RUNE_TYPES.FIRE: damage += 2; break;
+            case RUNE_TYPES.WATER: healing += 2; break;
+            case RUNE_TYPES.EARTH: shield += 1; break; // Reduced from 2 to 1 to balance difficulty
+            case RUNE_TYPES.LIGHT: mana += 3; break;
+            case RUNE_TYPES.DARK: damage += 1; break;
+        }
+        
+        // Remove tile logic
+        tile.type = -1; // Empty
+        tile.alpha = 0;
+    });
+    
+    // Apply stats
+    if (damage > 0) {
+        damage = Math.ceil(damage * gameState.comboMultiplier + gameState.player.baseDamage * 0.2);
+        const dealt = gameState.currentEnemy.takeDamage(damage);
+        createFloatingText(450, 100, `-${dealt}`, COLORS.HP);
+    }
+    if (healing > 0) {
+        gameState.player.heal(healing);
+        createFloatingText(150, 100, `+${healing}`, COLORS.SHIELD);
+    }
+    if (shield > 0) {
+        gameState.player.addShield(shield);
+    }
+    if (mana > 0) {
+        gameState.player.gainMana(mana);
+    }
+
+    gameState.comboMultiplier += 0.5;
+}
+
+function applyGravity() {
+    let moved = false;
+    
+    // Move tiles down
+    for (let c = 0; c < GRID_COLS; c++) {
+        for (let r = GRID_ROWS - 1; r >= 0; r--) {
+            if (gameState.grid[c][r].type === -1) {
+                // Find nearest tile above
+                let found = false;
+                for (let k = r - 1; k >= 0; k--) {
+                    if (gameState.grid[c][k].type !== -1) {
+                        // Move k to r
+                        const tile = gameState.grid[c][k];
+                        gameState.grid[c][r] = tile;
+                        gameState.grid[c][k] = new Tile(c, k, -1); // Placeholder
+                        
+                        tile.r = r;
+                        tile.targetY = r * TILE_SIZE;
+                        found = true;
+                        moved = true;
+                        break;
+                    }
+                }
+                // If no tile above, spawn new
+                if (!found) {
+                    const type = Math.floor(Math.random() * 5);
+                    const newTile = new Tile(c, r, type);
+                    newTile.y = -TILE_SIZE * (GRID_ROWS - r); // Start above screen
+                    newTile.targetY = r * TILE_SIZE;
+                    gameState.grid[c][r] = newTile;
+                    moved = true;
+                }
+            }
+        }
+    }
+    
+    if (moved) {
+        gameState.turnState = "ANIMATING"; // Re-animate drop
+    } else {
+        // Check for cascades
+        const matches = findMatches();
+        if (matches.length > 0) {
+            gameState.turnState = "RESOLVING";
+            processMatches(matches);
+        } else {
+            endPlayerTurn();
+        }
+    }
+}
+
+function endPlayerTurn() {
+    gameState.turnState = "ENEMY_TURN";
+    gameState.comboMultiplier = 1;
+    
+    setTimeout(() => {
+        // Check Enemy Death First
+        if (gameState.currentEnemy && gameState.currentEnemy.hp <= 0) {
+            handleEnemyDefeat();
+            return;
+        }
+
+        // Enemy Attack
+        if (gameState.currentEnemy && gameState.currentEnemy.hp > 0) {
+            gameState.currentEnemy.attack(gameState.player);
+            
+            // Check Player Death
+            if (gameState.player.hp <= 0) {
+                gameState.gamePhase = "GAME_OVER_LOSE";
+                return;
+            }
+        }
+        
+        // Return control to player
+        gameState.turnState = "PLAYER_INPUT";
+    }, 500);
+}
+
+function handleEnemyDefeat() {
+    gameState.stage++;
+    if (gameState.stage > gameState.maxStages) {
+        gameState.gamePhase = "GAME_OVER_WIN";
+    } else {
+        createFloatingText(300, 200, "STAGE CLEARED!", COLORS.ACCENT);
+        // Create next enemy
+        createEnemy(gameState.stage);
+        initGrid(); 
+        gameState.turnState = "PLAYER_INPUT";
+    }
+}
+
+export function getRuneColor(type) {
+    switch(type) {
+        case RUNE_TYPES.FIRE: return COLORS.FIRE;
+        case RUNE_TYPES.WATER: return COLORS.WATER;
+        case RUNE_TYPES.EARTH: return COLORS.EARTH;
+        case RUNE_TYPES.LIGHT: return COLORS.LIGHT;
+        case RUNE_TYPES.DARK: return COLORS.DARK;
+        default: return '#fff';
+    }
+}
+</code>
+
+<code filename="ui.js">
+import { gameState, CANVAS_WIDTH, CANVAS_HEIGHT, COLORS, GRID_OFFSET_X, GRID_OFFSET_Y, TILE_SIZE, RUNE_TYPES } from './globals.js';
+import { getRuneColor } from './match3.js';
+import { renderParticles } from './particles.js';
+
+export function renderStartScreen(p) {
+    p.background(COLORS.BACKGROUND);
+    p.textAlign(p.CENTER, p.CENTER);
+    
+    p.fill(COLORS.ACCENT);
+    p.textSize(48);
+    p.text("MAGICUS", CANVAS_WIDTH/2, CANVAS_HEIGHT/3);
+    
+    p.fill(COLORS.TEXT);
+    p.textSize(18);
+    p.text("Match elemental runes to defeat monsters!", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    
+    p.textSize(24);
+    if (p.frameCount % 60 < 30) {
+        p.text("PRESS ENTER TO START", CANVAS_WIDTH/2, CANVAS_HEIGHT * 0.7);
+    }
+    
+    renderControls(p);
+}
+
+function renderControls(p) {
+    p.textSize(12);
+    p.fill(150);
+    p.textAlign(p.CENTER, p.BOTTOM);
+    p.text("Arrows: Move | Z: Swap | Space: Ultimate | R: Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT - 20);
+}
+
+export function renderGame(p) {
+    p.background(COLORS.BACKGROUND);
+    
+    // Draw Rune Legend at top
+    renderRuneLegend(p);
+    
+    // Draw Split Layout
+    
+    // Left Panel: Stats & Battle Area
+    p.fill(COLORS.UI_BG);
+    p.noStroke();
+    p.rect(0, 50, GRID_OFFSET_X - 20, CANVAS_HEIGHT - 50);
+    
+    renderBattleScene(p);
+    renderPlayerStats(p);
+    
+    // Right Panel: Grid
+    renderGrid(p);
+    
+    // Overlays
+    renderParticles(p);
+}
+
+function renderRuneLegend(p) {
+    const y = 25;
+    const size = 15;
+    const gap = 110;
+    let x = 30;
+    
+    p.textAlign(p.LEFT, p.CENTER);
+    p.textSize(12);
+    p.noStroke();
+    
+    const runes = [
+        { type: RUNE_TYPES.FIRE, label: "DMG" },
+        { type: RUNE_TYPES.WATER, label: "HEAL" },
+        { type: RUNE_TYPES.EARTH, label: "SHIELD" },
+        { type: RUNE_TYPES.LIGHT, label: "MANA" },
+        { type: RUNE_TYPES.DARK, label: "BONUS" }
+    ];
+    
+    runes.forEach(rune => {
+        p.fill(getRuneColor(rune.type));
+        p.rect(x, y - size/2, size, size, 2);
+        p.fill(COLORS.TEXT);
+        p.text(rune.label, x + size + 5, y);
+        x += gap;
+    });
+}
+
+function renderBattleScene(p) {
+    // Enemy
+    if (gameState.currentEnemy) {
+        const ex = 140;
+        const ey = 150;
+        
+        // Simple Enemy Sprite
+        p.push();
+        p.translate(ex, ey);
+        
+        // Bobbing animation
+        const bob = Math.sin(p.frameCount * 0.05) * 5;
+        p.translate(0, bob);
+        
+        // Shadow
+        p.fill(0, 0, 0, 100);
+        p.ellipse(0, 40, 60, 20);
+        
+        // Body
+        p.fill(COLORS.HP);
+        p.stroke(255);
+        p.strokeWeight(2);
+        p.beginShape();
+        p.vertex(0, -30);
+        p.vertex(25, 0);
+        p.vertex(15, 30);
+        p.vertex(-15, 30);
+        p.vertex(-25, 0);
+        p.endShape(p.CLOSE);
+        
+        // Eyes
+        p.fill(255);
+        p.circle(-10, -5, 8);
+        p.circle(10, -5, 8);
+        p.fill(0);
+        p.circle(-10, -5, 3);
+        p.circle(10, -5, 3);
+        
+        // Name & HP
+        p.noStroke();
+        p.fill(COLORS.TEXT);
+        p.textSize(16);
+        p.textAlign(p.CENTER);
+        p.text(gameState.currentEnemy.name, 0, -50);
+        
+        // HP Bar
+        renderBar(p, -40, 45, 80, 10, gameState.currentEnemy.hp, gameState.currentEnemy.maxHp, COLORS.HP);
+        
+        p.pop();
+    }
+}
+
+function renderPlayerStats(p) {
+    // Player Avatar (Bottom Left)
+    const px = 60;
+    const py = 300;
+    
+    p.push();
+    p.translate(px, py);
+    
+    // Avatar
+    p.fill(COLORS.MANA);
+    p.stroke(255);
+    p.rectMode(p.CENTER);
+    p.rect(0, 0, 40, 40, 5);
+    
+    // Face
+    p.fill(255);
+    p.rect(-10, -5, 5, 5);
+    p.rect(10, -5, 5, 5);
+    
+    p.noStroke();
+    p.fill(COLORS.TEXT);
+    p.textAlign(p.LEFT);
+    p.textSize(16);
+    p.text(gameState.player.name, 30, -10);
+    p.textSize(12);
+    p.text(`Stage ${gameState.stage}/${gameState.maxStages}`, 30, 10);
+    
+    p.pop();
+    
+    // Player Bars
+    const barX = 20;
+    const barY = 340;
+    const barW = 240;
+    
+    // HP
+    p.textAlign(p.LEFT, p.BOTTOM);
+    p.fill(COLORS.TEXT);
+    p.textSize(12);
+    p.text("HP", barX, barY);
+    renderBar(p, barX + 25, barY - 10, 150, 10, gameState.player.hp, gameState.player.maxHp, COLORS.HP);
+    p.textAlign(p.RIGHT, p.BOTTOM);
+    p.text(`${Math.ceil(gameState.player.hp)}`, barX + 210, barY);
+    
+    // Mana / Ultimate Bar - Polished
+    p.textAlign(p.LEFT, p.BOTTOM);
+    p.text("ULT", barX, barY + 20);
+    
+    // Glow effect if full
+    if (gameState.player.mana >= gameState.player.maxMana) {
+        p.drawingContext.shadowBlur = 15;
+        p.drawingContext.shadowColor = COLORS.LIGHT;
+    }
+    
+    renderBar(p, barX + 25, barY + 10, 150, 12, gameState.player.mana, gameState.player.maxMana, COLORS.MANA);
+    
+    p.drawingContext.shadowBlur = 0; // Reset
+    
+    // Shield
+    if (gameState.player.shield > 0) {
+        p.fill(COLORS.SHIELD);
+        p.text(`Shield: ${gameState.player.shield}`, barX, barY + 40);
+    }
+    
+    // Ultimate Ready Text
+    if (gameState.player.mana >= gameState.player.maxMana) {
+        p.fill(COLORS.LIGHT);
+        p.textAlign(p.CENTER);
+        p.textStyle(p.BOLD);
+        // Pulse effect
+        const scale = 1 + Math.sin(p.frameCount * 0.1) * 0.1;
+        p.push();
+        p.translate(140, 390);
+        p.scale(scale);
+        p.text("ULTIMATE READY! (SPACE)", 0, 0);
+        p.pop();
+    }
+}
+
+function renderBar(p, x, y, w, h, val, max, color) {
+    p.noStroke();
+    p.fill(50);
+    p.rectMode(p.CORNER);
+    p.rect(x, y, w, h, 4); // Rounded bg
+    
+    if (val > 0) {
+        p.fill(color);
+        const fillW = Math.max(0, Math.min(w, w * (val / max)));
+        p.rect(x, y, fillW, h, 4); // Rounded fg
+        
+        // Shine effect
+        p.fill(255, 255, 255, 50);
+        p.rect(x, y, fillW, h/2, 4);
+    }
+}
+
+function renderGrid(p) {
+    p.push();
+    p.translate(GRID_OFFSET_X, GRID_OFFSET_Y);
+    
+    // Background
+    p.fill(COLORS.GRID_BG);
+    p.stroke(50);
+    p.rect(0, 0, TILE_SIZE * 6, TILE_SIZE * 6);
+    
+    // Tiles
+    gameState.grid.forEach(col => {
+        col.forEach(tile => {
+            if (tile.type !== -1) {
+                renderTile(p, tile);
+            }
+        });
+    });
+    
+    // Cursor
+    if (gameState.turnState === "PLAYER_INPUT") {
+        const cx = gameState.cursor.c * TILE_SIZE;
+        const cy = gameState.cursor.r * TILE_SIZE;
+        
+        p.noFill();
+        p.stroke(255);
+        p.strokeWeight(3);
+        p.rect(cx, cy, TILE_SIZE, TILE_SIZE);
+        
+        // Selected Highlight
+        if (gameState.selectedTile) {
+            const sx = gameState.selectedTile.c * TILE_SIZE;
+            const sy = gameState.selectedTile.r * TILE_SIZE;
+            p.stroke(COLORS.ACCENT);
+            p.rect(sx, sy, TILE_SIZE, TILE_SIZE);
+        }
+    }
+    
+    p.pop();
+}
+
+function renderTile(p, tile) {
+    const x = tile.x + TILE_SIZE/2;
+    const y = tile.y + TILE_SIZE/2;
+    const size = TILE_SIZE * 0.8;
+    const color = getRuneColor(tile.type);
+    
+    p.push();
+    p.translate(x, y);
+    p.fill(color);
+    p.noStroke();
+    
+    // Shapes
+    switch(tile.type) {
+        case RUNE_TYPES.FIRE: // Triangle
+            p.triangle(0, -size/2, size/2, size/2, -size/2, size/2);
+            break;
+        case RUNE_TYPES.WATER: // Circle
+            p.circle(0, 0, size);
+            break;
+        case RUNE_TYPES.EARTH: // Square
+            p.rectMode(p.CENTER);
+            p.rect(0, 0, size, size, 4);
+            break;
+        case RUNE_TYPES.LIGHT: // Diamond
+            p.beginShape();
+            p.vertex(0, -size/2);
+            p.vertex(size/2, 0);
+            p.vertex(0, size/2);
+            p.vertex(-size/2, 0);
+            p.endShape(p.CLOSE);
+            break;
+        case RUNE_TYPES.DARK: // Star/Cross
+            p.rectMode(p.CENTER);
+            p.rect(0, 0, size, size/3);
+            p.rect(0, 0, size/3, size);
+            break;
+    }
+    
+    p.pop();
+}
+
+export function renderPausedOverlay(p) {
+    p.fill(0, 0, 0, 200);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.fill(255);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(48);
+    p.text("PAUSED", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+    p.textSize(20);
+    p.text("Press ESC to Resume", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 50);
+}
+
+export function renderGameOver(p) {
+    p.fill(0, 0, 0, 220);
+    p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    const isWin = gameState.gamePhase === "GAME_OVER_WIN";
+    p.fill(isWin ? COLORS.ACCENT : COLORS.HP);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(48);
+    p.text(isWin ? "VICTORY!" : "GAME OVER", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 - 20);
+    
+    p.fill(COLORS.TEXT);
+    p.textSize(24);
+    p.text(isWin ? "You are the Master of Magic!" : "The monsters prevailed...", CANVAS_WIDTH/2, CANVAS_HEIGHT/2 + 40);
+    
+    p.textSize(18);
+    p.text("Press R to Restart", CANVAS_WIDTH/2, CANVAS_HEIGHT - 50);
+}
+</code>

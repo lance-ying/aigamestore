@@ -1,0 +1,154 @@
+/**
+ * Main game loop and p5 instance setup
+ */
+import { 
+    gameState, getGameState, initLogs, logGameInfo, logPlayerInfo,
+    CANVAS_WIDTH, CANVAS_HEIGHT, CONFIG, COLORS 
+} from './globals.js';
+import { handleInput, handleKeyPress, handleKeyRelease, spawnRow } from './input.js';
+import { updatePhysics } from './physics.js';
+import { renderUI, renderStartScreen, renderPausedOverlay, renderGameOver } from './ui.js';
+import { get_automated_testing_action } from './automated_testing_controller.js';
+
+const p5 = window.p5;
+
+// Main Game Instance
+let gameInstance = new p5(p => {
+    
+    p.setup = function() {
+        p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+        p.frameRate(60);
+        p.randomSeed(42);
+        
+        initLogs(p);
+        
+        // Initial log
+        logGameInfo(p, { gamePhase: gameState.gamePhase });
+    };
+
+    p.draw = function() {
+        // Time management
+        const currentTime = p.millis();
+        gameState.deltaTime = (currentTime - gameState.lastFrameTime) / 1000;
+        gameState.lastFrameTime = currentTime;
+        gameState.frameCount = p.frameCount;
+
+        // Auto Input
+        if (gameState.controlMode !== "HUMAN") {
+            const action = get_automated_testing_action();
+            if (action) {
+                p.keyCode = action.keyCode;
+                handleKeyPress(p);
+                // Simulate holding for movement
+                if (action.keyCode === 37 || action.keyCode === 39) {
+                     // In handleInput we check p.keyIsDown. 
+                     // Since keyIsDown checks hardware, we must mock it or 
+                     // modify input.js to check a virtual key map for bots.
+                     // For this constraint, we will manually apply input logic for bots here:
+                     if (gameState.turnPhase === "AIMING") {
+                         if (action.keyCode === 37) gameState.player.angle -= 0.05;
+                         if (action.keyCode === 39) gameState.player.angle += 0.05;
+                     }
+                }
+            }
+        }
+
+        // Draw Background
+        p.background(COLORS.BACKGROUND);
+        
+        // State Machine
+        switch (gameState.gamePhase) {
+            case "START":
+                renderStartScreen(p);
+                break;
+            case "PLAYING":
+                updateGameLogic(p);
+                renderGame(p);
+                renderUI(p);
+                break;
+            case "PAUSED":
+                renderGame(p);
+                renderUI(p);
+                renderPausedOverlay(p);
+                break;
+            case "GAME_OVER_WIN": // Not reachable in endless mode but good practice
+            case "GAME_OVER_LOSE":
+                renderGame(p);
+                renderGameOver(p);
+                break;
+        }
+
+        logPlayerInfo(p);
+    };
+
+    p.keyPressed = function() {
+        if (gameState.controlMode === "HUMAN") {
+            handleKeyPress(p);
+        }
+    };
+
+    p.keyReleased = function() {
+        if (gameState.controlMode === "HUMAN") {
+            handleKeyRelease(p);
+        }
+    };
+});
+
+function updateGameLogic(p) {
+    handleInput(p);
+    
+    // Physics
+    updatePhysics(p);
+
+    // Turn Logic Management
+    if (gameState.turnPhase === "FIRING") {
+        // Launch balls periodically
+        gameState.launchTimer++;
+        if (gameState.ballsReady > 0 && gameState.launchTimer >= CONFIG.LAUNCH_DELAY) {
+            const ballIndex = gameState.ballCount - gameState.ballsReady;
+            if (gameState.balls[ballIndex]) {
+                gameState.balls[ballIndex].launch(gameState.player.angle);
+                gameState.ballsActive++;
+                gameState.ballsReady--;
+                gameState.launchTimer = 0;
+            }
+        }
+
+        // Check if all balls returned
+        if (gameState.ballsReady === 0 && gameState.ballsActive === 0) {
+            gameState.turnPhase = "RESOLVING";
+        }
+    } 
+    else if (gameState.turnPhase === "RESOLVING") {
+        // Move launcher to new X
+        if (gameState.firstBallLanded) {
+            gameState.player.x = gameState.nextLauncherX;
+        }
+        
+        // Spawn next row
+        spawnRow();
+        gameState.turnPhase = "AIMING";
+        
+        // Check loose items cleanup
+        gameState.items = gameState.items.filter(i => !i.collected);
+        gameState.bricks = gameState.bricks.filter(b => !b.isDead);
+    }
+}
+
+function renderGame(p) {
+    // Entities
+    gameState.bricks.forEach(brick => brick.render(p));
+    gameState.items.forEach(item => item.render(p));
+    gameState.balls.forEach(ball => ball.render(p));
+    
+    if (gameState.player) {
+        gameState.player.render(p);
+    }
+}
+
+// Global exposure
+window.gameInstance = gameInstance;
+window.setControlMode = (mode) => {
+    gameState.controlMode = mode;
+    console.log("Control Mode set to:", mode);
+};

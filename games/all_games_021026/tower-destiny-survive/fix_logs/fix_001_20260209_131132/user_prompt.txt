@@ -1,0 +1,1821 @@
+You are a senior game developer focused on safe, minimal, high-impact edits. Prefer small, surgical changes over rewrites. Keep file names and structure stable. Maintain consistent coding style and avoid introducing external dependencies.
+
+<task>
+You are improving an existing browser game. Apply the human feedback precisely while preserving
+existing working features. Only modify what is necessary to achieve the requested changes, and
+ensure the result remains playable. Avoid regressions.
+
+<human_feedback>
+when I pause, the text puase shows up, can you make it so that the game just freezes without the text and graying out
+</human_feedback>
+
+<existing_files>
+<file name="index.html">
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #222; }
+      body { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+      canvas { border: 1px solid #333; width: 600px !important; height: 400px !important; }
+      .control-buttons { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; justify-content: center; }
+      .control-button { padding: 8px 16px; cursor: pointer; background: #444; color: #fff; border: none; border-radius: 4px; }
+      .control-button.active { background: #007bff; }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <h1 id="gameTitle" style="color: #fff; font-family: Arial, sans-serif; margin-bottom: 10px;"></h1>
+      <div class="control-buttons">
+        <button id="humanModeBtn" class="control-button active" onclick="window.setControlMode('HUMAN')">Human Mode</button>
+        <button id="test_1_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_1')">TEST (Basic)</button>
+        <button id="test_2_ModeBtn" class="control-button" onclick="window.setControlMode('TEST_2')">TEST (Win)</button>
+      </div>
+      <p id="gameDescription" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Defend your tower from zombie waves. Move to collect blocks and shoot enemies. Use blocks to upgrade your tower and survive three challenging levels.</p>
+      <p id="gameControls" style="color: #ccc; font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto 20px auto; line-height: 1.4;">Move: Arrow Keys or A/D | Fire: SPACE (costs energy!) | Switch Direction: Q (left) / E (right) | Aim: UP/DOWN Arrows | Start: ENTER | Pause: ESC | Restart: R</p>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://unpkg.com/p5.collide2d@0.7.3/p5.collide2d.js"></script>
+    <script src="../../dev_mode.js"></script>
+    <script type="module" src="game.js"></script>
+  </body>
+</html>
+</file>
+
+<file name="globals.js">
+// globals.js - Global constants and game state
+export const CANVAS_WIDTH = 600;
+export const CANVAS_HEIGHT = 400;
+
+export const GAME_PHASES = {
+  START: "START",
+  PLAYING: "PLAYING",
+  PAUSED: "PAUSED",
+  LEVEL_COMPLETE: "LEVEL_COMPLETE",
+  GAME_OVER_WIN: "GAME_OVER_WIN",
+  GAME_OVER_LOSE: "GAME_OVER_LOSE"
+};
+
+export const gameState = {
+  gamePhase: GAME_PHASES.START,
+  controlMode: "HUMAN",
+  
+  // Player/Tower
+  player: null,
+  towerX: CANVAS_WIDTH / 2,
+  towerHealth: 100,
+  towerMaxHealth: 100,
+  towerSpeed: 4,
+  facingRight: true, // New: direction tower is facing
+  firingAngle: 0, // Angle in degrees (-30 to +30)
+  
+  // Energy system
+  energy: 100,
+  maxEnergy: 100,
+  energyRegenRate: 0.5, // energy per frame
+  shotEnergyCost: 15, // energy per shot
+  
+  // Combo system
+  comboCount: 0,
+  comboTimer: 0,
+  comboTimeLimit: 120, // frames to maintain combo
+  comboMultiplier: 1,
+  
+  // Game progression
+  currentLevel: 1,
+  currentWave: 0,
+  zombiesSpawnedInWave: 0,
+  zombiesRemainingInWave: 0,
+  totalZombiesInLevel: 0,
+  waveSpawnTimer: 0,
+  waveSpawnDelay: 60,
+  
+  // Resources and score
+  blocksCollected: 0,
+  score: 0,
+  highScore: 0,
+  
+  // Entities
+  entities: [],
+  bullets: [],
+  zombies: [],
+  blocks: [],
+  particles: [],
+  powerups: [],
+  
+  // Weapons
+  weapons: [
+    {
+      type: "cannon",
+      damage: 20,
+      fireRate: 30,
+      lastFired: 0,
+      unlocked: true
+    },
+    {
+      type: "machinegun",
+      damage: 10,
+      fireRate: 10,
+      lastFired: 0,
+      unlocked: false
+    }
+  ],
+  activeWeaponSlots: 1,
+  
+  // Power-up effects
+  powerupEffects: {
+    damageBoost: 0,
+    damageBoostTimer: 0
+  },
+  
+  // Upgrade costs
+  upgradeCosts: {
+    health: 10,
+    weaponDamage: 15,
+    weaponFireRate: 20,
+    secondSlot: 50,
+    unlockMachinegun: 100
+  },
+  
+  // Level configuration
+  levels: [
+    {
+      waves: 3,
+      zombiesPerWave: [8, 10, 12],
+      zombieTypes: ["basic"],
+      zombieSpeed: 1.0,
+      blockFrequency: 180
+    },
+    {
+      waves: 4,
+      zombiesPerWave: [10, 12, 15, 18],
+      zombieTypes: ["basic", "fast"],
+      zombieSpeed: 1.2,
+      blockFrequency: 240
+    },
+    {
+      waves: 5,
+      zombiesPerWave: [12, 15, 18, 20, 25],
+      zombieTypes: ["basic", "fast", "tank"],
+      zombieSpeed: 1.5,
+      blockFrequency: 300
+    }
+  ],
+  
+  // Timers
+  blockSpawnTimer: 0,
+  frameCount: 0,
+  
+  // UI state
+  upgradeMenuOpen: false,
+  selectedUpgrade: null
+};
+
+// Make gameState accessible globally
+if (typeof window !== 'undefined') {
+  window.getGameState = () => gameState;
+}
+</file>
+
+<file name="game.js">
+// game.js - Main game file
+import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+import { Tower, Block } from './entities.js';
+import { handleKeyPressed, updatePlayerMovement } from './input.js';
+import { checkCollisions } from './collision.js';
+import { renderGame } from './render.js';
+import { updateWaveSpawning, checkWaveComplete } from './levels.js';
+import { getTestAction, applyTestAction } from './testing.js';
+
+const p5 = window.p5;
+
+let gameInstance = new p5(p => {
+  // Initialize logs
+  p.logs = {
+    game_info: [],
+    inputs: [],
+    player_info: []
+  };
+  
+  p.setup = function() {
+    p.createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+    p.frameRate(60);
+    p.randomSeed(42);
+    
+    // Initialize tower
+    gameState.player = new Tower(gameState.towerX, CANVAS_HEIGHT - 80);
+    gameState.entities.push(gameState.player);
+    
+    // Load high score
+    const savedHighScore = localStorage.getItem('tds_highscore');
+    if (savedHighScore) {
+      gameState.highScore = parseInt(savedHighScore);
+    }
+    
+    // Log initial state
+    p.logs.game_info.push({
+      data: { gamePhase: gameState.gamePhase },
+      framecount: p.frameCount,
+      timestamp: Date.now()
+    });
+  };
+  
+  p.draw = function() {
+    gameState.frameCount = p.frameCount;
+    
+    // Apply test actions if in test mode
+    if (gameState.controlMode !== "HUMAN") {
+      const action = getTestAction(p);
+      if (action) {
+        applyTestAction(p, action);
+        handleKeyPressed(p);
+      }
+    }
+    
+    // Update game logic
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      updateGameLogic(p);
+    }
+    
+    // Render
+    renderGame(p);
+  };
+  
+  p.keyPressed = function() {
+    if (gameState.controlMode === "HUMAN") {
+      handleKeyPressed(p);
+    }
+  };
+  
+  function updateGameLogic(p) {
+    // Update player movement
+    updatePlayerMovement(p);
+    
+    // Regenerate energy
+    gameState.energy = Math.min(gameState.energy + gameState.energyRegenRate, gameState.maxEnergy);
+    
+    // Update power-up effects
+    if (gameState.powerupEffects.damageBoostTimer > 0) {
+      gameState.powerupEffects.damageBoostTimer--;
+      if (gameState.powerupEffects.damageBoostTimer === 0) {
+        gameState.powerupEffects.damageBoost = 0;
+      }
+    }
+    
+    // Update tower
+    if (gameState.player) {
+      gameState.player.update(p);
+      
+      // Log player info periodically
+      if (p.frameCount % 30 === 0) {
+        p.logs.player_info.push({
+          screen_x: gameState.player.x,
+          screen_y: gameState.player.y,
+          game_x: gameState.player.x,
+          game_y: gameState.player.y,
+          health: gameState.towerHealth,
+          energy: gameState.energy,
+          framecount: p.frameCount
+        });
+      }
+    }
+    
+    // Update wave spawning
+    updateWaveSpawning(p);
+    
+    // Update bullets
+    gameState.bullets.forEach(b => b.update(p));
+    
+    // Update zombies
+    gameState.zombies.forEach(z => z.update(p));
+    
+    // Update blocks
+    gameState.blocks.forEach(b => b.update(p));
+    
+    // Update power-ups
+    gameState.powerups.forEach(pu => pu.update(p));
+    
+    // Update particles
+    gameState.particles.forEach(part => part.update(p));
+    
+    // Spawn blocks randomly
+    gameState.blockSpawnTimer++;
+    const levelConfig = gameState.levels[gameState.currentLevel - 1];
+    if (gameState.blockSpawnTimer >= levelConfig.blockFrequency) {
+      const block = new Block(
+        100 + Math.random() * 400,
+        270 + Math.random() * 40
+      );
+      gameState.blocks.push(block);
+      gameState.blockSpawnTimer = 0;
+    }
+    
+    // Check collisions
+    checkCollisions(p);
+    
+    // Check wave completion
+    checkWaveComplete();
+    
+    // Check game over
+    if (gameState.towerHealth <= 0) {
+      gameState.gamePhase = GAME_PHASES.GAME_OVER_LOSE;
+      
+      // Update high score
+      if (gameState.score > gameState.highScore) {
+        gameState.highScore = gameState.score;
+        localStorage.setItem('tds_highscore', gameState.highScore.toString());
+      }
+      
+      p.logs.game_info.push({
+        data: { gamePhase: gameState.gamePhase, finalScore: gameState.score },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+});
+
+// Expose game instance globally
+window.gameInstance = gameInstance;
+// Expose level loading for dev mode
+window.loadLevel = function(levelNum) {
+  const state = window.getGameState ? window.getGameState() : (window.gameState || (window.gameInstance && window.gameInstance.gameState));
+  if (state) {
+    state.currentLevel = levelNum;
+    // Try common reset/start patterns
+    if (typeof resetGame === 'function') {
+      resetGame();
+    }
+    if (typeof startGame === 'function') {
+      startGame();
+    } else if (state.gamePhase !== undefined) {
+      state.gamePhase = "PLAYING";
+    }
+  }
+};
+
+// Control mode setter
+window.setControlMode = function(mode) {
+  gameState.controlMode = mode;
+  
+  // Update button states
+  const buttons = ['humanModeBtn', 'test_1_ModeBtn', 'test_2_ModeBtn'];
+  buttons.forEach(btnId => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.classList.remove('active');
+    }
+  });
+  
+  const activeBtn = document.getElementById(mode === 'HUMAN' ? 'humanModeBtn' : 
+                                           mode === 'TEST_1' ? 'test_1_ModeBtn' : 
+                                           'test_2_ModeBtn');
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+};
+</file>
+
+<file name="collision.js">
+// collision.js - Collision detection and handling
+import { gameState } from './globals.js';
+import { Particle } from './entities.js';
+
+export function checkCollisions(p) {
+  // Bullet-Zombie collisions
+  for (let i = gameState.bullets.length - 1; i >= 0; i--) {
+    const bullet = gameState.bullets[i];
+    if (!bullet.active) continue;
+    
+    for (let j = gameState.zombies.length - 1; j >= 0; j--) {
+      const zombie = gameState.zombies[j];
+      if (!zombie.active) continue;
+      
+      const distance = Math.sqrt(
+        Math.pow(bullet.x - zombie.x, 2) + 
+        Math.pow(bullet.y - zombie.y, 2)
+      );
+      
+      if (distance < bullet.radius + zombie.width / 2) {
+        bullet.active = false;
+        const killed = zombie.takeDamage(bullet.damage);
+        
+        // Create hit particles
+        createHitParticles(p, bullet.x, bullet.y, killed ? [255, 200, 100] : [255, 255, 255]);
+        
+        break;
+      }
+    }
+  }
+  
+  // Update combo timer
+  if (gameState.comboTimer > 0) {
+    gameState.comboTimer--;
+    if (gameState.comboTimer === 0) {
+      gameState.comboCount = 0;
+      gameState.comboMultiplier = 1;
+    }
+  }
+  
+  // Remove inactive entities
+  gameState.bullets = gameState.bullets.filter(b => b.active);
+  gameState.zombies = gameState.zombies.filter(z => z.active);
+  gameState.blocks = gameState.blocks.filter(b => b.active);
+  gameState.particles = gameState.particles.filter(p => p.active);
+  gameState.powerups = gameState.powerups.filter(p => p.active);
+}
+
+function createHitParticles(p, x, y, color) {
+  for (let i = 0; i < 5; i++) {
+    const angle = (Math.PI * 2 * i) / 5;
+    const speed = 1 + Math.random() * 2;
+    const particle = new Particle(
+      x, y,
+      Math.cos(angle) * speed,
+      Math.sin(angle) * speed,
+      color,
+      15 + Math.floor(Math.random() * 10)
+    );
+    gameState.particles.push(particle);
+  }
+}
+</file>
+
+<file name="render.js">
+// render.js - Rendering functions
+import { gameState, GAME_PHASES, CANVAS_WIDTH, CANVAS_HEIGHT } from './globals.js';
+
+export function renderGame(p) {
+  // Background
+  p.background(30, 30, 50);
+  
+  // Ground
+  p.fill(40, 60, 40);
+  p.noStroke();
+  p.rect(0, 320, CANVAS_WIDTH, 80);
+  
+  // Ground details
+  p.fill(50, 70, 50);
+  for (let i = 0; i < 10; i++) {
+    p.rect(i * 60, 320, 50, 10);
+  }
+  
+  switch (gameState.gamePhase) {
+    case GAME_PHASES.START:
+      renderStartScreen(p);
+      break;
+    case GAME_PHASES.PLAYING:
+      renderGameplay(p);
+      renderUI(p);
+      renderTrajectoryIndicator(p);
+      break;
+    case GAME_PHASES.PAUSED:
+      renderGameplay(p);
+      renderUI(p);
+      renderPauseOverlay(p);
+      break;
+    case GAME_PHASES.LEVEL_COMPLETE:
+      renderGameplay(p);
+      renderLevelComplete(p);
+      break;
+    case GAME_PHASES.GAME_OVER_WIN:
+      renderGameplay(p);
+      renderGameOverWin(p);
+      break;
+    case GAME_PHASES.GAME_OVER_LOSE:
+      renderGameplay(p);
+      renderGameOverLose(p);
+      break;
+  }
+}
+
+function renderStartScreen(p) {
+  p.push();
+  
+  // Replaced game title with "press enter to begin"
+  p.fill(255, 220, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(36);
+  p.text("press enter to begin", CANVAS_WIDTH / 2, 60);
+  
+  // Removed subtitle/tagline as per instructions
+  // p.textSize(16);
+  // p.fill(200);
+  // p.text("Defend your tower from all sides!", CANVAS_WIDTH / 2, 100);
+  
+  // Instructions (preserved)
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(13);
+  p.fill(220);
+  
+  const instructions = [
+    "HOW TO PLAY:",
+    "• Move: Arrow Keys or A/D",
+    "• Shoot: SPACE (costs energy!)",
+    "• Switch Direction: Q (left) / E (right)",
+    "• Aim: UP/DOWN Arrow Keys",
+    "• Energy regenerates over time",
+    "• Kill zombies quickly for combo bonuses!",
+    "• Collect power-ups from defeated zombies:",
+    "  - Green: +Health",
+    "  - Blue: +Energy",
+    "  - Orange: Damage boost",
+    "",
+    "Zombies attack from BOTH SIDES!",
+    "Adjust your aim and fire trajectory!"
+  ];
+  
+  // Adjusted starting Y for instructions due to subtitle removal
+  let y = 110; 
+  instructions.forEach(line => {
+    p.text(line, 40, y);
+    y += 18;
+  });
+  
+  // Removed blinking "PRESS ENTER TO START" as it's redundant with the new main title
+  // p.fill(100, 255, 100);
+  // p.textAlign(p.CENTER, p.CENTER);
+  // p.textSize(20);
+  // if (Math.floor(p.frameCount / 30) % 2 === 0) {
+  //   p.text("PRESS ENTER TO START", CANVAS_WIDTH / 2, 360);
+  // }
+  
+  p.pop();
+}
+
+function renderGameplay(p) {
+  // Render all entities
+  gameState.bullets.forEach(b => b.render(p));
+  gameState.zombies.forEach(z => z.render(p));
+  gameState.blocks.forEach(b => b.render(p));
+  gameState.powerups.forEach(pu => pu.render(p));
+  gameState.particles.forEach(part => part.render(p));
+  
+  if (gameState.player) {
+    gameState.player.render(p);
+  }
+}
+
+function renderTrajectoryIndicator(p) {
+  if (!gameState.player) return;
+  
+  p.push();
+  
+  // Draw trajectory line from tower
+  const direction = gameState.facingRight ? 1 : -1;
+  const angleRad = (gameState.firingAngle * Math.PI) / 180;
+  const lineLength = 80;
+  
+  const startX = gameState.player.x;
+  const startY = gameState.player.y - gameState.player.height - 10;
+  const endX = startX + Math.cos(angleRad) * lineLength * direction;
+  const endY = startY + Math.sin(angleRad) * lineLength;
+  
+  // Draw dashed line
+  p.stroke(255, 255, 100, 150);
+  p.strokeWeight(2);
+  p.drawingContext.setLineDash([5, 5]);
+  p.line(startX, startY, endX, endY);
+  p.drawingContext.setLineDash([]);
+  
+  // Draw angle indicator circle at the end
+  p.fill(255, 255, 100, 100);
+  p.noStroke();
+  p.circle(endX, endY, 8);
+  
+  p.pop();
+}
+
+function renderUI(p) {
+  p.push();
+  
+  // Score
+  p.fill(255);
+  p.textAlign(p.LEFT, p.TOP);
+  p.textSize(14);
+  p.text(`SCORE: ${gameState.score}`, 10, 10);
+  
+  // Level & Wave
+  const levelConfig = gameState.levels[gameState.currentLevel - 1];
+  p.text(`LVL ${gameState.currentLevel} | WAVE ${gameState.currentWave}/${levelConfig.waves}`, 10, 28);
+  
+  // Blocks
+  p.fill(80, 180, 255);
+  p.textAlign(p.RIGHT, p.TOP);
+  p.text(`BLOCKS: ${gameState.blocksCollected}`, CANVAS_WIDTH - 10, 10);
+  
+  // Combo counter
+  if (gameState.comboCount > 0) {
+    p.fill(255, 215, 0);
+    p.textSize(16);
+    p.text(`COMBO x${gameState.comboMultiplier.toFixed(1)} (${gameState.comboCount})`, CANVAS_WIDTH - 10, 28);
+  }
+  
+  // Firing angle indicator
+  p.fill(255, 255, 100);
+  p.textSize(12);
+  p.text(`ANGLE: ${gameState.firingAngle}°`, CANVAS_WIDTH - 10, 48);
+  
+  // Tower health bar
+  const barWidth = 150;
+  const barHeight = 16;
+  const barX = CANVAS_WIDTH / 2 - barWidth / 2;
+  const barY = 10;
+  
+  p.fill(60, 60, 60);
+  p.rect(barX, barY, barWidth, barHeight);
+  
+  const healthPercent = gameState.towerHealth / gameState.towerMaxHealth;
+  const healthColor = healthPercent > 0.5 ? [100, 255, 100] : 
+                      healthPercent > 0.25 ? [255, 200, 50] : [255, 100, 100];
+  p.fill(...healthColor);
+  p.rect(barX, barY, barWidth * healthPercent, barHeight);
+  
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(10);
+  p.text(`HP: ${Math.ceil(gameState.towerHealth)}/${gameState.towerMaxHealth}`, 
+         CANVAS_WIDTH / 2, barY + barHeight / 2);
+  
+  // Energy bar
+  const energyBarY = barY + barHeight + 4;
+  p.fill(40, 40, 60);
+  p.rect(barX, energyBarY, barWidth, 12);
+  
+  const energyPercent = gameState.energy / gameState.maxEnergy;
+  p.fill(100, 200, 255);
+  p.rect(barX, energyBarY, barWidth * energyPercent, 12);
+  
+  p.fill(255);
+  p.textSize(9);
+  p.text(`ENERGY: ${Math.floor(gameState.energy)}`, CANVAS_WIDTH / 2, energyBarY + 6);
+  
+  // Power-up indicator
+  if (gameState.powerupEffects.damageBoostTimer > 0) {
+    p.fill(255, 150, 50);
+    p.textAlign(p.LEFT, p.TOP);
+    p.textSize(12);
+    p.text(`⚡ DAMAGE BOOST (${Math.ceil(gameState.powerupEffects.damageBoostTimer / 60)}s)`, 
+           10, CANVAS_HEIGHT - 30);
+  }
+  
+  p.pop();
+}
+
+function renderPauseOverlay(p) {
+  p.push();
+  
+  p.fill(0, 0, 0, 150);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.fill(255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text("PAUSED", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 40);
+  
+  p.textSize(18);
+  p.text("Press ESC to Resume", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+  p.text("Press R to Restart", CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+  
+  p.pop();
+}
+
+function renderLevelComplete(p) {
+  p.push();
+  
+  p.fill(0, 0, 0, 200);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.fill(100, 255, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(36);
+  p.text("LEVEL COMPLETE!", CANVAS_WIDTH / 2, 60);
+  
+  p.fill(255);
+  p.textSize(20);
+  p.text(`Score: ${gameState.score}`, CANVAS_WIDTH / 2, 100);
+  p.text(`Blocks: ${gameState.blocksCollected}`, CANVAS_WIDTH / 2, 130);
+  
+  // Upgrades
+  p.textSize(16);
+  p.textAlign(p.LEFT, p.TOP);
+  p.fill(255, 220, 100);
+  p.text("UPGRADES:", 50, 160);
+  
+  const upgrades = getAvailableUpgrades();
+  let y = 190;
+  
+  upgrades.forEach((upgrade, i) => {
+    const canAfford = gameState.blocksCollected >= upgrade.cost;
+    p.fill(canAfford ? [200, 255, 200] : [150, 150, 150]);
+    p.text(`${i + 1}. ${upgrade.name} - ${upgrade.cost} blocks`, 60, y);
+    y += 25;
+  });
+  
+  p.fill(100, 255, 255);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(18);
+  if (Math.floor(p.frameCount / 30) % 2 === 0) {
+    p.text("Press 1-5 to buy upgrades", CANVAS_WIDTH / 2, 320);
+    p.text("Press ENTER to continue", CANVAS_WIDTH / 2, 350);
+  }
+  
+  p.pop();
+}
+
+function renderGameOverWin(p) {
+  p.push();
+  
+  p.fill(0, 0, 0, 200);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.fill(255, 215, 0);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text("VICTORY!", CANVAS_WIDTH / 2, 120);
+  
+  p.fill(255);
+  p.textSize(24);
+  p.text("You have survived all waves!", CANVAS_WIDTH / 2, 180);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 220);
+  
+  if (gameState.score > gameState.highScore) {
+    p.fill(255, 215, 0);
+    p.textSize(20);
+    p.text("NEW HIGH SCORE!", CANVAS_WIDTH / 2, 260);
+  }
+  
+  p.fill(200);
+  p.textSize(18);
+  p.text("Press R to Restart", CANVAS_WIDTH / 2, 320);
+  
+  p.pop();
+}
+
+function renderGameOverLose(p) {
+  p.push();
+  
+  p.fill(0, 0, 0, 200);
+  p.rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  
+  p.fill(255, 100, 100);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.textSize(48);
+  p.text("GAME OVER", CANVAS_WIDTH / 2, 120);
+  
+  p.fill(255);
+  p.textSize(24);
+  p.text("Your tower has fallen...", CANVAS_WIDTH / 2, 180);
+  p.text(`Final Score: ${gameState.score}`, CANVAS_WIDTH / 2, 220);
+  p.text(`Reached Level: ${gameState.currentLevel}`, CANVAS_WIDTH / 2, 250);
+  
+  p.fill(200);
+  p.textSize(18);
+  p.text("Press R to Restart", CANVAS_WIDTH / 2, 320);
+  
+  p.pop();
+}
+
+function getAvailableUpgrades() {
+  const upgrades = [
+    { id: "health", name: "Upgrade Health (+50 HP)", cost: gameState.upgradeCosts.health },
+    { id: "weaponDamage", name: "Upgrade Weapon Damage (+10)", cost: gameState.upgradeCosts.weaponDamage },
+    { id: "weaponFireRate", name: "Upgrade Fire Rate", cost: gameState.upgradeCosts.weaponFireRate }
+  ];
+  
+  if (gameState.activeWeaponSlots === 1) {
+    upgrades.push({ id: "secondSlot", name: "Unlock 2nd Weapon Slot", cost: gameState.upgradeCosts.secondSlot });
+  }
+  
+  if (!gameState.weapons[1].unlocked) {
+    upgrades.push({ id: "unlockMachinegun", name: "Unlock Machine Gun", cost: gameState.upgradeCosts.unlockMachinegun });
+  }
+  
+  return upgrades;
+}
+</file>
+
+<file name="testing.js">
+// testing.js - Automated testing controllers
+import { gameState, GAME_PHASES } from './globals.js';
+
+export function getTestAction(p) {
+  if (gameState.controlMode === "TEST_1") {
+    return getBasicTestAction(p);
+  } else if (gameState.controlMode === "TEST_2") {
+    return getWinTestAction(p);
+  }
+  return null;
+}
+
+function getBasicTestAction(p) {
+  // Basic test: Move and shoot
+  if (gameState.gamePhase === GAME_PHASES.START) {
+    return { keyCode: 13 }; // ENTER to start
+  }
+  
+  if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+    // Shoot continuously
+    if (p.frameCount % 15 === 0) {
+      return { keyCode: 32 }; // SPACE to shoot
+    }
+    
+    // Move to collect blocks
+    if (gameState.blocks.length > 0) {
+      const block = gameState.blocks[0];
+      if (gameState.towerX < block.x - 20) {
+        return { keyCode: 39 }; // RIGHT
+      } else if (gameState.towerX > block.x + 20) {
+        return { keyCode: 37 }; // LEFT
+      }
+    }
+  }
+  
+  if (gameState.gamePhase === GAME_PHASES.LEVEL_COMPLETE) {
+    // Buy upgrades randomly
+    if (p.frameCount % 60 === 0) {
+      const upgradeKey = 49 + Math.floor(Math.random() * 3); // 1-3
+      return { keyCode: upgradeKey };
+    }
+    if (p.frameCount % 60 === 30) {
+      return { keyCode: 13 }; // ENTER to continue
+    }
+  }
+  
+  return null;
+}
+
+function getWinTestAction(p) {
+  // Aggressive test to win the game quickly
+  if (gameState.gamePhase === GAME_PHASES.START) {
+    return { keyCode: 13 }; // ENTER to start
+  }
+  
+  if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+    // Shoot very frequently
+    if (p.frameCount % 5 === 0) {
+      return { keyCode: 32 }; // SPACE to shoot
+    }
+    
+    // Track closest zombie and move towards it for better aim
+    if (gameState.zombies.length > 0) {
+      const closestZombie = gameState.zombies.reduce((closest, zombie) => {
+        return zombie.x < closest.x ? zombie : closest;
+      });
+      
+      if (gameState.towerX < closestZombie.x - 50) {
+        return { keyCode: 39 }; // RIGHT
+      } else if (gameState.towerX > closestZombie.x + 50) {
+        return { keyCode: 37 }; // LEFT
+      }
+    }
+    
+    // Collect blocks
+    if (gameState.blocks.length > 0) {
+      const block = gameState.blocks[0];
+      if (Math.abs(gameState.towerX - block.x) < 100) {
+        if (gameState.towerX < block.x - 10) {
+          return { keyCode: 39 }; // RIGHT
+        } else if (gameState.towerX > block.x + 10) {
+          return { keyCode: 37 }; // LEFT
+        }
+      }
+    }
+  }
+  
+  if (gameState.gamePhase === GAME_PHASES.LEVEL_COMPLETE) {
+    // Buy weapon upgrades first
+    if (gameState.blocksCollected >= 15 && p.frameCount % 30 === 0) {
+      return { keyCode: 50 }; // 2 for weapon damage
+    }
+    if (gameState.blocksCollected >= 20 && p.frameCount % 30 === 10) {
+      return { keyCode: 51 }; // 3 for fire rate
+    }
+    if (p.frameCount % 30 === 20) {
+      return { keyCode: 13 }; // ENTER to continue
+    }
+  }
+  
+  return null;
+}
+
+export function applyTestAction(p, action) {
+  if (!action) return;
+  
+  // Simulate key press
+  p.keyCode = action.keyCode;
+  p.key = String.fromCharCode(action.keyCode);
+  
+  // Log the test input
+  p.logs.inputs.push({
+    input_type: "keyPressed",
+    data: { key: p.key, keyCode: p.keyCode, testMode: gameState.controlMode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+</file>
+
+<file name="entities.js">
+// entities.js - Entity classes
+import { CANVAS_WIDTH, CANVAS_HEIGHT, gameState } from './globals.js';
+
+export class Tower {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.width = 40;
+    this.height = 60;
+    this.health = gameState.towerMaxHealth;
+    this.damageFlashTimer = 0;
+  }
+  
+  update(p) {
+    if (this.damageFlashTimer > 0) {
+      this.damageFlashTimer--;
+    }
+  }
+  
+  takeDamage(amount) {
+    this.health -= amount;
+    this.damageFlashTimer = 15;
+    gameState.towerHealth = this.health;
+    // Reset combo on taking damage
+    gameState.comboCount = 0;
+    gameState.comboTimer = 0;
+    gameState.comboMultiplier = 1;
+    if (this.health <= 0) {
+      this.health = 0;
+    }
+  }
+  
+  render(p) {
+    p.push();
+    
+    // Main tower body
+    if (this.damageFlashTimer > 0 && this.damageFlashTimer % 4 < 2) {
+      p.fill(255, 100, 100);
+    } else {
+      p.fill(60, 80, 120);
+    }
+    p.stroke(40, 60, 100);
+    p.strokeWeight(2);
+    p.rect(this.x - this.width / 2, this.y - this.height, this.width, this.height);
+    
+    // Tower segments
+    p.fill(50, 70, 110);
+    for (let i = 0; i < 3; i++) {
+      p.rect(this.x - this.width / 2 + 2, this.y - this.height + i * 20 + 2, this.width - 4, 16);
+    }
+    
+    // Direction indicator
+    p.fill(255, 255, 100);
+    const indicatorX = gameState.facingRight ? this.x + this.width / 2 + 5 : this.x - this.width / 2 - 5;
+    p.triangle(
+      indicatorX, this.y - this.height / 2,
+      indicatorX + (gameState.facingRight ? 6 : -6), this.y - this.height / 2 - 8,
+      indicatorX + (gameState.facingRight ? 6 : -6), this.y - this.height / 2 + 8
+    );
+    
+    // Weapon mounts
+    for (let i = 0; i < gameState.activeWeaponSlots; i++) {
+      const weapon = gameState.weapons[i];
+      if (weapon && weapon.unlocked) {
+        const offsetX = gameState.activeWeaponSlots === 1 ? 0 : (i === 0 ? -15 : 15);
+        const directionFlip = gameState.facingRight ? 1 : -1;
+        if (weapon.type === "cannon") {
+          p.fill(180, 50, 50);
+          p.rect(this.x + offsetX * directionFlip - 5, this.y - this.height - 8, 10, 15);
+          p.fill(100, 30, 30);
+          p.rect(this.x + offsetX * directionFlip - 3, this.y - this.height - 10, 6, 10);
+        } else if (weapon.type === "machinegun") {
+          p.fill(50, 180, 50);
+          p.rect(this.x + offsetX * directionFlip - 4, this.y - this.height - 6, 8, 12);
+          p.fill(30, 100, 30);
+          p.rect(this.x + offsetX * directionFlip - 2, this.y - this.height - 8, 4, 8);
+        }
+      }
+    }
+    
+    p.pop();
+  }
+}
+
+export class Bullet {
+  constructor(x, y, damage, weaponType, direction, angle) {
+    this.x = x;
+    this.y = y;
+    this.damage = damage + gameState.powerupEffects.damageBoost;
+    this.speed = 8;
+    this.direction = direction; // 1 for right, -1 for left
+    this.angle = angle; // angle in degrees
+    this.radius = weaponType === "cannon" ? 4 : 3;
+    this.weaponType = weaponType;
+    this.active = true;
+    
+    // Calculate velocity components based on angle
+    const angleRad = (angle * Math.PI) / 180;
+    this.vx = Math.cos(angleRad) * this.speed * this.direction;
+    this.vy = Math.sin(angleRad) * this.speed;
+  }
+  
+  update(p) {
+    this.x += this.vx;
+    this.y += this.vy;
+    
+    // Extend bullet lifetime to reach zombies
+    if (this.x > CANVAS_WIDTH + 50 || this.x < -50 || this.y < -50 || this.y > CANVAS_HEIGHT + 50) {
+      this.active = false;
+    }
+  }
+  
+  render(p) {
+    p.push();
+    p.noStroke();
+    if (this.weaponType === "cannon") {
+      p.fill(255, 220, 100);
+    } else {
+      p.fill(100, 255, 100);
+    }
+    p.circle(this.x, this.y, this.radius * 2);
+    
+    // Bullet trail
+    p.fill(255, 255, 255, 100);
+    p.circle(this.x - 4 * this.direction, this.y, this.radius);
+    p.pop();
+  }
+}
+
+export class Zombie {
+  constructor(x, y, type, level, movingLeft) {
+    this.x = x;
+    this.y = y;
+    this.type = type;
+    this.movingLeft = movingLeft; // true if moving left, false if moving right
+    this.active = true;
+    this.hitFlashTimer = 0;
+    
+    const levelMultiplier = gameState.levels[level - 1].zombieSpeed;
+    
+    // All zombies now have same dimensions - narrow rectangles
+    this.width = 20;  // Narrow width
+    this.height = 40; // Tall height
+    
+    switch (type) {
+      case "basic":
+        this.health = 40;
+        this.maxHealth = 40;
+        this.speed = 1.0 * levelMultiplier;
+        this.damage = 10;
+        this.color = [80, 180, 80];
+        this.scoreValue = 10;
+        break;
+      case "fast":
+        this.health = 25;
+        this.maxHealth = 25;
+        this.speed = 2.5 * levelMultiplier;
+        this.damage = 5;
+        this.color = [220, 220, 80];
+        this.scoreValue = 25;
+        break;
+      case "tank":
+        this.health = 120;
+        this.maxHealth = 120;
+        this.speed = 0.6 * levelMultiplier;
+        this.damage = 25;
+        this.color = [180, 80, 60];
+        this.scoreValue = 50;
+        break;
+    }
+  }
+  
+  update(p) {
+    this.x += this.movingLeft ? -this.speed : this.speed;
+    
+    if (this.hitFlashTimer > 0) {
+      this.hitFlashTimer--;
+    }
+    
+    // Check collision with tower
+    if (gameState.player && this.active) {
+      const tower = gameState.player;
+      if (this.x - this.width / 2 < tower.x + tower.width / 2 &&
+          this.x + this.width / 2 > tower.x - tower.width / 2 &&
+          this.y - this.height / 2 < tower.y &&
+          this.y + this.height / 2 > tower.y - tower.height) {
+        tower.takeDamage(this.damage);
+        this.active = false;
+        createHitParticles(p, this.x, this.y, [255, 100, 100]);
+      }
+    }
+  }
+  
+  takeDamage(amount) {
+    this.health -= amount;
+    this.hitFlashTimer = 5;
+    if (this.health <= 0) {
+      this.active = false;
+      
+      // Combo system
+      gameState.comboCount++;
+      gameState.comboTimer = gameState.comboTimeLimit;
+      gameState.comboMultiplier = 1 + Math.floor(gameState.comboCount / 5) * 0.5;
+      
+      const scoreGain = Math.floor(this.scoreValue * gameState.comboMultiplier);
+      gameState.score += scoreGain;
+      
+      return true;
+    }
+    return false;
+  }
+  
+  render(p) {
+    p.push();
+    
+    // Body - now consistently a narrow rectangle
+    if (this.hitFlashTimer > 0 && this.hitFlashTimer % 2 === 0) {
+      p.fill(255, 255, 255);
+    } else {
+      p.fill(...this.color);
+    }
+    p.stroke(this.color[0] - 30, this.color[1] - 30, this.color[2] - 30);
+    p.strokeWeight(2);
+    p.rect(this.x - this.width / 2, this.y - this.height / 2, this.width, this.height, 3);
+    
+    // Eyes
+    p.fill(20);
+    p.noStroke();
+    p.circle(this.x - this.width / 4, this.y - this.height / 3, 4);
+    p.circle(this.x + this.width / 4, this.y - this.height / 3, 4);
+    
+    // Type indicator on body
+    p.fill(0, 0, 0, 100);
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(8);
+    if (this.type === "fast") {
+      p.text("F", this.x, this.y + 5);
+    } else if (this.type === "tank") {
+      p.text("T", this.x, this.y + 5);
+    }
+    
+    // Health bar
+    if (this.health < this.maxHealth) {
+      p.fill(50);
+      p.rect(this.x - this.width / 2, this.y - this.height / 2 - 8, this.width, 3);
+      p.fill(200, 50, 50);
+      p.rect(this.x - this.width / 2, this.y - this.height / 2 - 8, 
+             this.width * (this.health / this.maxHealth), 3);
+    }
+    
+    // Speed indicator for fast zombies
+    if (this.type === "fast") {
+      p.stroke(220, 220, 80, 150);
+      p.strokeWeight(1);
+      p.noFill();
+      const dir = this.movingLeft ? -1 : 1;
+      p.line(this.x + this.width / 2 * dir, this.y - 5, this.x + (this.width / 2 + 6) * dir, this.y - 5);
+      p.line(this.x + this.width / 2 * dir, this.y, this.x + (this.width / 2 + 5) * dir, this.y);
+      p.line(this.x + this.width / 2 * dir, this.y + 5, this.x + (this.width / 2 + 6) * dir, this.y + 5);
+    }
+    
+    p.pop();
+  }
+}
+
+export class Block {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.size = 15;
+    this.active = true;
+    this.floatOffset = 0;
+    this.floatSpeed = 0.1;
+  }
+  
+  update(p) {
+    this.floatOffset += this.floatSpeed;
+    
+    // Check collision with tower
+    if (gameState.player && this.active) {
+      const tower = gameState.player;
+      if (this.x - this.size / 2 < tower.x + tower.width / 2 &&
+          this.x + this.size / 2 > tower.x - tower.width / 2 &&
+          this.y - this.size / 2 < tower.y &&
+          this.y + this.size / 2 > tower.y - tower.height) {
+        this.active = false;
+        gameState.blocksCollected++;
+        gameState.score += 5;
+        createCollectParticles(p, this.x, this.y);
+      }
+    }
+  }
+  
+  render(p) {
+    p.push();
+    p.translate(this.x, this.y + Math.sin(this.floatOffset) * 5);
+    p.rotate(this.floatOffset * 0.5);
+    
+    p.fill(80, 180, 255);
+    p.stroke(60, 140, 200);
+    p.strokeWeight(2);
+    p.rect(-this.size / 2, -this.size / 2, this.size, this.size);
+    
+    p.fill(120, 200, 255, 150);
+    p.noStroke();
+    p.rect(-this.size / 2 + 2, -this.size / 2 + 2, this.size - 4, this.size - 4);
+    
+    p.pop();
+  }
+}
+
+export class PowerUp {
+  constructor(x, y, type) {
+    this.x = x;
+    this.y = y;
+    this.type = type; // "health", "energy", "damage"
+    this.size = 12;
+    this.active = true;
+    this.floatOffset = 0;
+    this.floatSpeed = 0.15;
+    this.lifetime = 300; // 5 seconds
+    
+    switch (type) {
+      case "health":
+        this.color = [100, 255, 100];
+        this.value = 30;
+        break;
+      case "energy":
+        this.color = [100, 200, 255];
+        this.value = 50;
+        break;
+      case "damage":
+        this.color = [255, 150, 50];
+        this.value = 10;
+        this.duration = 300; // 5 seconds
+        break;
+    }
+  }
+  
+  update(p) {
+    this.floatOffset += this.floatSpeed;
+    this.lifetime--;
+    
+    if (this.lifetime <= 0) {
+      this.active = false;
+      return;
+    }
+    
+    // Check collision with tower
+    if (gameState.player && this.active) {
+      const tower = gameState.player;
+      const distance = Math.sqrt(
+        Math.pow(this.x - tower.x, 2) + 
+        Math.pow(this.y - (tower.y - tower.height / 2), 2)
+      );
+      
+      if (distance < this.size + tower.width / 2) {
+        this.active = false;
+        this.applyEffect();
+        createCollectParticles(p, this.x, this.y, this.color);
+      }
+    }
+  }
+  
+  applyEffect() {
+    switch (this.type) {
+      case "health":
+        gameState.towerHealth = Math.min(gameState.towerHealth + this.value, gameState.towerMaxHealth);
+        if (gameState.player) {
+          gameState.player.health = gameState.towerHealth;
+        }
+        break;
+      case "energy":
+        gameState.energy = Math.min(gameState.energy + this.value, gameState.maxEnergy);
+        break;
+      case "damage":
+        gameState.powerupEffects.damageBoost += this.value;
+        gameState.powerupEffects.damageBoostTimer = this.duration;
+        break;
+    }
+  }
+  
+  render(p) {
+    p.push();
+    p.translate(this.x, this.y + Math.sin(this.floatOffset) * 4);
+    
+    // Fade out when lifetime is low
+    const alpha = this.lifetime < 60 ? (this.lifetime / 60) * 255 : 255;
+    
+    p.fill(...this.color, alpha);
+    p.stroke(this.color[0] - 30, this.color[1] - 30, this.color[2] - 30, alpha);
+    p.strokeWeight(2);
+    p.circle(0, 0, this.size * 2);
+    
+    // Icon
+    p.fill(255, 255, 255, alpha);
+    p.noStroke();
+    p.textAlign(p.CENTER, p.CENTER);
+    p.textSize(10);
+    if (this.type === "health") {
+      p.text("+", 0, 0);
+    } else if (this.type === "energy") {
+      p.text("E", 0, 0);
+    } else if (this.type === "damage") {
+      p.text("!", 0, 0);
+    }
+    
+    p.pop();
+  }
+}
+
+export class Particle {
+  constructor(x, y, vx, vy, color, life) {
+    this.x = x;
+    this.y = y;
+    this.vx = vx;
+    this.vy = vy;
+    this.color = color;
+    this.life = life;
+    this.maxLife = life;
+    this.size = 4;
+    this.active = true;
+  }
+  
+  update(p) {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.vy += 0.2; // gravity
+    this.life--;
+    
+    if (this.life <= 0) {
+      this.active = false;
+    }
+  }
+  
+  render(p) {
+    p.push();
+    const alpha = (this.life / this.maxLife) * 255;
+    p.fill(this.color[0], this.color[1], this.color[2], alpha);
+    p.noStroke();
+    p.circle(this.x, this.y, this.size);
+    p.pop();
+  }
+}
+
+function createHitParticles(p, x, y, color) {
+  for (let i = 0; i < 8; i++) {
+    const angle = (Math.PI * 2 * i) / 8;
+    const speed = 2 + Math.random() * 2;
+    const particle = new Particle(
+      x, y,
+      Math.cos(angle) * speed,
+      Math.sin(angle) * speed,
+      color,
+      20 + Math.floor(Math.random() * 10)
+    );
+    gameState.particles.push(particle);
+  }
+}
+
+function createCollectParticles(p, x, y, color = [80, 180, 255]) {
+  for (let i = 0; i < 6; i++) {
+    const angle = (Math.PI * 2 * i) / 6;
+    const speed = 3 + Math.random() * 2;
+    const particle = new Particle(
+      x, y,
+      Math.cos(angle) * speed,
+      Math.sin(angle) * speed - 2,
+      color,
+      15 + Math.floor(Math.random() * 10)
+    );
+    gameState.particles.push(particle);
+  }
+}
+</file>
+
+<file name="levels.js">
+// levels.js - Level and wave management
+import { gameState, GAME_PHASES } from './globals.js';
+import { Zombie, PowerUp } from './entities.js';
+
+export function initializeLevel(levelNumber) {
+  gameState.currentLevel = levelNumber;
+  gameState.currentWave = 0;
+  gameState.zombiesSpawnedInWave = 0;
+  gameState.zombiesRemainingInWave = 0;
+  gameState.waveSpawnTimer = 0;
+  
+  const levelConfig = gameState.levels[levelNumber - 1];
+  gameState.totalZombiesInLevel = levelConfig.zombiesPerWave.reduce((a, b) => a + b, 0);
+  
+  // Clear entities
+  gameState.zombies = [];
+  gameState.bullets = [];
+  gameState.blocks = [];
+  gameState.powerups = [];
+  
+  startNextWave();
+}
+
+export function startNextWave() {
+  gameState.currentWave++;
+  const levelConfig = gameState.levels[gameState.currentLevel - 1];
+  
+  if (gameState.currentWave <= levelConfig.waves) {
+    gameState.zombiesSpawnedInWave = 0;
+    gameState.zombiesRemainingInWave = levelConfig.zombiesPerWave[gameState.currentWave - 1];
+    gameState.waveSpawnTimer = 0;
+  }
+}
+
+export function updateWaveSpawning(p) {
+  const levelConfig = gameState.levels[gameState.currentLevel - 1];
+  
+  if (gameState.currentWave > levelConfig.waves) {
+    return;
+  }
+  
+  const zombiesInWave = levelConfig.zombiesPerWave[gameState.currentWave - 1];
+  
+  if (gameState.zombiesSpawnedInWave < zombiesInWave) {
+    gameState.waveSpawnTimer++;
+    
+    if (gameState.waveSpawnTimer >= gameState.waveSpawnDelay) {
+      spawnZombie(p, levelConfig);
+      gameState.zombiesSpawnedInWave++;
+      gameState.waveSpawnTimer = 0;
+    }
+  }
+}
+
+function spawnZombie(p, levelConfig) {
+  const types = levelConfig.zombieTypes;
+  let type = "basic";
+  
+  if (types.includes("tank") && Math.random() < 0.15) {
+    type = "tank";
+  } else if (types.includes("fast") && Math.random() < 0.35) {
+    type = "fast";
+  }
+  
+  // Spawn from random side
+  const spawnFromLeft = Math.random() < 0.5;
+  const x = spawnFromLeft ? 10 : 590;
+  
+  // Fixed y position - aligned with bullet firing height
+  // Tower is at y=320 with height 60, so top is at 260
+  // Bullets fire from y=250, so zombies should spawn at y=250
+  const y = 250;
+  
+  const zombie = new Zombie(x, y, type, gameState.currentLevel, !spawnFromLeft);
+  gameState.zombies.push(zombie);
+  gameState.entities.push(zombie);
+  
+  // Store original zombie count for power-up drops
+  zombie.dropPowerUp = Math.random() < 0.3; // 30% chance to drop power-up
+}
+
+export function checkWaveComplete() {
+  if (gameState.zombies.length === 0 && 
+      gameState.zombiesSpawnedInWave >= gameState.levels[gameState.currentLevel - 1].zombiesPerWave[gameState.currentWave - 1]) {
+    
+    const levelConfig = gameState.levels[gameState.currentLevel - 1];
+    
+    if (gameState.currentWave >= levelConfig.waves) {
+      // Level complete
+      gameState.score += 500;
+      
+      if (gameState.currentLevel >= 3) {
+        gameState.gamePhase = GAME_PHASES.GAME_OVER_WIN;
+      } else {
+        gameState.gamePhase = GAME_PHASES.LEVEL_COMPLETE;
+      }
+    } else {
+      // Wave complete
+      gameState.score += 100;
+      startNextWave();
+    }
+  }
+}
+
+// Called when a zombie is killed to potentially spawn power-ups
+export function spawnPowerUpFromZombie(p, x, y) {
+  if (Math.random() < 0.3) { // 30% chance
+    const powerUpTypes = ["health", "energy", "damage"];
+    const weights = [0.4, 0.4, 0.2]; // Health and energy more common
+    
+    let roll = Math.random();
+    let type = "health";
+    let cumulative = 0;
+    
+    for (let i = 0; i < powerUpTypes.length; i++) {
+      cumulative += weights[i];
+      if (roll < cumulative) {
+        type = powerUpTypes[i];
+        break;
+      }
+    }
+    
+    const powerup = new PowerUp(x, y, type);
+    gameState.powerups.push(powerup);
+  }
+}
+</file>
+
+<file name="input.js">
+// input.js - Input handling
+import { gameState, GAME_PHASES } from './globals.js';
+import { initializeLevel } from './levels.js';
+import { Bullet } from './entities.js';
+
+export function handleKeyPressed(p) {
+  const key = p.key;
+  const keyCode = p.keyCode;
+  
+  // Log input
+  p.logs.inputs.push({
+    input_type: "keyPressed",
+    data: { key, keyCode },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+  
+  // Game phase controls
+  if (keyCode === 13) { // ENTER
+    if (gameState.gamePhase === GAME_PHASES.START) {
+      startGame(p);
+    }
+  } else if (keyCode === 27) { // ESC
+    if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+      gameState.gamePhase = GAME_PHASES.PAUSED;
+      p.logs.game_info.push({
+        data: { gamePhase: gameState.gamePhase },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    } else if (gameState.gamePhase === GAME_PHASES.PAUSED) {
+      gameState.gamePhase = GAME_PHASES.PLAYING;
+      p.logs.game_info.push({
+        data: { gamePhase: gameState.gamePhase },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  } else if (keyCode === 82) { // R
+    if (gameState.gamePhase === GAME_PHASES.GAME_OVER_LOSE || 
+        gameState.gamePhase === GAME_PHASES.GAME_OVER_WIN ||
+        gameState.gamePhase === GAME_PHASES.PAUSED) {
+      resetGame(p);
+    }
+  }
+  
+  // Gameplay controls
+  if (gameState.gamePhase === GAME_PHASES.PLAYING) {
+    if (keyCode === 32) { // SPACE
+      fireWeapons(p);
+    } else if (keyCode === 81) { // Q - face left
+      gameState.facingRight = false;
+    } else if (keyCode === 69) { // E - face right
+      gameState.facingRight = true;
+    } else if (keyCode === 38) { // UP ARROW - aim up
+      gameState.firingAngle = Math.max(-30, gameState.firingAngle - 5);
+    } else if (keyCode === 40) { // DOWN ARROW - aim down
+      gameState.firingAngle = Math.min(30, gameState.firingAngle + 5);
+    }
+  }
+  
+  // Level complete controls
+  if (gameState.gamePhase === GAME_PHASES.LEVEL_COMPLETE) {
+    // Number keys for upgrades
+    if (keyCode >= 49 && keyCode <= 53) { // 1-5
+      const upgradeIndex = keyCode - 49;
+      performUpgrade(p, upgradeIndex);
+    } else if (keyCode === 13) { // ENTER to continue
+      gameState.currentLevel++;
+      initializeLevel(gameState.currentLevel);
+      gameState.gamePhase = GAME_PHASES.PLAYING;
+      p.logs.game_info.push({
+        data: { gamePhase: gameState.gamePhase, level: gameState.currentLevel },
+        framecount: p.frameCount,
+        timestamp: Date.now()
+      });
+    }
+  }
+}
+
+function startGame(p) {
+  gameState.gamePhase = GAME_PHASES.PLAYING;
+  gameState.score = 0;
+  gameState.blocksCollected = 10; // Start with some blocks
+  gameState.currentLevel = 1;
+  gameState.towerHealth = gameState.towerMaxHealth;
+  gameState.energy = gameState.maxEnergy;
+  gameState.comboCount = 0;
+  gameState.comboTimer = 0;
+  gameState.comboMultiplier = 1;
+  gameState.facingRight = true;
+  gameState.firingAngle = 0;
+  
+  if (gameState.player) {
+    gameState.player.health = gameState.towerMaxHealth;
+  }
+  
+  initializeLevel(1);
+  
+  p.logs.game_info.push({
+    data: { gamePhase: gameState.gamePhase, level: gameState.currentLevel },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+function resetGame(p) {
+  gameState.gamePhase = GAME_PHASES.START;
+  gameState.score = 0;
+  gameState.blocksCollected = 0;
+  gameState.currentLevel = 1;
+  gameState.towerMaxHealth = 100;
+  gameState.towerHealth = 100;
+  gameState.energy = 100;
+  gameState.maxEnergy = 100;
+  gameState.activeWeaponSlots = 1;
+  gameState.comboCount = 0;
+  gameState.comboTimer = 0;
+  gameState.comboMultiplier = 1;
+  gameState.facingRight = true;
+  gameState.firingAngle = 0;
+  gameState.powerupEffects = {
+    damageBoost: 0,
+    damageBoostTimer: 0
+  };
+  
+  // Reset weapons
+  gameState.weapons = [
+    {
+      type: "cannon",
+      damage: 20,
+      fireRate: 30,
+      lastFired: 0,
+      unlocked: true
+    },
+    {
+      type: "machinegun",
+      damage: 10,
+      fireRate: 10,
+      lastFired: 0,
+      unlocked: false
+    }
+  ];
+  
+  if (gameState.player) {
+    gameState.player.health = gameState.towerMaxHealth;
+  }
+  
+  gameState.zombies = [];
+  gameState.bullets = [];
+  gameState.blocks = [];
+  gameState.particles = [];
+  gameState.powerups = [];
+  
+  p.logs.game_info.push({
+    data: { gamePhase: gameState.gamePhase },
+    framecount: p.frameCount,
+    timestamp: Date.now()
+  });
+}
+
+export function updatePlayerMovement(p) {
+  if (gameState.gamePhase !== GAME_PHASES.PLAYING || !gameState.player) {
+    return;
+  }
+  
+  if (gameState.controlMode === "HUMAN") {
+    if (p.keyIsDown(37) || p.keyIsDown(65)) { // LEFT or A
+      gameState.towerX -= gameState.towerSpeed;
+    }
+    if (p.keyIsDown(39) || p.keyIsDown(68)) { // RIGHT or D
+      gameState.towerX += gameState.towerSpeed;
+    }
+  }
+  
+  // Constrain tower position
+  const halfWidth = gameState.player.width / 2;
+  gameState.towerX = Math.max(halfWidth, Math.min(600 - halfWidth, gameState.towerX));
+  gameState.player.x = gameState.towerX;
+}
+
+function fireWeapons(p) {
+  // Check energy
+  if (gameState.energy < gameState.shotEnergyCost) {
+    return; // Not enough energy
+  }
+  
+  let fired = false;
+  const direction = gameState.facingRight ? 1 : -1;
+  
+  for (let i = 0; i < gameState.activeWeaponSlots; i++) {
+    const weapon = gameState.weapons[i];
+    if (weapon && weapon.unlocked) {
+      if (p.frameCount - weapon.lastFired >= weapon.fireRate) {
+        const offsetX = gameState.activeWeaponSlots === 1 ? 0 : (i === 0 ? -15 : 15);
+        const bullet = new Bullet(
+          gameState.player.x + offsetX,
+          gameState.player.y - gameState.player.height - 10,
+          weapon.damage,
+          weapon.type,
+          direction,
+          gameState.firingAngle
+        );
+        gameState.bullets.push(bullet);
+        weapon.lastFired = p.frameCount;
+        fired = true;
+      }
+    }
+  }
+  
+  // Consume energy if any weapon fired
+  if (fired) {
+    gameState.energy -= gameState.shotEnergyCost;
+  }
+}
+
+function performUpgrade(p, upgradeIndex) {
+  const upgrades = getAvailableUpgrades();
+  if (upgradeIndex >= upgrades.length) return;
+  
+  const upgrade = upgrades[upgradeIndex];
+  if (gameState.blocksCollected >= upgrade.cost) {
+    gameState.blocksCollected -= upgrade.cost;
+    
+    switch (upgrade.id) {
+      case "health":
+        gameState.towerMaxHealth += 50;
+        gameState.towerHealth += 50;
+        if (gameState.player) {
+          gameState.player.health = gameState.towerHealth;
+        }
+        gameState.upgradeCosts.health += 5;
+        break;
+      case "weaponDamage":
+        gameState.weapons.forEach(w => {
+          if (w.unlocked) w.damage += 10;
+        });
+        gameState.upgradeCosts.weaponDamage += 10;
+        break;
+      case "weaponFireRate":
+        gameState.weapons.forEach(w => {
+          if (w.unlocked) w.fireRate = Math.max(5, w.fireRate - 3);
+        });
+        gameState.upgradeCosts.weaponFireRate += 10;
+        break;
+      case "secondSlot":
+        gameState.activeWeaponSlots = 2;
+        break;
+      case "unlockMachinegun":
+        gameState.weapons[1].unlocked = true;
+        break;
+    }
+  }
+}
+
+function getAvailableUpgrades() {
+  const upgrades = [
+    { id: "health", name: "Upgrade Health (+50 HP)", cost: gameState.upgradeCosts.health },
+    { id: "weaponDamage", name: "Upgrade Weapon Damage (+10)", cost: gameState.upgradeCosts.weaponDamage },
+    { id: "weaponFireRate", name: "Upgrade Fire Rate", cost: gameState.upgradeCosts.weaponFireRate }
+  ];
+  
+  if (gameState.activeWeaponSlots === 1) {
+    upgrades.push({ id: "secondSlot", name: "Unlock 2nd Weapon Slot", cost: gameState.upgradeCosts.secondSlot });
+  }
+  
+  if (!gameState.weapons[1].unlocked) {
+    upgrades.push({ id: "unlockMachinegun", name: "Unlock Machine Gun", cost: gameState.upgradeCosts.unlockMachinegun });
+  }
+  
+  return upgrades;
+}
+</file>
+</existing_files>
+</task>
+
+<output_instructions>
+IMPORTANT: Your response must have TWO sections in this exact order:
+
+1. First, output your analysis in <analysis> tags:
+<analysis>
+- Issue identified: [clear description of the root cause]
+- Files affected: [list the specific files that need changes]
+- Changes needed: [brief summary of what fixes to apply]
+</analysis>
+
+2. Then, output ONLY the updated files in this format:
+<code filename="{name}.{extension}">
+... (complete file contents with fixes applied)
+</code>
+
+Only output files that are being changed. Do not include commentary outside these tags.
+If you change HTML, include the full updated index.html.
+Keep the game playable and preserve the existing physics engine (p5.js or Matter.js).
+</output_instructions>

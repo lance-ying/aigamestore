@@ -1,0 +1,60 @@
+Let me analyze the issue: "when I catch a fish, and the shooting begins, none of the fish pop up"
+
+Looking at the code flow:
+
+1. When fishing (ASCENT phase), fish are caught and added to `gameState.caughtFish`
+2. When the player reaches the surface (depth <= 0), `startShootingPhase()` is called
+3. In `startShootingPhase()`, the code does:
+   - Sets subPhase to "SHOOTING"
+   - Initializes `gameState.airborneFish = []`
+   - Iterates through `gameState.caughtFish` and launches them into `gameState.airborneFish`
+
+Let me look at the ASCENT phase collision detection in physics.js:
+
+```javascript
+if (gameState.subPhase === "ASCENT") {
+    for (let i = gameState.fish.length - 1; i >= 0; i--) {
+        let fish = gameState.fish[i];
+        if (fish.caught) continue;
+
+        const dx = gameState.hookX - fish.x;
+        const dy = gameState.depth - fish.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+
+        if (dist < fish.width/2 + 10) {
+            // Catch!
+            fish.caught = true;
+            fish.relativeX = fish.x - gameState.hookX;
+            fish.relativeY = fish.y - gameState.depth;
+            gameState.caughtFish.push(fish);
+            gameState.fish.splice(i, 1);
+            
+            // Visual feedback
+            createExplosion(p, gameState.hookX, 200, [255, 255, 0], 3);
+        }
+    }
+}
+```
+
+So fish are being added to `caughtFish`.
+
+
+I notice the shooting phase initialization involves resetting fish properties for launching. The code prepares to position fish at the canvas center with some random horizontal spread and sets them at the bottom of the canvas. It looks like the vertical velocity is about to be defined, which will determine how the fish launch upward.
+
+The launch mechanism seems designed to create varied, staggered fish trajectories by introducing randomness in horizontal and vertical velocities. Each fish gets a slightly different initial launch configuration, which will make their aerial paths more dynamic and unpredictable.
+
+The gun angle is also preset to point directly upward, suggesting the player will soon be able to adjust their shooting direction using left and right arrow keys.
+
+I'll constrain the gun angle within a reasonable range, preventing it from rotating beyond certain limits. When the space key is pressed, I'll generate projectiles with a potential spread based on the current gun upgrade level, creating a more complex shooting mechanic that rewards weapon progression.
+
+I'll decrement the shooting cooldown timer to manage firing rate. Then I'll systematically update and manage projectiles, removing those that have expired while rendering active ones. The process involves iterating through the projectiles array in reverse to safely modify its contents during iteration.
+
+Next, I'll process airborne fish, updating their positions and rendering them. I'll track their vertical movement, identifying when fish have moved beyond the canvas boundaries, which likely indicates a missed target or potential point loss.
+
+The game checks for end conditions by examining the state of airborne and caught fish, along with remaining projectiles. If all airborne fish are gone, some fish have been caught, and no projectiles remain, a summary timer begins. This allows a brief pause before transitioning to the summary phase. Alternatively, if no fish are caught and no airborne fish exist, the game immediately moves to the summary screen.
+
+The code then proceeds to check collisions for the current game state, ensuring interactions between game elements are processed.
+
+I notice a critical logic flaw in the fish update mechanism. When a fish is caught during the ASCENT phase and `caught` is set to true, the update method immediately returns, preventing further movement during the SHOOTING phase. This means caught fish won't respond to physics or game dynamics after being hooked.
+
+The solution involves resetting the `caught` flag when launching fish in the `startShootingPhase()` method, which will allow caught fish to resume normal update behavior during subsequent game phases.
