@@ -59,14 +59,32 @@ Notes
 - Token usage is recorded where available in the iteration metadata files.
 
 ### Repository Structure
-- `generators/`, `evaluators/`, `iterators/`, `pipelines/`, `configs/`, `llm_interface/`, `utils/`, `prompts/`, `html_templates/`
-- `scripts/cli/` - Main CLI scripts (generate_game.py, evaluate_game.py, iterate_game.py, expand_concept.py)
-- `scripts/rl/` - Reinforcement learning tools (train_rl.py, gym_wrapper.py, etc.)
-- `scripts/tests/` - Test scripts
-- `scripts/utils/` - Utility scripts
-- `scripts/js/` - JavaScript utilities
-- `docs/` - Documentation files
-- `data/` - Data files
+
+**Generation pipeline (Python modules):**
+- `pipelines/`, `generators/`, `iterators/`, `evaluators/` — YAML-driven generation pipeline
+- `game_concept_generator/` — App Store URL → concept text
+- `steam_scraper/` — Steam API client (metadata, screenshots, videos)
+- `llm_interface/`, `utils/`, `prompts/`, `configs/`, `html_templates/`, `templates/`
+
+**Scripts:**
+- `scripts/concepts/` — Concept generation entry points (App Store + Steam)
+  - `generate_temp_concepts.py`, `generate_temp_concepts_steam.py`
+  - `add_app_store_descriptions.py`, `fetch_steam_concept.py`
+- `scripts/cli/` — Main pipeline CLI (generate_game.py, evaluate_game.py, iterate_game.py)
+- `scripts/batch/` — Batch ops: copy-by-flag (`copy_*_games.py`), flatten, URL mapping
+- `scripts/qa/` — HTML validation (`check_html_controls.py`, `check_html_violations.py`)
+- `scripts/rl/`, `scripts/tests/`, `scripts/utils/`, `scripts/js/`, `scripts/data_processing/`, `scripts/single/`
+
+**Game corpora & data:**
+- `games/` — Primary corpus (color-flagged tiers via `flags.json`)
+- `crawled_games/` — Secondary crawled corpus
+- `barebones/` — Minimal/reference games
+- `temp_concept_files/` — Transient concept text files (regenerated)
+- `screenshots/` — Captured game screenshots
+- `data/` — CSVs, input URLs, results, processing logs
+
+**Archived (kept for reference, not part of active pipeline):**
+- `_archive/matter_reference/`, `_archive/vlm_baseline/`, `_archive/old_games_corpus/`, `_archive/duplicates/`
 
 ### Gemini model selection for VLM
 Configure the VLM evaluator’s model via pipeline YAML (default `gemini-2.5-flash`, optionally `gemini-2.5-pro`). See Gemini model versions: https://ai.google.dev/gemini-api/docs/models#model-versions

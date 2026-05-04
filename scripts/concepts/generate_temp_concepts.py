@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 # Add project root to path
-project_root = Path(__file__).parent
+project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
 
 from game_concept_generator.url_parser import extract_url_info, extract_game_name_from_url

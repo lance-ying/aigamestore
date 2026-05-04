@@ -17,7 +17,7 @@ from pathlib import Path
 
 def main():
     # Get project root
-    project_root = Path(__file__).parent
+    project_root = Path(__file__).resolve().parents[2]
     base_path = project_root / 'games' / 'games_final'
     output_dir = project_root / 'games' / 'games_final_true'
     

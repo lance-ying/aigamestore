@@ -172,7 +172,7 @@ def main():
     args = parser.parse_args()
     
     # Setup paths
-    project_root = Path(__file__).parent
+    project_root = Path(__file__).resolve().parents[2]
     source_dir = project_root / args.source
     dest_dir = project_root / args.dest
     

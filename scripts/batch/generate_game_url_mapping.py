@@ -403,10 +403,10 @@ def scan_all_directories(base_path: Path, csv_data: List[Dict], concept_data: Li
 
 def main():
     """Main entry point."""
-    base_path = Path(__file__).parent / 'games' / 'games_final'
-    csv_dir = Path(__file__).parent / 'archive' / 'games'
-    concepts_dir = Path(__file__).parent / 'data' / 'concepts' / 'game_concepts'
-    output_csv = Path(__file__).parent / 'game_url_mapping.csv'
+    base_path = Path(__file__).resolve().parents[2] / 'games' / 'games_final'
+    csv_dir = Path(__file__).resolve().parents[2] / 'archive' / 'games'
+    concepts_dir = Path(__file__).resolve().parents[2] / 'data' / 'concepts' / 'game_concepts'
+    output_csv = Path(__file__).resolve().parents[2] / 'game_url_mapping.csv'
     
     print("Loading CSV files...")
     csv_data = load_csv_files(csv_dir)

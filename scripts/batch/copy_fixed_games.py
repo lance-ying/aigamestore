@@ -13,7 +13,7 @@ from pathlib import Path
 
 def main():
     # Get project root
-    project_root = Path(__file__).parent
+    project_root = Path(__file__).resolve().parents[2]
     csv_path = project_root / 'games_with_html_controls.csv'
     base_path = project_root / 'games' / 'games_final'
     output_dir = project_root / 'games' / 'add_controls_14_games'

@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 # Add project root to path
-project_root = Path(__file__).parent
+project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
 
 from game_concept_generator.url_parser import extract_url_info
@@ -80,7 +80,7 @@ def add_description_to_file(file_path: Path):
 def main():
     """Process all temp concept files."""
     # Automatically find all temp_concept files that don't have full descriptions yet
-    project_root = Path(__file__).parent
+    project_root = Path(__file__).resolve().parents[2]
     temp_files = []
     
     for file_path in project_root.glob("temp_concept_*.txt"):

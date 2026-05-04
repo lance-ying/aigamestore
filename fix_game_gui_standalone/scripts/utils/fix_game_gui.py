@@ -12,6 +12,7 @@ Usage:
     uv run python fix_game_gui.py
     uv run python fix_game_gui.py --port 7860
     uv run python fix_game_gui.py --share  # Create public URL
+    uv run python fix_game_gui.py --large-text  # Use larger font sizes
 """
 # /// script
 # dependencies = ["gradio", "anthropic", "openai", "pyyaml", "google-generativeai"]
@@ -169,6 +170,9 @@ COLOR_HEX = {
     "blue": "#4444ff",
     "purple": "#aa44ff",
 }
+
+# Global setting for large text mode
+LARGE_TEXT_MODE = False
 
 
 def start_game_server(games_dir: str = "games/games"):
@@ -893,15 +897,15 @@ def refresh_games(directory: str = "games/games", sort_by: str = "alphabetical")
     return gr.Dropdown(choices=choices, value=choices[0][1] if choices else "")
 
 
-def on_game_selected_minimal(game_path: str) -> Tuple[str, gr.Dropdown, str]:
+def on_game_selected_minimal(game_path: str) -> Tuple[str, gr.Dropdown, str, str]:
     """
     Handle game selection event (minimal version).
-    
+
     Returns:
-        Tuple of (iframe_html, backup_dropdown, current_flag_color)
+        Tuple of (iframe_html, backup_dropdown, current_flag_color, concept_text)
     """
     if not game_path:
-        return "", gr.Dropdown(choices=[]), "none"
+        return "", gr.Dropdown(choices=[]), "none", ""
     
     game_dir = Path(game_path)
     
@@ -932,8 +936,12 @@ def on_game_selected_minimal(game_path: str) -> Tuple[str, gr.Dropdown, str]:
     # Get current flag color
     flag_color = get_game_flag(game_path)
     current_flag = flag_color if flag_color else "none"
-    
-    return iframe_html, gr.Dropdown(choices=backup_choices), current_flag
+
+    # Get concept from metadata
+    concept = extract_concept_from_metadata(game_path)
+    concept_text = concept if concept else "No concept found in metadata.json"
+
+    return iframe_html, gr.Dropdown(choices=backup_choices), current_flag, concept_text
 
 
 # COMMENTED OUT: Level selector functionality
@@ -1299,25 +1307,33 @@ def update_flag_counts(games_dir: str = "games/games") -> str:
     counts = get_flag_counts(games)
     
     total_flagged = sum(counts.values())
-    
+
+    # Use larger font sizes if large text mode is enabled
+    if LARGE_TEXT_MODE:
+        header_font_size = "18px"
+        item_font_size = "15px"
+    else:
+        header_font_size = "14px"
+        item_font_size = "12px"
+
     html_lines = [
         '<div style="background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 15px; font-family: monospace; color: #c9d1d9;">',
-        '<h3 style="margin: 0 0 15px 0; color: #c9d1d9; font-size: 14px;">Flag Counts</h3>',
+        f'<h3 style="margin: 0 0 15px 0; color: #c9d1d9; font-size: {header_font_size};">Flag Counts</h3>',
     ]
-    
+
     for color in FLAG_COLORS:
         count = counts[color]
         emoji = COLOR_EMOJIS[color]
         color_name = color.capitalize()
         html_lines.append(
-            f'<div style="margin-bottom: 8px; font-size: 12px;">'
+            f'<div style="margin-bottom: 8px; font-size: {item_font_size};">'
             f'<span style="margin-right: 8px;">{emoji}</span>'
             f'<span style="color: #8b949e;">{color_name}:</span> '
             f'<span style="color: #c9d1d9; font-weight: bold;">{count}</span>'
             f'</div>'
         )
-    
-    html_lines.append('<div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #30363d; font-size: 12px;">')
+
+    html_lines.append(f'<div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #30363d; font-size: {item_font_size};">')
     html_lines.append(f'<span style="color: #8b949e;">Total Flagged:</span> ')
     html_lines.append(f'<span style="color: #c9d1d9; font-weight: bold;">{total_flagged}</span>')
     html_lines.append('</div>')
@@ -1677,9 +1693,15 @@ def regenerate_game_action(game_path: str, model: str, method: str) -> Tuple[str
                 pass
 
 
-def build_interface():
-    """Build the Gradio interface."""
-    
+def build_interface(large_text: bool = False):
+    """Build the Gradio interface.
+
+    Args:
+        large_text: If True, use larger font sizes for better readability
+    """
+    global LARGE_TEXT_MODE
+    LARGE_TEXT_MODE = large_text
+
     # Start game server
     start_game_server()
     
@@ -1702,50 +1724,64 @@ def build_interface():
     
     if not game_choices:
         game_choices = [("No games found", "")]
-    
+
+    # Set font sizes based on large_text flag
+    if large_text:
+        base_font_size = "16px"
+        button_font_size = "16px"
+        label_font_size = "15px"
+    else:
+        base_font_size = "13px"
+        button_font_size = "13px"
+        label_font_size = "13px"
+
     # Custom CSS for sleek dark mode code-style interface
-    custom_css = """
-    * {
+    custom_css = f"""
+    * {{
         font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'source-code-pro', monospace !important;
-    }
-    .gradio-container {
+    }}
+    .gradio-container {{
         max-width: 100% !important;
         background-color: #0d1117 !important;
-    }
-    body {
+    }}
+    body {{
         background-color: #0d1117 !important;
-    }
-    .dark, .dark * {
+        font-size: {base_font_size} !important;
+    }}
+    .dark, .dark * {{
         background-color: #0d1117 !important;
         color: #c9d1d9 !important;
-    }
-    button {
+    }}
+    button {{
         border-radius: 4px !important;
-        font-size: 13px !important;
+        font-size: {button_font_size} !important;
         background-color: #21262d !important;
         border: 1px solid #30363d !important;
         color: #c9d1d9 !important;
-    }
-    button:hover {
+    }}
+    button:hover {{
         background-color: #30363d !important;
-    }
-    .dropdown, input, textarea {
-        font-size: 13px !important;
+    }}
+    .dropdown, input, textarea {{
+        font-size: {base_font_size} !important;
         border-radius: 4px !important;
         background-color: #0d1117 !important;
         border: 1px solid #30363d !important;
         color: #c9d1d9 !important;
-    }
-    label {
+    }}
+    label {{
         color: #c9d1d9 !important;
-    }
+        font-size: {label_font_size} !important;
+    }}
+    textarea {{
+        font-size: {base_font_size} !important;
+    }}
+    .gradio-html {{
+        font-size: {base_font_size} !important;
+    }}
     """
-    
-    # Create Blocks - use minimal parameters for compatibility
-    # CSS will be injected via HTML component
-    with gr.Blocks(title="Game Fix") as app:
-        # Inject custom CSS as first component
-        gr.HTML(f"<style>{custom_css}</style>", visible=False)
+
+    with gr.Blocks(title="Game Fix", theme=gr.themes.Monochrome(), css=custom_css) as app:
         
         with gr.Row():
             # Left: Flag Counts and Status (narrow)
@@ -1813,6 +1849,7 @@ def build_interface():
                         ("Claude 4.5 Sonnet", "anthropic:claude-4.5-sonnet"),
                         ("Claude 4.5 Haiku", "anthropic:claude-4.5-haiku"),
                         ("Gemini 3 Pro Preview", "google:gemini-3-pro-preview"),
+                        ("Gemini 3 Flash Preview", "google:gemini-3-flash-preview"),
                         ("Gemini 2.5 Flash", "google:gemini-2.5-flash"),
                     ],
                     value="anthropic:claude-4.5-sonnet",
@@ -1834,8 +1871,37 @@ def build_interface():
                         interactive=True
                     )
                     restore_btn = gr.Button("Restore")
-                
-        
+
+                with gr.Accordion("Regenerate Game", open=False):
+                    regenerate_model_dropdown = gr.Dropdown(
+                        choices=[
+                            ("Claude 4.5 Sonnet", "anthropic:claude-4.5-sonnet"),
+                            ("Gemini 3 Pro Preview", "google:gemini-3-pro-preview"),
+                            ("Gemini 3 Flash Preview", "google:gemini-3-flash-preview"),
+                        ],
+                        value="anthropic:claude-4.5-sonnet",
+                        label="Model",
+                        interactive=True
+                    )
+                    regenerate_method_dropdown = gr.Dropdown(
+                        choices=[
+                            ("Matter.js", "matter"),
+                            ("Three.js", "threejs"),
+                            ("p5.js", "p5js"),
+                        ],
+                        value="p5js",
+                        label="Generation Method",
+                        interactive=True
+                    )
+                    concept_display = gr.Textbox(
+                        label="Concept (from metadata.json)",
+                        lines=6,
+                        interactive=False,
+                        placeholder="Select a game to view its concept..."
+                    )
+                    regenerate_btn = gr.Button("Regenerate Game", variant="primary")
+
+
         # Wire up events
         # When directory changes, refresh game list and flag counts
         directory_dropdown.change(
@@ -1876,7 +1942,7 @@ def build_interface():
         game_dropdown.change(
             fn=on_game_selected_minimal,
             inputs=[game_dropdown],
-            outputs=[game_iframe, backup_list, flag_color_dropdown]
+            outputs=[game_iframe, backup_list, flag_color_dropdown, concept_display]
         )
         
         # Flag management events
@@ -1902,15 +1968,21 @@ def build_interface():
         app.load(
             fn=on_game_selected_minimal,
             inputs=[game_dropdown],
-            outputs=[game_iframe, backup_list, flag_color_dropdown]
+            outputs=[game_iframe, backup_list, flag_color_dropdown, concept_display]
         )
-        
+
+        # Regenerate game event
+        regenerate_btn.click(
+            fn=regenerate_game_action,
+            inputs=[game_dropdown, regenerate_model_dropdown, regenerate_method_dropdown],
+            outputs=[status_output, game_iframe]
+        )
         app.load(
             fn=update_flag_counts,
             inputs=[directory_dropdown],
             outputs=[flag_counts_html]
         )
-    
+
     return app
 
 
@@ -1927,7 +1999,12 @@ def main():
         action="store_true",
         help="Create a public Gradio link"
     )
-    
+    parser.add_argument(
+        "--large-text",
+        action="store_true",
+        help="Use larger font sizes for better readability"
+    )
+
     args = parser.parse_args()
     
     # Verify project root and .env location
@@ -1942,13 +2019,15 @@ def main():
         print(f"⚠ .env file not found: {env_file}")
     print("="*60 + "\n")
     
-    app = build_interface()
-    
+    app = build_interface(large_text=args.large_text)
+
     print("\n" + "="*60)
     print("Game Fix GUI")
     print("="*60)
     print(f"\nStarting Gradio interface on http://localhost:{args.port}")
     print(f"Game server running on http://localhost:{GAME_SERVER_PORT}")
+    if args.large_text:
+        print("Large text mode enabled")
     print("\nPress Ctrl+C to stop\n")
     
     app.launch(

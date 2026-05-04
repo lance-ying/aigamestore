@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 
 # Project root directory
-PROJECT_ROOT = Path(__file__).parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FLAGS_FILE = PROJECT_ROOT / "flags.json"
 SOURCE_DIR = PROJECT_ROOT / "games" / "games"
 DEST_DIR = PROJECT_ROOT / "games" / "green_flag_games"

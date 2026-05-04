@@ -311,19 +311,19 @@ def main():
     if args.directory:
         base_path = Path(args.directory)
         if not base_path.is_absolute():
-            base_path = Path(__file__).parent / args.directory
+            base_path = Path(__file__).resolve().parents[2] / args.directory
         flat_structure = True  # Assume flat if directory is explicitly provided
     else:
-        base_path = Path(__file__).parent / 'games' / 'games_final'
+        base_path = Path(__file__).resolve().parents[2] / 'games' / 'games_final'
         flat_structure = False  # Use nested structure by default
     
     # Determine output path
     if args.output:
         output_csv = Path(args.output)
         if not output_csv.is_absolute():
-            output_csv = Path(__file__).parent / args.output
+            output_csv = Path(__file__).resolve().parents[2] / args.output
     else:
-        output_csv = Path(__file__).parent / 'games_with_html_controls.csv'
+        output_csv = Path(__file__).resolve().parents[2] / 'games_with_html_controls.csv'
     
     print("Scanning game directories for controls and descriptions in HTML...")
     results = scan_all_games(base_path, flat_structure=flat_structure)

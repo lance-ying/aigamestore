@@ -17,7 +17,7 @@ from typing import Set, Dict, List
 import importlib.util
 
 
-PROJECT_ROOT = Path(__file__).parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_SCRIPT = PROJECT_ROOT / "scripts" / "utils" / "fix_game_gui.py"
 DEST_DIR = PROJECT_ROOT / "fix_game_gui_standalone"
 

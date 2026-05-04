@@ -246,15 +246,15 @@ def main():
     # Determine base path
     base_path = Path(args.directory)
     if not base_path.is_absolute():
-        base_path = Path(__file__).parent / args.directory
+        base_path = Path(__file__).resolve().parents[2] / args.directory
     
     # Determine output path
     if args.output:
         output_csv = Path(args.output)
         if not output_csv.is_absolute():
-            output_csv = Path(__file__).parent / args.output
+            output_csv = Path(__file__).resolve().parents[2] / args.output
     else:
-        output_csv = Path(__file__).parent / 'games_html_violations.csv'
+        output_csv = Path(__file__).resolve().parents[2] / 'games_html_violations.csv'
     
     print("Scanning game directories for violations...")
     results = scan_all_games(base_path)

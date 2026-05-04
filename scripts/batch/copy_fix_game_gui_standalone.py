@@ -8,7 +8,7 @@ This creates a self-contained version that can be used in a separate repository.
 import shutil
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEST_DIR = PROJECT_ROOT / "fix_game_gui_standalone"
 
 # Files and directories to copy
