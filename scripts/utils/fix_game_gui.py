@@ -130,6 +130,7 @@ game_server_thread = None
 # Configuration for multiple game directories
 GAME_DIRECTORIES = {
     "Games": "games/games",
+    "Barebones": "barebones/generated",
     "All Games 020526": "games/all_games_020926",
     "Single Prompt (nested)": "games/single_prompt_with_testing",
     "Single Prompt 1 (nested)": "games/single_prompt_with_testing_1",
@@ -2015,4 +2016,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
