@@ -4,9 +4,7 @@ Gameplay sessions, per-session telemetry, and qualitative feedback collected
 from the deployed user study. Participants were recruited via Prolific.
 
 Machine-readable metadata for this dataset is in [`croissant.jsonld`](croissant.jsonld)
-(MLCommons Croissant 1.0; includes Responsible AI fields). The `contentUrl`
-of the `aigamestore-videos` distribution entry is a placeholder — fill in the
-external archive URL once the video release is hosted.
+(MLCommons Croissant 1.0; includes Responsible AI fields).
 
 ## Top-level layout
 
@@ -37,11 +35,6 @@ data/study/
 
 ## What's not included
 
-- **Gameplay videos** (`video.webm`, ~3.2 GB across 902 sessions): held in
-  the sibling release `aigamestore_anonymous_videos/`. Its directory layout
-  mirrors `data/study/sessions/` so videos can be aligned by path. The
-  `inputs.json` event stream and `scores.json` time-series included here
-  preserve everything needed for quantitative analysis without the videos.
 - **Verbose runtime logs** (`logs.json`, ~189 MB): excluded as redundant —
   these are JS console output captured during gameplay and were used only
   for debugging the deployed app.

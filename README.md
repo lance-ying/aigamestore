@@ -8,6 +8,6 @@ Anonymous code package accompanying the NeurIPS submission. Three components:
 - **`model evaluation/`** — VLM evaluation harness (Playwright + LLM loop over the games).
 - **`human experiment/`** — the user study.
   - `frontend/` — Next.js participant frontend that served the 100-game corpus.
-  - `study_data/` — collected data: 128 participants, 3,722 sessions, per-session events, scores, and feedback. Schema in `study_data/README.md`. Gameplay videos (~3.2 GB) ship separately as `aigamestore_anonymous_videos/`.
+  - `study_data/` — collected data: 128 participants, 3,722 sessions, per-session events, scores, and feedback. Schema in `study_data/README.md`.
 
 See each subfolder's README for setup and usage.
