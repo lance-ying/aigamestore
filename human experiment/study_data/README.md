@@ -3,6 +3,11 @@
 Gameplay sessions, per-session telemetry, and qualitative feedback collected
 from the deployed user study. Participants were recruited via Prolific.
 
+Machine-readable metadata for this dataset is in [`croissant.jsonld`](croissant.jsonld)
+(MLCommons Croissant 1.0; includes Responsible AI fields). The `contentUrl`
+of the `aigamestore-videos` distribution entry is a placeholder — fill in the
+external archive URL once the video release is hosted.
+
 ## Top-level layout
 
 ```
