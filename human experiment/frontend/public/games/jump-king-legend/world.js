@@ -1,0 +1,140 @@
+/**
+ * Handles level generation and camera management.
+ * The world is a tall vertical shaft.
+ */
+import { gameState, WORLD_HEIGHT, WORLD_WIDTH, CANVAS_HEIGHT, CANVAS_WIDTH } from './globals.js';
+import { Platform, Decoration } from './entities.js';
+
+export function initWorld() {
+    gameState.platforms = [];
+    gameState.decorations = [];
+    
+    // Create Walls
+    // Left Wall
+    gameState.platforms.push(new Platform(-50, -1000, 50, WORLD_HEIGHT + 2000, 'STONE'));
+    // Right Wall
+    gameState.platforms.push(new Platform(WORLD_WIDTH, -1000, 50, WORLD_HEIGHT + 2000, 'STONE'));
+    
+    // Create Floor
+    gameState.platforms.push(new Platform(0, WORLD_HEIGHT - 50, WORLD_WIDTH, 100, 'STONE'));
+
+    // --- Generate Level Sections (Bottom to Top) ---
+    
+    // 1. Tutorial / Base Area (4000 - 3500)
+    // Widened platforms for easier start
+    addPlatform(200, 3900, 250, 20, 'STONE');
+    addPlatform(350, 3800, 180, 20, 'STONE');
+    addPlatform(100, 3750, 200, 20, 'STONE');
+    addPlatform(300, 3680, 180, 20, 'WOOD');
+    
+    let lastX = 300; // Track X for reachable generation
+    let lastW = 180; // Track Width for overlap checking
+
+    // 2. The Forest / Mossy Area (3500 - 2500)
+    // Start slightly higher to bridge gap from 3680
+    for (let y = 3550; y > 2500; y -= 150) {
+        // Significantly increased width range (120 to 200) to make landing easier
+        let w = Math.random() * 80 + 120;
+        let x;
+        
+        let minX = 60;
+        let maxX = WORLD_WIDTH - 60 - w;
+        
+        // Ensure we don't stack directly above the previous platform
+        let attempts = 0;
+        let valid = false;
+        
+        do {
+            x = Math.random() * (maxX - minX) + minX;
+            
+            // Calculate overlap with previous platform
+            // Interval 1: [lastX, lastX + lastW]
+            // Interval 2: [x, x + w]
+            let start = Math.max(x, lastX);
+            let end = Math.min(x + w, lastX + lastW);
+            let overlap = Math.max(0, end - start);
+            
+            // We want to minimize overlap to prevent head bonking
+            // Allow a small overlap (e.g. 40px) for forgiveness, but not large
+            if (overlap < 40) {
+                valid = true;
+            }
+            
+            attempts++;
+        } while (!valid && attempts < 20);
+
+        // If we couldn't find a non-overlapping spot, just take the last random x
+        // but maybe shift it to be far from center if possible.
+        // For now, the attempt limit prevents infinite loops.
+
+        addPlatform(x, y, w, 20, 'WOOD');
+        lastX = x;
+        lastW = w;
+        
+        // Add some random smaller blocks for difficulty, but wider and less frequent
+        if (Math.random() > 0.7) {
+            let bx = Math.random() * 500 + 50;
+            let bw = 60; // Wider
+            // Only add if it doesn't overlap the current platform's x range
+            // This prevents the bonus block from being a ceiling for the current platform
+            // since it is placed at y - 75 (above)
+            if (bx + bw < x - 10 || bx > x + w + 10) {
+                addPlatform(bx, y - 75, bw, 20, 'STONE');
+            }
+        }
+        
+        // Decor
+        gameState.decorations.push(new Decoration(Math.random() * 500 + 50, y - 50, 'TORCH'));
+    }
+    
+    // Bridge from Forest to Sky to ensure connectivity
+    addPlatform(200, 2580, 200, 20, 'WOOD');
+    
+    // 3. The Sky / Clouds (2500 - 1000)
+    // Zigzag pattern
+    let leftSide = true;
+    for (let y = 2500; y > 1000; y -= 140) {
+        // Spread out more horizontally (80 vs 340) and made much wider (180)
+        let x = leftSide ? 80 : 340; 
+        let w = 180; 
+        leftSide = !leftSide;
+        
+        addPlatform(x, y, w, 20, 'STONE');
+        
+        gameState.decorations.push(new Decoration(Math.random()*600, y, 'CLOUD'));
+    }
+    
+    // 4. The Tower / Space (1000 - 100)
+    for (let y = 1000; y > 200; y -= 200) {
+        // Easier tower climb with wider platforms
+        addPlatform(220, y, 160, 20, 'STONE'); // Center
+        addPlatform(50, y - 100, 100, 20, 'STONE'); // Left Side
+        addPlatform(450, y - 100, 100, 20, 'STONE'); // Right Side
+    }
+    
+    // 5. The Top (Goal)
+    addPlatform(200, 150, 200, 40, 'GOAL');
+}
+
+function addPlatform(x, y, w, h, type) {
+    gameState.platforms.push(new Platform(x, y, w, h, type));
+}
+
+export function updateCamera(p) {
+    if (!gameState.player) return;
+    
+    const targetY = gameState.player.y - CANVAS_HEIGHT / 2;
+    
+    // Smooth Lerp
+    gameState.camera.y += (targetY - gameState.camera.y) * 0.1;
+    
+    // Clamp Camera
+    // We want the camera to be able to go up to the top (negative coords if needed, but here 0)
+    // And down to bottom
+    const minCamY = -200;
+    const maxCamY = WORLD_HEIGHT - CANVAS_HEIGHT;
+    
+    gameState.camera.y = p.constrain(gameState.camera.y, minCamY, maxCamY);
+    
+    gameState.camera.x = 0; // No horizontal scrolling
+}
