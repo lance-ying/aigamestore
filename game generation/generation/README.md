@@ -67,6 +67,31 @@ Accepted values:
 - `matterjs` or `matter.js`
 - `threejs` or `three.js`
 
+## Generate-test-fix loop
+
+`generate_with_testing.py` extends the one-shot generator with the
+test-driven loop described in the paper: the LLM emits an automated-testing
+plan alongside the code, the Playwright-based `basic_test` harness runs the
+generated game (loading it, pressing ENTER to start, then sending randomized
+gameplay keys for a few seconds), and any failure feedback is fed back to the
+LLM for up to `--max-iters` fix passes.
+
+```bash
+pip install playwright
+python -m playwright install firefox
+
+python generate_with_testing.py \
+  --source steam \
+  --library p5js \
+  --url "https://store.steampowered.com/app/1061090/Jump_King/" \
+  --max-iters 2
+```
+
+Per-iteration test results, feedback, and the LLM-authored testing plan are
+saved under `<game_dir>/evaluation/basic_test/` and `<game_dir>/automated_testing.md`.
+The harness lives in `../review_ui/evaluators/basic_test/`; this script imports
+`test_game()` from there directly.
+
 ## References
 
 The `refs/` folder contains earlier prompt/context files for comparison
