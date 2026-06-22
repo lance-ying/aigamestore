@@ -2,6 +2,8 @@
 
 **Scalable, Open-Ended Evaluation of Machine General Intelligence with Human Games**
 
+🎮 Website: https://www.aigamestore.org &nbsp;·&nbsp; 📄 Paper: [arXiv:2602.17594](https://arxiv.org/abs/2602.17594)
+
 ## Overview
 
 AI GameStore evaluates machine general intelligence through performance on **human games** —
@@ -26,7 +28,7 @@ planning.
 
 ## Code package
 
-Anonymous code package accompanying the NeurIPS submission. Three components:
+Code package accompanying the paper. Three components:
 
 - **`game generation/`** — Steam/App Store URL → playable HTML5 game.
   - `generation/` — generation pipeline (default model: `google:gemini-3-pro-preview`). `generate.py` is one-shot; `generate_with_testing.py` runs the generate → simulated-play test → LLM-fix loop.
@@ -37,3 +39,25 @@ Anonymous code package accompanying the NeurIPS submission. Three components:
   - `study_data/` — collected data: 128 participants, 3,722 sessions, per-session events, scores, and feedback. Schema in `study_data/README.md`.
 
 See each subfolder's README for setup and usage.
+
+## Citation
+
+AI Gamestore: Scalable, Open-Ended Evaluation of Machine General Intelligence with Human Games.
+Lance Ying, Ryan Truong, Prafull Sharma, Kaiya Ivy Zhao, Nathan Cloos, Kelsey R. Allen,
+Thomas L. Griffiths, Katherine M. Collins, José Hernández-Orallo, Phillip Isola,
+Samuel J. Gershman, Joshua B. Tenenbaum. arXiv:2602.17594, 2026.
+
+```bibtex
+@misc{ying2026aigamestore,
+  title  = {AI Gamestore: Scalable, Open-Ended Evaluation of Machine General
+            Intelligence with Human Games},
+  author = {Ying, Lance and Truong, Ryan and Sharma, Prafull and Zhao, Kaiya Ivy and
+            Cloos, Nathan and Allen, Kelsey R. and Griffiths, Thomas L. and
+            Collins, Katherine M. and Hern\'andez-Orallo, Jos\'e and Isola, Phillip and
+            Gershman, Samuel J. and Tenenbaum, Joshua B.},
+  year   = {2026},
+  eprint = {2602.17594},
+  archivePrefix = {arXiv},
+  url    = {https://arxiv.org/abs/2602.17594},
+}
+```
