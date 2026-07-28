@@ -6,6 +6,7 @@ Anonymous code package accompanying the NeurIPS submission. Three components:
   - `generation/` — generation pipeline (default model: `google:gemini-3-pro-preview`). `generate.py` is one-shot; `generate_with_testing.py` runs the generate → simulated-play test → LLM-fix loop.
   - `review_ui/` — Gradio review UI, batch cleanup scripts used to curate the study corpus, and the Playwright-based `basic_test` harness used by the test-fix loop.
 - **`model evaluation/`** — VLM evaluation harness (Playwright + LLM loop over the games).
+  - `games/` — the **10 public games** (`game1`–`game10`), the playable HTML5 games released with this package.
 - **`human experiment/`** — the user study.
   - `frontend/` — Next.js participant frontend that served the 100-game corpus.
   - `study_data/` — collected data: 128 participants, 3,722 sessions, per-session events, scores, and feedback. Schema in `study_data/README.md`.
