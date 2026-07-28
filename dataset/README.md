@@ -15,5 +15,5 @@ These are the same games evaluated by the harness in `../model evaluation/`.
 
 ## `videos/` — example gameplay
 
-`example_gameplay_01.mp4` … `example_gameplay_20.mp4` — 30-second example
+`example_gameplay_01.mp4` … `example_gameplay_25.mp4` — 30-second example
 gameplay clips (H.264 MP4).
