@@ -9,5 +9,6 @@ Anonymous code package accompanying the NeurIPS submission. Three components:
 - **`human experiment/`** — the user study.
   - `frontend/` — Next.js participant frontend that served the 100-game corpus.
   - `study_data/` — collected data: 128 participants, 3,722 sessions, per-session events, scores, and feedback. Schema in `study_data/README.md`.
+- **`extra-examples/`** — extra example screenshots of generated games.
 
 See each subfolder's README for setup and usage.
