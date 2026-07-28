@@ -147,20 +147,12 @@ const ConsentForm: React.FC<ConsentFormProps> = ({ onConsent }) => {
 
             <p className="font-bold mb-2">Who can I talk to?</p>
             <p className="mb-4">
-              If you have questions, concerns, or complaints, or think the research has hurt you, talk to the research team by contacting Ryan Truong at{' '}
-              <a href="mailto:truongtruong@g.harvard.edu" className="text-blue-600 underline">
-                truongtruong@g.harvard.edu
-              </a>. You may also contact the Principal Investigator, Samuel Gershman, at{' '}
-              <a href="mailto:gershman@fas.harvard.edu" className="text-blue-600 underline">
-                gershman@fas.harvard.edu
-              </a>.
+              If you have questions, concerns, or complaints, or think the research has hurt you, talk to the research team.{' '}
+              <em>[Research-team contact details redacted for anonymous peer review.]</em>
             </p>
             <p className="mb-4">
-              This research has been reviewed and approved by the Harvard University Area Institutional Review Board ("IRB"). Learn more about the IRB and your rights as a participant on the IRB's For Research Participants webpage. You may contact the IRB at (617) 496-2847 or{' '}
-              <a href="mailto:cuhs@harvard.edu" className="text-blue-600 underline">
-                cuhs@harvard.edu
-              </a>{' '}
-              if:
+              This research has been reviewed and approved by the Institutional Review Board ("IRB").{' '}
+              <em>[IRB contact details redacted for anonymous peer review.]</em> You may contact the IRB if:
             </p>
             <p className="mb-1">• Your questions, concerns, or complaints are not being answered by the research team.</p>
             <p className="mb-1">• You cannot reach the research team.</p>

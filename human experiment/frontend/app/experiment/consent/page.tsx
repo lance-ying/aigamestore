@@ -37,7 +37,7 @@ export default function ConsentPage() {
           <div className="text-sm text-black leading-relaxed">
             <h2 className="text-xl font-bold mb-4 text-black">Welcome to our study!</h2>
             <p className="mb-4">
-              By agreeing to this consent form, you agree to participate in a study conducted by researchers from the Massachusetts Institute of Technology (MIT). The purpose of this study is to rate new video games for how fun and playable they are. The results will inform research in artificial intelligence and cognitive science.
+              By agreeing to this consent form, you agree to participate in a study conducted by academic researchers. The purpose of this study is to rate new video games for how fun and playable they are. The results will inform research in artificial intelligence and cognitive science.
             </p>
 
             <ul className="list-disc list-inside space-y-3 mb-6">
@@ -54,10 +54,7 @@ export default function ConsentPage() {
                 <strong className="text-black">Anonymity & Data Use:</strong> We record keyboard/mouse interactions and a brief canvas video. Data are anonymous and used for research. Your anonymity is assured; the researchers will not receive any personal information about you. We may release anonymized gameplay data as part of open-source research. Please do not participate unless you are comfortable with your gameplay traces being shared in this way.
               </li>
               <li>
-                <strong className="text-black">Contact:</strong> If you have questions about this research, please contact the researchers at{' '}
-                <a href="mailto:katiemc@mit.edu" className="text-blue-600 underline hover:text-blue-700">
-                  katiemc@mit.edu
-                </a>. For questions regarding your rights as a participant, or if problems arise which you do not feel you can discuss with the researchers, please contact the MIT Committee on the Use of Humans as Experimental Subjects (COUHES).
+                <strong className="text-black">Contact:</strong> If you have questions about this research, please contact the research team. <em>[Contact details redacted for anonymous peer review.]</em> For questions regarding your rights as a participant, or if problems arise which you do not feel you can discuss with the researchers, please contact the institution&apos;s human-subjects review committee.
               </li>
               <li>
                 <strong className="text-black">Records:</strong> You may print a copy of this consent form for your records.
