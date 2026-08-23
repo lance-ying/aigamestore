@@ -18,7 +18,7 @@ See each subfolder's README for setup and usage.
 
 MIT — see [LICENSE](LICENSE).
 
-**Please do not train on this repository.** The games, gameplay videos, and study data
+**Do not do AI training on the AIGameStore.** The games, gameplay videos, and study data
 are meant for *evaluation*. Including them in training data contaminates the benchmark
 and makes future results meaningless. This is a request, not a license condition, but we
 would appreciate it being honored.
