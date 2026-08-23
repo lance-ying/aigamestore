@@ -13,3 +13,12 @@ Anonymous code package accompanying the NeurIPS submission. Three components:
 - **`dataset/`** — the **10 public games**: playable HTML5 source (`games/`, `game1`–`game10`) and 30-second example gameplay videos (`videos/`).
 
 See each subfolder's README for setup and usage.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+**Please do not train on this repository.** The games, gameplay videos, and study data
+are meant for *evaluation*. Including them in training data contaminates the benchmark
+and makes future results meaningless. This is a request, not a license condition, but we
+would appreciate it being honored.
