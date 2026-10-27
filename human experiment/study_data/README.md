@@ -11,8 +11,8 @@ Machine-readable metadata for this dataset is in [`croissant.jsonld`](croissant.
 ```
 data/study/
 ├── firestore/
-│   ├── gameplay_sessions.json   # 3,722 session records
-│   └── users.json               # 128 participants
+│   ├── gameplay_sessions.json   # 2,281 session records
+│   └── users.json               # 87 participants
 ├── sessions/<game-slug>/user_sessions/<userId>/<sessionId>/
 │   ├── inputs.json              # input event stream
 │   ├── metadata.json            # per-session metadata
@@ -26,13 +26,17 @@ data/study/
 
 | Item | Count |
 |---|---|
-| Participants | 128 |
-| Sessions | 3,722 |
+| Participants (with session records) | 87 |
+| Sessions | 2,281 |
 | Sessions with completed gameplay | most (`completed: true` in record) |
-| Distinct games played | 100 |
+| Distinct games played | 99 of the final 100 (none recorded for PhysiType) |
 | Raw session folders (`sessions/`, public games only) | 98 |
-| Per-game-feedback files | 1,227 |
-| End-of-study feedback responses | 106 |
+| Per-game-feedback files | 889 |
+| End-of-study feedback responses | 77 |
+
+## Scope
+
+This release covers only the final 100 AI GameStore games. Sessions and feedback for game variants and for games cut from the final set were removed, along with end-of-study surveys from participants who played only those games.
 
 ## Public games vs. private test set
 

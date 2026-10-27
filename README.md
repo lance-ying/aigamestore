@@ -36,7 +36,7 @@ Code package accompanying the paper. Three components:
 - **`model evaluation/`** — VLM evaluation harness (Playwright + LLM loop over the games).
 - **`human experiment/`** — the user study.
   - `frontend/` — Next.js participant frontend used for the study, shipped with the 10 public games.
-  - `study_data/` — collected data: 128 participants, 3,722 sessions, scores, per-session events, and feedback (participant IDs pseudonymized). Schema and Croissant metadata in `study_data/`.
+  - `study_data/` — collected data for the final 100 games: 87 participants, 2,281 sessions, scores, per-session events, and feedback (participant IDs pseudonymized). Schema and Croissant metadata in `study_data/`.
 
 See each subfolder's README for setup and usage.
 
